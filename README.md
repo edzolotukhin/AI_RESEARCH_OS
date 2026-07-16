@@ -44,3 +44,35 @@ Architecture Review v1.0
 - Research Designer
 - Business Consultant
 - Planner
+---
+
+# Architecture
+                Client
+                   │
+                   ▼
+          Client Manager
+                   │
+                   ▼
+              Project
+                   │
+    ┌──────────────┼──────────────┐
+    │              │              │
+Qualification   Project Brief   Research Design
+    │              │              │
+    └──────────────┼──────────────┘
+                   │
+        Commercial Proposal
+                   │
+             Client Approval
+                   │
+               Fieldwork
+                   │
+                Analysis
+                   │
+                 Reporting
+
+The Project is the central business entity of the entire system.
+
+AI agents never work independently.
+
+Each agent enriches the Project with new business knowledge, documents and decisions.
