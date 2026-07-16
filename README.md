@@ -115,3 +115,76 @@ AI_RESEARCH_OS/
 | core | Business rules |
 | constants | Shared constants |
 | memory | Long-term memory |
+---
+
+# Technology Stack
+
+Current
+
+- Python
+- OpenAI API
+- Git
+- GitHub
+- Markdown
+
+Planned
+
+- n8n
+- FastAPI
+- PostgreSQL
+- Redis
+- Docker
+
+---
+
+# Development Principles
+
+- Business before AI
+- Architecture before implementation
+- One completed component per sprint
+- Human-in-the-loop
+- Domain-driven design
+- Reusable knowledge
+- Clean Architecture
+- Workflow-first thinking
+
+---
+
+# Roadmap
+
+## Completed
+
+- ✅ Architecture Review
+- ✅ Project Domain
+- ✅ Client Manager
+- ✅ Git Integration
+- ✅ GitHub Repository
+
+## In Progress
+
+- 🔄 Research Designer
+- 🔄 Business Consultant
+
+## Planned
+
+- Planner
+- Methodologist
+- Proposal Generator
+- Knowledge Graph
+- Memory
+- n8n Integration
+- Web Interface
+
+---
+
+# License
+
+Private project.
+
+---
+
+# Author
+
+Eduard Zolotukhin
+
+AI Research OS © 2026
