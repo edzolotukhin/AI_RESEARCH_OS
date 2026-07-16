@@ -76,3 +76,42 @@ The Project is the central business entity of the entire system.
 AI agents never work independently.
 
 Each agent enriches the Project with new business knowledge, documents and decisions.
+---
+
+# Project Structure
+AI_RESEARCH_OS/
+│
+├── core/
+├── constants/
+├── domain/
+├── roles/
+├── services/
+├── workflow/
+├── knowledge/
+├── prompts/
+├── docs/
+├── memory/
+│
+├── main.py
+├── config.py
+├── requirements.txt
+│
+├── ARCHITECTURE.md
+├── PROJECT_VISION.md
+├── ROADMAP.md
+└── CHANGELOG.md
+
+## Main Directories
+
+| Directory | Purpose |
+|-----------|---------|
+| domain | Business entities |
+| roles | AI agents |
+| services | Business services |
+| workflow | Workflow orchestration |
+| knowledge | Knowledge Base |
+| prompts | LLM prompts |
+| docs | Project documentation |
+| core | Business rules |
+| constants | Shared constants |
+| memory | Long-term memory |
