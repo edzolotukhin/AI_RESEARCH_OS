@@ -1,12 +1,9 @@
-# Environment
-.env
-
 # Python
 __pycache__/
 *.py[cod]
 *.pyo
 
-# Virtual environments
+# Virtual environment
 .venv/
 venv/
 env/
@@ -15,6 +12,13 @@ env/
 .vscode/
 .idea/
 
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+
 # Logs
 *.log
 
@@ -22,11 +26,5 @@ env/
 build/
 dist/
 
-# Tests
-.pytest_cache/
-.coverage
-htmlcov/
-
-# OS
-.DS_Store
-Thumbs.db
+# PyInstaller
+*.spec

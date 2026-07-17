@@ -1,19 +1,21 @@
 from domain.project import Project
 
-from roles.client_manager import ClientManager
-
 
 class WorkflowEngine:
 
-    def __init__(self):
+    def __init__(
+        self,
+        pipeline,
+    ):
 
-        self.client_manager = ClientManager()
+        self.pipeline = pipeline
 
     def run(
         self,
-        project: Project
+        project: Project,
     ) -> Project:
 
-        project = self.client_manager.execute(project)
+        for agent in self.pipeline:
+            project = agent.execute(project)
 
         return project

@@ -1,42 +1,84 @@
 from domain.project import Project
+from domain.research_design import (
+    ResearchDesign,
+    BusinessProblem,
+    ResearchObjectives,
+    ResearchStrategy,
+    Methodology,
+    SamplingPlan,
+    Risk,
+    RiskAssessment,
+)
 
+from roles.base_agent import BaseAgent
 from constants.prompts import Prompts
 
-from services.prompt_repository import PromptRepository
-from services.prompt_builder import PromptBuilder
-from services.openai_service import OpenAIService
-from services.json_parser import JsonParser
-from services.research_design_factory import ResearchDesignFactory
 
-
-class ResearchDesigner:
+class ResearchDesigner(BaseAgent):
 
     def __init__(self):
+        super().__init__()
 
-        self.prompt_repository = PromptRepository()
-        self.prompt_builder = PromptBuilder()
-        self.llm = OpenAIService()
+    def prompt_name(self) -> str:
+        return Prompts.RESEARCH_DESIGN
 
-    def create(self, project: Project):
+    def build_user_prompt(
+        self,
+        project: Project
+    ) -> str:
 
-        brief = project.brief
+        return self.create_user_prompt(
+            f"""Project Brief
 
-        system_prompt = self.prompt_repository.load(
-            Prompts.RESEARCH_DESIGNER
+{project.brief}"""
         )
 
-        user_prompt = self.prompt_builder.build_project_brief(
-            brief
+    def parse_response(
+        self,
+        project: Project,
+        data: dict
+    ) -> Project:
+
+        project.research_design = ResearchDesign(
+
+            business_problem=BusinessProblem(
+                description=data["business_problem"]["description"],
+                business_decision=data["business_problem"]["business_decision"]
+            ),
+
+            objectives=ResearchObjectives(
+                primary=data["objectives"]["primary"],
+                secondary=data["objectives"]["secondary"]
+            ),
+
+            strategy=ResearchStrategy(
+                recommendation=data["strategy"]["recommendation"],
+                rationale=data["strategy"]["rationale"],
+                alternatives=data["strategy"]["alternatives"]
+            ),
+
+            methodology=Methodology(
+                methods=data["methodology"]["methods"],
+                target_audience=data["methodology"]["target_audience"],
+                geography=data["methodology"]["geography"],
+                timeline=data["methodology"]["timeline"]
+            ),
+
+            sampling=SamplingPlan(
+                sample_size=data["sampling"]["sample_size"],
+                sampling_method=data["sampling"]["sampling_method"],
+                quotas=data["sampling"]["quotas"]
+            ),
+
+            risks=RiskAssessment(
+                risks=[
+                    Risk(
+                        description=risk["description"],
+                        mitigation=risk["mitigation"]
+                    )
+                    for risk in data["risks"]
+                ]
+            )
         )
 
-        response = self.llm.ask(
-            system_prompt,
-            user_prompt
-        )
-
-        data = JsonParser.parse(response)
-
-        return ResearchDesignFactory.create(
-            brief,
-            data
-        )
+        return project

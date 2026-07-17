@@ -1,7 +1,5 @@
 from domain.project import Project
-from domain.client_qualification import ClientQualification
-
-from constants.prompts import Prompts
+from domain.client_qualification_task import ClientQualificationTask
 
 from roles.base_agent import BaseAgent
 
@@ -9,52 +7,34 @@ from roles.base_agent import BaseAgent
 class ClientManager(BaseAgent):
 
     def __init__(self):
-
         super().__init__()
 
-    def execute(
-        self,
-        project: Project
-    ) -> Project:
+        self.task = ClientQualificationTask()
 
-        system_prompt = self.load_prompt(
-            Prompts.CLIENT_QUALIFICATION
-        )
+    def prompt_name(self) -> str:
+        return self.task.prompt_name
+
+    def build_user_prompt(
+        self,
+        project: Project,
+    ) -> str:
 
         knowledge = self.load_knowledge(
             "roles/client_manager.md"
         )
 
-        user_prompt = f"""
-Company:
-{project.client_request.client_name}
-
-Message:
-{project.client_request.message}
-
-Corporate knowledge:
-
-{knowledge.content}
-"""
-
-        data = self.ask(
-            system_prompt,
-            user_prompt
+        return self.task.build_user_prompt(
+            project,
+            knowledge,
         )
 
-        project.qualification = ClientQualification(
+    def parse_response(
+        self,
+        project: Project,
+        data: dict,
+    ) -> Project:
 
-            summary=data["summary"],
-
-            project_understanding=data["project_understanding"],
-
-            understanding_score=data["understanding_score"],
-
-            project_state=data["project_state"],
-
-            next_question=data["next_question"],
-
-            missing_information=data["missing_information"]
+        return self.task.parse_response(
+            project,
+            data,
         )
-
-        return project

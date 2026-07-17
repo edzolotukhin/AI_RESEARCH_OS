@@ -1,70 +1,29 @@
-from domain.client_request import ClientRequest
-from domain.project import Project
+from core.agency import Agency
+from examples.brand_health_demo import create_demo_project
 
+from workflow.default_pipeline import create_default_pipeline
 from workflow.workflow_engine import WorkflowEngine
 
 
 def main():
 
-    request = ClientRequest(
-        source="Telegram",
-        client_name="Nestlé",
-        contact_person="John Smith",
-        contact_email="john@nestle.com",
-        contact_phone="+381600000000",
-        message="""
-Hello.
+    print("Creating demo project...")
 
-We need a market research project in Serbia.
+    agency = Agency()
 
-Please send us a commercial proposal.
-"""
-    )
+    project = create_demo_project()
 
-    project = Project(
-        id="P-2026-001",
-        name="Nestlé Serbia Research"
-    )
+    agency.create_project(project)
+    agency.save_project(project)
 
-    project.client_request = request
+    pipeline = create_default_pipeline()
 
-    workflow = WorkflowEngine()
+    engine = WorkflowEngine(pipeline)
 
-    project = workflow.run(project)
+    project = engine.run(project)
 
-    print()
-    print("===== CLIENT QUALIFICATION =====")
-    print()
-
-    print("Summary:")
-    print(project.qualification.summary)
-
-    print()
-
-    print("Project understanding:")
-    print(project.qualification.project_understanding)
-
-    print()
-
-    print("Understanding score:")
-    print(project.qualification.understanding_score)
-
-    print()
-
-    print("Project state:")
-    print(project.qualification.project_state)
-
-    print()
-
-    print("Next question:")
-    print(project.qualification.next_question)
-
-    print()
-
-    print("Missing information:")
-
-    for item in project.qualification.missing_information:
-        print("-", item)
+    print("\nWorkflow completed.\n")
+    print(project)
 
 
 if __name__ == "__main__":

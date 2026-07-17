@@ -1,0 +1,18 @@
+{
+    "id": "P001",
+    "name": "Purina Brand Health 2026",
+    "status": "Lead",
+    "client_request": {
+        "source": "Email",
+        "client_name": "Purina",
+        "contact_person": "John Smith",
+        "contact_email": "john.smith@purina.com",
+        "contact_phone": "+1 555 123 4567",
+        "message": "\nWe need a Brand Health study in Ukraine.\n\nThe research should evaluate:\n\n- Brand Awareness\n- Consideration\n- Usage\n- Loyalty\n\nThe results will be used for marketing strategy.\n"
+    },
+    "qualification": null,
+    "brief": null,
+    "research_design": null,
+    "created_at": "",
+    "updated_at": ""
+}
