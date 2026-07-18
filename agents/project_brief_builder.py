@@ -7,8 +7,8 @@ from constants.prompts import Prompts
 
 class ProjectBriefBuilder(BaseAgent):
 
-    def __init__(self):
-        super().__init__()
+    def init(self):
+        super().init()
 
     def prompt_name(self) -> str:
         return Prompts.PROJECT_BRIEF

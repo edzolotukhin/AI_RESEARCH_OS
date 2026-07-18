@@ -6,8 +6,8 @@ from roles.base_agent import BaseAgent
 
 class ClientManager(BaseAgent):
 
-    def __init__(self):
-        super().__init__()
+    def init(self):
+        super().init()
 
         self.task = ClientQualificationTask()
 
