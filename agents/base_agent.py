@@ -1,14 +1,14 @@
-from roles.base_role import BaseRole
-
-from services.prompt_repository import PromptRepository
 from infrastructure.documents.document_loader import DocumentLoader
 from infrastructure.llm.openai_service import OpenAIService
 from infrastructure.parsers.json_parser import JsonParser
+from infrastructure.prompts.prompt_repository import PromptRepository
 
 
-class BaseAgent(BaseRole):
+class BaseAgent:
 
-    def __init__(self):
+    def __init__(self, name: str = ""):
+
+        self.name = name
 
         self.prompt_repository = PromptRepository()
         self.document_loader = DocumentLoader()
@@ -49,32 +49,3 @@ class BaseAgent(BaseRole):
             for part in parts
             if part
         )
-
-    def execute(self, project):
-
-        system_prompt = self.load_prompt(
-            self.prompt_name()
-        )
-
-        user_prompt = self.build_user_prompt(
-            project
-        )
-
-        data = self.ask(
-            system_prompt,
-            user_prompt
-        )
-
-        return self.parse_response(
-            project,
-            data
-        )
-
-    def prompt_name(self) -> str:
-        raise NotImplementedError()
-
-    def build_user_prompt(self, project):
-        raise NotImplementedError()
-
-    def parse_response(self, project, data):
-        raise NotImplementedError()

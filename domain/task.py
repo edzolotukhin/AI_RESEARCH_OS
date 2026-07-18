@@ -1,17 +1,24 @@
-from abc import ABC, abstractmethod
+from dataclasses import dataclass
+
+from domain.value_objects.task_status import TaskStatus
 
 
-class Task(ABC):
+@dataclass
+class Task:
+    """
+    Единица работы AI Research OS.
+    """
 
-    @property
-    @abstractmethod
-    def prompt_name(self) -> str:
-        pass
+    id: str
 
-    @abstractmethod
-    def build_user_prompt(self, project) -> str:
-        pass
+    name: str
 
-    @abstractmethod
-    def parse_response(self, project, data):
-        pass
+    description: str = ""
+
+    assigned_agent: str = ""
+
+    status: TaskStatus = TaskStatus.PENDING
+
+    created_at: str = ""
+
+    updated_at: str = ""

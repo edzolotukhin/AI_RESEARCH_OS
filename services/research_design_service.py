@@ -1,6 +1,6 @@
 from domain.project import Project
 
-from roles.research_designer import ResearchDesigner
+from agents.research_designer.research_designer import ResearchDesigner
 
 
 class ResearchDesignService:

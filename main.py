@@ -1,29 +1,54 @@
 from core.agency import Agency
-from examples.brand_health_demo import create_demo_project
 
-from workflow.default_pipeline import create_default_pipeline
-from workflow.workflow_engine import WorkflowEngine
+from runtime.research_context import ResearchContext
 
 
 def main():
-
-    print("Creating demo project...")
-
     agency = Agency()
 
-    project = create_demo_project()
+    print(f"Initialized: {agency.initialized}")
 
-    agency.create_project(project)
-    agency.save_project(project)
+    agency.initialize()
 
-    pipeline = create_default_pipeline()
+    print(f"Initialized: {agency.initialized}")
 
-    engine = WorkflowEngine(pipeline)
+    # Создаем проект
+    project = agency.create_project("Architecture Test")
 
-    project = engine.run(project)
+    print(f"Project created: {project.name}")
 
-    print("\nWorkflow completed.\n")
-    print(project)
+    # Создаем первую задачу
+    task = agency.task_factory.create(
+        name="Build Research Plan",
+        description="Create research execution plan",
+        assigned_agent="planner",
+    )
+
+    print(f"Task created: {task.name}")
+
+    # Создаем контекст выполнения
+    context = ResearchContext(
+        project=project,
+        task=task,
+    )
+
+    # Получаем PlannerAgent из Registry
+    planner_cls = agency.registry.agents.get("planner")
+
+    planner = planner_cls()
+
+    # Выполняем задачу
+    context = planner.run(context)
+
+    print(f"Execution state: {context.state}")
+
+    print(f"Current task: {context.task.name}")
+
+    print(f"Assigned agent: {context.task.assigned_agent}")
+
+    agency.shutdown()
+
+    print(f"Initialized: {agency.initialized}")
 
 
 if __name__ == "__main__":
