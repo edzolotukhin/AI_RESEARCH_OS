@@ -28,6 +28,7 @@ class ClientQualificationTask(AITask):
             f"""Corporate knowledge:
 
 {knowledge.content}"""
+
         ])
 
     def parse_response(

@@ -1,60 +1,41 @@
-from domain.project_brief import ProjectBrief
+from domain.ai_task import AITask
+from domain.project import Project
+
+from infrastructure.documents.document_loader import DocumentLoader
+from infrastructure.prompts.prompt_repository import PromptRepository
 
 
 class PromptBuilder:
+    """
+    Отвечает за построение полного prompt для AI-задачи.
+    """
 
-    @staticmethod
-    def build_project_brief(brief: ProjectBrief) -> str:
+    def __init__(self):
 
-        objectives = "\n".join(
-            f"- {objective}"
-            for objective in brief.research_objectives
+        self.prompt_repository = PromptRepository()
+        self.document_loader = DocumentLoader()
+
+    def build(
+        self,
+        task: AITask,
+        project: Project,
+        *knowledge_documents,
+    ) -> tuple[str, str]:
+
+        system_prompt = self.prompt_repository.load(
+            task.prompt_name
         )
 
-        constraints = "\n".join(
-            f"- {constraint}"
-            for constraint in brief.constraints
+        knowledge = self.document_loader.load(
+            *knowledge_documents
         )
 
-        attachments = "\n".join(
-            f"- {attachment}"
-            for attachment in brief.attachments
+        user_prompt = task.build_user_prompt(
+            project,
+            knowledge,
         )
 
-        return f"""
-Client:
-{brief.client}
-
-Project:
-{brief.project_title}
-
-Business problem:
-{brief.business_problem}
-
-Research goal:
-{brief.research_goal}
-
-Research objectives:
-{objectives}
-
-Research object:
-{brief.research_object}
-
-Target audience:
-{brief.target_audience}
-
-Geography:
-{brief.geography}
-
-Timeline:
-{brief.timeline}
-
-Constraints:
-{constraints}
-
-Comments:
-{brief.comments}
-
-Attachments:
-{attachments}
-""".strip()
+        return (
+            system_prompt,
+            user_prompt,
+        )

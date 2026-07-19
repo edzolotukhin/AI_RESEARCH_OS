@@ -1,7 +1,8 @@
-from infrastructure.documents.document_loader import DocumentLoader
+from application.services.prompt_builder import PromptBuilder
+from application.services.task_executor import TaskExecutor
+
 from infrastructure.llm.openai_service import OpenAIService
 from infrastructure.parsers.json_parser import JsonParser
-from infrastructure.prompts.prompt_repository import PromptRepository
 
 
 class BaseAgent:
@@ -10,42 +11,33 @@ class BaseAgent:
 
         self.name = name
 
-        self.prompt_repository = PromptRepository()
-        self.document_loader = DocumentLoader()
-        self.llm = OpenAIService()
-        self.json_parser = JsonParser()
+        prompt_builder = PromptBuilder()
+        llm = OpenAIService()
+        parser = JsonParser()
 
-    def load_prompt(
-        self,
-        prompt_name: str,
-    ) -> str:
-
-        return self.prompt_repository.load(prompt_name)
-
-    def load_knowledge(
-        self,
-        *documents: str,
-    ):
-
-        return self.document_loader.load(*documents)
-
-    def ask(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-    ) -> dict:
-
-        response = self.llm.ask(
-            system_prompt,
-            user_prompt,
+        self.executor = TaskExecutor(
+            prompt_builder=prompt_builder,
+            llm=llm,
+            json_parser=parser,
         )
 
-        return self.json_parser.parse(response)
+    @property
+    def task(self):
+        return None
 
-    def create_user_prompt(self, *parts) -> str:
+    def execute(
+        self,
+        project,
+        *knowledge_documents,
+    ):
 
-        return "\n\n".join(
-            str(part)
-            for part in parts
-            if part
+        if self.task is None:
+            raise NotImplementedError(
+                f"{self.__class__.__name__} does not implement task."
+            )
+
+        return self.executor.execute(
+            task=self.task,
+            project=project,
+            *knowledge_documents,
         )

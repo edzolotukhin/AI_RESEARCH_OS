@@ -29,8 +29,9 @@ def main():
     # Создаем контекст выполнения
     context = ResearchContext(
         project=project,
-        task=task,
     )
+
+    context.current_task = task
 
     # Получаем PlannerAgent из Registry
     planner_cls = agency.registry.agents.get("planner")
@@ -42,9 +43,9 @@ def main():
 
     print(f"Execution state: {context.state}")
 
-    print(f"Current task: {context.task.name}")
-
-    print(f"Assigned agent: {context.task.assigned_agent}")
+    if context.current_task:
+        print(f"Current task: {context.current_task.name}")
+        print(f"Assigned agent: {context.current_task.assigned_agent}")
 
     agency.shutdown()
 
