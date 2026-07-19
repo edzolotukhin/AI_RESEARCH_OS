@@ -1,11 +1,11 @@
-from domain.task import Task
+from domain.ai_task import AITask
 from domain.project import Project
 from domain.client_qualification import ClientQualification
 
 from constants.prompts import Prompts
 
 
-class ClientQualificationTask(Task):
+class ClientQualificationTask(AITask):
 
     @property
     def prompt_name(self) -> str:
