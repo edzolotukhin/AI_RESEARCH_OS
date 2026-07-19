@@ -1,7 +1,7 @@
 from domain.project import Project
 from domain.project_brief import ProjectBrief
 
-from roles.base_agent import BaseAgent
+from agents.base_agent import BaseAgent
 from constants.prompts import Prompts
 
 

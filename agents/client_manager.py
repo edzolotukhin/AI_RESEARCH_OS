@@ -1,7 +1,7 @@
 from domain.project import Project
 from domain.client_qualification_task import ClientQualificationTask
 
-from roles.base_agent import BaseAgent
+from agents.base_agent import BaseAgent
 
 
 class ClientManager(BaseAgent):
