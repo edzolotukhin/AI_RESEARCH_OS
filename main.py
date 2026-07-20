@@ -1,4 +1,4 @@
-from core.agency import Agency
+from agency.agency import Agency
 
 from runtime.research_context import ResearchContext
 

@@ -1,5 +1,5 @@
 from services.project_brief_builder import ProjectBriefBuilder
-from core.readiness_rules import ReadinessRules
+from domain.readiness_rules import ReadinessRules
 
 
 def main():

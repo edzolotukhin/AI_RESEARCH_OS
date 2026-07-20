@@ -1,21 +1,17 @@
-from domain.project import Project
+from runtime.research_context import ResearchContext
 
 
 class WorkflowEngine:
 
-    def __init__(
-        self,
-        pipeline,
-    ):
-
+    def __init__(self, pipeline):
         self.pipeline = pipeline
 
     def run(
         self,
-        project: Project,
-    ) -> Project:
+        context: ResearchContext,
+    ) -> ResearchContext:
 
         for agent in self.pipeline:
-            project = agent.execute(project)
+            context = agent.run(context)
 
-        return project
+        return context

@@ -2,7 +2,7 @@ from registry.registry import Registry
 
 from loaders.agent_loader import AgentLoader
 
-from core.project_repository import ProjectRepository
+from infrastructure.project_repository import ProjectRepository
 
 from domain.factories.project_factory import ProjectFactory
 from domain.factories.task_factory import TaskFactory
