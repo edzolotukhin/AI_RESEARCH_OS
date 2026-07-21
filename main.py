@@ -2,6 +2,10 @@ from agency.agency import Agency
 
 from runtime.research_context import ResearchContext
 
+from domain.task_definition import TaskDefinition
+
+from application.task_executor import TaskExecutor
+
 
 def main():
     agency = Agency()
@@ -17,12 +21,15 @@ def main():
 
     print(f"Project created: {project.name}")
 
-    # Создаем первую задачу
-    task = agency.task_factory.create(
+    # Создаем описание задачи
+    definition = TaskDefinition(
+        id="build_research_plan",
         name="Build Research Plan",
-        description="Create research execution plan",
-        assigned_agent="planner",
+        executor_id="planner",
     )
+
+    # Создаем экземпляр задачи
+    task = agency.task_factory.create(definition)
 
     print(f"Task created: {task.name}")
 
@@ -31,21 +38,21 @@ def main():
         project=project,
     )
 
-    context.current_task = task
-
-    # Получаем PlannerAgent из Registry
-    planner_cls = agency.registry.agents.get("planner")
-
-    planner = planner_cls()
-
     # Выполняем задачу
-    context = planner.run(context)
+    task_executor = TaskExecutor(
+        agency.registry,
+    )
+
+    context = task_executor.execute(
+        task=task,
+        context=context,
+    )
 
     print(f"Execution state: {context.state}")
 
     if context.current_task:
         print(f"Current task: {context.current_task.name}")
-        print(f"Assigned agent: {context.current_task.assigned_agent}")
+        print(f"Executor: {context.current_task.executor_id}")
 
     agency.shutdown()
 

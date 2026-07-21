@@ -53,7 +53,6 @@ class Agency:
         project = self.project_factory.create(name)
 
         self.project_repository.create_project(project)
-
         self.project_repository.save_project(project)
 
         return project

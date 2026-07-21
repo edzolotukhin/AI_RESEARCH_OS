@@ -1,22 +1,13 @@
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
 class TaskDefinition:
-    """
-    Неизменяемое описание одного шага Workflow.
-    """
-
     id: str
+    name: str
+    executor_id: str
 
-    title: str
+    depends_on: list[str] = field(default_factory=list)
 
-    agent: str
-
-    goal: str = ""
-
-    inputs: list[str] = field(default_factory=list)
-
-    outputs: list[str] = field(default_factory=list)
-
-    dependencies: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)

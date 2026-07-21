@@ -1,16 +1,19 @@
 from dataclasses import dataclass, field
+from uuid import uuid4
 
-from domain.ai_task import AITask
+from domain.task import Task
 
 
 @dataclass
 class WorkflowRun:
     """
-    Конкретный экземпляр выполнения Workflow.
+    Экземпляр выполнения WorkflowTemplate.
     """
 
-    id: str
+    id: str = field(default_factory=lambda: str(uuid4()))
 
-    template_id: str
+    workflow_template_id: str = ""
 
-    tasks: list[AITask] = field(default_factory=list)
+    tasks: list[Task] = field(default_factory=list)
+
+    status: str = "pending"

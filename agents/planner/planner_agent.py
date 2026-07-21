@@ -2,6 +2,7 @@ from agents.base_agent import BaseAgent
 
 from application.services.planner_service import PlannerService
 from runtime.execution_state import ExecutionState
+from runtime.research_context import ResearchContext
 
 
 class PlannerAgent(BaseAgent):
@@ -13,7 +14,10 @@ class PlannerAgent(BaseAgent):
         super().__init__("planner")
         self.planner = PlannerService()
 
-    def run(self, context):
+    def run(
+        self,
+        context: ResearchContext,
+    ) -> ResearchContext:
 
         context.state = ExecutionState.RUNNING
 

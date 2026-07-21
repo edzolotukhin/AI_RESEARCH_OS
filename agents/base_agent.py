@@ -1,17 +1,25 @@
-class BaseAgent:
+from abc import abstractmethod
+
+from application.contracts.base_executor import BaseExecutor
+from runtime.research_context import ResearchContext
+
+
+class BaseAgent(BaseExecutor):
     """
     Базовый класс для всех AI-агентов.
+
+    Реализует общий контракт BaseExecutor.
     """
 
     def __init__(self, name: str = ""):
         self.name = name
 
-    def run(self, context):
+    @abstractmethod
+    def run(
+        self,
+        context: ResearchContext,
+    ) -> ResearchContext:
         """
         Выполнить работу агента.
-
-        Каждый агент обязан реализовать этот метод.
         """
-        raise NotImplementedError(
-            f"{self.__class__.__name__} must implement run()."
-        )
+        pass

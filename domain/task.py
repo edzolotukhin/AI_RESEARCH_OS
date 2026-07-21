@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from domain.value_objects.task_status import TaskStatus
 
@@ -6,16 +6,21 @@ from domain.value_objects.task_status import TaskStatus
 @dataclass
 class Task:
     """
-    Единица работы AI Research OS.
+    Экземпляр задачи в рамках WorkflowRun.
+    Создается на основе TaskDefinition.
     """
 
     id: str
+
+    definition_id: str
 
     name: str
 
     description: str = ""
 
-    assigned_agent: str = ""
+    executor_id: str = ""
+
+    depends_on: list[str] = field(default_factory=list)
 
     status: TaskStatus = TaskStatus.PENDING
 

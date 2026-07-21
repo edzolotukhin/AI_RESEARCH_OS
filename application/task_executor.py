@@ -1,8 +1,7 @@
+from domain.task import Task
 from runtime.research_context import ResearchContext
 
-from domain.task import Task
-
-from application.executor_factory import ExecutorFactory
+from application.factories.executor_factory import ExecutorFactory
 from application.executor_resolver import ExecutorResolver
 from application.task_lifecycle_manager import TaskLifecycleManager
 

@@ -1,13 +1,13 @@
 from domain.workflow_template import WorkflowTemplate
 from domain.workflow_run import WorkflowRun
 
-from domain.factories.ai_task_factory import AITaskFactory
+from domain.factories.task_factory import TaskFactory
 
 
 class WorkflowRunFactory:
 
     def __init__(self):
-        self.ai_task_factory = AITaskFactory()
+        self.task_factory = TaskFactory()
 
     def create(
         self,
@@ -17,12 +17,11 @@ class WorkflowRunFactory:
 
         run = WorkflowRun(
             id=run_id,
-            template_id=template.id,
+            workflow_template_id=template.id,
         )
 
-        # Следующим шагом здесь появится создание AITask
-        for definition in template.tasks:
-            # Пока ничего не делаем
-            pass
+        for definition in template.task_definitions:
+            task = self.task_factory.create(definition)
+            run.tasks.append(task)
 
         return run

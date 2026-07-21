@@ -1,6 +1,6 @@
 from domain.project import Project
 from domain.workflow_plan import WorkflowPlan
-from domain.ai_task import AITask
+from domain.task import Task
 
 from runtime.execution_state import ExecutionState
 
@@ -19,7 +19,8 @@ class ResearchContext:
         self.project = project
 
         self.plan = WorkflowPlan()
-        self.current_task: AITask | None = None
+
+        self.current_task: Task | None = None
         self.current_agent: str | None = None
 
         self.state = ExecutionState.CREATED

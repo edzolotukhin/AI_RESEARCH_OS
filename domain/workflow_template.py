@@ -6,11 +6,13 @@ from domain.task_definition import TaskDefinition
 @dataclass
 class WorkflowTemplate:
     """
-    Неизменяемое описание процесса.
+    Неизменяемый шаблон процесса.
+    Содержит определения задач (TaskDefinition),
+    из которых создаются Task при запуске WorkflowRun.
     """
 
     id: str
 
     name: str
 
-    tasks: list[TaskDefinition] = field(default_factory=list)
+    task_definitions: list[TaskDefinition] = field(default_factory=list)
