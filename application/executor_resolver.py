@@ -3,9 +3,9 @@ from application.contracts.base_executor import BaseExecutor
 
 class ExecutorResolver:
     """
-    Находит класс исполнителя по executor_id.
+    Возвращает готовый Executor по executor_id.
 
-    Resolver изолирует Application Layer
+    Изолирует Application Layer
     от конкретной реализации Registry.
     """
 
@@ -15,5 +15,13 @@ class ExecutorResolver:
     def resolve(
         self,
         executor_id: str,
-    ) -> type[BaseExecutor]:
-        return self._registry.agents.get(executor_id)
+    ) -> BaseExecutor:
+
+        executor_cls = self._registry.agents.get(executor_id)
+
+        if executor_cls is None:
+            raise ValueError(
+                f"Executor '{executor_id}' is not registered."
+            )
+
+        return executor_cls()

@@ -1,7 +1,7 @@
-from domain.task import Task
 from runtime.research_context import ResearchContext
 
-from application.factories.executor_factory import ExecutorFactory
+from domain.task import Task
+
 from application.executor_resolver import ExecutorResolver
 from application.task_lifecycle_manager import TaskLifecycleManager
 
@@ -11,14 +11,13 @@ class TaskExecutor:
     Выполняет одну Task целиком.
 
     Отвечает за:
-    - выбор Executor;
+    - получение Executor;
     - жизненный цикл Task;
     - выполнение Task.
     """
 
     def __init__(self, registry):
         self._resolver = ExecutorResolver(registry)
-        self._factory = ExecutorFactory()
         self._lifecycle = TaskLifecycleManager()
 
     def execute(
@@ -30,8 +29,7 @@ class TaskExecutor:
         self._lifecycle.start(task)
 
         try:
-            executor_cls = self._resolver.resolve(task.executor_id)
-            executor = self._factory.create(executor_cls)
+            executor = self._resolver.resolve(task.executor_id)
 
             context.current_task = task
 
