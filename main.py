@@ -5,6 +5,8 @@ from runtime.research_context import ResearchContext
 from domain.task_definition import TaskDefinition
 
 from application.task_executor import TaskExecutor
+from application.executor_resolver import ExecutorResolver
+from application.task_lifecycle_manager import TaskLifecycleManager
 
 
 def main():
@@ -38,11 +40,17 @@ def main():
         project=project,
     )
 
-    # Выполняем задачу
+    # Создаем зависимости
+    resolver = ExecutorResolver(agency.registry)
+    lifecycle = TaskLifecycleManager()
+
+    # Создаем TaskExecutor
     task_executor = TaskExecutor(
-        agency.registry,
+        resolver=resolver,
+        lifecycle=lifecycle,
     )
 
+    # Выполняем задачу
     context = task_executor.execute(
         task=task,
         context=context,

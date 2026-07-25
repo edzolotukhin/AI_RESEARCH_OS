@@ -28,3 +28,8 @@ dist/
 
 # PyInstaller
 *.spec
+# Runtime data
+agency/projects/
+
+# Python cache
+__pycache__/

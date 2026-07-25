@@ -14,3 +14,6 @@ class Registry:
         self.workflows = WorkflowRegistry()
         self.tools = ToolRegistry()
         self.knowledge = KnowledgeRegistry()
+
+    def get(self, executor_id: str):
+        return self.agents.get(executor_id)

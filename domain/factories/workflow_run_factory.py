@@ -6,8 +6,11 @@ from domain.factories.task_factory import TaskFactory
 
 class WorkflowRunFactory:
 
-    def __init__(self):
-        self.task_factory = TaskFactory()
+    def __init__(
+        self,
+        task_factory: TaskFactory,
+    ):
+        self.task_factory = task_factory
 
     def create(
         self,
@@ -21,7 +24,8 @@ class WorkflowRunFactory:
         )
 
         for definition in template.task_definitions:
-            task = self.task_factory.create(definition)
-            run.tasks.append(task)
+            run.tasks.append(
+                self.task_factory.create(definition)
+            )
 
         return run

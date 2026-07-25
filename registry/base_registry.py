@@ -16,10 +16,7 @@ class BaseRegistry(ABC):
         self._items[name] = item
 
     def get(self, name: str):
-        if name not in self._items:
-            raise KeyError(f"'{name}' is not registered.")
-
-        return self._items[name]
+        return self._items.get(name)
 
     def exists(self, name: str) -> bool:
         return name in self._items

@@ -17,7 +17,7 @@ class ExecutorResolver:
         executor_id: str,
     ) -> BaseExecutor:
 
-        executor_cls = self._registry.agents.get(executor_id)
+        executor_cls = self._registry.get(executor_id)
 
         if executor_cls is None:
             raise ValueError(

@@ -16,9 +16,13 @@ class TaskExecutor:
     - выполнение Task.
     """
 
-    def __init__(self, registry):
-        self._resolver = ExecutorResolver(registry)
-        self._lifecycle = TaskLifecycleManager()
+    def __init__(
+        self,
+        resolver: ExecutorResolver,
+        lifecycle: TaskLifecycleManager,
+    ):
+        self._resolver = resolver
+        self._lifecycle = lifecycle
 
     def execute(
         self,
