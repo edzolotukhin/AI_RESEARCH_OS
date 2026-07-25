@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
-from uuid import uuid4
 from typing import Any
+from uuid import uuid4
 
 from domain.task import Task
 from domain.workflow_status import WorkflowStatus
@@ -11,8 +11,8 @@ class WorkflowRun:
     """
     Экземпляр выполнения WorkflowTemplate.
 
-    На данном этапе является публичным фасадом над Runtime.
-    Реальная логика выполнения будет перенесена сюда постепенно.
+    Domain-модель состояния Workflow.
+    Выполнение Workflow осуществляется Application-слоем.
     """
 
     id: str = field(default_factory=lambda: str(uuid4()))
@@ -23,27 +23,20 @@ class WorkflowRun:
 
     status: WorkflowStatus = WorkflowStatus.PENDING
 
-    def execute(self) -> None:
-        """
-        Запустить выполнение Workflow.
-
-        Пока не реализовано.
-        """
-        raise NotImplementedError("WorkflowRun.execute() is not implemented yet.")
-
     def pause(self) -> None:
-        raise NotImplementedError("WorkflowRun.pause() is not implemented yet.")
+        self.status = WorkflowStatus.PAUSED
 
     def resume(self) -> None:
-        raise NotImplementedError("WorkflowRun.resume() is not implemented yet.")
+        self.status = WorkflowStatus.RUNNING
 
     def cancel(self) -> None:
-        raise NotImplementedError("WorkflowRun.cancel() is not implemented yet.")
+        self.status = WorkflowStatus.CANCELLED
 
     @property
     def progress(self) -> int:
         """
         Процент выполнения Workflow.
+        Пока заглушка.
         """
         return 0
 
@@ -52,6 +45,6 @@ class WorkflowRun:
         """
         Артефакты, созданные данным WorkflowRun.
 
-        Пока не реализовано.
+        Пока заглушка.
         """
         return []
