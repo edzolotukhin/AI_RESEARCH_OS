@@ -1,16 +1,34 @@
-from domain.workflow_plan import WorkflowPlan
-
-from domain.client_qualification_task import ClientQualificationTask
-from domain.project_brief_task import ProjectBriefTask
+from domain.workflow_template import WorkflowTemplate
+from domain.task_definition import TaskDefinition
 
 
 class PlannerService:
+    """
+    Строит WorkflowTemplate для проекта.
+    """
 
-    def build_plan(self, project) -> WorkflowPlan:
+    def build_workflow(
+        self,
+        project,
+    ) -> WorkflowTemplate:
 
-        plan = WorkflowPlan()
+        template = WorkflowTemplate(
+            id="research_workflow",
+            name="Research Workflow",
+        )
 
-        plan.add(ClientQualificationTask())
-        plan.add(ProjectBriefTask())
+        template.task_definitions.extend([
+            TaskDefinition(
+                id="client_qualification",
+                name="Client Qualification",
+                executor_id="planner",
+            ),
+            TaskDefinition(
+                id="project_brief",
+                name="Project Brief",
+                executor_id="planner",
+                depends_on=["client_qualification"],
+            ),
+        ])
 
-        return plan
+        return template

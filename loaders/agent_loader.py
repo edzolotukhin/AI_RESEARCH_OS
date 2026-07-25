@@ -1,11 +1,11 @@
-from agents.planner.planner_agent import PlannerAgent
+from agents.planner.planner_executor import PlannerExecutor
 
 from loaders.base_loader import BaseLoader
 
 
 class AgentLoader(BaseLoader):
     """
-    Регистрирует встроенных AI-агентов.
+    Регистрирует встроенных Executor'ов.
     """
 
     def __init__(self, registry):
@@ -13,10 +13,10 @@ class AgentLoader(BaseLoader):
 
     def load(self):
         """
-        Регистрация встроенных AI-агентов.
+        Регистрация встроенных Executor'ов.
         """
 
         self.registry.agents.register(
             "planner",
-            PlannerAgent
+            PlannerExecutor,
         )

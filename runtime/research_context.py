@@ -1,15 +1,16 @@
 from domain.project import Project
-from domain.workflow_plan import WorkflowPlan
 from domain.task import Task
+from domain.workflow_template import WorkflowTemplate
+from domain.workflow_run import WorkflowRun
 
 from runtime.execution_state import ExecutionState
 
 
 class ResearchContext:
     """
-    Контекст выполнения Workflow.
-    Содержит текущее состояние исполнения,
-    но не хранит бизнес-данные проекта.
+    Runtime-контекст выполнения Workflow.
+
+    Содержит временное состояние исполнения.
     """
 
     def __init__(
@@ -18,7 +19,8 @@ class ResearchContext:
     ):
         self.project = project
 
-        self.plan = WorkflowPlan()
+        self.workflow_template: WorkflowTemplate | None = None
+        self.workflow_run: WorkflowRun | None = None
 
         self.current_task: Task | None = None
         self.current_agent: str | None = None

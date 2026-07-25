@@ -37,7 +37,10 @@ class TaskExecutor:
 
             context.current_task = task
 
-            context = executor.run(context)
+            context = executor.run(
+                task=task,
+                context=context,
+            )
 
             self._lifecycle.complete(task)
 

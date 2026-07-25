@@ -23,8 +23,13 @@ class PlannerAgent(BaseAgent):
 
         print(f"PlannerAgent started: {context.project.name}")
 
-        context.plan = self.planner.build_plan(context.project)
+        context.workflow_template = self.planner.build_workflow(
+            context.project,
+        )
 
-        print(f"Plan contains {len(context.plan)} task(s)")
+        print(
+            f"Workflow contains "
+            f"{len(context.workflow_template.task_definitions)} task(s)"
+        )
 
         return context

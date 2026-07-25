@@ -3,7 +3,6 @@ from runtime.research_context import ResearchContext
 from application.task_executor import TaskExecutor
 from application.task_scheduler import TaskScheduler
 
-from domain.workflow_run import WorkflowRun
 from domain.workflow_status import WorkflowStatus
 
 
@@ -22,12 +21,15 @@ class WorkflowEngine:
 
     def execute(
         self,
-        workflow_run: WorkflowRun,
-    ) -> None:
+        context: ResearchContext,
+    ) -> ResearchContext:
+
+        workflow_run = context.workflow_run
+
+        if workflow_run is None:
+            raise ValueError("WorkflowRun is not initialized.")
 
         workflow_run.status = WorkflowStatus.RUNNING
-
-        context = ResearchContext()
 
         while True:
 
@@ -36,9 +38,13 @@ class WorkflowEngine:
             if task is None:
                 break
 
+            context.current_task = task
+
             context = self._task_executor.execute(
                 task=task,
                 context=context,
             )
 
         workflow_run.status = WorkflowStatus.COMPLETED
+
+        return context
