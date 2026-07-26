@@ -4,7 +4,9 @@ from application.contracts.base_executor import BaseExecutor
 
 from runtime.research_context import ResearchContext
 
-from agents.planner.planner_agent import PlannerAgent
+from agents.planner.planner_agent_factory import (
+    PlannerAgentFactory,
+)
 
 
 class PlannerExecutor(BaseExecutor):
@@ -13,7 +15,7 @@ class PlannerExecutor(BaseExecutor):
     """
 
     def __init__(self):
-        self._agent = PlannerAgent()
+        self._agent = PlannerAgentFactory().create()
 
     def run(
         self,

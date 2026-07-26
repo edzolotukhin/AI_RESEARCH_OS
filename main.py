@@ -1,15 +1,13 @@
 from agency.agency import Agency
 
-from runtime.research_context import ResearchContext
-
+from domain.project_brief import ProjectBrief
 from domain.task_definition import TaskDefinition
 
-from application.task_executor import TaskExecutor
-from application.executor_resolver import ExecutorResolver
-from application.task_lifecycle_manager import TaskLifecycleManager
+from runtime.research_context import ResearchContext
 
 
 def main():
+
     agency = Agency()
 
     print(f"Initialized: {agency.initialized}")
@@ -18,40 +16,36 @@ def main():
 
     print(f"Initialized: {agency.initialized}")
 
-    # Создаем проект
     project = agency.create_project("Architecture Test")
+
+    project.brief = ProjectBrief(
+        client="Purina",
+        project_title="Brand Health 2026",
+        business_problem=(
+            "Assess the current market position of the brand."
+        ),
+        research_goal=(
+            "Evaluate brand awareness, usage and loyalty."
+        ),
+    )
 
     print(f"Project created: {project.name}")
 
-    # Создаем описание задачи
     definition = TaskDefinition(
         id="build_research_plan",
         name="Build Research Plan",
         executor_id="planner",
     )
 
-    # Создаем экземпляр задачи
     task = agency.task_factory.create(definition)
 
     print(f"Task created: {task.name}")
 
-    # Создаем контекст выполнения
     context = ResearchContext(
         project=project,
     )
 
-    # Создаем зависимости
-    resolver = ExecutorResolver(agency.registry)
-    lifecycle = TaskLifecycleManager()
-
-    # Создаем TaskExecutor
-    task_executor = TaskExecutor(
-        resolver=resolver,
-        lifecycle=lifecycle,
-    )
-
-    # Выполняем задачу
-    context = task_executor.execute(
+    context = agency.task_executor.execute(
         task=task,
         context=context,
     )
