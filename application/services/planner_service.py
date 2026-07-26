@@ -1,34 +1,31 @@
+from uuid import uuid4
+
+from domain.ai.llm_response import LLMResponse
+from domain.project import Project
 from domain.workflow_template import WorkflowTemplate
-from domain.task_definition import TaskDefinition
+from domain.workflow_template_builder import WorkflowTemplateBuilder
 
 
 class PlannerService:
     """
-    Строит WorkflowTemplate для проекта.
+    Builds a workflow template from the planner LLM response.
     """
 
     def build_workflow(
         self,
-        project,
+        project: Project,
+        response: LLMResponse,
     ) -> WorkflowTemplate:
+        """
+        Temporary implementation.
 
-        template = WorkflowTemplate(
-            id="research_workflow",
-            name="Research Workflow",
+        The planner response is accepted but is not yet parsed.
+        Parsing will be implemented in PlannerResponseParser.
+        """
+
+        builder = WorkflowTemplateBuilder(
+            id=str(uuid4()),
+            name=f"Workflow for {project.name}",
         )
 
-        template.task_definitions.extend([
-            TaskDefinition(
-                id="client_qualification",
-                name="Client Qualification",
-                executor_id="planner",
-            ),
-            TaskDefinition(
-                id="project_brief",
-                name="Project Brief",
-                executor_id="planner",
-                depends_on=["client_qualification"],
-            ),
-        ])
-
-        return template
+        return builder.build()

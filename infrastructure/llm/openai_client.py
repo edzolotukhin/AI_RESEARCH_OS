@@ -1,10 +1,14 @@
 from openai import OpenAI
+from dotenv import load_dotenv
 
 from domain.ai.prompt import Prompt
 from domain.ai.llm_response import LLMResponse
 
 from infrastructure.llm.llm_client import LLMClient
 from infrastructure.llm.llm_configuration import LLMConfiguration
+
+
+load_dotenv()
 
 
 class OpenAIClient(LLMClient):
@@ -26,8 +30,6 @@ class OpenAIClient(LLMClient):
 
         response = self._client.responses.create(
             model=self._configuration.model,
-            temperature=self._configuration.temperature,
-            max_output_tokens=self._configuration.max_tokens,
             input=[
                 {
                     "role": "system",
@@ -38,6 +40,7 @@ class OpenAIClient(LLMClient):
                     "content": prompt.user,
                 },
             ],
+            max_output_tokens=self._configuration.max_tokens,
         )
 
         return LLMResponse(
