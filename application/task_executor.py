@@ -1,6 +1,4 @@
-from runtime.research_context import ResearchContext
-
-from domain.task import Task
+from runtime.workflow_context import WorkflowContext
 
 from application.executor_resolver import ExecutorResolver
 from application.task_lifecycle_manager import TaskLifecycleManager
@@ -8,12 +6,7 @@ from application.task_lifecycle_manager import TaskLifecycleManager
 
 class TaskExecutor:
     """
-    Выполняет одну Task целиком.
-
-    Отвечает за:
-    - получение Executor;
-    - жизненный цикл Task;
-    - выполнение Task.
+    Выполняет задачи посредством зарегистрированных Executor'ов.
     """
 
     def __init__(
@@ -26,21 +19,19 @@ class TaskExecutor:
 
     def execute(
         self,
-        task: Task,
-        context: ResearchContext,
-    ) -> ResearchContext:
+        context: WorkflowContext,
+    ) -> WorkflowContext:
+        task = context.current_task
+
+        if task is None:
+            raise ValueError("WorkflowContext.current_task is not set.")
 
         self._lifecycle.start(task)
 
+        executor = self._resolver.resolve(task)
+
         try:
-            executor = self._resolver.resolve(task.executor_id)
-
-            context.current_task = task
-
-            context = executor.run(
-                task=task,
-                context=context,
-            )
+            context = executor.run(context)
 
             self._lifecycle.complete(task)
 
@@ -48,4 +39,5 @@ class TaskExecutor:
 
         except Exception:
             self._lifecycle.fail(task)
+
             raise

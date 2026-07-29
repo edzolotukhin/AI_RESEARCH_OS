@@ -1,14 +1,8 @@
-from openai import OpenAI
-from dotenv import load_dotenv
-
 from domain.ai.prompt import Prompt
 from domain.ai.llm_response import LLMResponse
 
 from infrastructure.llm.llm_client import LLMClient
 from infrastructure.llm.llm_configuration import LLMConfiguration
-
-
-load_dotenv()
 
 
 class OpenAIClient(LLMClient):
@@ -21,14 +15,15 @@ class OpenAIClient(LLMClient):
         configuration: LLMConfiguration,
     ):
         self._configuration = configuration
-        self._client = OpenAI()
+        self._client = None
 
     def generate(
         self,
         prompt: Prompt,
     ) -> LLMResponse:
+        client = self._get_client()
 
-        response = self._client.responses.create(
+        response = client.responses.create(
             model=self._configuration.model,
             input=[
                 {
@@ -46,3 +41,13 @@ class OpenAIClient(LLMClient):
         return LLMResponse(
             content=response.output_text,
         )
+
+    def _get_client(self):
+        if self._client is None:
+            from dotenv import load_dotenv
+            from openai import OpenAI
+
+            load_dotenv()
+            self._client = OpenAI()
+
+        return self._client

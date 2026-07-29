@@ -11,8 +11,11 @@ class ProjectRepository:
     Пока реализованы create_project() и save_project().
     """
 
-    def __init__(self):
-        self.projects_root = Path("agency/projects")
+    def __init__(
+        self,
+        projects_root: str = "agency/projects",
+    ):
+        self.projects_root = Path(projects_root)
 
     def create_project(self, project: Project) -> Path:
         project_dir = self.projects_root / project.id

@@ -36,15 +36,25 @@ When designing the workflow:
 - Avoid duplicate activities.
 - Prefer practical and executable solutions.
 - Use professional marketing research terminology.
+- Include at least one stage.
+- Include at least two tasks.
+- Assign every task a non-empty suggested_agent.
+- Use dependencies to express task ordering.
 
 ---
 
 # OUTPUT FORMAT
 
-For each task provide:
+Return only valid JSON.
 
-Title:
-Purpose:
-Expected Result:
+Do not include markdown fences or explanations.
 
-Return only the workflow.
+Each task must contain:
+
+- id
+- title
+- description
+- suggested_agent
+- dependencies
+
+Return only the JSON object.

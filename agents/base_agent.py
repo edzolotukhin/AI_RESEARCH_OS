@@ -1,25 +1,25 @@
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 
-from application.contracts.base_executor import BaseExecutor
-from runtime.research_context import ResearchContext
+from runtime.workflow_context import WorkflowContext
 
 
-class BaseAgent(BaseExecutor):
+class BaseAgent(ABC):
     """
-    Базовый класс для всех AI-агентов.
+    Base class for AI agents.
 
-    Реализует общий контракт BaseExecutor.
+    Agents own all domain logic and exchange state exclusively through
+    WorkflowContext.
     """
 
-    def __init__(self, name: str = ""):
+    def __init__(
+        self,
+        name: str = "",
+    ) -> None:
         self.name = name
 
     @abstractmethod
     def run(
         self,
-        context: ResearchContext,
-    ) -> ResearchContext:
-        """
-        Выполнить работу агента.
-        """
+        context: WorkflowContext,
+    ) -> WorkflowContext:
         pass

@@ -1,6 +1,7 @@
 from domain.task_definition import TaskDefinition
 from domain.workflow_template import WorkflowTemplate
 from domain.workflow_validator import WorkflowValidator
+from domain.value_objects.executor_type import ExecutorType
 
 
 class WorkflowTemplateBuilder:
@@ -20,6 +21,7 @@ class WorkflowTemplateBuilder:
         id: str,
         name: str,
         executor_id: str,
+        executor_type: ExecutorType = ExecutorType.AGENT,
         depends_on: list[str] | None = None,
         metadata: dict | None = None,
     ) -> "WorkflowTemplateBuilder":
@@ -28,6 +30,7 @@ class WorkflowTemplateBuilder:
                 id=id,
                 name=name,
                 executor_id=executor_id,
+                executor_type=executor_type,
                 depends_on=depends_on or [],
                 metadata=metadata or {},
             )

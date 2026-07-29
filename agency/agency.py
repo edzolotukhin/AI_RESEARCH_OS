@@ -1,120 +1,174 @@
-from registry.registry import Registry
+from agents.planner.planner_agent import PlannerAgent
 
-from loaders.agent_loader import AgentLoader
 
-from infrastructure.project_repository import ProjectRepository
 
-from domain.factories.project_factory import ProjectFactory
-from domain.factories.task_factory import TaskFactory
-from domain.factories.workflow_run_factory import WorkflowRunFactory
-
-from domain.task_definition import TaskDefinition
-
-from runtime.research_context import ResearchContext
-
-from application.executor_resolver import ExecutorResolver
-from application.task_executor import TaskExecutor
-from application.task_lifecycle_manager import TaskLifecycleManager
-from application.task_scheduler import TaskScheduler
 from application.workflow_engine import WorkflowEngine
 
 
+
+from domain.factories.project_factory import ProjectFactory
+
+from domain.factories.workflow_run_factory import WorkflowRunFactory
+
+from domain.workflow_run import WorkflowRun
+
+
+
+from infrastructure.project_repository import ProjectRepository
+
+
+
+from loaders.agent_loader import AgentLoader
+
+
+
+from runtime.workflow_context import WorkflowContext
+
+
+
+
+
 class Agency:
-    """
-    Центральный объект AI Research OS.
-    Composition Root + Application Facade.
+
     """
 
-    def __init__(self):
+    Application facade for AI Research OS.
+
+    """
+
+
+
+    def __init__(
+
+        self,
+
+        *,
+
+        agent_loader: AgentLoader,
+
+        project_factory: ProjectFactory,
+
+        project_repository: ProjectRepository,
+
+        planner_agent: PlannerAgent,
+
+        workflow_run_factory: WorkflowRunFactory,
+
+        workflow_engine: WorkflowEngine,
+
+        workflow_run_id: str = "run-001",
+
+    ) -> None:
+
+        self._agent_loader = agent_loader
+
+        self._project_factory = project_factory
+
+        self._project_repository = project_repository
+
+        self._planner_agent = planner_agent
+
+        self._workflow_run_factory = workflow_run_factory
+
+        self._workflow_engine = workflow_engine
+
+        self._workflow_run_id = workflow_run_id
+
+
 
         self.initialized = False
 
-        # Registry
-        self.registry = Registry()
 
-        # Loaders
-        self.agent_loader = AgentLoader(self.registry)
 
-        # Factories
-        self.project_factory = ProjectFactory()
-        self.task_factory = TaskFactory()
-        self.workflow_run_factory = WorkflowRunFactory(
-            task_factory=self.task_factory,
-        )
+    def initialize(self) -> None:
 
-        # Repositories
-        self.project_repository = ProjectRepository()
-
-        # Runtime
-        self.executor_resolver = ExecutorResolver(self.registry)
-
-        self.task_lifecycle_manager = TaskLifecycleManager()
-
-        self.task_scheduler = TaskScheduler()
-
-        self.task_executor = TaskExecutor(
-            resolver=self.executor_resolver,
-            lifecycle=self.task_lifecycle_manager,
-        )
-
-        self.workflow_engine = WorkflowEngine(
-            scheduler=self.task_scheduler,
-            task_executor=self.task_executor,
-        )
-
-    def initialize(self):
-
-        self.agent_loader.load()
+        self._agent_loader.load()
 
         self.initialized = True
 
-    def shutdown(self):
+
+
+    def shutdown(self) -> None:
 
         self.initialized = False
 
+
+
     def create_project(
+
         self,
+
         name: str,
+
     ):
 
-        project = self.project_factory.create(name)
+        project = self._project_factory.create(name)
 
-        self.project_repository.create_project(project)
-        self.project_repository.save_project(project)
+
+
+        self._project_repository.create_project(project)
+
+        self._project_repository.save_project(project)
+
+
 
         return project
 
+
+
     def start_research(
+
         self,
+
         project,
-    ) -> ResearchContext:
 
-        context = ResearchContext(
+    ) -> WorkflowContext:
+
+        planning_context = WorkflowContext(
+
+            workflow_run=WorkflowRun(id="planning"),
+
             project=project,
+
         )
 
-        planner_definition = TaskDefinition(
-            id="build_research_plan",
-            name="Build Research Plan",
-            executor_id="planner",
+
+
+        planning_context = self._planner_agent.run(
+
+            planning_context,
+
         )
 
-        planner_task = self.task_factory.create(
-            planner_definition,
+
+
+        workflow_template = planning_context.workflow_template
+
+
+
+        if workflow_template is None:
+
+            raise ValueError("Planner did not produce a WorkflowTemplate.")
+
+
+
+        workflow_run = self._workflow_run_factory.create(
+
+            template=workflow_template,
+
+            run_id=self._workflow_run_id,
+
         )
 
-        context = self.task_executor.execute(
-            task=planner_task,
-            context=context,
+
+
+        return self._workflow_engine.execute(
+
+            project=project,
+
+            workflow_template=workflow_template,
+
+            workflow_run=workflow_run,
+
         )
 
-        context.workflow_run = self.workflow_run_factory.create(
-            template=context.workflow_template,
-            run_id="run-001",
-        )
-
-        context = self.workflow_engine.execute(
-            context,
-        )
-
-        return context

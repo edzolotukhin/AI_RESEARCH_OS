@@ -1,26 +1,17 @@
-from domain.task import Task
+from application.executors.agent_executor import AgentExecutor
 
-from application.contracts.base_executor import BaseExecutor
-
-from runtime.research_context import ResearchContext
-
-from agents.planner.planner_agent_factory import (
-    PlannerAgentFactory,
-)
+from agents.planner.planner_agent import PlannerAgent
 
 
-class PlannerExecutor(BaseExecutor):
+class PlannerExecutor(AgentExecutor):
     """
-    Выполняет задачу построения Workflow.
+    Reference AI executor implementation.
+
+    Thin wrapper around AgentExecutor for PlannerAgent registration.
     """
 
-    def __init__(self):
-        self._agent = PlannerAgentFactory().create()
-
-    def run(
+    def __init__(
         self,
-        task: Task,
-        context: ResearchContext,
-    ) -> ResearchContext:
-
-        return self._agent.run(context)
+        agent: PlannerAgent,
+    ) -> None:
+        super().__init__(agent)

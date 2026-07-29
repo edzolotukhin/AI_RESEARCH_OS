@@ -8,7 +8,9 @@ from domain.ai.prompt import Prompt
 from domain.project import Project
 from domain.project_brief import ProjectBrief
 
-from runtime.research_context import ResearchContext
+from domain.workflow_run import WorkflowRun
+
+from runtime.workflow_context import WorkflowContext
 
 
 def test_build_returns_prompt():
@@ -47,7 +49,8 @@ def test_build_returns_prompt():
         ),
     )
 
-    context = ResearchContext(
+    context = WorkflowContext(
+        workflow_run=WorkflowRun(id="planning"),
         project=project,
     )
 
@@ -77,7 +80,8 @@ def test_build_raises_when_project_brief_is_missing():
         name="Architecture Test",
     )
 
-    context = ResearchContext(
+    context = WorkflowContext(
+        workflow_run=WorkflowRun(id="planning"),
         project=project,
     )
 

@@ -1,7 +1,9 @@
+from domain.factories.task_factory import TaskFactory
+from domain.factories.workflow_run_dependency_graph_builder import (
+    WorkflowRunDependencyGraphBuilder,
+)
 from domain.workflow_template import WorkflowTemplate
 from domain.workflow_run import WorkflowRun
-
-from domain.factories.task_factory import TaskFactory
 
 
 class WorkflowRunFactory:
@@ -17,15 +19,22 @@ class WorkflowRunFactory:
         template: WorkflowTemplate,
         run_id: str,
     ) -> WorkflowRun:
+        tasks = [
+            self.task_factory.create(definition)
+            for definition in template.task_definitions
+        ]
 
-        run = WorkflowRun(
-            id=run_id,
-            workflow_template_id=template.id,
+        dependency_graph = WorkflowRunDependencyGraphBuilder.build_from_template(
+            template,
+            tasks,
         )
 
-        for definition in template.task_definitions:
-            run.tasks.append(
-                self.task_factory.create(definition)
-            )
+        workflow_run = WorkflowRun(
+            id=run_id,
+            workflow_template_id=template.id,
+            tasks=tasks,
+            dependency_graph=dependency_graph,
+        )
+        workflow_run.validate_dependency_graph()
 
-        return run
+        return workflow_run

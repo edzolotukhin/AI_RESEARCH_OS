@@ -1,20 +1,18 @@
 from abc import ABC, abstractmethod
 
 from domain.ai.prompt import Prompt
-from runtime.research_context import ResearchContext
+
+from runtime.workflow_context import WorkflowContext
 
 
 class PromptBuilder(ABC):
     """
-    Builds a Prompt from the current research context.
+    Builds a Prompt from the current workflow context.
     """
 
     @abstractmethod
     def build(
         self,
-        context: ResearchContext,
+        context: WorkflowContext,
     ) -> Prompt:
-        """
-        Build an immutable Prompt.
-        """
-        ...
+        pass

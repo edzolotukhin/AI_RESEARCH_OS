@@ -3,11 +3,15 @@ from enum import Enum
 
 class TaskStatus(str, Enum):
     """
-    Статус выполнения задачи.
+    Runtime status of a Task within a WorkflowRun.
     """
 
-    PENDING = "pending"
+    CREATED = "created"
+    WAITING = "waiting"
+    READY = "ready"
     RUNNING = "running"
+    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    SKIPPED = "skipped"

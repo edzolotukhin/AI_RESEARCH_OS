@@ -5,4 +5,22 @@ class ToolRegistry(BaseRegistry):
     """
     Registry инструментов.
     """
-    pass
+
+    def register(
+        self,
+        executor_id: str,
+        executor,
+    ) -> None:
+        super().register(executor_id, executor)
+
+    def get(
+        self,
+        executor_id: str,
+    ):
+        return super().get(executor_id)
+
+    def exists(
+        self,
+        executor_id: str,
+    ) -> bool:
+        return super().exists(executor_id)

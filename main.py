@@ -1,14 +1,11 @@
-from agency.agency import Agency
+from application.composition_root import create_application
 
 from domain.project_brief import ProjectBrief
-from domain.task_definition import TaskDefinition
-
-from runtime.research_context import ResearchContext
 
 
 def main():
 
-    agency = Agency()
+    agency = create_application()
 
     print(f"Initialized: {agency.initialized}")
 
@@ -31,26 +28,10 @@ def main():
 
     print(f"Project created: {project.name}")
 
-    definition = TaskDefinition(
-        id="build_research_plan",
-        name="Build Research Plan",
-        executor_id="planner",
-    )
+    context = agency.start_research(project)
 
-    task = agency.task_factory.create(definition)
-
-    print(f"Task created: {task.name}")
-
-    context = ResearchContext(
-        project=project,
-    )
-
-    context = agency.task_executor.execute(
-        task=task,
-        context=context,
-    )
-
-    print(f"Execution state: {context.state}")
+    print(f"Workflow run: {context.workflow_run.id}")
+    print(f"Workflow status: {context.workflow_run.status}")
 
     if context.current_task:
         print(f"Current task: {context.current_task.name}")

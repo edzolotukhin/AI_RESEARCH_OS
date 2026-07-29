@@ -6,7 +6,7 @@ from application.prompts.template_loader import TemplateLoader
 
 from domain.ai.prompt import Prompt
 
-from runtime.research_context import ResearchContext
+from runtime.workflow_context import WorkflowContext
 
 
 class PlannerPromptBuilder(PromptBuilder):
@@ -26,15 +26,14 @@ class PlannerPromptBuilder(PromptBuilder):
         self,
         template_loader: TemplateLoader,
         prompt_renderer: PromptRenderer,
-    ):
+    ) -> None:
         self._template_loader = template_loader
         self._prompt_renderer = prompt_renderer
 
     def build(
         self,
-        context: ResearchContext,
+        context: WorkflowContext,
     ) -> Prompt:
-
         project = context.project
 
         if project.brief is None:

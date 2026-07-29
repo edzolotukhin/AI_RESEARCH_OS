@@ -24,6 +24,7 @@ class TaskFactory(BaseFactory):
             definition_id=definition.id,
             name=definition.name,
             executor_id=definition.executor_id,
+            executor_type=definition.executor_type,
             depends_on=list(definition.depends_on),
             created_at=now,
             updated_at=now,

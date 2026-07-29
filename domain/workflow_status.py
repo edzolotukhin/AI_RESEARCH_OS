@@ -2,8 +2,10 @@ from enum import Enum
 
 
 class WorkflowStatus(str, Enum):
-    PENDING = "pending"
+    CREATED = "created"
+    READY = "ready"
     RUNNING = "running"
+    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"

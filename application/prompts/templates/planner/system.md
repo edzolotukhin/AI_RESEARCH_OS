@@ -106,24 +106,57 @@ Design a workflow consisting of clear executable tasks.
 
 Each task must include:
 
-- Title
-- Purpose
-- Expected Result
+- id
+- title
+- description
+- suggested_agent
+- dependencies
 
 Tasks should be independent whenever possible.
 
 The workflow should be easy to execute by specialized AI agents.
 
+Every workflow must contain at least one stage and at least two tasks.
+
+Every suggested_agent must be a non-empty executor identifier.
+
 ---
 
 # OUTPUT RULES
 
-Return only the workflow.
+Return only valid JSON.
 
 Do not explain your reasoning.
 
 Do not describe your thinking process.
 
 Do not add introductions or conclusions.
+
+Do not wrap the JSON in markdown code fences.
+
+The JSON must match this schema:
+
+{{
+  "name": "string",
+  "goal": "string",
+  "methodology": "string",
+  "stages": [
+    {{
+      "id": "string",
+      "name": "string",
+      "description": "string",
+      "tasks": [
+        {{
+          "id": "string",
+          "title": "string",
+          "description": "string",
+          "suggested_agent": "string",
+          "dependencies": ["string"]
+        }}
+      ]
+    }}
+  ],
+  "metadata": {{}}
+}}
 
 Produce a clear professional workflow.

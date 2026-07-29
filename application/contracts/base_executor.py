@@ -1,18 +1,20 @@
 from abc import ABC, abstractmethod
 
-from domain.task import Task
-from runtime.research_context import ResearchContext
+from runtime.workflow_context import WorkflowContext
 
 
 class BaseExecutor(ABC):
     """
-    Базовый контракт любого исполнителя Task.
+    Infrastructure contract for task executors.
+
+    Implementations receive WorkflowContext, delegate work to the
+    appropriate runtime component (Agent, Tool, API, Human), and return
+    the updated context. They must not contain business logic.
     """
 
     @abstractmethod
     def run(
         self,
-        task: Task,
-        context: ResearchContext,
-    ) -> ResearchContext:
+        context: WorkflowContext,
+    ) -> WorkflowContext:
         pass

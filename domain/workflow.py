@@ -1,5 +1,6 @@
 from domain.workflow_template import WorkflowTemplate
 from domain.workflow_template_builder import WorkflowTemplateBuilder
+from domain.value_objects.executor_type import ExecutorType
 
 
 class Workflow:
@@ -44,6 +45,7 @@ class Workflow:
         id: str,
         name: str,
         executor_id: str,
+        executor_type: ExecutorType = ExecutorType.AGENT,
         depends_on: list[str] | None = None,
         metadata: dict | None = None,
     ) -> "Workflow":
@@ -51,6 +53,7 @@ class Workflow:
             id=id,
             name=name,
             executor_id=executor_id,
+            executor_type=executor_type,
             depends_on=depends_on,
             metadata=metadata,
         )

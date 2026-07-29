@@ -1,16 +1,13 @@
 from agents.planner.planner_agent import PlannerAgent
 
+from application.planner.contracts import PlannerService, WorkflowTemplateMapper
+from application.planner.payload_contract import PlannerPayloadContract
 from application.prompts.builders.planner_prompt_builder import (
     PlannerPromptBuilder,
 )
-from application.prompts.file_template_loader import FileTemplateLoader
-from application.prompts.python_format_prompt_renderer import (
-    PythonFormatPromptRenderer,
-)
-from application.services.planner_service import PlannerService
+from application.structured_output.parser import StructuredOutputParser
 
-from infrastructure.llm.llm_configuration import LLMConfiguration
-from infrastructure.llm.openai_client import OpenAIClient
+from infrastructure.llm.llm_client import LLMClient
 
 
 class PlannerAgentFactory:
@@ -18,31 +15,29 @@ class PlannerAgentFactory:
     Factory создания PlannerAgent.
     """
 
-    def create(
+    def __init__(
         self,
-    ) -> PlannerAgent:
+        planner_service: PlannerService,
+        workflow_mapper: WorkflowTemplateMapper,
+        prompt_builder: PlannerPromptBuilder,
+        llm_client: LLMClient,
+        structured_output_parser: StructuredOutputParser,
+        payload_contract: PlannerPayloadContract,
+    ) -> None:
+        self._planner_service = planner_service
+        self._workflow_mapper = workflow_mapper
+        self._prompt_builder = prompt_builder
+        self._llm_client = llm_client
+        self._structured_output_parser = structured_output_parser
+        self._payload_contract = payload_contract
 
-        planner_service = PlannerService()
-
-        template_loader = FileTemplateLoader()
-
-        prompt_renderer = PythonFormatPromptRenderer()
-
-        prompt_builder = PlannerPromptBuilder(
-            template_loader=template_loader,
-            prompt_renderer=prompt_renderer,
-        )
-
-        llm_configuration = LLMConfiguration(
-            model="gpt-5",
-        )
-
-        llm_client = OpenAIClient(
-            configuration=llm_configuration,
-        )
+    def create(self) -> PlannerAgent:
 
         return PlannerAgent(
-            planner_service=planner_service,
-            prompt_builder=prompt_builder,
-            llm_client=llm_client,
+            planner_service=self._planner_service,
+            workflow_mapper=self._workflow_mapper,
+            prompt_builder=self._prompt_builder,
+            llm_client=self._llm_client,
+            structured_output_parser=self._structured_output_parser,
+            payload_contract=self._payload_contract,
         )
