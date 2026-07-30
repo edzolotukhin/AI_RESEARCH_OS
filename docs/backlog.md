@@ -14,7 +14,7 @@
 
 - [x] AUD-016: terminal `WorkflowRun` state when executor fails during execution
 - [x] AUD-017: Agency initialization contract — `WorkflowEngine` remains self-starting via `_ensure_running()`; `Agency.start_research()` performs lazy initialization; explicit `Agency.initialize()` remains supported
-- [ ] AUD-018: planner dependency validation inside structured-output retry path
+- [x] AUD-018: planner dependency validation inside structured-output retry path — graph semantics (unknown dependency, self-dependency, cycle, duplicate task id) validated in `PlannerPayloadContract` after executor ID checks; runtime `WorkflowValidator` / factory graph validation retained; `WorkflowEngine` unchanged
 - [ ] Catalog/registry desynchronization test coverage
 - [ ] Full runtime E2E test (all registered executors)
 - [ ] Planner runtime-executor semantics (`executor_id=planner` re-planning behavior)
