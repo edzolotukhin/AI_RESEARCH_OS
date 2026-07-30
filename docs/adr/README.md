@@ -63,6 +63,7 @@ The following statuses are used throughout the project.
 | ADR-005 | Knowledge Model | Planned |
 | ADR-006 | Artifact Model | Planned |
 | ADR-007 | Agent Architecture | Planned |
+| ADR-008 | Executor Catalog Contract | Active |
 
 Additional ADRs will be added as the architecture evolves.
 

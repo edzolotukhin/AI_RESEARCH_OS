@@ -8,6 +8,12 @@ from application.parsers.planner_response_parser import PlannerResponseParser
 from application.planner.executor_catalog import ExecutorCatalog
 from application.structured_output.contracts import StructuredPayloadContract
 
+PLANNER_PAYLOAD_VALIDATION_ERRORS = (
+    PlannerParserError,
+    ValueError,
+    TypeError,
+)
+
 
 class PlannerPayloadContract(StructuredPayloadContract):
     """
@@ -37,7 +43,7 @@ class PlannerPayloadContract(StructuredPayloadContract):
             plan = self._response_parser.parse(payload)
             self._validate_executor_ids(plan)
             return True
-        except Exception as exc:
+        except PLANNER_PAYLOAD_VALIDATION_ERRORS as exc:
             self._last_validation_error = str(exc)
             return False
 
