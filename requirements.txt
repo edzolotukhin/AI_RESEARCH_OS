@@ -1,0 +1,6 @@
+# AI Research OS runtime dependencies.
+# Install: pip install -r requirements.txt
+# Python: see pyproject.toml ([project] requires-python)
+
+openai>=1.55,<3
+python-dotenv>=1.0,<2
