@@ -61,6 +61,136 @@ Not production-ready. Early-stage runtime core with a public repository.
 
 ---
 
+## Installation
+
+From the repository root:
+
+```bash
+git clone https://github.com/edzolotukhin/AI_RESEARCH_OS.git
+cd AI_RESEARCH_OS
+python -m venv .venv
+```
+
+Activate the virtual environment:
+
+```bash
+# Linux / macOS
+source .venv/bin/activate
+
+# Windows
+.venv\Scripts\activate
+```
+
+Install runtime dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## Python Requirements
+
+Supported range (see `pyproject.toml`):
+
+**Python >=3.11,<3.15**
+
+The runtime and test suite are verified within this range. Use a virtual environment; do not rely on system-wide packages.
+
+---
+
+## Environment
+
+For live planner execution (`main.py`), copy `.env.example` to `.env` and set `OPENAI_API_KEY`.
+The OpenAI SDK reads it after `python-dotenv` loads the file.
+
+| Path | API key required? |
+|------|-------------------|
+| `python examples/deterministic_research_demo.py` | No |
+| `python run_tests.py` | No |
+| `python main.py` | Yes |
+
+No other environment variables are required by the current runtime.
+
+---
+
+## Offline Demo
+
+Run the deterministic workflow demo from the repository root:
+
+```bash
+python examples/deterministic_research_demo.py
+```
+
+The demo exercises the current runtime without network access:
+
+- **WorkflowTemplate** — immutable workflow definition
+- **WorkflowRun** — materialized runtime instance
+- **Dependency graph** — linear task dependencies
+- **TaskScheduler** — dependency-aware ready-task selection
+- **ExecutorResolver** — resolves demo executors from a local registry
+- **WorkflowEngine** — synchronous execution loop through workflow completion
+
+The demo uses in-memory storage only. It does not call OpenAI, does not require `OPENAI_API_KEY`, and does not write files under `agency/projects/`.
+
+---
+
+## Running Tests
+
+```bash
+python run_tests.py
+```
+
+The suite currently runs **289 automated tests**. It validates runtime orchestration, planner contracts, dependency graphs, executor resolution, structured-output retry, agency integration, and the offline demo subprocess path. Coverage metrics are not published.
+
+---
+
+## Repository Structure
+
+```
+AI_RESEARCH_OS/
+├── agency/           Application facade
+├── agents/           Agent executors
+├── application/      Workflow engine, planner, composition root
+├── architecture/     Architecture documentation
+├── domain/           Domain and runtime models
+├── docs/             ADRs, backlog, project docs
+├── examples/         Offline demos
+├── infrastructure/   LLM client, repositories
+├── registry/         Executor registries
+├── tests/            Automated tests
+├── main.py           Live demo entry (requires API key)
+└── run_tests.py      Test entrypoint
+```
+
+---
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Architecture entry point |
+| [architecture/overview.md](architecture/overview.md) | Layers, runtime flow, executor contract |
+| [docs/adr/README.md](docs/adr/README.md) | Architecture decision records |
+| [ROADMAP.md](ROADMAP.md) | Current state and planned work |
+| [CHANGELOG.md](CHANGELOG.md) | Notable changes |
+| [docs/backlog.md](docs/backlog.md) | Internal task backlog |
+| [LICENSE](LICENSE) | All Rights Reserved |
+
+---
+
+## Project Status
+
+| Area | Status |
+|------|--------|
+| **Runtime core** | Complete — Phase B hardening done |
+| **Product Foundation** | Next planned work — not integrated in production runtime |
+| **Production platform** | Future work — FastAPI, PostgreSQL, Docker, deployment, multi-user |
+
+See [ROADMAP.md](ROADMAP.md) for detail. The project is not production-ready.
+
+---
+
 # Architecture
 
 The system is organized in four layers. See [architecture/overview.md](architecture/overview.md) for the full description.
@@ -83,57 +213,7 @@ The **Project** is the central business aggregate. Executors run inside **Workfl
 
 Executor references use **`executor_id`** only. **ExecutorCatalog** constrains planner output; **Registry** (`AgentRegistry`, `ToolRegistry`, `HumanExecutorRegistry`, `APIExecutorRegistry`) resolves executors at runtime. See [ADR-008](docs/adr/ADR-008-Executor-Catalog-Contract.md).
 
----
-
-# Project Structure
-
-```
-AI_RESEARCH_OS/
-├── agency/              Application facade
-├── agents/              Agent executors (planner, search, analysis, …)
-├── application/         Workflow engine, planner service, composition root, config
-├── architecture/        Architecture documentation
-├── domain/              Business and runtime domain models
-├── infrastructure/      LLM, documents, persistence adapters
-├── loaders/             Agent and executor loading
-├── registry/            Runtime executor registries (agent, tool, human, api)
-├── runtime/             Workflow context helpers
-├── services/            Legacy sandbox helper (project_brief_builder)
-├── scripts/             Development utilities (sandbox)
-├── knowledge/           Static expertise files
-├── prompts/             LLM prompt templates
-├── docs/                Project documentation and ADRs
-├── tests/
-├── main.py
-├── run_tests.py
-└── requirements.txt
-```
-
-| Directory | Purpose |
-|-----------|---------|
-| `agency/` | Application entry facade |
-| `agents/` | Concrete agent executors |
-| `application/` | Orchestration, planner, workflow runtime |
-| `domain/` | Entities, value objects, state machines |
-| `infrastructure/` | External system adapters |
-| `registry/` | Runtime executor lookup (`AgentRegistry`, `ToolRegistry`, `HumanExecutorRegistry`, `APIExecutorRegistry`) |
-| `architecture/` | Layer and domain model docs |
-| `docs/` | ADRs, development rules |
-
----
-
-# Technology Stack
-
-**Current**
-
-- Python
-- OpenAI API
-- Git / GitHub
-- Markdown
-
-**Planned**
-
-- FastAPI, PostgreSQL, Docker (not part of current runtime)
+Further reading: [architecture/layers.md](architecture/layers.md), [architecture/domain-model.md](architecture/domain-model.md), [docs/architecture.md](docs/architecture.md).
 
 ---
 
@@ -145,18 +225,6 @@ AI_RESEARCH_OS/
 - **ExecutorResolver** is the single resolution point for executors
 - Domain-driven design
 - ADRs for significant decisions (`docs/adr/`)
-
----
-
-# Documentation
-
-| Document | Description |
-|----------|-------------|
-| [architecture/overview.md](architecture/overview.md) | Layers, runtime flow, executor contract |
-| [architecture/layers.md](architecture/layers.md) | Layer boundaries |
-| [architecture/domain-model.md](architecture/domain-model.md) | TaskDefinition vs Task, WorkflowTemplate vs WorkflowRun |
-| [docs/architecture.md](docs/architecture.md) | Documentation index |
-| [docs/adr/README.md](docs/adr/README.md) | ADR index |
 
 ---
 
