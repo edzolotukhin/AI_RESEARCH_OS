@@ -191,40 +191,121 @@ See [ROADMAP.md](ROADMAP.md) for detail. The project is not production-ready.
 
 ---
 
-# Architecture
+# Runtime Architecture
 
-The system is organized in four layers. See [architecture/overview.md](architecture/overview.md) for the full description.
-
-```
-Business Layer     Agency → Project → Knowledge / Artifacts
-Workflow Layer     WorkflowTemplate → TaskDefinition → WorkflowRun → Task
-Execution Layer    WorkflowEngine → TaskScheduler → TaskExecutor → ExecutorResolver → Executor
-Infrastructure     LLM, Repositories, Storage, Registry
-```
-
-**Runtime path** (implemented):
-
-```
-main.py → Agency → Planner → ResearchPlan → WorkflowTemplate → WorkflowRun
-       → WorkflowEngine → TaskScheduler → TaskExecutor → ExecutorResolver → Executor → Task Result → Workflow Completion
-```
-
-The **Project** is the central business aggregate. Executors run inside **WorkflowRun**; they do not replace project ownership.
-
-Executor references use **`executor_id`** only. **ExecutorCatalog** constrains planner output; **Registry** (`AgentRegistry`, `ToolRegistry`, `HumanExecutorRegistry`, `APIExecutorRegistry`) resolves executors at runtime. See [ADR-008](docs/adr/ADR-008-Executor-Catalog-Contract.md).
-
-Further reading: [architecture/layers.md](architecture/layers.md), [architecture/domain-model.md](architecture/domain-model.md), [docs/architecture.md](docs/architecture.md).
+This section explains how the workflow runtime is designed and why. For layer diagrams and ADRs, see [architecture/overview.md](architecture/overview.md).
 
 ---
 
-# Development Principles
+## Core Concepts
 
-- Business before AI
-- Architecture before implementation
-- Definition vs runtime separation (`WorkflowTemplate` / `TaskDefinition` vs `WorkflowRun` / `Task`)
-- **ExecutorResolver** is the single resolution point for executors
-- Domain-driven design
-- ADRs for significant decisions (`docs/adr/`)
+**WorkflowTemplate** — Immutable workflow definition attached to a project after planning. Contains `TaskDefinition` blueprints and dependency structure.
+
+**TaskDefinition** — Blueprint for a single unit of work: name, `executor_id`, `executor_type`, and `depends_on` references to other definition IDs.
+
+**WorkflowRun** — Mutable runtime instance of a template. Owns live `Task` objects, execution status, and a validated dependency graph.
+
+**Task** — Runtime counterpart of a `TaskDefinition`. Carries state (`created`, `ready`, `running`, `completed`, `failed`, …) and resolves dependencies at execution time.
+
+**Executor** — Infrastructure contract (`BaseExecutor`) that receives a `WorkflowContext`, performs one unit of work, and returns the updated context. Agents, tools, human steps, and API calls are all accessed through this interface.
+
+**WorkflowEngine** — Canonical owner of the execution loop. Schedules ready tasks, invokes `TaskExecutor`, applies completion policy, and finalizes workflow status.
+
+---
+
+## Definition vs Runtime
+
+| Definition (immutable) | Runtime (mutable) |
+|------------------------|-------------------|
+| `WorkflowTemplate` | `WorkflowRun` |
+| `TaskDefinition` | `Task` |
+
+Definitions describe *what* should happen. Runtime objects track *what is happening*.
+
+Separating the two yields:
+
+- **Determinism** — the same template materializes the same structural graph every time
+- **Reproducibility** — plans can be stored, compared, and re-run without mutating the source definition
+- **Immutability** — templates are not altered when a single run fails or retries
+- **Execution isolation** — state transitions and failures affect the run, not the definition
+
+Materialization path: `WorkflowTemplate` → `WorkflowRunFactory` → `WorkflowRun` + `TaskDependencyGraph`.
+
+---
+
+## Workflow Lifecycle
+
+```mermaid
+flowchart TD
+    WT[WorkflowTemplate] --> WR[WorkflowRun]
+    WR --> TC[Task creation from TaskDefinition]
+    TC --> DV[Dependency graph validation]
+    DV --> TS[TaskScheduler]
+    TS --> ER[ExecutorResolver]
+    ER --> EX[Executor.run]
+    EX --> TS
+    TS --> WC[Workflow completion policy]
+```
+
+Execution order in code:
+
+1. A **WorkflowTemplate** is produced (planner path or programmatic builder).
+2. **WorkflowRunFactory** creates a **WorkflowRun** and runtime **Task** instances.
+3. The dependency graph is validated (unknown deps, cycles, duplicate IDs rejected).
+4. **WorkflowEngine** enters a loop: **TaskScheduler** selects a ready task.
+5. **TaskExecutor** resolves an **Executor** via **ExecutorResolver** and runs it.
+6. When no ready tasks remain and all tasks are terminal, **WorkflowCompletionPolicy** sets the final workflow status.
+
+The offline demo runs this path without a planner or LLM. The live path adds `PlannerAgent` → `ResearchPlan` → template mapping before step 1.
+
+---
+
+## Executor Model
+
+Every task declares an `executor_id` and an explicit `ExecutorType`:
+
+| Type | Registry | Role |
+|------|----------|------|
+| **Agent** | `AgentRegistry` | LLM-backed or scripted agents |
+| **Tool** | `ToolRegistry` | Deterministic tool adapters |
+| **Human** | `HumanExecutorRegistry` | Human-in-the-loop steps |
+| **API** | `APIExecutorRegistry` | External API integrations |
+
+**ExecutorResolver** is the single lookup point. It maps `(executor_type, executor_id)` to a `BaseExecutor` implementation.
+
+The **WorkflowEngine** and **TaskScheduler** never import concrete agents. New executors register in the appropriate registry without changing the engine loop. The planner-side **ExecutorCatalog** (ADR-008) constrains which agent IDs may appear in generated plans.
+
+---
+
+## Architectural Principles
+
+- Definition/runtime separation (`WorkflowTemplate` / `TaskDefinition` vs `WorkflowRun` / `Task`)
+- Dependency-aware scheduling via an explicit task dependency graph
+- Deterministic scheduling order for a given graph and task states
+- Pluggable executors resolved through registries, not hard-coded imports
+- Clear layer boundaries: business → workflow → execution → infrastructure
+- Minimal runtime coupling — engine depends on contracts, not on agent implementations
+- Defense in depth — graph validation at planner contract, factory, and scheduler layers
+
+---
+
+## Current Limitations
+
+- Single-process, synchronous runtime loop
+- File-based project persistence only; no shared database
+- No REST API or service layer
+- No UI
+- No multi-user or multi-tenant support
+- No production deployment packaging (Docker, CI, releases)
+- Live planner path requires an external LLM API key
+
+These limits are intentional at the current maturity stage. See [ROADMAP.md](ROADMAP.md).
+
+---
+
+## Future Direction
+
+The runtime is domain-agnostic at its core: templates, dependency graphs, and executor resolution do not assume a specific industry. Marketing research is the first domain implemented — planner output, agent executors, and project models target agency workflows today. Additional domains could reuse the same engine, scheduler, and resolver model with different templates and executors. Product Foundation work (brief, design, artifacts) and platform layers (API, persistence, deployment) are planned next; they are not part of the current runtime core.
 
 ---
 
