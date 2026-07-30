@@ -2,223 +2,162 @@
 
 ## Purpose
 
-The Domain Model defines the core business entities of AI Research OS and the relationships between them.
-
-It represents the business view of the platform, independent of implementation details or specific technologies.
-
-The domain model serves as the foundation for the entire architecture and guides the implementation of business logic.
+The domain model describes core business and runtime entities as implemented today. It is independent of LLM providers and executor implementations.
 
 ---
 
 # Core Principles
 
-The domain model is built on the following principles:
-
-- Business entities represent real business concepts.
-- Project is the central business aggregate.
-- Business entities are independent of AI implementation.
-- Runtime execution is separated from business state.
-- AI agents interact with the domain through controlled interfaces.
+- **Project** is the central business aggregate for a research initiative.
+- Workflow **definitions** are immutable; **runtime** objects are mutable.
+- Tasks reference executors by **`executor_id`** only (see ADR-008).
+- Domain layer does not import the application layer.
 
 ---
 
-# Core Business Entities
+# Business Entities
 
 ## Project
 
-The Project is the primary business aggregate of AI Research OS.
+Long-lived business context for one research initiative.
 
-A Project represents a long-lived business context and owns all information related to a research initiative.
+May include:
 
-A Project may contain:
+- `ProjectBrief` (client, business problem, research goal)
+- References to workflow runs and artifacts (via application facade)
 
-- Workflow Runs
-- Knowledge
-- Documents
-- Artifacts
-- Business Decisions
-- Execution History
-
-A Project exists independently of workflow execution.
+Exists independently of a single workflow execution.
 
 ---
+
+## ResearchPlan (planning domain)
+
+Aggregate produced after Planner LLM output is parsed and validated.
+
+Contains **ResearchStage** and **PlannerTask** entities. Each planner task carries **`executor_id`** (canonical executor reference for mapping).
+
+Mapped to **WorkflowTemplate** by the application layer; not executed directly.
+
+---
+
+# Workflow Definitions (immutable)
 
 ## WorkflowTemplate
 
-A WorkflowTemplate defines a reusable business process.
+Reusable workflow plan attached to a project context after planning.
 
-It contains the sequence of TaskDefinitions required to accomplish a business objective.
-
-Workflow templates are immutable.
-
----
-
-## WorkflowRun
-
-A WorkflowRun is a runtime instance of a WorkflowTemplate.
-
-It represents one execution of a workflow within a specific Project.
-
-A WorkflowRun owns:
-
-- AITasks
-- Execution State
-- Execution History
-- Runtime Metadata
-
----
+Contains an ordered set of **TaskDefinition** objects and dependency metadata.
 
 ## TaskDefinition
 
-A TaskDefinition describes a reusable unit of work.
+Immutable blueprint for one unit of work.
 
-It specifies:
+| Field | Meaning |
+|-------|---------|
+| `id` | Stable task identifier within the template |
+| `name` | Human-readable task name |
+| `executor_id` | Registered executor identifier |
+| `executor_type` | Executor category (`agent`, `tool`, `human`, `api`) |
+| `depends_on` | Task IDs that must complete first |
 
-- objective
-- expected inputs
-- expected outputs
-- execution requirements
-
-TaskDefinitions are immutable and reusable.
-
----
-
-## AITask
-
-An AITask is the runtime representation of a TaskDefinition.
-
-It exists only during workflow execution.
-
-An AITask stores:
-
-- current status
-- runtime context
-- produced artifacts
-- execution logs
-
-Business logic is never stored inside an AITask.
+**TaskDefinition** does not have runtime status.
 
 ---
 
-## Knowledge
+# Workflow Runtime (mutable)
 
-Knowledge represents reusable business information accumulated across projects.
+## WorkflowRun
 
-Examples include:
+Runtime instance created from a **WorkflowTemplate**.
 
-- methodologies
-- research standards
-- best practices
-- client-specific knowledge
-- reusable insights
+Owns:
 
-Knowledge is persistent and independent of workflow execution.
+- `Task` instances
+- `TaskDependencyGraph`
+- `WorkflowRun.status` (owned exclusively by **WorkflowEngine**)
 
----
+Uses a domain state machine; direct status mutation is blocked.
 
-## Document
+## Task
 
-A Document represents any business document managed by the platform.
+Runtime instance created from a **TaskDefinition**.
 
-Examples include:
+| Field | Meaning |
+|-------|---------|
+| `definition_id` | Link back to template task id |
+| `executor_id` | Same semantic as in **TaskDefinition** |
+| `executor_type` | Same semantic as in **TaskDefinition** |
+| `status` | Task lifecycle (`CREATED` → `READY` → `RUNNING` → terminal) |
+| `depends_on` | Resolved dependency task ids |
 
-- Project Brief
-- Commercial Proposal
-- Questionnaire
-- Final Report
-- Presentation
-
-Documents belong to a Project.
-
----
-
-## Artifact
-
-An Artifact is any output produced during workflow execution.
-
-Examples include:
-
-- generated text
-- structured JSON
-- tables
-- summaries
-- recommendations
-- intermediate analysis
-
-Artifacts may later become Documents or Knowledge.
-
----
-
-# Entity Relationships
-
-Project
-│
-├── owns Knowledge
-├── owns Documents
-├── owns Artifacts
-└── owns WorkflowRuns
-        │
-        ├── created from WorkflowTemplate
-        │
-        └── contains AITasks
-                    │
-                    └── instantiated from TaskDefinition
+**Task** is what **TaskScheduler** and **TaskExecutor** operate on.
 
 ---
 
 # Definition vs Runtime
 
-AI Research OS separates executable definitions from runtime instances.
+```mermaid
+flowchart LR
+    WT[WorkflowTemplate]
+    TD[TaskDefinition]
+    WR[WorkflowRun]
+    T[Task]
 
-Definition
+    WT --> TD
+    WT -->|instantiate| WR
+    TD -->|instantiate| T
+    WR --> T
+```
 
-- WorkflowTemplate
-- TaskDefinition
+| | Definition | Runtime |
+|---|------------|---------|
+| Workflow | **WorkflowTemplate** | **WorkflowRun** |
+| Task | **TaskDefinition** | **Task** |
+| Mutability | Immutable plan | Status and lifecycle change during execution |
+| Created by | Planner mapping | **WorkflowRunFactory** |
 
-↓
+---
 
-Runtime
+# Supporting Domain Concepts
 
-- WorkflowRun
-- AITask
+## TaskDependencyGraph
 
-This separation enables reusable workflows while preserving execution history.
+Directed acyclic graph of task dependencies attached to **WorkflowRun**. Built at factory time; validated for cycles.
+
+## WorkflowStatus / TaskStatus
+
+Value objects enforced by state machines in `domain/runtime/state_machine.py`.
+
+## Knowledge, Document, Artifact
+
+Conceptual business outputs. Static knowledge files live under `knowledge/`. Full artifact/document persistence is not the focus of the current runtime loop documentation.
+
+---
+
+# Entity Relationships
+
+```
+Project
+  └── planning produces WorkflowTemplate
+        └── TaskDefinition (executor_id, depends_on)
+              └── WorkflowRunFactory creates WorkflowRun
+                    └── Task (runtime, executor_id, status)
+                          └── TaskDependencyGraph
+```
 
 ---
 
 # Design Rules
 
-The following rules apply to the domain model:
-
-- Business entities never depend on AI agents.
-- Runtime objects never own business state.
-- AI components operate only through runtime objects.
-- Business data belongs to the Project.
-- Every entity has a single responsibility.
-
----
-
-# Future Extensions
-
-The domain model is intentionally designed for incremental evolution.
-
-Future entities may include:
-
-- Client
-- Research
-- Dataset
-- Methodology
-- Survey
-- Respondent Group
-- Fieldwork
-- Report Version
-
-New entities should follow the same architectural principles defined in ADR-000.
+- Domain entities never call LLMs.
+- Runtime objects do not embed business rules for executor resolution.
+- **`executor_id`** is the only runtime executor identifier (ADR-008).
+- **WorkflowEngine** mutates **WorkflowRun** status; schedulers and executors do not.
 
 ---
 
 # Related Documents
 
-- Architecture Overview
-- Architecture Layers
-- ADR-000 — Architecture Principles
+- [overview.md](overview.md) — runtime flow
+- [layers.md](layers.md) — layer boundaries
+- [ADR-008: Executor Catalog Contract](../docs/adr/ADR-008-Executor-Catalog-Contract.md)

@@ -2,32 +2,43 @@
 
 ## Purpose
 
-This document defines the architectural layers of AI Research OS, their responsibilities, and the rules governing interactions between them.
-
-The goal is to ensure a clear separation of concerns, maintainability, and scalability as the platform evolves.
+This document defines the architectural layers of AI Research OS, their responsibilities, and interaction rules as implemented in the current codebase.
 
 ---
 
-# Layered Architecture
+# Layered Model
 
-AI Research OS is organized into four architectural layers.
-                    AI Research OS
-                           │
-        ┌──────────────────┼──────────────────┐
-        │                  │                  │
-        ▼                  ▼                  ▼
- Business Layer   Execution Definition   Execution Runtime
-                        Layer                 Layer
-        │                  │                  │
-        └──────────────────┼──────────────────┘
-                           │
-                           ▼
-                   Execution Engine
-                           │
-                           ▼
-                    External Services
+```mermaid
+flowchart TB
+    subgraph BL["Business Layer"]
+        Agency
+        Project
+    end
 
-Each layer has a single responsibility and communicates only through well-defined interfaces.
+    subgraph WL["Workflow Layer"]
+        WorkflowTemplate
+        TaskDefinition
+        WorkflowRun
+        Task
+    end
+
+    subgraph EL["Execution Layer"]
+        WorkflowEngine
+        TaskScheduler
+        TaskExecutor
+        ExecutorResolver
+    end
+
+    subgraph IL["Infrastructure"]
+        LLMClient
+        ProjectRepository
+        Registry
+    end
+
+    BL --> WL
+    WL --> EL
+    EL --> IL
+```
 
 ---
 
@@ -35,202 +46,149 @@ Each layer has a single responsibility and communicates only through well-define
 
 ## Purpose
 
-Represents the business domain of the platform.
+Represents the business domain and application facade.
 
-This layer contains persistent business entities, business rules, and business state.
+## Components (implemented)
 
-## Typical Entities
-
-- Project
-- Knowledge
-- Document
-- Artifact
+| Component | Location | Role |
+|-----------|----------|------|
+| **Agency** | `agency/agency.py` | Application facade: projects, planning, workflow start |
+| **Project** | `domain/project.py` | Central business aggregate for a research initiative |
+| **ProjectBrief** | `domain/project_brief.py` | Client context fed to the Planner |
+| **Knowledge** | `knowledge/` | Static expertise files (not runtime state) |
 
 ## Responsibilities
 
-- Store business data
-- Represent business concepts
-- Maintain business rules
-- Preserve long-term state
+- Persist and expose business context
+- Own project lifecycle at the facade level
+- Remain independent of LLM and executor implementations
 
-## Must Not
+## Must not
 
-- Execute AI tasks
-- Call LLMs
-- Generate prompts
-- Manage workflow execution
+- Execute workflow tasks directly
+- Resolve executors
+- Own runtime scheduling logic
 
 ---
 
-# 2. Execution Definition Layer
+# 2. Workflow Layer
 
 ## Purpose
 
-Defines reusable business processes.
+Separates immutable workflow definitions from mutable runtime execution.
 
-This layer describes what should happen, but never performs execution.
+## Definition (immutable)
 
-## Typical Entities
+| Entity | Role |
+|--------|------|
+| **WorkflowTemplate** | Reusable workflow plan produced by the Planner |
+| **TaskDefinition** | Single task blueprint: `id`, `name`, `executor_id`, `depends_on` |
 
-- WorkflowTemplate
-- TaskDefinition
+## Runtime (mutable)
 
-## Responsibilities
+| Entity | Role |
+|--------|------|
+| **WorkflowRun** | Instance of a template; owns `Task` collection and dependency graph |
+| **Task** | Runtime task instance with status, `executor_id`, `executor_type` |
 
-- Describe workflows
-- Define task sequences
-- Specify execution requirements
-- Provide reusable process definitions
+## Planning bridge
 
-## Must Not
+| Component | Role |
+|-----------|------|
+| **ResearchPlan** | Domain planning aggregate from parsed LLM output |
+| **ResearchPlanWorkflowTemplateMapper** | Maps plan → `WorkflowTemplate` |
+| **WorkflowRunFactory** | Instantiates `WorkflowRun` and `Task` from template |
 
-- Store runtime state
-- Execute workflows
-- Store business data
+## Must not
+
+- Call LLMs directly (planning is delegated to PlannerAgent)
+- Execute tasks (delegated to Execution Layer)
 
 ---
 
-# 3. Execution Runtime Layer
+# 3. Execution Layer
 
 ## Purpose
 
-Represents active workflow execution.
+Synchronous workflow orchestration and task execution.
 
-This layer contains runtime objects created from execution definitions.
+## Components (implemented)
 
-## Typical Entities
+| Component | Location | Role |
+|-----------|----------|------|
+| **WorkflowEngine** | `application/workflow_engine.py` | Owns runtime loop and `WorkflowRun.status` |
+| **TaskScheduler** | `application/task_scheduler.py` | Readiness, dependency graph scheduling |
+| **TaskExecutor** | `application/task_executor.py` | Invokes executor for one task |
+| **ExecutorResolver** | `application/executor_resolver.py` | Maps `executor_id` → registered executor |
+| **TaskLifecycleManager** | `application/task_lifecycle_manager.py` | Task execution lifecycle transitions |
+| **WorkflowCompletionPolicy** | `application/runtime/workflow_completion_policy.py` | Computes terminal workflow status |
 
-- WorkflowRun
-- AITask
+## Runtime loop (one iteration)
 
-## Responsibilities
+1. `TaskScheduler.schedule()` — update readiness from dependency graph
+2. `TaskScheduler.find_ready_task()` — select one ready task
+3. `TaskExecutor.execute()` — run executor if a ready task exists
+4. `WorkflowCompletionPolicy` — stop when terminal or no progress
 
-- Track execution state
-- Store runtime context
-- Manage task lifecycle
-- Record execution history
+## Must not
 
-## Must Not
-
-- Own business entities
-- Replace business state
-- Contain business rules
+- Store business aggregates unrelated to execution
+- Invent executor IDs
+- Perform fuzzy executor matching or fallback resolution
 
 ---
 
-# 4. Execution Engine
+# 4. Infrastructure Layer
 
 ## Purpose
 
-Coordinates execution of workflows and AI agents.
+External services and technical adapters.
 
-The engine orchestrates execution but never owns business data.
+## Components (implemented)
 
-## Core Components
+| Component | Role |
+|-----------|------|
+| **OpenAIClient** | LLM adapter (`infrastructure/llm/`) |
+| **ProjectRepository** | Project persistence |
+| **AgentLoader / Registry** | Registers agent executors by `executor_id` |
+| **StructuredOutputParser** | Strict JSON extraction and contract validation |
+| **StructuredOutputGenerator** | LLM retry orchestration for planner output |
 
-- Supervisor
-- Planner
-- TaskExecutor
-- Agent
-- PromptBuilder
-
-## Responsibilities
-
-- Create execution plans
-- Execute tasks
-- Coordinate AI agents
-- Invoke external services
-- Produce execution artifacts
-
-## Must Not
-
-- Store persistent business data
-- Replace business entities
-- Own business decisions
+Composition root: `application/composition_root.py`.
 
 ---
 
 # Layer Interaction Rules
 
-## Allowed
+Allowed dependency direction:
 
+```
 Business Layer
+      ↓
+Workflow Layer
+      ↓
+Execution Layer
+      ↓
+Infrastructure Layer
+```
 
-↓
-
-Execution Definition Layer
-
-↓
-
-Execution Runtime Layer
-
-↓
-
-Execution Engine
-
-The Execution Engine may update the Business Layer only through controlled business interfaces.
+The Execution Layer reads and updates runtime objects (`WorkflowRun`, `Task`) through defined application services. It does not replace `Project` as the business aggregate.
 
 ---
 
 # Forbidden Dependencies
 
-The following dependencies are prohibited:
-
-- Business Layer → Execution Engine
-- Business Layer → AI Agent
-- Project → LLM
-- Project → PromptBuilder
-- WorkflowTemplate → WorkflowRun
-- TaskDefinition → AITask
-- AI Agent → Project
-
----
-
-# Dependency Direction
-Business Layer
-       ▲
-       │
-Execution Runtime Layer
-       ▲
-       │
-Execution Definition Layer
-
-Execution Engine
-       │
-       ▼
-External Services
-
-Business entities never depend on execution components.
-
-Execution components depend on business abstractions but never own them.
-
----
-
-# Layer Responsibilities Summary
-
-| Layer | Responsibility |
-|--------|----------------|
-| Business Layer | Business state and business rules |
-| Execution Definition Layer | Reusable process definitions |
-| Execution Runtime Layer | Runtime execution state |
-| Execution Engine | Workflow orchestration and AI execution |
-
----
-
-# Design Principles
-
-The layered architecture follows these principles:
-- Single Responsibility
-- Separation of Concerns
-- Explicit Dependencies
-- Business Before AI
-- Definition vs Runtime Separation
-- Incremental Evolution
+- Business entities → LLM client
+- **TaskScheduler** → task execution
+- **PlannerAgent** → executor registry (uses **ExecutorCatalog** instead)
+- **WorkflowTemplate** → **WorkflowRun** (templates do not reference runs)
+- **TaskDefinition** → **Task** (definitions do not reference runtime instances)
+- Free-form agent names (`suggested_agent`) in runtime contracts
 
 ---
 
 # Related Documents
 
-- Architecture Overview
-- Domain Model
-- ADR-000 — Architecture Principles
+- [overview.md](overview.md)
+- [domain-model.md](domain-model.md)
+- [ADR-008: Executor Catalog Contract](../docs/adr/ADR-008-Executor-Catalog-Contract.md)

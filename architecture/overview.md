@@ -4,183 +4,152 @@
 
 AI Research OS is an AI-native operating system for professional marketing research agencies.
 
-It is designed to manage the complete lifecycle of research projects by combining business workflows, structured knowledge, reusable processes, and AI-powered execution into a single platform.
-
-AI Research OS is not a collection of AI agents. It is an operating system where AI acts as an execution component within a well-defined business architecture.
-
-The platform follows a Business First philosophy: business entities, business rules, and business decisions always remain the foundation of the system.
+The platform manages research projects by combining business workflows, structured knowledge, reusable process definitions, and synchronous task execution. AI agents are execution components inside a defined architecture — not the architecture itself.
 
 ---
 
 # Architectural Statement
 
-> AI Research OS is an operating system for marketing research. AI agents are execution components of the platform, not the platform itself.
-
-This principle guides every architectural decision within the project.
+> AI Research OS is an operating system for marketing research. AI agents execute tasks within workflows; business entities and runtime contracts own the truth.
 
 ---
 
-# High-Level Architecture
+# High-Level Layers
 
-    AI Research OS
-           │
-    ┌──────┼──────┐
-    │      │      │
-    ▼      ▼      ▼
-Business   Execution Definition   Execution Runtime
- Layer             Layer                  Layer
-    │              │                      │
-    └──────────────┼──────────────────────┘
-                   │
-                   ▼
-           Execution Engine
-                   │
-                   ▼
-          External Services
+```mermaid
+flowchart TB
+    subgraph Business["Business Layer"]
+        Agency
+        Project
+        Knowledge
+        Artifacts
+    end
 
-Each layer has a clearly defined responsibility and communicates through explicit interfaces.
+    subgraph Workflow["Workflow Layer"]
+        WT[WorkflowTemplate]
+        TD[TaskDefinition]
+        WR[WorkflowRun]
+        Task
+    end
 
----
+    subgraph Execution["Execution Layer"]
+        WE[WorkflowEngine]
+        TS[TaskScheduler]
+        TE[TaskExecutor]
+        ER[ExecutorResolver]
+        EX[Executor]
+    end
 
-# Architecture Layers
+    subgraph Infra["Infrastructure"]
+        LLM[LLM Client]
+        Repo[Repositories]
+        Storage[Storage]
+    end
 
-## 1. Business Layer
+    Agency --> Project
+    WT --> TD
+    WT --> WR
+    WR --> Task
+    WE --> TS --> TE --> ER --> EX
+    EX --> LLM
+    Agency --> Repo
+```
 
-Represents the business domain of the platform.
-
-Typical entities include:
-
-- Project
-- Knowledge
-- Documents
-- Artifacts
-
-This layer owns the persistent business state and business rules.
-
-It is completely independent of AI implementation details.
-
----
-
-## 2. Execution Definition Layer
-
-Defines what should happen.
-
-Typical entities:
-
-- WorkflowTemplate
-- TaskDefinition
-
-These objects describe reusable business processes and remain immutable during execution.
+| Layer | Responsibility | Key types |
+|-------|----------------|-----------|
+| Business | Long-lived business context | `Agency`, `Project`, `Knowledge`, artifacts |
+| Workflow | Immutable plans and runtime runs | `WorkflowTemplate`, `TaskDefinition`, `WorkflowRun`, `Task` |
+| Execution | Orchestration and task execution | `WorkflowEngine`, `TaskScheduler`, `TaskExecutor`, `ExecutorResolver` |
+| Infrastructure | External systems | OpenAI LLM client, project repository |
 
 ---
 
-## 3. Execution Runtime Layer
+# End-to-End Runtime Flow
 
-Represents what is happening now.
+This is the path implemented today (`main.py` → `Agency.start_research`).
 
-Typical entities:
+```mermaid
+flowchart TD
+    Main[main.py] --> Agency
+    Agency --> Planner[PlannerAgent]
+    Planner --> RP[ResearchPlan]
+    RP --> WTemplate[WorkflowTemplate]
+    WTemplate --> WRun[WorkflowRun]
+    WRun --> Loop[WorkflowEngine.run]
+    Loop --> Sched[TaskScheduler.schedule]
+    Sched --> Ready{Ready Task?}
+    Ready -->|yes| TExec[TaskExecutor.execute]
+    TExec --> Resolv[ExecutorResolver.resolve]
+    Resolv --> Exec[Agent Executor]
+    Exec --> Result[Task state update]
+    Result --> Loop
+    Ready -->|no| Policy[WorkflowCompletionPolicy]
+    Policy --> Done[WorkflowRun terminal status]
+```
 
-- WorkflowRun
-- AITask
-
-Runtime objects are instantiated from execution definitions and exist only while a workflow is being executed.
+1. **main.py** builds the application through `create_application()` (composition root).
+2. **Agency** creates a `Project`, runs **PlannerAgent**, then starts workflow execution.
+3. **PlannerAgent** calls the LLM, validates structured output, builds a **ResearchPlan**, maps it to **WorkflowTemplate**.
+4. **WorkflowRunFactory** instantiates **WorkflowRun** and **Task** instances from the template.
+5. **WorkflowEngine** owns the synchronous runtime loop: schedule → execute one ready task → repeat.
+6. **TaskScheduler** selects ready tasks from the dependency graph; it does not execute tasks.
+7. **TaskExecutor** resolves and invokes the executor for the selected task.
+8. **ExecutorResolver** maps `Task.executor_id` to a registered executor instance.
+9. **WorkflowCompletionPolicy** resolves final workflow status when no further progress is possible.
 
 ---
 
-## 4. Execution Engine
+# Executor Contract
 
-Responsible for workflow orchestration and task execution.
+Planner output and runtime execution share a single identifier: **`executor_id`**.
 
-Core components include:
+- The Planner receives an **ExecutorCatalog** (allowed IDs and descriptions) in its prompt.
+- **PlannerPayloadContract** rejects unknown or empty `executor_id` values before `WorkflowRun` creation.
+- Invalid planner output triggers **StructuredOutputGenerator** correction retry (strict parser unchanged).
+- **ExecutorResolver** is the only component that resolves `executor_id` to an executor instance at runtime.
 
-- Supervisor
-- Planner
-- TaskExecutor
-- Agent
-- PromptBuilder
+See [ADR-008: Executor Catalog Contract](../docs/adr/ADR-008-Executor-Catalog-Contract.md) for the full decision record. Do not invent executor IDs at planning time.
 
-The Execution Engine coordinates execution but never owns business state.
+Registered agent executor IDs (current): `planner`, `search`, `analysis`, `report`, `proposal`.
+
+---
+
+# Definition vs Runtime
+
+| Concept | Role | Mutability |
+|---------|------|------------|
+| **WorkflowTemplate** | Immutable workflow plan | Defined at planning time |
+| **TaskDefinition** | Immutable task blueprint inside a template | Contains `executor_id`, dependencies |
+| **WorkflowRun** | Runtime workflow instance | Status tracked by state machine |
+| **Task** | Runtime task instance | Status, lifecycle, executor reference |
+
+**TaskDefinition** describes what should run. **Task** is what actually runs inside a **WorkflowRun**.
 
 ---
 
 # Core Design Principles
 
-The architecture is built around the following principles:
-
 - Business before AI.
-- Project is the central business aggregate.
+- **Project** is the central business aggregate during a research initiative.
 - Process definitions are separated from runtime execution.
-- AI executes work but never owns business logic.
-- Every major architectural decision is documented through ADRs.
-- Simplicity is preferred over premature abstraction.
-- The architecture evolves incrementally through well-defined iterations.
-
----
-
-# Execution Flow
-
-A typical execution lifecycle is illustrated below.
-
-    Project
-        │
-        ▼
-WorkflowTemplate
-        │
- Instantiate
-        ▼
- WorkflowRun
-        │
-    Creates
-        ▼
-    AITasks
-        │
- Executed by
-        ▼
- TaskExecutor
-        │
-      Uses
-        ▼
-    AI Agent
-        │
-    Produces
-        ▼
-Artifacts / Knowledge / Documents
-
-Business information is always stored in business entities owned by the Project.
+- **WorkflowEngine** is the sole owner of `WorkflowRun.status`.
+- **TaskScheduler** schedules; **TaskExecutor** executes; never combined.
+- One ready task per runtime loop iteration (synchronous, deterministic).
+- Major decisions are recorded in ADRs under `docs/adr/`.
 
 ---
 
 # Related Documentation
 
-Further architectural details are available in the following documents:
-
-- domain-model.md — Core business entities and relationships.
-- layers.md — Responsibilities and boundaries of architectural layers.
-- docs/adr/ — Architecture Decision Records.
-- docs/roadmap/ — Development roadmap and sprint planning.
+- [domain-model.md](domain-model.md) — entities and relationships
+- [layers.md](layers.md) — layer boundaries and forbidden dependencies
+- [docs/adr/README.md](../docs/adr/README.md) — Architecture Decision Records
+- [docs/architecture.md](../docs/architecture.md) — documentation index
 
 ---
 
 # Evolution
 
-AI Research OS follows an Architecture First development process.
+Significant architectural changes follow: discussion → ADR → implementation → review.
 
-Every significant architectural change follows the same lifecycle:
-
-    Idea
-      │
-      ▼
-Architecture Discussion
-      │
-      ▼
-Architecture Decision Record (ADR)
-      │
-      ▼
-Implementation
-      │
-      ▼
-Review
-      │
-      ▼
-Release
-This approach ensures that the architecture remains consistent, maintainable, and aligned with the long-term vision of the platform.
+Accepted ADRs are immutable; supersede with a new ADR instead of editing history.

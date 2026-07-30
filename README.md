@@ -5,6 +5,7 @@
 AI Research OS is a modular platform designed to automate and support the complete lifecycle of professional marketing research projects.
 
 Unlike standalone AI agents, AI Research OS is built as a business operating system where AI, workflow automation, knowledge management and human expertise work together.
+
 ---
 
 # Vision
@@ -18,122 +19,104 @@ The system is based on real agency workflows and is designed to improve speed, q
 # Mission
 
 Transform every stage of a marketing research project into an intelligent, reusable and scalable workflow.
+
 ---
 
 # Current Status
 
-Current version:
-
-Architecture Review v1.0
+Architecture aligned with synchronous workflow runtime (Planner → WorkflowTemplate → WorkflowRun → Task execution).
 
 ## Implemented
 
-- Project-centric architecture
-- Client Manager
-- Workflow Engine
-- Project Domain Model
-- Knowledge Manager
-- Prompt Repository
-- JSON Parser
-- OpenAI Integration
-- Documentation structure
-- Development Roadmap
+- **Agency** application facade (`agency/agency.py`)
+- **Project** domain model and repository
+- **PlannerAgent** with structured output validation and executor catalog
+- **ResearchPlan** → **WorkflowTemplate** mapping
+- **WorkflowRun** factory and dependency graph
+- **WorkflowEngine** synchronous runtime loop
+- **TaskScheduler**, **TaskExecutor**, **ExecutorResolver**
+- Registered agent executors: `planner`, `search`, `analysis`, `report`, `proposal`
+- OpenAI LLM integration, prompt repository, knowledge files
+- Architecture documentation under `architecture/` and ADRs under `docs/adr/`
 
 ## In Progress
 
-- Research Designer
-- Business Consultant
-- Planner
+- Additional business agents beyond the research workflow path
+- Client Manager and early project lifecycle automation
+
 ---
 
 # Architecture
-                Client
-                   │
-                   ▼
-          Client Manager
-                   │
-                   ▼
-              Project
-                   │
-    ┌──────────────┼──────────────┐
-    │              │              │
-Qualification   Project Brief   Research Design
-    │              │              │
-    └──────────────┼──────────────┘
-                   │
-        Commercial Proposal
-                   │
-             Client Approval
-                   │
-               Fieldwork
-                   │
-                Analysis
-                   │
-                 Reporting
 
-The Project is the central business entity of the entire system.
+The system is organized in four layers. See [architecture/overview.md](architecture/overview.md) for the full description.
 
-AI agents never work independently.
+```
+Business Layer     Agency → Project → Knowledge / Artifacts
+Workflow Layer     WorkflowTemplate → TaskDefinition → WorkflowRun → Task
+Execution Layer    WorkflowEngine → TaskScheduler → TaskExecutor → ExecutorResolver → Executor
+Infrastructure     LLM, Repositories, Storage, Registry
+```
 
-Each agent enriches the Project with new business knowledge, documents and decisions.
+**Runtime path** (implemented):
+
+```
+main.py → Agency → Planner → ResearchPlan → WorkflowTemplate → WorkflowRun
+       → WorkflowEngine → TaskScheduler → TaskExecutor → ExecutorResolver → Executor → Task Result → Workflow Completion
+```
+
+The **Project** is the central business aggregate. Executors run inside **WorkflowRun**; they do not replace project ownership.
+
+Executor references use **`executor_id`** only. See [ADR-008](docs/adr/ADR-008-Executor-Catalog-Contract.md).
+
 ---
 
 # Project Structure
+
+```
 AI_RESEARCH_OS/
-│
-├── core/
-├── constants/
-├── domain/
-├── roles/
-├── services/
-├── workflow/
-├── knowledge/
-├── prompts/
-├── docs/
-├── memory/
-│
+├── agency/              Application facade
+├── agents/              Agent executors (planner, search, analysis, …)
+├── application/         Workflow engine, planner service, composition root
+├── architecture/        Architecture documentation
+├── domain/              Business and runtime domain models
+├── infrastructure/      LLM, documents, persistence adapters
+├── loaders/             Agent and executor loading
+├── registry/            Executor and knowledge registries
+├── runtime/             Workflow context helpers
+├── knowledge/           Static expertise files
+├── prompts/             LLM prompt templates
+├── docs/                Project documentation and ADRs
+├── tests/
 ├── main.py
 ├── config.py
-├── requirements.txt
-│
-├── ARCHITECTURE.md
-├── PROJECT_VISION.md
-├── ROADMAP.md
-└── CHANGELOG.md
-
-## Main Directories
+└── requirements.txt
+```
 
 | Directory | Purpose |
 |-----------|---------|
-| domain | Business entities |
-| roles | AI agents |
-| services | Business services |
-| workflow | Workflow orchestration |
-| knowledge | Knowledge Base |
-| prompts | LLM prompts |
-| docs | Project documentation |
-| core | Business rules |
-| constants | Shared constants |
-| memory | Long-term memory |
+| `agency/` | Application entry facade |
+| `agents/` | Concrete agent executors |
+| `application/` | Orchestration, planner, workflow runtime |
+| `domain/` | Entities, value objects, state machines |
+| `infrastructure/` | External system adapters |
+| `registry/` | Executor registration |
+| `architecture/` | Layer and domain model docs |
+| `docs/` | ADRs, development rules |
+
 ---
 
 # Technology Stack
 
-Current
+**Current**
 
 - Python
 - OpenAI API
-- Git
-- GitHub
+- Git / GitHub
 - Markdown
 
-Planned
+**Planned**
 
-- n8n
-- FastAPI
-- PostgreSQL
-- Redis
-- Docker
+- FastAPI, PostgreSQL, Docker (not part of current runtime)
 
 ---
 
@@ -141,39 +124,22 @@ Planned
 
 - Business before AI
 - Architecture before implementation
-- One completed component per sprint
-- Human-in-the-loop
+- Definition vs runtime separation (`WorkflowTemplate` / `TaskDefinition` vs `WorkflowRun` / `Task`)
+- **ExecutorResolver** is the single resolution point for executors
 - Domain-driven design
-- Reusable knowledge
-- Clean Architecture
-- Workflow-first thinking
+- ADRs for significant decisions (`docs/adr/`)
 
 ---
 
-# Roadmap
+# Documentation
 
-## Completed
-
-- ✅ Architecture Review
-- ✅ Project Domain
-- ✅ Client Manager
-- ✅ Git Integration
-- ✅ GitHub Repository
-
-## In Progress
-
-- 🔄 Research Designer
-- 🔄 Business Consultant
-
-## Planned
-
-- Planner
-- Methodologist
-- Proposal Generator
-- Knowledge Graph
-- Memory
-- n8n Integration
-- Web Interface
+| Document | Description |
+|----------|-------------|
+| [architecture/overview.md](architecture/overview.md) | Layers, runtime flow, executor contract |
+| [architecture/layers.md](architecture/layers.md) | Layer boundaries |
+| [architecture/domain-model.md](architecture/domain-model.md) | TaskDefinition vs Task, WorkflowTemplate vs WorkflowRun |
+| [docs/architecture.md](docs/architecture.md) | Documentation index |
+| [docs/adr/README.md](docs/adr/README.md) | ADR index |
 
 ---
 
