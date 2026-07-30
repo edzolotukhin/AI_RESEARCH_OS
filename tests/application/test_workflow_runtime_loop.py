@@ -32,6 +32,47 @@ class RecordingExecutor:
         return context
 
 
+class SelectiveExecutor:
+    def __init__(
+        self,
+        *,
+        fail_ids: set[str] | None = None,
+        errors: dict[str, BaseException] | None = None,
+    ) -> None:
+        self.fail_ids = fail_ids or set()
+        self.errors = errors or {}
+        self.executed: list[str] = []
+
+    def run(self, context: WorkflowContext) -> WorkflowContext:
+        task = context.current_task
+        assert task is not None
+        self.executed.append(task.definition_id)
+
+        if task.definition_id in self.fail_ids:
+            raise self.errors.get(
+                task.definition_id,
+                RuntimeError(f"{task.definition_id} failed"),
+            )
+
+        return context
+
+
+def _engine_with_executor(
+    lifecycle: TaskLifecycleManager,
+    executor,
+) -> WorkflowEngine:
+    resolver = Mock()
+    resolver.resolve.return_value = executor
+    return WorkflowEngine(
+        scheduler=TaskScheduler(),
+        task_executor=TaskExecutor(
+            resolver=resolver,
+            lifecycle=lifecycle,
+        ),
+        completion_policy=WorkflowCompletionPolicy(),
+    )
+
+
 class WorkflowRuntimeLoopTests(unittest.TestCase):
 
     def setUp(self):
@@ -122,20 +163,9 @@ class WorkflowRuntimeLoopTests(unittest.TestCase):
         self.assertEqual(workflow_run.status, WorkflowStatus.FAILED)
 
     def test_failed_task_during_execution_marks_workflow_failed(self):
-        class FailingExecutor:
-            def run(self, context: WorkflowContext) -> WorkflowContext:
-                raise RuntimeError("execution failed")
-
-        resolver = Mock()
-        resolver.resolve.return_value = FailingExecutor()
-        task_executor = TaskExecutor(
-            resolver=resolver,
-            lifecycle=self.lifecycle,
-        )
-        engine = WorkflowEngine(
-            scheduler=self.scheduler,
-            task_executor=task_executor,
-            completion_policy=WorkflowCompletionPolicy(),
+        engine = _engine_with_executor(
+            self.lifecycle,
+            SelectiveExecutor(fail_ids={"a"}),
         )
         workflow_run = make_workflow_run(make_task("a"))
 
@@ -143,7 +173,122 @@ class WorkflowRuntimeLoopTests(unittest.TestCase):
             engine.run(self._context(workflow_run))
 
         self.assertEqual(workflow_run.tasks[0].status, TaskStatus.FAILED)
-        self.assertEqual(workflow_run.status, WorkflowStatus.RUNNING)
+        self.assertEqual(workflow_run.status, WorkflowStatus.FAILED)
+
+    def test_dependency_failure_cascade_at_runtime(self):
+        executor = SelectiveExecutor(fail_ids={"a"})
+        engine = _engine_with_executor(self.lifecycle, executor)
+        task_a = make_task("a")
+        task_b = make_task("b", depends_on=["a"])
+        workflow_run = make_workflow_run(task_a, task_b)
+
+        with self.assertRaises(RuntimeError):
+            engine.run(self._context(workflow_run))
+
+        self.assertEqual(task_a.status, TaskStatus.FAILED)
+        self.assertEqual(task_b.status, TaskStatus.SKIPPED)
+        self.assertEqual(executor.executed, ["a"])
+        self.assertEqual(workflow_run.status, WorkflowStatus.FAILED)
+
+    def test_downstream_execution_failure(self):
+        executor = SelectiveExecutor(fail_ids={"b"})
+        engine = _engine_with_executor(self.lifecycle, executor)
+        task_a = make_task("a")
+        task_b = make_task("b", depends_on=["a"])
+        workflow_run = make_workflow_run(task_a, task_b)
+
+        with self.assertRaises(RuntimeError):
+            engine.run(self._context(workflow_run))
+
+        self.assertEqual(task_a.status, TaskStatus.COMPLETED)
+        self.assertEqual(task_b.status, TaskStatus.FAILED)
+        self.assertEqual(executor.executed, ["a", "b"])
+        self.assertEqual(workflow_run.status, WorkflowStatus.FAILED)
+
+    def test_independent_tasks_continue_after_failure(self):
+        executor = SelectiveExecutor(fail_ids={"a"})
+        engine = _engine_with_executor(self.lifecycle, executor)
+        task_a = make_task("a")
+        task_b = make_task("b")
+        workflow_run = make_workflow_run(task_a, task_b)
+
+        with self.assertRaises(RuntimeError):
+            engine.run(self._context(workflow_run))
+
+        self.assertEqual(task_a.status, TaskStatus.FAILED)
+        self.assertEqual(task_b.status, TaskStatus.COMPLETED)
+        self.assertEqual(executor.executed, ["a", "b"])
+        self.assertEqual(workflow_run.status, WorkflowStatus.FAILED)
+
+    def test_multiple_independent_failures_reraises_first_error(self):
+        executor = SelectiveExecutor(
+            fail_ids={"a", "b"},
+            errors={
+                "a": RuntimeError("first failure"),
+                "b": ValueError("second failure"),
+            },
+        )
+        engine = _engine_with_executor(self.lifecycle, executor)
+        workflow_run = make_workflow_run(
+            make_task("a"),
+            make_task("b"),
+        )
+
+        with self.assertRaises(RuntimeError) as ctx:
+            engine.run(self._context(workflow_run))
+
+        self.assertEqual(str(ctx.exception), "first failure")
+        self.assertEqual(
+            {task.status for task in workflow_run.tasks},
+            {TaskStatus.FAILED},
+        )
+        self.assertEqual(workflow_run.status, WorkflowStatus.FAILED)
+
+    def test_runtime_failure_terminates_without_infinite_loop(self):
+        scheduler = Mock(spec=TaskScheduler)
+        scheduler.schedule.side_effect = TaskScheduler().schedule
+        scheduler.find_ready_task.side_effect = TaskScheduler().find_ready_task
+
+        resolver = Mock()
+        resolver.resolve.return_value = SelectiveExecutor(fail_ids={"a"})
+        task_executor = TaskExecutor(
+            resolver=resolver,
+            lifecycle=self.lifecycle,
+        )
+        engine = WorkflowEngine(
+            scheduler=scheduler,
+            task_executor=task_executor,
+            completion_policy=WorkflowCompletionPolicy(),
+        )
+        workflow_run = make_workflow_run(
+            make_task("a"),
+            make_task("b", depends_on=["a"]),
+        )
+
+        with self.assertRaises(RuntimeError):
+            engine.run(self._context(workflow_run))
+
+        self.assertLessEqual(scheduler.schedule.call_count, 4)
+        self.assertEqual(workflow_run.status, WorkflowStatus.FAILED)
+
+    def test_rerun_terminal_failed_workflow_is_idempotent(self):
+        engine = _engine_with_executor(
+            self.lifecycle,
+            SelectiveExecutor(fail_ids={"a"}),
+        )
+        workflow_run = make_workflow_run(make_task("a"))
+        context = self._context(workflow_run)
+
+        with self.assertRaises(RuntimeError):
+            engine.run(context)
+
+        self.assertEqual(workflow_run.status, WorkflowStatus.FAILED)
+
+        result = engine.run(context)
+
+        self.assertIs(result, context)
+        self.assertEqual(workflow_run.status, WorkflowStatus.FAILED)
+        self.assertEqual(workflow_run.tasks[0].status, TaskStatus.FAILED)
 
     def test_no_progress_stops_without_exception(self):
         task_a = make_task("a", status=TaskStatus.RUNNING)

@@ -147,6 +147,33 @@ class WorkflowEngineSchedulerTests(unittest.TestCase):
             WorkflowStatus.RUNNING,
         )
 
+    def test_runtime_single_task_failure_finalizes_workflow(self):
+        class FailingExecutor:
+            def run(self, context: WorkflowContext) -> WorkflowContext:
+                raise RuntimeError("execution failed")
+
+        resolver = Mock()
+        resolver.resolve.return_value = FailingExecutor()
+        engine = WorkflowEngine(
+            scheduler=self.scheduler,
+            task_executor=TaskExecutor(
+                resolver=resolver,
+                lifecycle=self.lifecycle,
+            ),
+            completion_policy=WorkflowCompletionPolicy(),
+        )
+        workflow_run = make_workflow_run(make_task("a"))
+
+        with self.assertRaises(RuntimeError):
+            engine.execute(
+                project=self.project,
+                workflow_template=self.workflow_template,
+                workflow_run=workflow_run,
+            )
+
+        self.assertEqual(workflow_run.tasks[0].status, TaskStatus.FAILED)
+        self.assertEqual(workflow_run.status, WorkflowStatus.FAILED)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -43,6 +43,8 @@ class WorkflowEngine:
 
         self._ensure_running(workflow_run)
 
+        first_execution_error: BaseException | None = None
+
         while True:
             if workflow_run.status == WorkflowStatus.CANCELLED:
                 break
@@ -59,13 +61,21 @@ class WorkflowEngine:
 
             if ready_task is not None:
                 context.current_task = ready_task
-                context = self._task_executor.execute(context)
+                try:
+                    context = self._task_executor.execute(context)
+                except Exception as exc:
+                    if first_execution_error is None:
+                        first_execution_error = exc
                 continue
 
             if progress.should_stop_iteration:
                 break
 
         self._finalize_workflow_status(workflow_run)
+
+        if first_execution_error is not None:
+            raise first_execution_error
+
         return context
 
     def execute(
