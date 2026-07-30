@@ -124,6 +124,9 @@ class Agency:
 
     ) -> WorkflowContext:
 
+        if not self.initialized:
+            self.initialize()
+
         planning_context = WorkflowContext(
 
             workflow_run=WorkflowRun(id="planning"),

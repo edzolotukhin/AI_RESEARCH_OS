@@ -12,8 +12,8 @@
 
 ## Runtime Hardening (pending)
 
-- [ ] AUD-016: terminal `WorkflowRun` state when executor fails during execution
-- [ ] AUD-017: explicit `Agency.initialize()` contract (or auto-load on `start_research`)
+- [x] AUD-016: terminal `WorkflowRun` state when executor fails during execution
+- [x] AUD-017: Agency initialization contract — `WorkflowEngine` remains self-starting via `_ensure_running()`; `Agency.start_research()` performs lazy initialization; explicit `Agency.initialize()` remains supported
 - [ ] AUD-018: planner dependency validation inside structured-output retry path
 - [ ] Catalog/registry desynchronization test coverage
 - [ ] Full runtime E2E test (all registered executors)
