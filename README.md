@@ -1,48 +1,63 @@
-# AI Research OS
+# AI_RESEARCH_OS
 
-> AI-powered Operating System for Marketing Research Agencies
+Workflow runtime for marketing research agencies.
 
-AI Research OS is a modular platform designed to automate and support the complete lifecycle of professional marketing research projects.
-
-Unlike standalone AI agents, AI Research OS is built as a business operating system where AI, workflow automation, knowledge management and human expertise work together.
-
----
-
-# Vision
-
-Build the most practical AI Operating System for marketing research agencies.
-
-The system is based on real agency workflows and is designed to improve speed, quality, consistency and knowledge reuse while keeping humans in control of business decisions.
+AI Research OS models research work as dependency-aware workflows: immutable
+definitions (`WorkflowTemplate`, `TaskDefinition`) are materialized into runtime
+executions (`WorkflowRun`, `Task`), scheduled and executed through a synchronous
+orchestration loop. AI agents are executors inside this runtime — not the
+architecture itself.
 
 ---
 
-# Mission
+## Current Status
 
-Transform every stage of a marketing research project into an intelligent, reusable and scalable workflow.
+| | |
+|---|---|
+| **Phase** | Phase B runtime hardening complete |
+| **Tests** | 289 automated tests |
+| **Demo** | Deterministic offline demo (`examples/deterministic_research_demo.py`) |
+| **Architecture** | Definition / runtime separation; dependency-aware workflow execution |
+| **License** | Source available · [All Rights Reserved](LICENSE) |
+
+Not production-ready. Early-stage runtime core with a public repository.
 
 ---
 
-# Current Status
+## What Works Today
 
-Architecture aligned with synchronous workflow runtime (Planner → WorkflowTemplate → WorkflowRun → Task execution).
-
-## Implemented
-
-- **Agency** application facade (`agency/agency.py`)
-- **Project** domain model and repository
-- **PlannerAgent** with structured output validation and executor catalog
-- **ResearchPlan** → **WorkflowTemplate** mapping
-- **WorkflowRun** factory and dependency graph
-- **WorkflowEngine** synchronous runtime loop
-- **TaskScheduler**, **TaskExecutor**, **ExecutorResolver**
+- **Agency** facade and composition root (`create_application()`)
+- **Planner** with structured-output retry and executor catalog (ADR-008)
+- **ResearchPlan** → **WorkflowTemplate** → **WorkflowRun** pipeline
+- **WorkflowEngine**, **TaskScheduler**, **TaskExecutor**, **ExecutorResolver**
+- Dependency graph validation at planner contract and domain layers
 - Registered agent executors: `planner`, `search`, `analysis`, `report`, `proposal`
-- OpenAI LLM integration, file-based prompt templates (`application/prompts/`), knowledge files
-- Architecture documentation under `architecture/` and ADRs under `docs/adr/`
+- OpenAI integration for live planning path (`main.py`, requires API key)
+- File-based **ProjectRepository** and architecture documentation
 
-## In Progress
+---
 
-- Additional business agents beyond the research workflow path
-- Client Manager and early project lifecycle automation
+## What Does Not Exist Yet
+
+- Client Manager wired to production runtime
+- Product Foundation workflows (brief, design, artifacts lifecycle)
+- FastAPI service layer
+- PostgreSQL storage
+- Docker deployment
+- Production deployment packaging
+- Multi-user platform capabilities
+- CI pipeline and release versioning
+
+---
+
+## Links
+
+| | |
+|---|---|
+| [Architecture](architecture/overview.md) | Layers, runtime flow, domain model |
+| [Roadmap](ROADMAP.md) | Current state and planned work |
+| [Changelog](CHANGELOG.md) | Notable changes |
+| [License](LICENSE) | All Rights Reserved |
 
 ---
 
