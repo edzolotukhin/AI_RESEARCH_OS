@@ -4,6 +4,8 @@ from application.config import ApplicationConfig, ApplicationOverrides
 from application.executor_resolver import ExecutorResolver
 from application.factories.research_plan_factory import ResearchPlanFactory
 from application.parsers.planner_response_parser import PlannerResponseParser
+from application.planner.executor_catalog import ExecutorCatalog
+from application.planner.executor_definitions import AGENT_EXECUTOR_CAPABILITIES
 from application.planner.service import PlannerServiceImpl
 from application.planner.workflow_template_mapper import (
     ResearchPlanWorkflowTemplateMapper,
@@ -39,6 +41,7 @@ from domain.factories.task_factory import TaskFactory
 from domain.factories.workflow_run_factory import WorkflowRunFactory
 
 from application.planner.payload_contract import PlannerPayloadContract
+from application.structured_output.generator import StructuredOutputGenerator
 from application.structured_output.parser import StructuredOutputParser
 from infrastructure.project_repository import ProjectRepository
 
@@ -67,18 +70,29 @@ def create_application(
 
     llm_client = overrides.llm_client or _create_llm_client(config)
 
+    executor_catalog = ExecutorCatalog.from_capabilities(
+        AGENT_EXECUTOR_CAPABILITIES,
+    )
+
     template_loader = FileTemplateLoader()
     prompt_renderer = PythonFormatPromptRenderer()
     planner_prompt_builder = PlannerPromptBuilder(
         template_loader=template_loader,
         prompt_renderer=prompt_renderer,
+        executor_catalog=executor_catalog,
     )
 
     workflow_template_mapper = ResearchPlanWorkflowTemplateMapper()
 
     structured_output_parser = StructuredOutputParser()
     planner_payload_contract = PlannerPayloadContract(
+        executor_catalog=executor_catalog,
         response_parser=PlannerResponseParser(),
+    )
+    structured_output_generator = StructuredOutputGenerator(
+        llm_client=llm_client,
+        parser=structured_output_parser,
+        executor_catalog=executor_catalog,
     )
 
     planner_service = PlannerServiceImpl(
@@ -93,20 +107,26 @@ def create_application(
             planner_service=planner_service,
             workflow_mapper=workflow_template_mapper,
             prompt_builder=planner_prompt_builder,
-            llm_client=llm_client,
-            structured_output_parser=structured_output_parser,
+            structured_output_generator=structured_output_generator,
             payload_contract=planner_payload_contract,
         ).create()
 
+    agent_executors = {
+        "planner": PlannerExecutor(agent=planner_agent),
+        "search": AgentExecutor(agent=SearchAgent()),
+        "analysis": AgentExecutor(agent=AnalysisAgent()),
+        "report": AgentExecutor(agent=ReportAgent()),
+        "proposal": AgentExecutor(agent=ProposalAgent()),
+    }
+
+    _ensure_executor_catalog_matches_registry(
+        executor_catalog,
+        agent_executors,
+    )
+
     agent_loader = AgentLoader(
         registry=registry,
-        executors={
-            "planner": PlannerExecutor(agent=planner_agent),
-            "search": AgentExecutor(agent=SearchAgent()),
-            "analysis": AgentExecutor(agent=AnalysisAgent()),
-            "report": AgentExecutor(agent=ReportAgent()),
-            "proposal": AgentExecutor(agent=ProposalAgent()),
-        },
+        executors=agent_executors,
     )
 
     project_factory = ProjectFactory()
@@ -146,6 +166,24 @@ def create_application(
         workflow_engine=workflow_engine,
         workflow_run_id=config.workflow_run_id,
     )
+
+
+def _ensure_executor_catalog_matches_registry(
+    executor_catalog: ExecutorCatalog,
+    agent_executors: dict,
+) -> None:
+    catalog_ids = set(executor_catalog.executor_ids)
+    registry_ids = set(agent_executors)
+
+    if catalog_ids != registry_ids:
+        missing_in_registry = catalog_ids - registry_ids
+        missing_in_catalog = registry_ids - catalog_ids
+
+        raise ValueError(
+            "Executor catalog and agent registry are out of sync. "
+            f"missing_in_registry={sorted(missing_in_registry)} "
+            f"missing_in_catalog={sorted(missing_in_catalog)}"
+        )
 
 
 def _create_llm_client(config: ApplicationConfig):

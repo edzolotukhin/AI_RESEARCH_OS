@@ -92,6 +92,6 @@ class ResearchPlanFactory:
             id=task_dto.id,
             title=task_dto.title,
             description=task_dto.description,
-            suggested_agent=task_dto.suggested_agent,
+            executor_id=task_dto.executor_id,
             dependencies=tuple(task_dto.dependencies),
         )

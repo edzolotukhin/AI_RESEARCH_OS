@@ -5,9 +5,7 @@ from application.planner.payload_contract import PlannerPayloadContract
 from application.prompts.builders.planner_prompt_builder import (
     PlannerPromptBuilder,
 )
-from application.structured_output.parser import StructuredOutputParser
-
-from infrastructure.llm.llm_client import LLMClient
+from application.structured_output.generator import StructuredOutputGenerator
 
 from runtime.workflow_context import WorkflowContext
 
@@ -22,8 +20,7 @@ class PlannerAgent(BaseAgent):
         planner_service: PlannerService,
         workflow_mapper: WorkflowTemplateMapper,
         prompt_builder: PlannerPromptBuilder,
-        llm_client: LLMClient,
-        structured_output_parser: StructuredOutputParser,
+        structured_output_generator: StructuredOutputGenerator,
         payload_contract: PlannerPayloadContract,
     ) -> None:
         super().__init__("planner")
@@ -31,8 +28,7 @@ class PlannerAgent(BaseAgent):
         self._planner_service = planner_service
         self._workflow_mapper = workflow_mapper
         self._prompt_builder = prompt_builder
-        self._llm_client = llm_client
-        self._structured_output_parser = structured_output_parser
+        self._structured_output_generator = structured_output_generator
         self._payload_contract = payload_contract
 
     def run(
@@ -44,10 +40,8 @@ class PlannerAgent(BaseAgent):
 
         prompt = self._prompt_builder.build(context)
 
-        response = self._llm_client.generate(prompt)
-
-        plan_data = self._structured_output_parser.parse(
-            response.content,
+        plan_data = self._structured_output_generator.generate(
+            prompt,
             payload_contract=self._payload_contract,
         )
 

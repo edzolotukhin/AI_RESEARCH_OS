@@ -38,8 +38,14 @@ When designing the workflow:
 - Use professional marketing research terminology.
 - Include at least one stage.
 - Include at least two tasks.
-- Assign every task a non-empty suggested_agent.
+- Assign every task a registered executor_id from the available executors list.
 - Use dependencies to express task ordering.
+
+---
+
+# AVAILABLE EXECUTORS
+
+{executor_catalog}
 
 ---
 
@@ -54,7 +60,11 @@ Each task must contain:
 - id
 - title
 - description
-- suggested_agent
+- executor_id
 - dependencies
 
 Return only the JSON object.
+
+Use only executor_id values from the available executors list.
+Do not create new executor IDs.
+Do not use job titles or display labels instead of executor_id.

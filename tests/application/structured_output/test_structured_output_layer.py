@@ -5,6 +5,7 @@ from pathlib import Path
 
 from application.exceptions.structured_output_error import StructuredOutputError
 from application.planner.payload_contract import PlannerPayloadContract
+from tests.helpers.executor_catalog import make_test_executor_catalog
 from application.structured_output.json_extractor import JsonExtractor
 from application.structured_output.json_repair import JsonRepair
 from application.structured_output.json_validator import JsonValidator
@@ -130,7 +131,9 @@ class JsonRepairStrictTests(unittest.TestCase):
 class StructuredOutputPlannerPipelineTests(unittest.TestCase):
 
     def setUp(self):
-        self.contract = PlannerPayloadContract()
+        self.contract = PlannerPayloadContract(
+            executor_catalog=make_test_executor_catalog(),
+        )
         self.parser = StructuredOutputParser()
         self.extractor = JsonExtractor()
 
@@ -266,7 +269,8 @@ class StructuredOutputArchitectureTests(unittest.TestCase):
         self.assertNotIn("json.loads", source)
 
     def test_does_not_expose_json_decode_error(self):
-        contract = PlannerPayloadContract()
+        catalog = make_test_executor_catalog()
+        contract = PlannerPayloadContract(executor_catalog=catalog)
         parser = StructuredOutputParser()
 
         with self.assertRaises(StructuredOutputError) as ctx:

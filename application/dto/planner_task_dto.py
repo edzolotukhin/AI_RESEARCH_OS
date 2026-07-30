@@ -21,5 +21,5 @@ class PlannerTaskDTO:
     id: str
     title: str
     description: str = ""
-    suggested_agent: str = ""
+    executor_id: str = ""
     dependencies: tuple[str, ...] = field(default_factory=tuple)

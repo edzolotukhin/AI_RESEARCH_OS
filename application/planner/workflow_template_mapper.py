@@ -61,11 +61,11 @@ class ResearchPlanWorkflowTemplateMapper:
         stage_name: str,
         project: Project,
     ) -> None:
-        executor_id = task.suggested_agent.strip()
+        executor_id = task.executor_id.strip()
 
         if not executor_id:
             raise PlannerMappingError(
-                f"Task '{task.id}' has an empty suggested_agent."
+                f"Task '{task.id}' has an empty executor_id."
             )
 
         builder.add_task(

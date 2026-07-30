@@ -109,7 +109,7 @@ Each task must include:
 - id
 - title
 - description
-- suggested_agent
+- executor_id
 - dependencies
 
 Tasks should be independent whenever possible.
@@ -118,7 +118,17 @@ The workflow should be easy to execute by specialized AI agents.
 
 Every workflow must contain at least one stage and at least two tasks.
 
-Every suggested_agent must be a non-empty executor identifier.
+Every executor_id must exactly match one of the available executor IDs listed below.
+
+Do not create new executor IDs.
+
+Do not use job titles or display labels instead of executor_id.
+
+---
+
+# AVAILABLE EXECUTORS
+
+{executor_catalog}
 
 ---
 
@@ -150,7 +160,7 @@ The JSON must match this schema:
           "id": "string",
           "title": "string",
           "description": "string",
-          "suggested_agent": "string",
+          "executor_id": "string",
           "dependencies": ["string"]
         }}
       ]

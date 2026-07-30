@@ -40,7 +40,38 @@ class OpenAIClient(LLMClient):
 
         return LLMResponse(
             content=response.output_text,
+            finish_reason=self._resolve_finish_reason(response),
+            output_tokens=self._resolve_output_tokens(response),
+            max_output_tokens=self._configuration.max_tokens,
         )
+
+    @staticmethod
+    def _resolve_finish_reason(response) -> str | None:
+        status = getattr(response, "status", None)
+
+        if status == "completed":
+            return "stop"
+
+        incomplete_details = getattr(response, "incomplete_details", None)
+
+        if incomplete_details is None:
+            return status
+
+        reason = getattr(incomplete_details, "reason", None)
+
+        if reason == "max_output_tokens":
+            return "length"
+
+        return reason or status
+
+    @staticmethod
+    def _resolve_output_tokens(response) -> int | None:
+        usage = getattr(response, "usage", None)
+
+        if usage is None:
+            return None
+
+        return getattr(usage, "output_tokens", None)
 
     def _get_client(self):
         if self._client is None:

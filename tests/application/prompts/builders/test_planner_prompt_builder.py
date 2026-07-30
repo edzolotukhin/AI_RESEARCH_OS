@@ -1,5 +1,7 @@
 from unittest.mock import Mock
 
+from application.planner.executor_catalog import ExecutorCatalog
+from application.planner.executor_definitions import AGENT_EXECUTOR_CAPABILITIES
 from application.prompts.builders.planner_prompt_builder import (
     PlannerPromptBuilder,
 )
@@ -31,6 +33,9 @@ def test_build_returns_prompt():
     builder = PlannerPromptBuilder(
         template_loader=template_loader,
         prompt_renderer=prompt_renderer,
+        executor_catalog=ExecutorCatalog.from_capabilities(
+            AGENT_EXECUTOR_CAPABILITIES,
+        ),
     )
 
     project = Project(
@@ -64,6 +69,10 @@ def test_build_returns_prompt():
     assert template_loader.load.call_count == 2
     assert prompt_renderer.render.call_count == 2
 
+    render_variables = prompt_renderer.render.call_args_list[0].args[1]
+    assert "executor_catalog" in render_variables
+    assert "planner" in render_variables["executor_catalog"]
+
 
 def test_build_raises_when_project_brief_is_missing():
 
@@ -73,6 +82,9 @@ def test_build_raises_when_project_brief_is_missing():
     builder = PlannerPromptBuilder(
         template_loader=template_loader,
         prompt_renderer=prompt_renderer,
+        executor_catalog=ExecutorCatalog.from_capabilities(
+            AGENT_EXECUTOR_CAPABILITIES,
+        ),
     )
 
     project = Project(

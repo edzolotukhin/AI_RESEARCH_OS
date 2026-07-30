@@ -22,7 +22,7 @@ class PlannerResponseParserTests(unittest.TestCase):
         self.assertEqual(len(dto.stages), 1)
         self.assertEqual(len(dto.stages[0].tasks), 2)
         self.assertEqual(
-            dto.stages[0].tasks[0].suggested_agent,
+            dto.stages[0].tasks[0].executor_id,
             "planner",
         )
 
@@ -45,7 +45,7 @@ class PlannerResponseParserTests(unittest.TestCase):
                         {
                             "id": "",
                             "title": "Task",
-                            "suggested_agent": "planner",
+                            "executor_id": "planner",
                         }
                     ],
                 }
@@ -70,7 +70,7 @@ class PlannerResponseParserTests(unittest.TestCase):
                     "tasks": [
                         {
                             "id": "task-1",
-                            "suggested_agent": "planner",
+                            "executor_id": "planner",
                         }
                     ],
                 }

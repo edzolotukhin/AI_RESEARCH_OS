@@ -21,6 +21,9 @@ class BaseRegistry(ABC):
     def exists(self, name: str) -> bool:
         return name in self._items
 
+    def list_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(self._items))
+
     def unregister(self, name: str):
         self._items.pop(name, None)
 

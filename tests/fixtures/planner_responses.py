@@ -12,14 +12,14 @@ VALID_PLANNER_RESPONSE = {
                     "id": "task-methodology",
                     "title": "Define methodology",
                     "description": "Select research methods and metrics.",
-                    "suggested_agent": "planner",
+                    "executor_id": "planner",
                     "dependencies": [],
                 },
                 {
                     "id": "task-sample",
                     "title": "Design sample plan",
                     "description": "Define target audience and sample size.",
-                    "suggested_agent": "planner",
+                    "executor_id": "search",
                     "dependencies": ["task-methodology"],
                 },
             ],
@@ -43,14 +43,46 @@ VALID_PLANNER_JSON = """
           "id": "task-methodology",
           "title": "Define methodology",
           "description": "Select research methods and metrics.",
-          "suggested_agent": "planner",
+          "executor_id": "planner",
           "dependencies": []
         },
         {
           "id": "task-sample",
           "title": "Design sample plan",
           "description": "Define target audience and sample size.",
-          "suggested_agent": "planner",
+          "executor_id": "search",
+          "dependencies": ["task-methodology"]
+        }
+      ]
+    }
+  ],
+  "metadata": {}
+}
+"""
+
+UNKNOWN_EXECUTOR_PLANNER_JSON = """
+{
+  "name": "Brand Health Workflow",
+  "goal": "Evaluate brand awareness, usage and loyalty.",
+  "methodology": "Quantitative brand tracking survey",
+  "stages": [
+    {
+      "id": "stage-design",
+      "name": "Research Design",
+      "description": "Define methodology and sample design.",
+      "tasks": [
+        {
+          "id": "task-methodology",
+          "title": "Define methodology",
+          "description": "Select research methods and metrics.",
+          "executor_id": "ResearchLead",
+          "dependencies": []
+        },
+        {
+          "id": "task-sample",
+          "title": "Design sample plan",
+          "description": "Define target audience and sample size.",
+          "executor_id": "search",
           "dependencies": ["task-methodology"]
         }
       ]
@@ -91,7 +123,7 @@ TRAILING_COMMA_PLANNER_JSON = """
           "id": "task-methodology",
           "title": "Define methodology",
           "description": "Select research methods and metrics.",
-          "suggested_agent": "planner",
+          "executor_id": "planner",
           "dependencies": [],
         }
       ],
@@ -116,7 +148,7 @@ TRUNCATED_PLANNER_JSON = """
           "id": "task-methodology",
           "title": "Define methodology",
           "description": "Select research methods and metrics.",
-          "suggested_agent": "planner",
+          "executor_id": "planner",
           "dependencies": []
         }
       ]

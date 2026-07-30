@@ -32,13 +32,13 @@ class PlannerTask:
         id: str,
         title: str,
         description: str,
-        suggested_agent: str,
+        executor_id: str,
         dependencies: tuple[str, ...],
     ) -> None:
         self._id = id
         self._title = title
         self._description = description
-        self._suggested_agent = suggested_agent
+        self._executor_id = executor_id
         self._dependencies = tuple(dependencies)
 
     @classmethod
@@ -47,7 +47,7 @@ class PlannerTask:
         *,
         title: str,
         description: str = "",
-        suggested_agent: str = "",
+        executor_id: str = "",
         dependencies: tuple[str, ...] = (),
         id: str | None = None,
     ) -> Self:
@@ -66,7 +66,7 @@ class PlannerTask:
             id=id or str(uuid4()),
             title=title,
             description=description.strip(),
-            suggested_agent=suggested_agent.strip(),
+            executor_id=executor_id.strip(),
             dependencies=tuple(dependencies),
         )
 
@@ -83,8 +83,8 @@ class PlannerTask:
         return self._description
 
     @property
-    def suggested_agent(self) -> str:
-        return self._suggested_agent
+    def executor_id(self) -> str:
+        return self._executor_id
 
     @property
     def dependencies(self) -> tuple[str, ...]:
@@ -121,15 +121,15 @@ class PlannerTask:
 
         self._description = description.strip()
 
-    def assign_agent(
+    def assign_executor(
         self,
-        agent: str,
+        executor_id: str,
     ) -> None:
         """
-        Update suggested agent.
+        Update the task executor reference.
         """
 
-        self._suggested_agent = agent.strip()
+        self._executor_id = executor_id.strip()
 
     def change_dependencies(
         self,

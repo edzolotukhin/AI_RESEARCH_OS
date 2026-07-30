@@ -55,9 +55,15 @@ class ExecutorResolver:
         )
 
         if executor is None:
+            available_executor_ids = self._available_executor_ids(
+                executor_type,
+            )
+
             raise ExecutorNotFoundError(
                 executor_type,
                 executor_id,
+                task_id=task.definition_id,
+                available_executor_ids=available_executor_ids,
             )
 
         return executor
@@ -80,3 +86,21 @@ class ExecutorResolver:
             return self._api_registry.get(executor_id)
 
         raise UnsupportedExecutorTypeError(executor_type)
+
+    def _available_executor_ids(
+        self,
+        executor_type: ExecutorType,
+    ) -> tuple[str, ...]:
+        if executor_type == ExecutorType.AGENT:
+            return self._agent_registry.list_ids()
+
+        if executor_type == ExecutorType.TOOL:
+            return self._tool_registry.list_ids()
+
+        if executor_type == ExecutorType.HUMAN:
+            return self._human_registry.list_ids()
+
+        if executor_type == ExecutorType.API:
+            return self._api_registry.list_ids()
+
+        return tuple()

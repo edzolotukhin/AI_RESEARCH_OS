@@ -10,6 +10,9 @@ class JsonValidationResult:
     is_valid: bool
     data: Any | None = None
     error: str | None = None
+    error_line: int | None = None
+    error_column: int | None = None
+    error_position: int | None = None
 
 
 class JsonValidator:
@@ -26,7 +29,10 @@ class JsonValidator:
         except json.JSONDecodeError as exc:
             return JsonValidationResult(
                 is_valid=False,
-                error=str(exc),
+                error=exc.msg,
+                error_line=exc.lineno,
+                error_column=exc.colno,
+                error_position=exc.pos,
             )
 
         return JsonValidationResult(

@@ -40,7 +40,7 @@ class WorkflowTemplateMapperTests(unittest.TestCase):
                 id="task-methodology",
                 title="Define methodology",
                 description="Select methods",
-                suggested_agent="planner",
+                executor_id="planner",
             )
         )
         stage.add_task(
@@ -48,7 +48,7 @@ class WorkflowTemplateMapperTests(unittest.TestCase):
                 id="task-sample",
                 title="Design sample plan",
                 description="Define sample",
-                suggested_agent="planner",
+                executor_id="planner",
                 dependencies=("task-methodology",),
             )
         )
@@ -83,7 +83,7 @@ class WorkflowTemplateMapperTests(unittest.TestCase):
             "project-1",
         )
 
-    def test_empty_suggested_agent_raises_error(self):
+    def test_empty_executor_id_raises_error(self):
         plan = ResearchPlan.create(
             name="Broken Workflow",
             goal="Broken goal",
@@ -96,14 +96,14 @@ class WorkflowTemplateMapperTests(unittest.TestCase):
             PlannerTask.create(
                 id="task-1",
                 title="Task 1",
-                suggested_agent="planner",
+                executor_id="planner",
             )
         )
         stage.add_task(
             PlannerTask.create(
                 id="task-2",
                 title="Task 2",
-                suggested_agent="",
+                executor_id="",
             )
         )
         plan.add_stage(stage)
@@ -124,7 +124,7 @@ class WorkflowTemplateMapperTests(unittest.TestCase):
             PlannerTask.create(
                 id="task-1",
                 title="Only task",
-                suggested_agent="planner",
+                executor_id="planner",
             )
         )
         plan.add_stage(stage)

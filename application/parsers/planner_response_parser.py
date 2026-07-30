@@ -153,9 +153,9 @@ class PlannerResponseParser:
             "description",
         )
 
-        suggested_agent = self._optional_string(
+        executor_id = self._require_string(
             data,
-            "suggested_agent",
+            "executor_id",
         )
 
         dependencies = self._optional_sequence(
@@ -175,7 +175,7 @@ class PlannerResponseParser:
             id=task_id,
             title=title,
             description=description,
-            suggested_agent=suggested_agent,
+            executor_id=executor_id,
             dependencies=dependency_ids,
         )
 

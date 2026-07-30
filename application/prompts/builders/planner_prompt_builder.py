@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from application.planner.executor_catalog import ExecutorCatalog
 from application.prompts.builders.prompt_builder import PromptBuilder
 from application.prompts.prompt_renderer import PromptRenderer
 from application.prompts.template_loader import TemplateLoader
@@ -26,9 +27,11 @@ class PlannerPromptBuilder(PromptBuilder):
         self,
         template_loader: TemplateLoader,
         prompt_renderer: PromptRenderer,
+        executor_catalog: ExecutorCatalog,
     ) -> None:
         self._template_loader = template_loader
         self._prompt_renderer = prompt_renderer
+        self._executor_catalog = executor_catalog
 
     def build(
         self,
@@ -48,6 +51,7 @@ class PlannerPromptBuilder(PromptBuilder):
             "project_title": brief.project_title,
             "business_problem": brief.business_problem,
             "research_goal": brief.research_goal,
+            "executor_catalog": self._executor_catalog.format_for_prompt(),
         }
 
         system_template = self._template_loader.load(

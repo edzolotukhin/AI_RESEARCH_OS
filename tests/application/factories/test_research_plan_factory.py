@@ -28,14 +28,14 @@ class ResearchPlanFactoryTests(unittest.TestCase):
                             id="task-methodology",
                             title="Define methodology",
                             description="Select research methods and metrics.",
-                            suggested_agent="planner",
+                            executor_id="planner",
                             dependencies=(),
                         ),
                         PlannerTaskDTO(
                             id="task-sample",
                             title="Design sample plan",
                             description="Define target audience and sample size.",
-                            suggested_agent="planner",
+                            executor_id="planner",
                             dependencies=("task-methodology",),
                         ),
                     ),
@@ -49,7 +49,7 @@ class ResearchPlanFactoryTests(unittest.TestCase):
         self.assertEqual(plan.stage_count, 1)
         self.assertEqual(plan.stages[0].task_count, 2)
         self.assertEqual(
-            plan.stages[0].tasks[0].suggested_agent,
+            plan.stages[0].tasks[0].executor_id,
             "planner",
         )
         self.assertEqual(
