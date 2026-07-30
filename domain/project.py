@@ -1,17 +1,18 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from domain.client_request import ClientRequest
 from domain.client_qualification import ClientQualification
 from domain.project_brief import ProjectBrief
 from domain.research_design import ResearchDesign
+from domain.workflow_run import WorkflowRun
 from domain.value_objects.project_status import ProjectStatus
 
 
 @dataclass
 class Project:
-
     id: str
+
     name: str
 
     status: str = ProjectStatus.LEAD
@@ -25,7 +26,10 @@ class Project:
     research_design: Optional[ResearchDesign] = None
 
     created_at: str = ""
+
     updated_at: str = ""
+
+    runs: list[WorkflowRun] = field(default_factory=list)
 
     def start_research_design(self):
         self.status = ProjectStatus.RESEARCH_DESIGN

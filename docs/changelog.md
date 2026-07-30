@@ -1,15 +1,7 @@
-# AI Research OS
+# Changelog (redirect)
 
-## v0.0.1
+The canonical changelog is **[CHANGELOG.md](../CHANGELOG.md)** at the repository root.
 
-### Добавлено
+This file is retained only as a redirect for older links. Do not add new entries here.
 
-- Workflow Engine
-- Project
-- Artifact
-- Knowledge Manager
-- Project Registry
-
-### Статус
-
-Рабочая версия.
+For current status see [README.md](../README.md), [ROADMAP.md](../ROADMAP.md), and [docs/backlog.md](backlog.md).

@@ -1,237 +1,126 @@
-# AI Research OS
+# AI Research OS — Roadmap
 
-# Development Roadmap
+## Current State
 
-Version: 1.0
+The synchronous orchestration runtime is **implemented, tested, and demonstrable**. Phase B runtime hardening is **complete**. A deterministic offline workflow demo is available. The repository has **289 automated tests**. The project is **not production-ready** — it is an early-stage research workflow runtime, not a full agency platform.
 
----
-
-# Development Philosophy
-
-AI Research OS is developed incrementally.
-
-Every sprint must:
-
-- produce a working result;
-- improve the real business workflow;
-- preserve architectural consistency;
-- reduce technical debt whenever practical.
-
-The roadmap represents the evolution of the operating system rather than a list of isolated features.
+| Dimension | Status |
+|-----------|--------|
+| Runtime core | Implemented and tested |
+| Planner + structured output | Integrated |
+| Offline demo | Available (`examples/deterministic_research_demo.py`) |
+| Live LLM demo path | Available (`main.py`, requires API key) |
+| Product Foundation | Not started |
+| Platform / infra (API, DB, Docker) | Planned only |
 
 ---
 
-# Phase 1 — Foundation ✅ COMPLETED
+## Completed Foundations
 
-Objective:
+### Phase A — Stabilization
 
-Build the architectural foundation of the platform.
+- Agency application facade and composition root
+- Planner → ResearchPlan → WorkflowTemplate → WorkflowRun pipeline
+- ADR-008 Executor Catalog Contract
+- Planner constrained to registered executor IDs
+- WorkflowEngine synchronous runtime loop
+- TaskScheduler, TaskExecutor, ExecutorResolver
+- WorkflowCompletionPolicy
+- Structured output retry and planner payload contract
+- Architecture documentation sync
+- Phase B Wave 1 cleanup: dead infrastructure, legacy services, dead registries
 
-Completed:
+### Phase B — Runtime Hardening
 
-- Project Vision
-- Architecture
-- Domain Model
-- Project as the central business entity
-- Workflow Engine
-- BaseAgent
-- Client Manager
-- Prompt infrastructure
-- Knowledge infrastructure
-- Project Registry
-- Core business structure
-- Initial documentation
+- **AUD-016:** terminal `WorkflowRun` state when executor fails during execution
+- **AUD-017:** Agency initialization contract — lazy init in `start_research()`; explicit `initialize()` still supported
+- **AUD-018:** planner dependency graph validation inside structured-output retry boundary
+- Defense-in-depth graph validation retained at factory/domain layer
 
-Result:
+### GF-00 — Repository Readiness (partial)
 
-The platform architecture is stable.
-
----
-
-# Phase 2 — Client Qualification 🚧 CURRENT
-
-Objective:
-
-Build the complete client qualification workflow.
-
-Components:
-
-- Interactive qualification interview
-- Project qualification
-- Qualification scoring
-- Readiness validation
-- Project Brief generation
-- Business problem clarification
-- Client communication workflow
-
-Deliverable:
-
-A fully qualified Project ready for research design.
+- **PR-A:** repository hygiene — untracked runtime project artifacts, hardened `.gitignore`
+- **PR-B:** packaging and environment contract — `requirements.txt`, `pyproject.toml`, `.env.example`
+- **PR-C:** deterministic offline research workflow demo; legacy misleading examples removed
 
 ---
 
-# Phase 3 — Research Design
+## Current Work
 
-Objective:
+**GitHub Face Sprint (GF-00, in progress)**
 
-Automate research methodology design.
+- Public documentation (README v2, architecture visuals)
+- CI and trust signals
+- License posture decision
+- Contribution and security documentation
 
-Components:
+**Remaining runtime hardening (backlog, not blocking public docs)**
 
-- Research Designer
-- Methodology selection
-- Sample design
-- Fieldwork planning
-- Timing estimation
-- Deliverables planning
-
-Deliverable:
-
-Complete Research Design.
+- Catalog/registry desynchronization test coverage
+- Full runtime E2E test (all registered executors)
+- Planner runtime-executor semantics (`executor_id=planner` re-planning behavior)
+- Migrate `scripts/sandbox.py` off legacy `services/project_brief_builder.py`
 
 ---
 
-# Phase 4 — Proposal Generation
+## Next: Product Foundation
 
-Objective:
+Product-facing workflow expansion — **planned, not started** in production runtime:
 
-Generate commercial proposals.
+- Project Brief integration into the main research path
+- Research Design automation
+- Knowledge flow beyond static files
+- Artifacts lifecycle
+- Product-facing workflow templates
+- Client Manager wired to `create_application()`
 
-Components:
-
-- Proposal Generator
-- Pricing
-- Timeline
-- Deliverables
-- Commercial documents
-
-Deliverable:
-
-Professional client proposal.
+Existing agent stubs (Client Manager, Research Designer, etc.) are **not integrated** into the production composition root.
 
 ---
 
-# Phase 5 — Research Execution
+## Later
 
-Objective:
+Platform and operational capabilities — **explicitly deferred**:
 
-Support execution of research projects.
-
-Components:
-
-- Questionnaire Designer
-- Sampling
-- Fieldwork management
-- Quality control
-- Project monitoring
-
-Deliverable:
-
-Research-ready operational workflow.
+- Persistence hardening beyond file-based `ProjectRepository`
+- Workflow resume / cancel semantics
+- Observability (logging, metrics, tracing)
+- FastAPI service layer
+- PostgreSQL storage
+- Docker deployment
+- Multi-user / multi-agency capabilities
+- CRM, client portal, integrations
 
 ---
 
-# Phase 6 — Analytics
+## Explicitly Not Committed
 
-Objective:
+This roadmap does **not** promise:
 
-Support research analysis.
-
-Components:
-
-- Data analysis
-- AI insights
-- Chart generation
-- Reporting
-- Presentation generation
-
-Deliverable:
-
-Client-ready research report.
+- Release dates or version timelines
+- Production SLA or uptime guarantees
+- Autonomous agency replacement of human researchers
+- PyPI package publication timeline
+- Full “operating system” platform completeness
 
 ---
 
-# Phase 7 — Knowledge Platform
+## Maturity Labels
 
-Objective:
+Use these distinctions when reading project status:
 
-Create a continuously learning organization.
+| Label | Meaning |
+|-------|---------|
+| **Implemented** | Code exists in the repository |
+| **Tested** | Covered by automated tests |
+| **Demonstrable** | Runnable example or demo path exists |
+| **Integrated** | Wired into `create_application()` / main runtime path |
+| **Production-ready** | Suitable for external deployment without further hardening |
 
-Components:
-
-- Best Practices
-- Playbooks
-- Internal standards
-- Templates
-- Project examples
-- Knowledge retrieval
-- Corporate memory
-
-Deliverable:
-
-Corporate AI Knowledge Base.
+Phase B runtime hardening is **complete** at the runtime-core level. The overall product is **not production-ready**.
 
 ---
 
-# Phase 8 — Business Platform
+## Definition of Done (phase gate)
 
-Objective:
-
-Transform AI Research OS into a complete agency platform.
-
-Components:
-
-- CRM
-- Client Portal
-- Dashboards
-- Integrations
-- n8n automation
-- Notifications
-- Scheduling
-
-Deliverable:
-
-Complete AI Operating System.
-
----
-
-# Long-term Evolution
-
-Future capabilities may include:
-
-- Multi-agent collaboration
-- Autonomous workflow optimization
-- Financial management
-- Resource planning
-- International localization
-- Multi-agency support
-- Marketplace integrations
-
-These features will be added only after the core operating system becomes stable.
-
----
-
-# Development Rules
-
-Before implementing any feature ask:
-
-1. Does it improve a real business workflow?
-2. Does it fit the architecture?
-3. Can it be implemented by extending existing components?
-4. Does it increase unnecessary complexity?
-5. Can it be demonstrated at the end of the sprint?
-
-If any answer is negative, reconsider the implementation.
-
----
-
-# Definition of Done
-
-A development phase is complete when:
-
-- functionality works;
-- architecture remains consistent;
-- documentation is updated;
-- CHANGELOG is updated;
-- no temporary solutions remain;
-- the system is ready for the next phase.
+A phase is complete when functionality works, architecture stays consistent, scoped documentation is updated, and the system is ready for the next phase.

@@ -1,185 +1,321 @@
-# AI Research OS
+# AI_RESEARCH_OS
 
-> AI-powered Operating System for Marketing Research Agencies
+Workflow runtime for marketing research agencies.
 
-AI Research OS is a modular platform designed to automate and support the complete lifecycle of professional marketing research projects.
-
-Unlike standalone AI agents, AI Research OS is built as a business operating system where AI, workflow automation, knowledge management and human expertise work together.
----
-
-# Vision
-
-Build the most practical AI Operating System for marketing research agencies.
-
-The system is based on real agency workflows and is designed to improve speed, quality, consistency and knowledge reuse while keeping humans in control of business decisions.
+AI Research OS models research work as dependency-aware workflows: immutable
+definitions (`WorkflowTemplate`, `TaskDefinition`) are materialized into runtime
+executions (`WorkflowRun`, `Task`), scheduled and executed through a synchronous
+orchestration loop. AI agents are executors inside this runtime — not the
+architecture itself.
 
 ---
 
-# Mission
+## Current Status
 
-Transform every stage of a marketing research project into an intelligent, reusable and scalable workflow.
+| | |
+|---|---|
+| **Phase** | Phase B runtime hardening complete |
+| **Tests** | 289 automated tests |
+| **Demo** | Deterministic offline demo (`examples/deterministic_research_demo.py`) |
+| **Architecture** | Definition / runtime separation; dependency-aware workflow execution |
+| **License** | Source available · [All Rights Reserved](LICENSE) |
+
+Not production-ready. Early-stage runtime core with a public repository.
+
 ---
 
-# Current Status
+## What Works Today
 
-Current version:
+- **Agency** facade and composition root (`create_application()`)
+- **Planner** with structured-output retry and executor catalog (ADR-008)
+- **ResearchPlan** → **WorkflowTemplate** → **WorkflowRun** pipeline
+- **WorkflowEngine**, **TaskScheduler**, **TaskExecutor**, **ExecutorResolver**
+- Dependency graph validation at planner contract and domain layers
+- Registered agent executors: `planner`, `search`, `analysis`, `report`, `proposal`
+- OpenAI integration for live planning path (`main.py`, requires API key)
+- File-based **ProjectRepository** and architecture documentation
 
-Architecture Review v1.0
-
-## Implemented
-
-- Project-centric architecture
-- Client Manager
-- Workflow Engine
-- Project Domain Model
-- Knowledge Manager
-- Prompt Repository
-- JSON Parser
-- OpenAI Integration
-- Documentation structure
-- Development Roadmap
-
-## In Progress
-
-- Research Designer
-- Business Consultant
-- Planner
 ---
 
-# Architecture
-                Client
-                   │
-                   ▼
-          Client Manager
-                   │
-                   ▼
-              Project
-                   │
-    ┌──────────────┼──────────────┐
-    │              │              │
-Qualification   Project Brief   Research Design
-    │              │              │
-    └──────────────┼──────────────┘
-                   │
-        Commercial Proposal
-                   │
-             Client Approval
-                   │
-               Fieldwork
-                   │
-                Analysis
-                   │
-                 Reporting
+## What Does Not Exist Yet
 
-The Project is the central business entity of the entire system.
+- Client Manager wired to production runtime
+- Product Foundation workflows (brief, design, artifacts lifecycle)
+- FastAPI service layer
+- PostgreSQL storage
+- Docker deployment
+- Production deployment packaging
+- Multi-user platform capabilities
+- CI pipeline and release versioning
 
-AI agents never work independently.
-
-Each agent enriches the Project with new business knowledge, documents and decisions.
 ---
 
-# Project Structure
+## Links
+
+| | |
+|---|---|
+| [Architecture](architecture/overview.md) | Layers, runtime flow, domain model |
+| [Roadmap](ROADMAP.md) | Current state and planned work |
+| [Changelog](CHANGELOG.md) | Notable changes |
+| [License](LICENSE) | All Rights Reserved |
+
+---
+
+## Installation
+
+From the repository root:
+
+```bash
+git clone https://github.com/edzolotukhin/AI_RESEARCH_OS.git
+cd AI_RESEARCH_OS
+python -m venv .venv
+```
+
+Activate the virtual environment:
+
+```bash
+# Linux / macOS
+source .venv/bin/activate
+
+# Windows
+.venv\Scripts\activate
+```
+
+Install runtime dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## Python Requirements
+
+Supported range (see `pyproject.toml`):
+
+**Python >=3.11,<3.15**
+
+The runtime and test suite are verified within this range. Use a virtual environment; do not rely on system-wide packages.
+
+---
+
+## Environment
+
+For live planner execution (`main.py`), copy `.env.example` to `.env` and set `OPENAI_API_KEY`.
+The OpenAI SDK reads it after `python-dotenv` loads the file.
+
+| Path | API key required? |
+|------|-------------------|
+| `python examples/deterministic_research_demo.py` | No |
+| `python run_tests.py` | No |
+| `python main.py` | Yes |
+
+No other environment variables are required by the current runtime.
+
+---
+
+## Offline Demo
+
+Run the deterministic workflow demo from the repository root:
+
+```bash
+python examples/deterministic_research_demo.py
+```
+
+The demo exercises the current runtime without network access:
+
+- **WorkflowTemplate** — immutable workflow definition
+- **WorkflowRun** — materialized runtime instance
+- **Dependency graph** — linear task dependencies
+- **TaskScheduler** — dependency-aware ready-task selection
+- **ExecutorResolver** — resolves demo executors from a local registry
+- **WorkflowEngine** — synchronous execution loop through workflow completion
+
+The demo uses in-memory storage only. It does not call OpenAI, does not require `OPENAI_API_KEY`, and does not write files under `agency/projects/`.
+
+---
+
+## Running Tests
+
+```bash
+python run_tests.py
+```
+
+The suite currently runs **289 automated tests**. It validates runtime orchestration, planner contracts, dependency graphs, executor resolution, structured-output retry, agency integration, and the offline demo subprocess path. Coverage metrics are not published.
+
+---
+
+## Repository Structure
+
+```
 AI_RESEARCH_OS/
-│
-├── core/
-├── constants/
-├── domain/
-├── roles/
-├── services/
-├── workflow/
-├── knowledge/
-├── prompts/
-├── docs/
-├── memory/
-│
-├── main.py
-├── config.py
-├── requirements.txt
-│
-├── ARCHITECTURE.md
-├── PROJECT_VISION.md
-├── ROADMAP.md
-└── CHANGELOG.md
-
-## Main Directories
-
-| Directory | Purpose |
-|-----------|---------|
-| domain | Business entities |
-| roles | AI agents |
-| services | Business services |
-| workflow | Workflow orchestration |
-| knowledge | Knowledge Base |
-| prompts | LLM prompts |
-| docs | Project documentation |
-| core | Business rules |
-| constants | Shared constants |
-| memory | Long-term memory |
----
-
-# Technology Stack
-
-Current
-
-- Python
-- OpenAI API
-- Git
-- GitHub
-- Markdown
-
-Planned
-
-- n8n
-- FastAPI
-- PostgreSQL
-- Redis
-- Docker
+├── agency/           Application facade
+├── agents/           Agent executors
+├── application/      Workflow engine, planner, composition root
+├── architecture/     Architecture documentation
+├── domain/           Domain and runtime models
+├── docs/             ADRs, backlog, project docs
+├── examples/         Offline demos
+├── infrastructure/   LLM client, repositories
+├── registry/         Executor registries
+├── tests/            Automated tests
+├── main.py           Live demo entry (requires API key)
+└── run_tests.py      Test entrypoint
+```
 
 ---
 
-# Development Principles
+## Documentation
 
-- Business before AI
-- Architecture before implementation
-- One completed component per sprint
-- Human-in-the-loop
-- Domain-driven design
-- Reusable knowledge
-- Clean Architecture
-- Workflow-first thinking
+| Document | Description |
+|----------|-------------|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Architecture entry point |
+| [architecture/overview.md](architecture/overview.md) | Layers, runtime flow, executor contract |
+| [docs/adr/README.md](docs/adr/README.md) | Architecture decision records |
+| [ROADMAP.md](ROADMAP.md) | Current state and planned work |
+| [CHANGELOG.md](CHANGELOG.md) | Notable changes |
+| [docs/backlog.md](docs/backlog.md) | Internal task backlog |
+| [LICENSE](LICENSE) | All Rights Reserved |
 
 ---
 
-# Roadmap
+## Project Status
 
-## Completed
+| Area | Status |
+|------|--------|
+| **Runtime core** | Complete — Phase B hardening done |
+| **Product Foundation** | Next planned work — not integrated in production runtime |
+| **Production platform** | Future work — FastAPI, PostgreSQL, Docker, deployment, multi-user |
 
-- ✅ Architecture Review
-- ✅ Project Domain
-- ✅ Client Manager
-- ✅ Git Integration
-- ✅ GitHub Repository
+See [ROADMAP.md](ROADMAP.md) for detail. The project is not production-ready.
 
-## In Progress
+---
 
-- 🔄 Research Designer
-- 🔄 Business Consultant
+# Runtime Architecture
 
-## Planned
+This section explains how the workflow runtime is designed and why. For layer diagrams and ADRs, see [architecture/overview.md](architecture/overview.md).
 
-- Planner
-- Methodologist
-- Proposal Generator
-- Knowledge Graph
-- Memory
-- n8n Integration
-- Web Interface
+---
+
+## Core Concepts
+
+**WorkflowTemplate** — Immutable workflow definition attached to a project after planning. Contains `TaskDefinition` blueprints and dependency structure.
+
+**TaskDefinition** — Blueprint for a single unit of work: name, `executor_id`, `executor_type`, and `depends_on` references to other definition IDs.
+
+**WorkflowRun** — Mutable runtime instance of a template. Owns live `Task` objects, execution status, and a validated dependency graph.
+
+**Task** — Runtime counterpart of a `TaskDefinition`. Carries state (`created`, `ready`, `running`, `completed`, `failed`, …) and resolves dependencies at execution time.
+
+**Executor** — Infrastructure contract (`BaseExecutor`) that receives a `WorkflowContext`, performs one unit of work, and returns the updated context. Agents, tools, human steps, and API calls are all accessed through this interface.
+
+**WorkflowEngine** — Canonical owner of the execution loop. Schedules ready tasks, invokes `TaskExecutor`, applies completion policy, and finalizes workflow status.
+
+---
+
+## Definition vs Runtime
+
+| Definition (immutable) | Runtime (mutable) |
+|------------------------|-------------------|
+| `WorkflowTemplate` | `WorkflowRun` |
+| `TaskDefinition` | `Task` |
+
+Definitions describe *what* should happen. Runtime objects track *what is happening*.
+
+Separating the two yields:
+
+- **Determinism** — the same template materializes the same structural graph every time
+- **Reproducibility** — plans can be stored, compared, and re-run without mutating the source definition
+- **Immutability** — templates are not altered when a single run fails or retries
+- **Execution isolation** — state transitions and failures affect the run, not the definition
+
+Materialization path: `WorkflowTemplate` → `WorkflowRunFactory` → `WorkflowRun` + `TaskDependencyGraph`.
+
+---
+
+## Workflow Lifecycle
+
+```mermaid
+flowchart TD
+    WT[WorkflowTemplate] --> WR[WorkflowRun]
+    WR --> TC[Task creation from TaskDefinition]
+    TC --> DV[Dependency graph validation]
+    DV --> TS[TaskScheduler]
+    TS --> ER[ExecutorResolver]
+    ER --> EX[Executor.run]
+    EX --> TS
+    TS --> WC[Workflow completion policy]
+```
+
+Execution order in code:
+
+1. A **WorkflowTemplate** is produced (planner path or programmatic builder).
+2. **WorkflowRunFactory** creates a **WorkflowRun** and runtime **Task** instances.
+3. The dependency graph is validated (unknown deps, cycles, duplicate IDs rejected).
+4. **WorkflowEngine** enters a loop: **TaskScheduler** selects a ready task.
+5. **TaskExecutor** resolves an **Executor** via **ExecutorResolver** and runs it.
+6. When no ready tasks remain and all tasks are terminal, **WorkflowCompletionPolicy** sets the final workflow status.
+
+The offline demo runs this path without a planner or LLM. The live path adds `PlannerAgent` → `ResearchPlan` → template mapping before step 1.
+
+---
+
+## Executor Model
+
+Every task declares an `executor_id` and an explicit `ExecutorType`:
+
+| Type | Registry | Role |
+|------|----------|------|
+| **Agent** | `AgentRegistry` | LLM-backed or scripted agents |
+| **Tool** | `ToolRegistry` | Deterministic tool adapters |
+| **Human** | `HumanExecutorRegistry` | Human-in-the-loop steps |
+| **API** | `APIExecutorRegistry` | External API integrations |
+
+**ExecutorResolver** is the single lookup point. It maps `(executor_type, executor_id)` to a `BaseExecutor` implementation.
+
+The **WorkflowEngine** and **TaskScheduler** never import concrete agents. New executors register in the appropriate registry without changing the engine loop. The planner-side **ExecutorCatalog** (ADR-008) constrains which agent IDs may appear in generated plans.
+
+---
+
+## Architectural Principles
+
+- Definition/runtime separation (`WorkflowTemplate` / `TaskDefinition` vs `WorkflowRun` / `Task`)
+- Dependency-aware scheduling via an explicit task dependency graph
+- Deterministic scheduling order for a given graph and task states
+- Pluggable executors resolved through registries, not hard-coded imports
+- Clear layer boundaries: business → workflow → execution → infrastructure
+- Minimal runtime coupling — engine depends on contracts, not on agent implementations
+- Defense in depth — graph validation at planner contract, factory, and scheduler layers
+
+---
+
+## Current Limitations
+
+- Single-process, synchronous runtime loop
+- File-based project persistence only; no shared database
+- No REST API or service layer
+- No UI
+- No multi-user or multi-tenant support
+- No production deployment packaging (Docker, CI, releases)
+- Live planner path requires an external LLM API key
+
+These limits are intentional at the current maturity stage. See [ROADMAP.md](ROADMAP.md).
+
+---
+
+## Future Direction
+
+The runtime is domain-agnostic at its core: templates, dependency graphs, and executor resolution do not assume a specific industry. Marketing research is the first domain implemented — planner output, agent executors, and project models target agency workflows today. Additional domains could reuse the same engine, scheduler, and resolver model with different templates and executors. Product Foundation work (brief, design, artifacts) and platform layers (API, persistence, deployment) are planned next; they are not part of the current runtime core.
 
 ---
 
 # License
 
-Private project.
+Source available. [All Rights Reserved](LICENSE).
+
+Viewing this repository does not grant permission to use, copy, modify,
+distribute, or create derivative works except with written permission
+from the copyright holder.
 
 ---
 

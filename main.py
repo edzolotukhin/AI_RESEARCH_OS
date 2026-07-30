@@ -1,70 +1,45 @@
-from domain.client_request import ClientRequest
-from domain.project import Project
+from application.composition_root import create_application
 
-from workflow.workflow_engine import WorkflowEngine
+from domain.project_brief import ProjectBrief
 
 
 def main():
 
-    request = ClientRequest(
-        source="Telegram",
-        client_name="Nestlé",
-        contact_person="John Smith",
-        contact_email="john@nestle.com",
-        contact_phone="+381600000000",
-        message="""
-Hello.
+    agency = create_application()
 
-We need a market research project in Serbia.
+    print(f"Initialized: {agency.initialized}")
 
-Please send us a commercial proposal.
-"""
+    agency.initialize()
+
+    print(f"Initialized: {agency.initialized}")
+
+    project = agency.create_project("Architecture Test")
+
+    project.brief = ProjectBrief(
+        client="Purina",
+        project_title="Brand Health 2026",
+        business_problem=(
+            "Assess the current market position of the brand."
+        ),
+        research_goal=(
+            "Evaluate brand awareness, usage and loyalty."
+        ),
     )
 
-    project = Project(
-        id="P-2026-001",
-        name="Nestlé Serbia Research"
-    )
+    print(f"Project created: {project.name}")
 
-    project.client_request = request
+    context = agency.start_research(project)
 
-    workflow = WorkflowEngine()
+    print(f"Workflow run: {context.workflow_run.id}")
+    print(f"Workflow status: {context.workflow_run.status}")
 
-    project = workflow.run(project)
+    if context.current_task:
+        print(f"Current task: {context.current_task.name}")
+        print(f"Executor: {context.current_task.executor_id}")
 
-    print()
-    print("===== CLIENT QUALIFICATION =====")
-    print()
+    agency.shutdown()
 
-    print("Summary:")
-    print(project.qualification.summary)
-
-    print()
-
-    print("Project understanding:")
-    print(project.qualification.project_understanding)
-
-    print()
-
-    print("Understanding score:")
-    print(project.qualification.understanding_score)
-
-    print()
-
-    print("Project state:")
-    print(project.qualification.project_state)
-
-    print()
-
-    print("Next question:")
-    print(project.qualification.next_question)
-
-    print()
-
-    print("Missing information:")
-
-    for item in project.qualification.missing_information:
-        print("-", item)
+    print(f"Initialized: {agency.initialized}")
 
 
 if __name__ == "__main__":
