@@ -16,15 +16,3 @@ class UnknownDependencyError(Exception):
             f"'{task_definition_id}' depends on unknown task "
             f"'{dependency_id}'."
         )
-
-
-class SchedulerStuckError(Exception):
-    """
-    Raised when pending tasks remain but none can progress.
-    """
-
-    def __init__(
-        self,
-        message: str = "Workflow has pending tasks that cannot progress.",
-    ) -> None:
-        super().__init__(message)

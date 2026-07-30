@@ -1,6 +1,9 @@
 import unittest
 from unittest.mock import Mock
 
+from application.runtime.workflow_completion_policy import (
+    WorkflowCompletionPolicy,
+)
 from application.task_executor import TaskExecutor
 from application.task_lifecycle_manager import TaskLifecycleManager
 from application.task_scheduler import TaskScheduler
@@ -44,6 +47,7 @@ class WorkflowEngineSchedulerTests(unittest.TestCase):
         self.engine = WorkflowEngine(
             scheduler=self.scheduler,
             task_executor=self.task_executor,
+            completion_policy=WorkflowCompletionPolicy(),
         )
 
         self.project = Project(id="p1", name="Test")
@@ -130,15 +134,18 @@ class WorkflowEngineSchedulerTests(unittest.TestCase):
         self.assertEqual(task_b.status, TaskStatus.SKIPPED)
         self.assertEqual(task_c.status, TaskStatus.SKIPPED)
 
-    def test_engine_raises_when_pending_tasks_cannot_progress(self):
-        from application.exceptions.scheduler_error import SchedulerStuckError
-
+    def test_engine_stops_without_exception_when_no_progress(self):
         task_a = make_task("a", status=TaskStatus.RUNNING)
         task_b = make_task("b", depends_on=["a"])
         workflow_run = make_workflow_run(task_a, task_b)
 
-        with self.assertRaises(SchedulerStuckError):
-            self._run_engine(workflow_run)
+        context = self._run_engine(workflow_run)
+
+        self.assertEqual(task_b.status, TaskStatus.WAITING)
+        self.assertEqual(
+            context.workflow_run.status,
+            WorkflowStatus.RUNNING,
+        )
 
 
 if __name__ == "__main__":

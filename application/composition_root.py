@@ -15,6 +15,9 @@ from application.prompts.file_template_loader import FileTemplateLoader
 from application.prompts.python_format_prompt_renderer import (
     PythonFormatPromptRenderer,
 )
+from application.runtime.workflow_completion_policy import (
+    WorkflowCompletionPolicy,
+)
 from application.task_executor import TaskExecutor
 from application.task_lifecycle_manager import TaskLifecycleManager
 from application.task_scheduler import TaskScheduler
@@ -121,6 +124,7 @@ def create_application(
 
     task_lifecycle_manager = TaskLifecycleManager()
     task_scheduler = TaskScheduler()
+    completion_policy = WorkflowCompletionPolicy()
 
     task_executor = TaskExecutor(
         resolver=executor_resolver,
@@ -130,6 +134,7 @@ def create_application(
     workflow_engine = WorkflowEngine(
         scheduler=task_scheduler,
         task_executor=task_executor,
+        completion_policy=completion_policy,
     )
 
     return Agency(
