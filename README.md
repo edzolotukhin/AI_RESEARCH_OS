@@ -147,7 +147,11 @@ AI_RESEARCH_OS/
 
 # License
 
-Private project.
+Source available. [All Rights Reserved](LICENSE).
+
+Viewing this repository does not grant permission to use, copy, modify,
+distribute, or create derivative works except with written permission
+from the copyright holder.
 
 ---
 

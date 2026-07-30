@@ -16,6 +16,8 @@ This project does not yet follow semantic versioning. Changes are grouped under 
 - Environment template (`.env.example`) for `OPENAI_API_KEY`
 - Subprocess tests for the offline demo
 - Examples README describing the offline demo path
+- Proprietary license ([LICENSE](LICENSE)) — All Rights Reserved
+- Repository legal posture clarified (source available, not open source)
 
 ### Changed
 
