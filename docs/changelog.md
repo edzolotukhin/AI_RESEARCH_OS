@@ -1,19 +1,7 @@
-# AI Research OS — Working Changelog
+# Changelog (redirect)
 
-> **Note:** This file is a legacy working log. For release history see root [CHANGELOG.md](../CHANGELOG.md). For current status see [README.md](../README.md) and [ROADMAP.md](../ROADMAP.md).
+The canonical changelog is **[CHANGELOG.md](../CHANGELOG.md)** at the repository root.
 
-## v0.0.1 (historical)
+This file is retained only as a redirect for older links. Do not add new entries here.
 
-Early snapshot before Phase A stabilization. Component names below reflect the state at that time, not the current architecture.
-
-### Добавлено
-
-- Workflow Engine
-- Project
-- Artifact
-- Knowledge Manager (stub)
-- In-memory project list (superseded by `ProjectRepository`)
-
-### Статус (historical)
-
-Initial working version.
+For current status see [README.md](../README.md), [ROADMAP.md](../ROADMAP.md), and [docs/backlog.md](backlog.md).

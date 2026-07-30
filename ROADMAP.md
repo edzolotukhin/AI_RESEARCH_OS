@@ -1,20 +1,23 @@
-# AI Research OS — Development Roadmap
+# AI Research OS — Roadmap
 
-Version: 1.1
+## Current State
+
+The synchronous orchestration runtime is **implemented, tested, and demonstrable**. Phase B runtime hardening is **complete**. A deterministic offline workflow demo is available. The repository has **289 automated tests**. The project is **not production-ready** — it is an early-stage research workflow runtime, not a full agency platform.
+
+| Dimension | Status |
+|-----------|--------|
+| Runtime core | Implemented and tested |
+| Planner + structured output | Integrated |
+| Offline demo | Available (`examples/deterministic_research_demo.py`) |
+| Live LLM demo path | Available (`main.py`, requires API key) |
+| Product Foundation | Not started |
+| Platform / infra (API, DB, Docker) | Planned only |
 
 ---
 
-# Development Philosophy
+## Completed Foundations
 
-AI Research OS is developed incrementally. Every sprint must produce a working result, preserve architectural consistency, and reduce technical debt when practical.
-
----
-
-# Phase A — Stabilization ✅ COMPLETED
-
-Objective: stabilize the synchronous research workflow runtime.
-
-Completed:
+### Phase A — Stabilization
 
 - Agency application facade and composition root
 - Planner → ResearchPlan → WorkflowTemplate → WorkflowRun pipeline
@@ -24,94 +27,100 @@ Completed:
 - TaskScheduler, TaskExecutor, ExecutorResolver
 - WorkflowCompletionPolicy
 - Structured output retry and planner payload contract
-- Architecture documentation sync (A.4)
-- Phase B Wave 1 cleanup: dead infrastructure, WorkflowPlan, legacy services, dead registries
+- Architecture documentation sync
+- Phase B Wave 1 cleanup: dead infrastructure, legacy services, dead registries
 
-Result: production demo path (`main.py` → `start_research`) runs end-to-end with mock or real LLM.
+### Phase B — Runtime Hardening
 
----
+- **AUD-016:** terminal `WorkflowRun` state when executor fails during execution
+- **AUD-017:** Agency initialization contract — lazy init in `start_research()`; explicit `initialize()` still supported
+- **AUD-018:** planner dependency graph validation inside structured-output retry boundary
+- Defense-in-depth graph validation retained at factory/domain layer
 
-# Phase B — Runtime Hardening 🚧 CURRENT
+### GF-00 — Repository Readiness (partial)
 
-Objective: harden runtime contracts and remove remaining legacy surface before product expansion.
-
-Pending:
-
-- AUD-016: terminal WorkflowRun state on executor failure
-- AUD-017: Agency initialization contract
-- AUD-018: planner dependency validation in retry path
-- Catalog/registry synchronization test coverage
-- Full runtime E2E test coverage
-- Planner runtime-executor semantics (`planner` as registered executor)
-
-Legacy tooling:
-
-- Migrate `scripts/sandbox.py` off `services/project_brief_builder.py`
+- **PR-A:** repository hygiene — untracked runtime project artifacts, hardened `.gitignore`
+- **PR-B:** packaging and environment contract — `requirements.txt`, `pyproject.toml`, `.env.example`
+- **PR-C:** deterministic offline research workflow demo; legacy misleading examples removed
 
 ---
 
-# Phase 2 — Client Qualification (planned)
+## Current Work
 
-Objective: client qualification workflow and Project Brief automation.
+**GitHub Face Sprint (GF-00, in progress)**
 
-Not started in production runtime. Client Manager agent exists but is not wired to `create_application()`.
+- Public documentation (README v2, architecture visuals)
+- CI and trust signals
+- License posture decision
+- Contribution and security documentation
 
----
+**Remaining runtime hardening (backlog, not blocking public docs)**
 
-# Phase 3 — Research Design (planned)
-
-Research Designer, methodology and sample design automation.
-
----
-
-# Phase 4 — Proposal Generation (planned)
-
-Commercial proposal generation workflow.
+- Catalog/registry desynchronization test coverage
+- Full runtime E2E test (all registered executors)
+- Planner runtime-executor semantics (`executor_id=planner` re-planning behavior)
+- Migrate `scripts/sandbox.py` off legacy `services/project_brief_builder.py`
 
 ---
 
-# Phase 5 — Research Execution (planned)
+## Next: Product Foundation
 
-Fieldwork and operational research support.
+Product-facing workflow expansion — **planned, not started** in production runtime:
 
----
+- Project Brief integration into the main research path
+- Research Design automation
+- Knowledge flow beyond static files
+- Artifacts lifecycle
+- Product-facing workflow templates
+- Client Manager wired to `create_application()`
 
-# Phase 6 — Analytics (planned)
-
-Analysis, reporting, and presentation generation.
-
----
-
-# Phase 7 — Knowledge Platform (planned)
-
-Corporate knowledge base and retrieval.
+Existing agent stubs (Client Manager, Research Designer, etc.) are **not integrated** into the production composition root.
 
 ---
 
-# Phase 8 — Business Platform (planned)
+## Later
 
-CRM, client portal, integrations.
+Platform and operational capabilities — **explicitly deferred**:
 
----
-
-# Post-Phase B — Open Source Polish (planned)
-
-Repository presentation only — not started:
-
-- README presentation and badges
-- Diagrams and assets
-- Repository metadata
-- Examples and demo polish
-- Releases, contributing, security, and license documentation
+- Persistence hardening beyond file-based `ProjectRepository`
+- Workflow resume / cancel semantics
+- Observability (logging, metrics, tracing)
+- FastAPI service layer
+- PostgreSQL storage
+- Docker deployment
+- Multi-user / multi-agency capabilities
+- CRM, client portal, integrations
 
 ---
 
-# Long-term Evolution
+## Explicitly Not Committed
 
-Multi-agent collaboration, workflow optimization, financial management, localization, multi-agency support — only after core runtime is stable.
+This roadmap does **not** promise:
+
+- Release dates or version timelines
+- Production SLA or uptime guarantees
+- Autonomous agency replacement of human researchers
+- PyPI package publication timeline
+- Full “operating system” platform completeness
 
 ---
 
-# Definition of Done
+## Maturity Labels
+
+Use these distinctions when reading project status:
+
+| Label | Meaning |
+|-------|---------|
+| **Implemented** | Code exists in the repository |
+| **Tested** | Covered by automated tests |
+| **Demonstrable** | Runnable example or demo path exists |
+| **Integrated** | Wired into `create_application()` / main runtime path |
+| **Production-ready** | Suitable for external deployment without further hardening |
+
+Phase B runtime hardening is **complete** at the runtime-core level. The overall product is **not production-ready**.
+
+---
+
+## Definition of Done (phase gate)
 
 A phase is complete when functionality works, architecture stays consistent, scoped documentation is updated, and the system is ready for the next phase.

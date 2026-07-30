@@ -10,7 +10,7 @@
 - [x] Architecture documentation sync (A.4)
 - [x] Wave 1 legacy cleanup (dead infrastructure, `WorkflowPlan`, services, registries)
 
-## Runtime Hardening (pending)
+## Runtime Hardening (remaining)
 
 - [x] AUD-016: terminal `WorkflowRun` state when executor fails during execution
 - [x] AUD-017: Agency initialization contract — `WorkflowEngine` remains self-starting via `_ensure_running()`; `Agency.start_research()` performs lazy initialization; explicit `Agency.initialize()` remains supported
@@ -38,6 +38,7 @@
 
 ## GitHub Face Sprint
 
-- [x] GF-00 / PR-A: Repository Hygiene — removed tracked `agency/projects/` runtime JSON from git index; hardened `.gitignore`; removed generated `strukture.txt`; runtime creates project storage on demand; 287/287 tests pass
-- [x] GF-00 / PR-B: Packaging and Environment Contract — runtime deps in `requirements.txt` (`openai`, `python-dotenv`); Python `>=3.11,<3.15` in `pyproject.toml`; `.env.example` for `OPENAI_API_KEY`; clean venv install verified; 287/287 tests pass
-- [x] GF-00 / PR-C: Examples Cleanup and Public Demo Contract — removed legacy misleading examples; added offline `examples/deterministic_research_demo.py` (WorkflowTemplate → WorkflowRun → WorkflowEngine); subprocess test; no repo artifacts; full suite pass
+- [x] GF-00 / PR-A: Repository Hygiene — removed tracked `agency/projects/` runtime JSON from git index; hardened `.gitignore`; removed generated `strukture.txt`; runtime creates project storage on demand; 289/289 tests pass
+- [x] GF-00 / PR-B: Packaging and Environment Contract — runtime deps in `requirements.txt` (`openai`, `python-dotenv`); Python `>=3.11,<3.15` in `pyproject.toml`; `.env.example` for `OPENAI_API_KEY`; clean venv install verified; 289/289 tests pass
+- [x] GF-00 / PR-C: Examples Cleanup and Public Demo Contract — removed legacy misleading examples; added offline `examples/deterministic_research_demo.py` (WorkflowTemplate → WorkflowRun → WorkflowEngine); subprocess test; no repo artifacts; 289/289 tests pass
+- [x] GF-00 / PR-D: Roadmap and Changelog Synchronization — `ROADMAP.md` and canonical `CHANGELOG.md` aligned with Phase B completion, GF-00 progress, and 289-test baseline
