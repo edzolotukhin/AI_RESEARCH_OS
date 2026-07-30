@@ -1,237 +1,117 @@
-# AI Research OS
+# AI Research OS — Development Roadmap
 
-# Development Roadmap
-
-Version: 1.0
+Version: 1.1
 
 ---
 
 # Development Philosophy
 
-AI Research OS is developed incrementally.
-
-Every sprint must:
-
-- produce a working result;
-- improve the real business workflow;
-- preserve architectural consistency;
-- reduce technical debt whenever practical.
-
-The roadmap represents the evolution of the operating system rather than a list of isolated features.
+AI Research OS is developed incrementally. Every sprint must produce a working result, preserve architectural consistency, and reduce technical debt when practical.
 
 ---
 
-# Phase 1 — Foundation ✅ COMPLETED
+# Phase A — Stabilization ✅ COMPLETED
 
-Objective:
-
-Build the architectural foundation of the platform.
+Objective: stabilize the synchronous research workflow runtime.
 
 Completed:
 
-- Project Vision
-- Architecture
-- Domain Model
-- Project as the central business entity
-- Workflow Engine
-- BaseAgent
-- Client Manager
-- Prompt infrastructure
-- Knowledge infrastructure
-- Project Registry
-- Core business structure
-- Initial documentation
+- Agency application facade and composition root
+- Planner → ResearchPlan → WorkflowTemplate → WorkflowRun pipeline
+- ADR-008 Executor Catalog Contract
+- Planner constrained to registered executor IDs
+- WorkflowEngine synchronous runtime loop
+- TaskScheduler, TaskExecutor, ExecutorResolver
+- WorkflowCompletionPolicy
+- Structured output retry and planner payload contract
+- Architecture documentation sync (A.4)
+- Phase B Wave 1 cleanup: dead infrastructure, WorkflowPlan, legacy services, dead registries
 
-Result:
-
-The platform architecture is stable.
+Result: production demo path (`main.py` → `start_research`) runs end-to-end with mock or real LLM.
 
 ---
 
-# Phase 2 — Client Qualification 🚧 CURRENT
+# Phase B — Runtime Hardening 🚧 CURRENT
 
-Objective:
+Objective: harden runtime contracts and remove remaining legacy surface before product expansion.
 
-Build the complete client qualification workflow.
+Pending:
 
-Components:
+- AUD-016: terminal WorkflowRun state on executor failure
+- AUD-017: Agency initialization contract
+- AUD-018: planner dependency validation in retry path
+- Catalog/registry synchronization test coverage
+- Full runtime E2E test coverage
+- Planner runtime-executor semantics (`planner` as registered executor)
 
-- Interactive qualification interview
-- Project qualification
-- Qualification scoring
-- Readiness validation
-- Project Brief generation
-- Business problem clarification
-- Client communication workflow
+Legacy tooling:
 
-Deliverable:
-
-A fully qualified Project ready for research design.
+- Migrate `scripts/sandbox.py` off `services/project_brief_builder.py`
 
 ---
 
-# Phase 3 — Research Design
+# Phase 2 — Client Qualification (planned)
 
-Objective:
+Objective: client qualification workflow and Project Brief automation.
 
-Automate research methodology design.
-
-Components:
-
-- Research Designer
-- Methodology selection
-- Sample design
-- Fieldwork planning
-- Timing estimation
-- Deliverables planning
-
-Deliverable:
-
-Complete Research Design.
+Not started in production runtime. Client Manager agent exists but is not wired to `create_application()`.
 
 ---
 
-# Phase 4 — Proposal Generation
+# Phase 3 — Research Design (planned)
 
-Objective:
-
-Generate commercial proposals.
-
-Components:
-
-- Proposal Generator
-- Pricing
-- Timeline
-- Deliverables
-- Commercial documents
-
-Deliverable:
-
-Professional client proposal.
+Research Designer, methodology and sample design automation.
 
 ---
 
-# Phase 5 — Research Execution
+# Phase 4 — Proposal Generation (planned)
 
-Objective:
-
-Support execution of research projects.
-
-Components:
-
-- Questionnaire Designer
-- Sampling
-- Fieldwork management
-- Quality control
-- Project monitoring
-
-Deliverable:
-
-Research-ready operational workflow.
+Commercial proposal generation workflow.
 
 ---
 
-# Phase 6 — Analytics
+# Phase 5 — Research Execution (planned)
 
-Objective:
-
-Support research analysis.
-
-Components:
-
-- Data analysis
-- AI insights
-- Chart generation
-- Reporting
-- Presentation generation
-
-Deliverable:
-
-Client-ready research report.
+Fieldwork and operational research support.
 
 ---
 
-# Phase 7 — Knowledge Platform
+# Phase 6 — Analytics (planned)
 
-Objective:
-
-Create a continuously learning organization.
-
-Components:
-
-- Best Practices
-- Playbooks
-- Internal standards
-- Templates
-- Project examples
-- Knowledge retrieval
-- Corporate memory
-
-Deliverable:
-
-Corporate AI Knowledge Base.
+Analysis, reporting, and presentation generation.
 
 ---
 
-# Phase 8 — Business Platform
+# Phase 7 — Knowledge Platform (planned)
 
-Objective:
+Corporate knowledge base and retrieval.
 
-Transform AI Research OS into a complete agency platform.
+---
 
-Components:
+# Phase 8 — Business Platform (planned)
 
-- CRM
-- Client Portal
-- Dashboards
-- Integrations
-- n8n automation
-- Notifications
-- Scheduling
+CRM, client portal, integrations.
 
-Deliverable:
+---
 
-Complete AI Operating System.
+# Post-Phase B — Open Source Polish (planned)
+
+Repository presentation only — not started:
+
+- README presentation and badges
+- Diagrams and assets
+- Repository metadata
+- Examples and demo polish
+- Releases, contributing, security, and license documentation
 
 ---
 
 # Long-term Evolution
 
-Future capabilities may include:
-
-- Multi-agent collaboration
-- Autonomous workflow optimization
-- Financial management
-- Resource planning
-- International localization
-- Multi-agency support
-- Marketplace integrations
-
-These features will be added only after the core operating system becomes stable.
-
----
-
-# Development Rules
-
-Before implementing any feature ask:
-
-1. Does it improve a real business workflow?
-2. Does it fit the architecture?
-3. Can it be implemented by extending existing components?
-4. Does it increase unnecessary complexity?
-5. Can it be demonstrated at the end of the sprint?
-
-If any answer is negative, reconsider the implementation.
+Multi-agent collaboration, workflow optimization, financial management, localization, multi-agency support — only after core runtime is stable.
 
 ---
 
 # Definition of Done
 
-A development phase is complete when:
-
-- functionality works;
-- architecture remains consistent;
-- documentation is updated;
-- CHANGELOG is updated;
-- no temporary solutions remain;
-- the system is ready for the next phase.
+A phase is complete when functionality works, architecture stays consistent, scoped documentation is updated, and the system is ready for the next phase.

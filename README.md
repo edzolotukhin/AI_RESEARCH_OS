@@ -36,7 +36,7 @@ Architecture aligned with synchronous workflow runtime (Planner → WorkflowTemp
 - **WorkflowEngine** synchronous runtime loop
 - **TaskScheduler**, **TaskExecutor**, **ExecutorResolver**
 - Registered agent executors: `planner`, `search`, `analysis`, `report`, `proposal`
-- OpenAI LLM integration, prompt repository, knowledge files
+- OpenAI LLM integration, file-based prompt templates (`application/prompts/`), knowledge files
 - Architecture documentation under `architecture/` and ADRs under `docs/adr/`
 
 ## In Progress
@@ -66,7 +66,7 @@ main.py → Agency → Planner → ResearchPlan → WorkflowTemplate → Workflo
 
 The **Project** is the central business aggregate. Executors run inside **WorkflowRun**; they do not replace project ownership.
 
-Executor references use **`executor_id`** only. See [ADR-008](docs/adr/ADR-008-Executor-Catalog-Contract.md).
+Executor references use **`executor_id`** only. **ExecutorCatalog** constrains planner output; **Registry** (`AgentRegistry`, `ToolRegistry`, `HumanExecutorRegistry`, `APIExecutorRegistry`) resolves executors at runtime. See [ADR-008](docs/adr/ADR-008-Executor-Catalog-Contract.md).
 
 ---
 
@@ -76,19 +76,21 @@ Executor references use **`executor_id`** only. See [ADR-008](docs/adr/ADR-008-E
 AI_RESEARCH_OS/
 ├── agency/              Application facade
 ├── agents/              Agent executors (planner, search, analysis, …)
-├── application/         Workflow engine, planner service, composition root
+├── application/         Workflow engine, planner service, composition root, config
 ├── architecture/        Architecture documentation
 ├── domain/              Business and runtime domain models
 ├── infrastructure/      LLM, documents, persistence adapters
 ├── loaders/             Agent and executor loading
-├── registry/            Executor and knowledge registries
+├── registry/            Runtime executor registries (agent, tool, human, api)
 ├── runtime/             Workflow context helpers
+├── services/            Legacy sandbox helper (project_brief_builder)
+├── scripts/             Development utilities (sandbox)
 ├── knowledge/           Static expertise files
 ├── prompts/             LLM prompt templates
 ├── docs/                Project documentation and ADRs
 ├── tests/
 ├── main.py
-├── config.py
+├── run_tests.py
 └── requirements.txt
 ```
 
@@ -99,7 +101,7 @@ AI_RESEARCH_OS/
 | `application/` | Orchestration, planner, workflow runtime |
 | `domain/` | Entities, value objects, state machines |
 | `infrastructure/` | External system adapters |
-| `registry/` | Executor registration |
+| `registry/` | Runtime executor lookup (`AgentRegistry`, `ToolRegistry`, `HumanExecutorRegistry`, `APIExecutorRegistry`) |
 | `architecture/` | Layer and domain model docs |
 | `docs/` | ADRs, development rules |
 

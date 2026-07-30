@@ -92,7 +92,7 @@ flowchart TD
 3. **PlannerAgent** calls the LLM, validates structured output, builds a **ResearchPlan**, maps it to **WorkflowTemplate**.
 4. **WorkflowRunFactory** instantiates **WorkflowRun** and **Task** instances from the template.
 5. **WorkflowEngine** owns the synchronous runtime loop: schedule → execute one ready task → repeat.
-6. **TaskScheduler** selects ready tasks from the dependency graph; it does not execute tasks.
+6. **TaskScheduler** updates task readiness from the dependency graph and selects ready tasks; it does not invoke executors.
 7. **TaskExecutor** resolves and invokes the executor for the selected task.
 8. **ExecutorResolver** maps `Task.executor_id` to a registered executor instance.
 9. **WorkflowCompletionPolicy** resolves final workflow status when no further progress is possible.

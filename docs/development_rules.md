@@ -5,7 +5,7 @@
 - Prefer minimal, focused changes aligned with existing layer boundaries.
 - Do not add new architectural abstractions without an ADR when the decision is significant.
 - One sprint = one completed, reviewable unit of work.
-- After behavioral changes, run the test suite (`pytest`).
+- After behavioral changes, run the test suite (`python run_tests.py`).
 
 ## Architecture Boundaries
 
