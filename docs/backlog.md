@@ -40,3 +40,4 @@
 
 - [x] GF-00 / PR-A: Repository Hygiene — removed tracked `agency/projects/` runtime JSON from git index; hardened `.gitignore`; removed generated `strukture.txt`; runtime creates project storage on demand; 287/287 tests pass
 - [x] GF-00 / PR-B: Packaging and Environment Contract — runtime deps in `requirements.txt` (`openai`, `python-dotenv`); Python `>=3.11,<3.15` in `pyproject.toml`; `.env.example` for `OPENAI_API_KEY`; clean venv install verified; 287/287 tests pass
+- [x] GF-00 / PR-C: Examples Cleanup and Public Demo Contract — removed legacy misleading examples; added offline `examples/deterministic_research_demo.py` (WorkflowTemplate → WorkflowRun → WorkflowEngine); subprocess test; no repo artifacts; full suite pass
