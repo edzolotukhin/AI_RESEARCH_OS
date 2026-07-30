@@ -35,3 +35,7 @@
 - Reviewer role
 - Event System
 - Handover
+
+## GitHub Face Sprint
+
+- [x] GF-00 / PR-A: Repository Hygiene — removed tracked `agency/projects/` runtime JSON from git index; hardened `.gitignore`; removed generated `strukture.txt`; runtime creates project storage on demand; 287/287 tests pass
