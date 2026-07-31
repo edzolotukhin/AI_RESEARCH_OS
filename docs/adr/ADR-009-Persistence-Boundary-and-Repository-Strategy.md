@@ -70,12 +70,18 @@ Introduce **repository ports** in the application layer (or a dedicated `applica
 |------|-----------|-------------------------------|----------------|
 | **ProjectRepository** | `Project` | `create`, `save`, `get_by_id`, `list`, `delete` | By project id; list with pagination/filter by status |
 | **WorkflowTemplateRepository** | `WorkflowTemplate` | `save_snapshot`, `get_by_id`, `list_for_project` | By template id; by owning project |
-| **WorkflowRunRepository** | `WorkflowRun` | `create_from_template`, `get_by_id`, `save`, `list_for_project` | By run id; by project + status |
+| **WorkflowRunRepository** | `WorkflowRun` | `create`, `get_by_id`, `save`, `list_for_project` | By run id; by project + status |
 | **ArtifactRepository** | `Artifact` | `save`, `get_by_id`, `list_for_project`, `list_for_run` | By project/run; optional type filter |
 | **KnowledgeRepository** | Knowledge item (new persistence record; maps from static files today) | `save`, `get_by_id`, `list_for_project`, `delete` | By project scope |
 | **ExecutionLogRepository** | Execution log entry | `append`, `list_for_run`, `list_for_task` | Append-only; by run/task, time-ordered |
 
 Avoid generic `CRUD[T]` repositories. Each port expresses aggregate semantics.
+
+**Repository construction rule:** Repositories persist aggregates; they never construct business objects. `ProjectFactory` creates projects; `WorkflowRunFactory` assembles runs from templates; repositories receive fully constructed aggregates via `create()` or `save()`.
+
+**ProjectRepository semantics:** `create()` accepts only new aggregates (rejects duplicate IDs, initializes version). `save()` accepts only existing aggregates (rejects missing IDs, enforces optimistic concurrency).
+
+**WorkflowRunRepository semantics:** `create(workflow_run, project_id=...)` persists a pre-built aggregate. Assembly from `WorkflowTemplate` belongs to `WorkflowRunFactory` in the application layer.
 
 **Partial updates:** Not exposed at the port level for `WorkflowRun`. Callers pass the aggregate (or a domain command that mutates it); the adapter persists the full consistent snapshot or uses internal row mapping with aggregate-level locking.
 
@@ -93,7 +99,7 @@ Avoid generic `CRUD[T]` repositories. Each port expresses aggregate semantics.
 
 | Scenario | Atomic unit | Idempotency note |
 |----------|-------------|------------------|
-| Create `WorkflowRun` + tasks + dependency graph | Single transaction | `create_from_template` keyed by client-supplied or generated run id; reject duplicate create with same id |
+| Create `WorkflowRun` + tasks + dependency graph | Single transaction | Application layer builds aggregate via `WorkflowRunFactory`; repository `create()` keyed by run id; reject duplicate create with same id |
 | Start task (claim / `RUNNING`) | Single transaction: load run, transition one task, save run | Worker retry must tolerate already-`RUNNING` same attempt token |
 | Complete task | Single transaction: task → terminal, persist result summary, save run | Completion handler idempotent on `(run_id, task_id, attempt_id)` |
 | Fail task | Same as complete | Same idempotency key |
@@ -188,6 +194,8 @@ Dockerfile and `compose.yaml` are **out of scope** for PF-01.
 | n8n integration topology | Later |
 | Deployment topology (single vs multi-service) | Later |
 | Whether to remove or repurpose `Project.runs` in-memory list | Future ADR |
+| `WorkflowRun.project_id` on domain model vs persistence record | PF-03 |
+| Full `Project` aggregate mapping (replace transitional file adapter) | PF-03 |
 
 ---
 

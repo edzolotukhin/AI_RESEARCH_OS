@@ -148,8 +148,7 @@ class AgencyLazyInitializationTests(unittest.TestCase):
         loader = Mock(spec=AgentLoader)
         agency = Agency(
             agent_loader=loader,
-            project_factory=Mock(),
-            project_repository=Mock(),
+            project_service=Mock(),
             planner_agent=Mock(),
             workflow_run_factory=Mock(),
             workflow_engine=Mock(),

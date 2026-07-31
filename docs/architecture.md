@@ -71,7 +71,7 @@ See [ADR-008: Executor Catalog Contract](adr/ADR-008-Executor-Catalog-Contract.m
 | [architecture/overview.md](../architecture/overview.md) | Layers, runtime flow, principles |
 | [architecture/layers.md](../architecture/layers.md) | Layer responsibilities and forbidden dependencies |
 | [architecture/domain-model.md](../architecture/domain-model.md) | Entities, TaskDefinition vs Task |
-| [architecture/product-foundation-persistence.md](../architecture/product-foundation-persistence.md) | PF-01 persistence contract, repository ports, transactions |
+| [architecture/product-foundation-persistence.md](../architecture/product-foundation-persistence.md) | PF-01 contract; PF-02 ports; PF-02.5 application services |
 | [ARCHITECTURE.md](../ARCHITECTURE.md) | Short entry point |
 | [adr/README.md](adr/README.md) | ADR index |
 | [adr/ADR-009-Persistence-Boundary-and-Repository-Strategy.md](adr/ADR-009-Persistence-Boundary-and-Repository-Strategy.md) | Persistence ADR |
@@ -80,11 +80,27 @@ See [ADR-008: Executor Catalog Contract](adr/ADR-008-Executor-Catalog-Contract.m
 
 # Out of Scope
 
-The following are **not** documented here because they are not part of the current implemented runtime:
+The following are **not** part of the current implemented runtime:
 
 - ExecutorDefinition registry type (beyond catalog IDs)
-- StartResearch, Product Foundation, Search Pipeline
+- StartResearch, Search Pipeline
 - Knowledge Graph, Execution Graph
 - Future integrations (n8n, web UI)
 
-Document only what exists in production code today.
+# Product Foundation status
+
+**Completed:**
+
+- **PF-01** — Persistence Architecture Contract ([ADR-009](adr/ADR-009-Persistence-Boundary-and-Repository-Strategy.md))
+- **PF-02** — Repository ports, in-memory adapters, contract tests (`application/ports/`)
+- **PF-02.5** — Application persistence services (`application/services/`)
+
+**Still out of scope (not implemented):**
+
+- PostgreSQL adapter and migrations
+- SQLAlchemy / ORM models
+- Docker / Docker Compose
+- FastAPI application boundary
+- Redis
+- Background workflow execution
+- Production deployment

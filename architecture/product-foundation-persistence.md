@@ -86,10 +86,73 @@ flowchart TB
 |------------|--------------------|--------------------|------------------|---------------------|-----------------|------------------------|-------------------|
 | **ProjectRepository** | `Project` | `create`, `save`, `get_by_id`, `list`, `delete` | By id; list with filters | Per project save | Full aggregate replace | `version` / `updated_at` on save | N/A |
 | **WorkflowTemplateRepository** | `WorkflowTemplate` (+ definitions) | `save_snapshot`, `get_by_id`, `list_for_project` | By template id; by project | Per template snapshot | No — immutable snapshot | Optional content hash dedup | TaskDefinitions embedded |
-| **WorkflowRunRepository** | `WorkflowRun` (+ tasks, graph) | `create_from_template`, `get_by_id`, `save`, `list_for_project` | By run id; by project + status | Per run lifecycle transition | No — aggregate save | Required on `save` | Tasks and graph via root |
+| **WorkflowRunRepository** | `WorkflowRun` (+ tasks, graph) | `create`, `get_by_id`, `save`, `list_for_project` | By run id; by project + status | Per run lifecycle transition | No — aggregate save | Required on `save` | Tasks and graph via root |
 | **ArtifactRepository** | `Artifact` | `save`, `get_by_id`, `list_for_project`, `list_for_run` | By project/run/type | Metadata + linkage | Metadata fields only after create | On metadata update | Optional run/project FK |
 | **KnowledgeRepository** | Knowledge item | `save`, `get_by_id`, `list_for_project`, `delete` | By project scope | Per item | Allowed for content/metadata | On update | N/A |
-| **ExecutionLogRepository** | Log entry | `append`, `list_for_run`, `list_for_task` | Time-ordered by run/task | Per append | N/A (append-only) | N/A | Scoped to run/task |
+| **ExecutionLogStore** | Log entry | `append`, `list_for_run`, `list_for_task` | Time-ordered by run/task | Per append | N/A (append-only) | N/A | Scoped to run/task |
+
+### Port semantics (PF-02)
+
+**ProjectRepository**
+
+| Operation | Responsibility |
+|-----------|----------------|
+| `create(project)` | Persist a **new** aggregate only. Rejects existing IDs (`DuplicateEntityError`). Initializes version to 0 and fully persists the supported representation. Does not construct business objects — `ProjectFactory` creates aggregates. |
+| `save(project)` | Persist modifications to an **existing** aggregate. Rejects missing aggregates (`EntityNotFoundError`). Supports optimistic concurrency via `expected_version`. |
+| `delete(project_id, expected_version=...)` | Remove an existing aggregate. Verifies existence and optional version before delete. |
+
+**WorkflowRunRepository**
+
+| Operation | Responsibility |
+|-----------|----------------|
+| `create(workflow_run, project_id=...)` | Persist a **pre-built** aggregate only. `WorkflowRunFactory` assembles tasks and graph in the application layer. Repository does not construct domain state. |
+| `save(workflow_run)` | Persist lifecycle transitions to an existing run. |
+
+**Repositories never construct business objects.**
+
+### WorkflowRun project ownership
+
+A `WorkflowRun` belongs to exactly one `Project`. The domain model does not yet expose `project_id` on `WorkflowRun` (deferred to avoid domain changes in PF-02). Durable persistence requires `project_id` as part of run identity and indexing — tracked in adapter storage today, to be formalized in PF-03 (PostgreSQL schema + mapper).
+
+### File adapter status
+
+`FileProjectRepository` is a **transitional adapter** preserving the legacy JSON-on-disk layout. It does **not** support complete `Project` aggregate round-trip (nested optional fields are not restored). The PostgreSQL adapter (PF-03) will implement the full persistence model with dedicated mappers.
+
+### Contract tests vs adapter tests
+
+| Suite | Location | Purpose |
+|-------|----------|---------|
+| **Repository contract tests** | `tests/application/ports/` | Verify port semantics shared by all compliant adapters: aggregate create/save boundaries, optimistic concurrency, duplicate detection, round-trip, append-only log semantics |
+| **Adapter-specific tests** | e.g. `tests/infrastructure/persistence/` | Verify implementation-specific behavior (transitional file layout, partial round-trip limits). Not part of the generic port contract. |
+
+### Application services (PF-02.5)
+
+External entry points (API, CLI, workers, n8n) must call **application services**, not repository ports directly.
+
+```
+Agency / API / CLI / Worker
+        ↓
+Application Services  (application/services/)
+        ↓
+Repository Ports
+        ↓
+Persistence Adapters
+```
+
+| Service | Coordinates | Factory role |
+|---------|-------------|--------------|
+| `ProjectService` | Project CRUD use cases | `ProjectFactory` constructs aggregates |
+| `WorkflowService` | Template snapshots and run persistence | `WorkflowRunFactory` constructs runs |
+| `ArtifactService` | Artifact metadata (`ArtifactRecord`) | None — caller supplies record |
+| `KnowledgeService` | Knowledge items (`KnowledgeItem`) | None — caller supplies record |
+
+**Agency** is a high-level facade: project creation delegates to `ProjectService`; runtime execution (`start_research`) still uses `WorkflowRunFactory` in-memory until PF-03 wiring.
+
+**ExecutionLogService:** Not introduced in PF-02.5. `ExecutionLogStore` remains a port for direct injection at the composition root when worker/API layers need append semantics. A dedicated service will be added when event assembly orchestration is required (PF-06).
+
+**Unit of Work:** Not implemented. Each service method performs one repository transaction. Cross-repository atomic orchestration is deferred until a concrete use case requires it (PF-03 PostgreSQL transactions).
+
+**Exception policy:** Services propagate `DuplicateEntityError`, `EntityNotFoundError`, and `ConcurrentModificationError` unchanged. Transport-layer translation belongs to PF-05 (FastAPI).
 
 ---
 
@@ -213,14 +276,14 @@ FastAPI schemas ── separate ──► map to/from domain at API boundary
 
 | Area | Finding |
 |------|---------|
-| Repository abstractions | Single concrete `ProjectRepository` in infrastructure; no port interface |
-| File persistence | `create_project` + `save_project` only; JSON via `asdict(project)` |
-| Unimplemented | `load_project`, `list_projects`, `delete_project` → `NotImplementedError` |
-| Dependency direction | `Agency`, `ApplicationConfig`, `ApplicationOverrides` import concrete `ProjectRepository` |
+| Repository abstractions | Ports in `application/ports/`; `FileProjectRepository` + in-memory adapters |
+| File persistence | `FileProjectRepository` — transitional adapter; partial aggregate round-trip only |
+| Unimplemented runtime wiring | Workflow/template/run repositories not yet wired into `Agency` execution path |
+| Dependency direction | `Agency` and `ApplicationOverrides` depend on `ProjectRepository` port |
 | Domain purity | Domain layer does not import infrastructure (verified) |
-| ID generation | `uuid4()` for projects and tasks; workflow run id caller-supplied (default `"run-001"`) |
+| ID generation | `uuid4()` for projects, tasks, and workflow runs when id not supplied |
 | Serialization risk | Populating `Project.runs` would break JSON round-trip (`TaskDependencyGraph`, enums) |
-| Execution log | No domain type yet — introduce at persistence boundary in PF-02 |
+| Execution log | `ExecutionLogEntry` + `ExecutionLogStore` port (append-only) |
 | Artifacts | Domain stub; `WorkflowRun.artifacts` returns empty list |
 
 ---
@@ -244,8 +307,9 @@ FastAPI schemas ── separate ──► map to/from domain at API boundary
 | Phase | Scope | Depends on |
 |-------|-------|------------|
 | **PF-01** | Persistence contract (this doc + ADR-009) | Phase B runtime |
-| **PF-02** | Repository ports + in-memory adapters + contract tests | PF-01 |
-| **PF-03** | PostgreSQL adapter + Alembic migrations + mappers | PF-02 |
+| **PF-02** | Repository ports + in-memory adapters + contract tests | PF-01 — **complete** |
+| **PF-02.5** | Application persistence services | PF-02 — **complete** |
+| **PF-03** | PostgreSQL adapter + Alembic migrations + mappers | PF-02.5 |
 | **PF-04** | Docker Compose dev environment | PF-03 |
 | **PF-05** | FastAPI application boundary | PF-02 (ports), PF-03 (optional for full stack) |
 | **PF-06** | Background workflow execution + reclaim policy | PF-03, PF-05 |
