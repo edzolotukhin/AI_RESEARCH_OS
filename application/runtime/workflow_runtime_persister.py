@@ -102,4 +102,3 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
             ) from exc
 
         self._last_fingerprint = fingerprint
-
