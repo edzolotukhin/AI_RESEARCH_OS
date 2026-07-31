@@ -199,6 +199,20 @@ Dockerfile and `compose.yaml` are **out of scope** for PF-01.
 
 ---
 
+## PF-03 implementation notes (2026-07-31)
+
+PF-03 adds `infrastructure/persistence/postgresql/` with SQLAlchemy 2.x ORM models, explicit mappers, repository adapters, Alembic migrations, and Docker Compose (PostgreSQL only). Key outcomes:
+
+- **Backend selection:** `PERSISTENCE_BACKEND=file|memory|postgresql` via `build_persistence_bundle()` in the composition root.
+- **WorkflowRun ownership:** `project_id` on the domain aggregate and `workflow_runs.project_id` FK.
+- **Artifact persistence:** `ArtifactRecord` remains an application persistence DTO (not a domain aggregate).
+- **Optimistic concurrency:** atomic `UPDATE … WHERE version = expected` for `Project` and `WorkflowRun`.
+- **Execution logs:** append-only rows; duplicate `event_id` is an idempotent no-op.
+- **Unit of Work:** not introduced; one repository operation per service method with per-method session/transaction in adapters.
+- **Schema:** normalized tables for aggregate roots and task children; JSONB for nested Project value objects and dependency graph snapshots.
+
+---
+
 ## Related ADRs
 
 - [ADR-008: Executor Catalog Contract](ADR-008-Executor-Catalog-Contract.md)

@@ -208,6 +208,66 @@ class ExecutionLogStoreContractTests:
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].event_id, "event-a")
 
+    def test_list_for_run_returns_append_order(self) -> None:
+        self.store.append(
+            ExecutionLogEntry(
+                event_id="event-first",
+                run_id="run-1",
+                event_type="task.started",
+                timestamp="2026-07-31T10:00:00+00:00",
+            )
+        )
+        self.store.append(
+            ExecutionLogEntry(
+                event_id="event-second",
+                run_id="run-1",
+                event_type="task.completed",
+                timestamp="2026-07-31T10:00:00+00:00",
+            )
+        )
+        self.store.append(
+            ExecutionLogEntry(
+                event_id="event-third",
+                run_id="run-1",
+                event_type="task.started",
+                timestamp="2026-07-31T09:00:00+00:00",
+            )
+        )
+
+        entries = self.store.list_for_run("run-1")
+
+        self.assertEqual(
+            [entry.event_id for entry in entries],
+            ["event-first", "event-second", "event-third"],
+        )
+
+    def test_list_for_task_returns_append_order_with_equal_timestamps(self) -> None:
+        self.store.append(
+            ExecutionLogEntry(
+                event_id="task-event-first",
+                run_id="run-1",
+                task_id="task-a",
+                event_type="task.started",
+                timestamp="2026-07-31T10:00:00+00:00",
+            )
+        )
+        self.store.append(
+            ExecutionLogEntry(
+                event_id="task-event-second",
+                run_id="run-1",
+                task_id="task-a",
+                event_type="task.progress",
+                timestamp="2026-07-31T10:00:00+00:00",
+            )
+        )
+
+        entries = self.store.list_for_task("run-1", "task-a")
+
+        self.assertEqual(
+            [entry.event_id for entry in entries],
+            ["task-event-first", "task-event-second"],
+        )
+
 
 class InMemoryExecutionLogStoreContractTests(
     ExecutionLogStoreContractTests,

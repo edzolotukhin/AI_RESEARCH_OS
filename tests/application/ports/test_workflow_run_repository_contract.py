@@ -107,28 +107,65 @@ class WorkflowRunRepositoryContractTests:
 
         version = self.repository.save(
             workflow_run,
-            expected_version=1,
+            expected_version=0,
             task_results={task_id: {"summary": "done"}},
         )
 
         loaded = self.repository.get_by_id("run-results")
         assert loaded is not None
         self.assertEqual(loaded.tasks[0].status, TaskStatus.COMPLETED)
-        self.assertEqual(version, 2)
+        self.assertEqual(version, 1)
         self.assertEqual(
             self.repository.get_task_results("run-results"),
             {task_id: {"summary": "done"}},
         )
 
-    def test_save_with_stale_expected_version_raises(self) -> None:
+    def test_create_initializes_version_zero(self) -> None:
+        workflow_run = self.workflow_run_factory.create(
+            _template("template-version-init"),
+            run_id="run-version-init",
+        )
+        self.repository.create(workflow_run, project_id="project-1")
+
+        first_version = self.repository.save(workflow_run, expected_version=0)
+        self.assertEqual(first_version, 1)
+
+    def test_first_save_with_stale_expected_version_raises(self) -> None:
+        workflow_run = self.workflow_run_factory.create(
+            _template("template-version-stale-first"),
+            run_id="run-version-stale-first",
+        )
+        self.repository.create(workflow_run, project_id="project-1")
+
+        with self.assertRaises(ConcurrentModificationError):
+            self.repository.save(workflow_run, expected_version=1)
+
+    def test_save_with_stale_expected_version_after_first_save_raises(self) -> None:
         workflow_run = self.workflow_run_factory.create(
             _template("template-version"),
             run_id="run-version",
         )
         self.repository.create(workflow_run, project_id="project-1")
+        self.repository.save(workflow_run, expected_version=0)
 
         with self.assertRaises(ConcurrentModificationError):
             self.repository.save(workflow_run, expected_version=0)
+
+    def test_second_save_increments_version(self) -> None:
+        workflow_run = self.workflow_run_factory.create(
+            _template("template-version-second"),
+            run_id="run-version-second",
+        )
+        self.repository.create(workflow_run, project_id="project-1")
+
+        first_version = self.repository.save(workflow_run, expected_version=0)
+        second_version = self.repository.save(
+            workflow_run,
+            expected_version=first_version,
+        )
+
+        self.assertEqual(first_version, 1)
+        self.assertEqual(second_version, 2)
 
     def test_list_for_project_filters_by_status(self) -> None:
         first = self.workflow_run_factory.create(
@@ -144,7 +181,7 @@ class WorkflowRunRepositoryContractTests:
         self.repository.create(second, project_id="project-list")
 
         second.ready()
-        self.repository.save(second, expected_version=1)
+        self.repository.save(second, expected_version=0)
 
         all_runs = self.repository.list_for_project("project-list")
         ready_runs = self.repository.list_for_project(

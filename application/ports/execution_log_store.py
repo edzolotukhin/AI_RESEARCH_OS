@@ -29,5 +29,5 @@ class ExecutionLogStore(Protocol):
         run_id: str,
         task_id: str,
     ) -> list[ExecutionLogEntry]:
-        """Return log entries for a specific task within a run."""
+        """Return log entries for a specific task within a run in append order."""
         ...

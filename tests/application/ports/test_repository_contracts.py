@@ -9,7 +9,10 @@ from __future__ import annotations
 import unittest
 from abc import abstractmethod
 
-from application.persistence.exceptions import ConcurrentModificationError
+from application.persistence.exceptions import (
+    ConcurrentModificationError,
+    DuplicateEntityError,
+)
 from application.persistence.records import ArtifactRecord, KnowledgeItem
 from application.ports.artifact_repository import ArtifactRepository
 from application.ports.knowledge_repository import KnowledgeRepository
@@ -65,6 +68,35 @@ class WorkflowTemplateRepositoryContractTests:
             {template.id for template in templates},
             {"template-a", "template-b"},
         )
+
+    def test_save_snapshot_rejects_duplicate_id(self) -> None:
+        original = WorkflowTemplate(
+            id="template-dup",
+            name="Original",
+            task_definitions=[
+                TaskDefinition(
+                    id="task-a",
+                    name="Task A",
+                    executor_id="planner",
+                    executor_type=ExecutorType.AGENT,
+                ),
+            ],
+        )
+        duplicate = WorkflowTemplate(
+            id="template-dup",
+            name="Overwrite Attempt",
+            task_definitions=[],
+        )
+
+        self.repository.save_snapshot(original, project_id="project-1")
+
+        with self.assertRaises(DuplicateEntityError):
+            self.repository.save_snapshot(duplicate, project_id="project-1")
+
+        loaded = self.repository.get_by_id("template-dup")
+        assert loaded is not None
+        self.assertEqual(loaded.name, "Original")
+        self.assertEqual(len(loaded.task_definitions), 1)
 
 
 class InMemoryWorkflowTemplateRepositoryContractTests(

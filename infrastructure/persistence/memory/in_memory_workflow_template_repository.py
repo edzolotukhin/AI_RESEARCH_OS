@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 
+from application.persistence.exceptions import DuplicateEntityError
 from application.ports.workflow_template_repository import (
     WorkflowTemplateRepository,
 )
@@ -21,6 +22,11 @@ class InMemoryWorkflowTemplateRepository:
         *,
         project_id: str,
     ) -> None:
+        if template.id in self._templates:
+            raise DuplicateEntityError(
+                f"WorkflowTemplate already exists: {template.id}"
+            )
+
         self._templates[template.id] = copy.deepcopy(template)
         project_templates = self._project_index.setdefault(project_id, [])
         if template.id not in project_templates:

@@ -27,7 +27,7 @@ class WorkflowRunRepository(Protocol):
         Persist a new, fully constructed WorkflowRun aggregate.
 
         The aggregate must already exist (built by WorkflowRunFactory).
-        Initializes persistence version to 1.
+        Initializes persistence version to 0.
         Raises DuplicateEntityError when workflow_run.id already exists.
         """
         ...

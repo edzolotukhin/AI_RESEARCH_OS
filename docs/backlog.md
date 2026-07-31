@@ -28,9 +28,9 @@
 - [x] **PF-01** Persistence Architecture Contract — [ADR-009](adr/ADR-009-Persistence-Boundary-and-Repository-Strategy.md), [architecture/product-foundation-persistence.md](../architecture/product-foundation-persistence.md)
 - [x] **PF-02** Persistence ports and in-memory contract tests
 - [x] **PF-02.5** Application persistence services
-- [ ] **PF-03** PostgreSQL adapter and migrations
-- [ ] Full Project aggregate mapping (complete round-trip; file adapter is transitional)
-- [ ] Persist WorkflowRun `project_id` ownership (required for durable run queries in PF-03)
+- [x] **PF-03** PostgreSQL adapter, Alembic migrations, Docker Compose (postgres only)
+- [x] Full Project aggregate PostgreSQL round-trip (JSONB nested structures)
+- [x] Persist WorkflowRun `project_id` ownership on domain aggregate
 - [ ] **PF-04** Docker Compose development environment
 - [ ] **PF-05** FastAPI application boundary
 - [ ] **PF-06** Background workflow execution

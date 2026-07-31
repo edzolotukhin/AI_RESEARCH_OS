@@ -10,8 +10,8 @@ The synchronous orchestration runtime is **implemented, tested, and demonstrable
 | Planner + structured output | Integrated |
 | Offline demo | Available (`examples/deterministic_research_demo.py`) |
 | Live LLM demo path | Available (`main.py`, requires API key) |
-| Product Foundation | In progress — PF-02.5 application persistence services ([ADR-009](docs/adr/ADR-009-Persistence-Boundary-and-Repository-Strategy.md)) |
-| Platform / infra (API, DB, Docker) | Planned only (PF-03–PF-06) |
+| Product Foundation | PF-03 PostgreSQL adapter implemented; PF-04+ planned ([ADR-009](docs/adr/ADR-009-Persistence-Boundary-and-Repository-Strategy.md)) |
+| Platform / infra (API, production Docker) | Planned (PF-05–PF-06); local PostgreSQL via Compose available |
 
 ---
 

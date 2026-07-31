@@ -20,6 +20,7 @@ class WorkflowRunFactory:
         self,
         template: WorkflowTemplate,
         run_id: str | None = None,
+        project_id: str = "",
     ) -> WorkflowRun:
         resolved_run_id = run_id or str(uuid4())
         tasks = [
@@ -34,6 +35,7 @@ class WorkflowRunFactory:
 
         workflow_run = WorkflowRun(
             id=resolved_run_id,
+            project_id=project_id,
             workflow_template_id=template.id,
             tasks=tasks,
             dependency_graph=dependency_graph,

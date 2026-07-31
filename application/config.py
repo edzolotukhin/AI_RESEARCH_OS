@@ -19,6 +19,8 @@ class ApplicationConfig:
     llm_model: str = "gpt-5"
     llm_max_tokens: int = 4096
     projects_root: str = "agency/projects"
+    persistence_backend: str = "file"
+    database_url: str | None = None
 
 
 @dataclass

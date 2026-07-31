@@ -15,7 +15,7 @@ architecture itself.
 | | |
 |---|---|
 | **Phase** | Phase B runtime hardening complete |
-| **Tests** | 289 automated tests |
+| **Tests** | 384 automated tests (352 run without PostgreSQL; 32 PostgreSQL-gated tests skipped unless configured) |
 | **Demo** | Deterministic offline demo (`examples/deterministic_research_demo.py`) |
 | **Architecture** | Definition / runtime separation; dependency-aware workflow execution |
 | **License** | Source available · [All Rights Reserved](LICENSE) |
@@ -33,7 +33,9 @@ Not production-ready. Early-stage runtime core with a public repository.
 - Dependency graph validation at planner contract and domain layers
 - Registered agent executors: `planner`, `search`, `analysis`, `report`, `proposal`
 - OpenAI integration for live planning path (`main.py`, requires API key)
-- File-based **ProjectRepository** and architecture documentation
+- Repository ports, application persistence services, and selectable backends (`file`, `memory`, `postgresql`)
+- PostgreSQL persistence adapter (SQLAlchemy 2.x, Alembic, Docker Compose for local PostgreSQL)
+- File-based **ProjectRepository** (transitional) and architecture documentation
 
 ---
 
@@ -42,8 +44,7 @@ Not production-ready. Early-stage runtime core with a public repository.
 - Client Manager wired to production runtime
 - Product Foundation workflows (brief, design, artifacts lifecycle)
 - FastAPI service layer
-- PostgreSQL storage
-- Docker deployment
+- Production Docker deployment (PostgreSQL-only Compose is available for local dev)
 - Production deployment packaging
 - Multi-user platform capabilities
 - CI pipeline and release versioning
@@ -110,7 +111,47 @@ The OpenAI SDK reads it after `python-dotenv` loads the file.
 | `python run_tests.py` | No |
 | `python main.py` | Yes |
 
-No other environment variables are required by the current runtime.
+### Persistence
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `PERSISTENCE_BACKEND` | `file` | `file`, `memory`, or `postgresql` |
+| `DATABASE_URL` | — | Required when `PERSISTENCE_BACKEND=postgresql` |
+
+Example PostgreSQL URL (see `.env.example`):
+
+```text
+postgresql+psycopg://ai_research_os:ai_research_os_dev@localhost:5432/ai_research_os
+```
+
+Local PostgreSQL (Docker Compose):
+
+```bash
+docker compose up -d postgres
+set DATABASE_URL=postgresql+psycopg://ai_research_os:ai_research_os_dev@localhost:5432/ai_research_os
+alembic upgrade head
+set PERSISTENCE_BACKEND=postgresql
+python run_tests.py
+```
+
+PostgreSQL verification (optional; 42 tests — 32 repository contracts + 10 integration; require a **test** database name and explicit opt-in):
+
+```powershell
+.\scripts\test_unit.ps1
+.\scripts\test_postgres.ps1
+.\scripts\test_all.ps1
+```
+
+Manual commands (equivalent to `test_postgres.ps1`):
+
+```powershell
+$env:POSTGRESQL_INTEGRATION_TESTS="1"
+$env:DATABASE_URL_TEST="postgresql+psycopg://ai_research_os:ai_research_os_dev@localhost:5432/ai_research_os_test"
+python -m unittest discover -s tests/integration/postgresql -p "test_*.py" -v
+python -m unittest tests.application.ports.test_postgresql_repository_contracts -v
+```
+
+No other environment variables are required by the default runtime.
 
 ---
 
@@ -141,7 +182,7 @@ The demo uses in-memory storage only. It does not call OpenAI, does not require 
 python run_tests.py
 ```
 
-The suite currently runs **289 automated tests**. It validates runtime orchestration, planner contracts, dependency graphs, executor resolution, structured-output retry, agency integration, and the offline demo subprocess path. Coverage metrics are not published.
+The suite discovers **384 automated tests**; **352** run and pass by default (**32** PostgreSQL contract and integration tests are skipped unless `POSTGRESQL_INTEGRATION_TESTS=1` and `DATABASE_URL_TEST` point at a test database). With PostgreSQL configured, all **42** PostgreSQL-gated tests run (0 skipped). It validates runtime orchestration, planner contracts, dependency graphs, executor resolution, structured-output retry, agency integration, persistence ports, and the offline demo subprocess path. Coverage metrics are not published.
 
 ---
 

@@ -67,6 +67,7 @@ class WorkflowService:
         workflow_run = self._workflow_run_factory.create(
             template=template,
             run_id=run_id,
+            project_id=project_id,
         )
         self._workflow_run_repository.create(
             workflow_run,

@@ -47,21 +47,7 @@ from application.services.artifact_service import ArtifactService
 from application.services.knowledge_service import KnowledgeService
 from application.services.project_service import ProjectService
 from application.services.workflow_service import WorkflowService
-from infrastructure.persistence.file.file_project_repository import (
-    FileProjectRepository,
-)
-from infrastructure.persistence.memory.in_memory_artifact_repository import (
-    InMemoryArtifactRepository,
-)
-from infrastructure.persistence.memory.in_memory_knowledge_repository import (
-    InMemoryKnowledgeRepository,
-)
-from infrastructure.persistence.memory.in_memory_workflow_run_repository import (
-    InMemoryWorkflowRunRepository,
-)
-from infrastructure.persistence.memory.in_memory_workflow_template_repository import (
-    InMemoryWorkflowTemplateRepository,
-)
+from infrastructure.persistence.persistence_factory import build_persistence_bundle
 
 from loaders.agent_loader import AgentLoader
 
@@ -82,9 +68,13 @@ def create_application(
 
     registry = overrides.registry or Registry()
 
-    project_repository = overrides.project_repository or FileProjectRepository(
+    persistence = build_persistence_bundle(
+        persistence_backend=config.persistence_backend,
         projects_root=config.projects_root,
+        database_url=config.database_url,
     )
+
+    project_repository = overrides.project_repository or persistence.project_repository
 
     project_factory = ProjectFactory()
 
@@ -98,17 +88,17 @@ def create_application(
     )
 
     workflow_service = WorkflowService(
-        workflow_template_repository=InMemoryWorkflowTemplateRepository(),
-        workflow_run_repository=InMemoryWorkflowRunRepository(),
+        workflow_template_repository=persistence.workflow_template_repository,
+        workflow_run_repository=persistence.workflow_run_repository,
         workflow_run_factory=workflow_run_factory,
     )
 
     artifact_service = ArtifactService(
-        artifact_repository=InMemoryArtifactRepository(),
+        artifact_repository=persistence.artifact_repository,
     )
 
     knowledge_service = KnowledgeService(
-        knowledge_repository=InMemoryKnowledgeRepository(),
+        knowledge_repository=persistence.knowledge_repository,
     )
 
     # Prepared for PF-03/PF-05 entry points; Agency uses ProjectService only today.

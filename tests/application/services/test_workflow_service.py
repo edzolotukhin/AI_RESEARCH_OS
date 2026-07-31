@@ -69,6 +69,7 @@ class WorkflowServiceTests(unittest.TestCase):
         factory.create.assert_called_once_with(
             template=template,
             run_id="run-service-1",
+            project_id="project-1",
         )
         self.assertEqual(result.id, "run-service-1")
         self.assertIsNotNone(self.run_repository.get_by_id("run-service-1"))
@@ -115,7 +116,7 @@ class WorkflowServiceTests(unittest.TestCase):
         )
 
         with self.assertRaises(ConcurrentModificationError):
-            self.service.save_workflow_run(workflow_run, expected_version=0)
+            self.service.save_workflow_run(workflow_run, expected_version=1)
 
     def test_get_task_results_round_trip(self) -> None:
         workflow_run = self.service.create_workflow_run(
@@ -127,7 +128,7 @@ class WorkflowServiceTests(unittest.TestCase):
 
         self.service.save_workflow_run(
             workflow_run,
-            expected_version=1,
+            expected_version=0,
             task_results={task_id: {"summary": "done"}},
         )
 

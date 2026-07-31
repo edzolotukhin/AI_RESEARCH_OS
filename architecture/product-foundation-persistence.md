@@ -1,6 +1,6 @@
 # Product Foundation — Persistence Architecture
 
-This document defines the persistence contract for Product Foundation (PF-01). It does **not** introduce PostgreSQL, ORM models, migrations, or API code. Runtime behavior remains unchanged until PF-02+.
+This document defines the persistence contract for Product Foundation. PF-01 through PF-03 are implemented: repository ports, in-memory and file adapters, application services, and a PostgreSQL adapter with SQLAlchemy ORM models, mappers, Alembic migrations, and Docker Compose for local PostgreSQL.
 
 **Authoritative decision record:** [ADR-009: Persistence Boundary and Repository Strategy](../docs/adr/ADR-009-Persistence-Boundary-and-Repository-Strategy.md)
 
@@ -56,7 +56,7 @@ flowchart TB
     T --> WR
 ```
 
-**Current state:** Only `Project` metadata is partially persisted via `infrastructure/project_repository.py` (JSON + directory scaffold). All workflow runtime objects are in-memory for the duration of `Agency.start_research()`.
+**Current state:** `Project` is persisted via `ProjectRepository` adapters (file, in-memory, PostgreSQL). Workflow templates, runs, artifacts, knowledge items, and execution logs are persisted through their respective ports. PostgreSQL is selected explicitly via `PERSISTENCE_BACKEND=postgresql` in the composition root; default local behavior remains file + in-memory.
 
 ---
 
@@ -105,18 +105,22 @@ flowchart TB
 
 | Operation | Responsibility |
 |-----------|----------------|
-| `create(workflow_run, project_id=...)` | Persist a **pre-built** aggregate only. `WorkflowRunFactory` assembles tasks and graph in the application layer. Repository does not construct domain state. |
-| `save(workflow_run)` | Persist lifecycle transitions to an existing run. |
+| `create(workflow_run, project_id=...)` | Persist a **pre-built** aggregate only. Initializes version to **0** (same invariant as `Project`). |
+| `save(workflow_run)` | Persist lifecycle transitions to an existing run. First successful save expects `expected_version=0` and returns version **1**. |
 
-**Repositories never construct business objects.**
+**WorkflowTemplateRepository:** `save_snapshot` is immutable — duplicate `template.id` raises `DuplicateEntityError`; adapters must not overwrite existing snapshots.
+
+**ExecutionLogStore:** `list_for_run` and `list_for_task` return entries in **append order** (first successful append first), regardless of timestamp values. Duplicate `event_id` append is an idempotent no-op.
+
+**Project query model:** `Project.runs` is **not** persisted. Runs are loaded via `WorkflowRunRepository.list_for_project`.
 
 ### WorkflowRun project ownership
 
-A `WorkflowRun` belongs to exactly one `Project`. The domain model does not yet expose `project_id` on `WorkflowRun` (deferred to avoid domain changes in PF-02). Durable persistence requires `project_id` as part of run identity and indexing — tracked in adapter storage today, to be formalized in PF-03 (PostgreSQL schema + mapper).
+A `WorkflowRun` belongs to exactly one `Project`. The domain aggregate exposes `project_id`; durable persistence stores it on `workflow_runs.project_id` with a foreign key to `projects`.
 
 ### File adapter status
 
-`FileProjectRepository` is a **transitional adapter** preserving the legacy JSON-on-disk layout. It does **not** support complete `Project` aggregate round-trip (nested optional fields are not restored). The PostgreSQL adapter (PF-03) will implement the full persistence model with dedicated mappers.
+`FileProjectRepository` remains a **transitional adapter** with partial round-trip. `PostgreSQLProjectRepository` implements complete aggregate round-trip using JSONB columns for nested optional structures (`ClientRequest`, `ProjectBrief`, `ResearchDesign`, etc.).
 
 ### Contract tests vs adapter tests
 
@@ -162,7 +166,7 @@ Persistence Adapters
 
 ```
 BEGIN
-  INSERT workflow_run (id, project_id, template_id, status=CREATED, version=1)
+  INSERT workflow_run (id, project_id, template_id, status=CREATED, version=0)
   INSERT tasks[] from template
   INSERT dependency_edges[] from graph
 COMMIT

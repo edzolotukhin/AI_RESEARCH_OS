@@ -33,8 +33,10 @@ class InMemoryWorkflowRunRepository:
                 f"WorkflowRun already exists: {workflow_run.id}"
             )
 
-        self._runs[workflow_run.id] = copy.deepcopy(workflow_run)
-        self._versions[workflow_run.id] = 1
+        stored = copy.deepcopy(workflow_run)
+        stored.project_id = project_id
+        self._runs[workflow_run.id] = stored
+        self._versions[workflow_run.id] = 0
         self._task_results[workflow_run.id] = {}
 
         project_runs = self._project_index.setdefault(project_id, [])
