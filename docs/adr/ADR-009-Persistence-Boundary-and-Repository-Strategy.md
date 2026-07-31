@@ -1,6 +1,6 @@
 # ADR-009: Persistence Boundary and Repository Strategy
 
-**Status:** Active  
+**Status:** Active
 **Date:** 2026-07-31
 
 ---

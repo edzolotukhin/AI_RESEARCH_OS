@@ -1,0 +1,180 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ai_research_os
+          POSTGRES_PASSWORD: ai_research_os_dev
+          POSTGRES_DB: ai_research_os
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ai_research_os -d ai_research_os"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      POSTGRES_USER: ai_research_os
+      POSTGRES_PASSWORD: ai_research_os_dev
+      POSTGRES_DB: ai_research_os
+      POSTGRES_TEST_DB: ai_research_os_test
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check whitespace and conflict markers
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ZERO_SHA="0000000000000000000000000000000000000000"
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+            echo "Checking pull request commit range."
+          else
+            BASE="${{ github.event.before }}"
+            HEAD="${{ github.sha }}"
+            echo "Checking push commit range."
+          fi
+
+          echo "Base: ${BASE}"
+          echo "Head: ${HEAD}"
+
+          if ! git cat-file -e "${HEAD}^{commit}" 2>/dev/null; then
+            echo "Head commit is not available in the local repository." >&2
+            exit 1
+          fi
+
+          if [ "$BASE" = "$ZERO_SHA" ]; then
+            echo "No previous ref (initial push); checking HEAD commit only."
+            git show --check --format="" "$HEAD"
+            exit 0
+          fi
+
+          if ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            echo "Base commit not available locally; attempting fetch."
+            if ! git fetch --no-tags origin "${BASE}"; then
+              echo "Could not fetch base commit; checking HEAD commit only." >&2
+              git show --check --format="" "$HEAD"
+              exit 0
+            fi
+          fi
+
+          if ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            echo "Base commit still unavailable after fetch; checking HEAD commit only." >&2
+            git show --check --format="" "$HEAD"
+            exit 0
+          fi
+
+          if [ "$BASE" = "$HEAD" ]; then
+            echo "Empty commit range; nothing to check."
+            exit 0
+          fi
+
+          git diff --check "${BASE}..${HEAD}"
+
+      - name: Ensure test database exists
+        run: |
+          python <<'PY'
+          import os
+          import sys
+
+          import psycopg
+
+          user = os.environ["POSTGRES_USER"]
+          password = os.environ["POSTGRES_PASSWORD"]
+          main_db = os.environ["POSTGRES_DB"]
+          test_db = os.environ["POSTGRES_TEST_DB"]
+          host = os.environ["POSTGRES_HOST"]
+          port = os.environ["POSTGRES_PORT"]
+
+          if "test" not in test_db.lower():
+              sys.exit(
+                  "Refusing to use integration database without 'test' in the name."
+              )
+
+          conn = psycopg.connect(
+              host=host,
+              port=port,
+              user=user,
+              password=password,
+              dbname=main_db,
+              autocommit=True,
+          )
+          try:
+              with conn.cursor() as cur:
+                  cur.execute(
+                      "SELECT 1 FROM pg_database WHERE datname = %s",
+                      (test_db,),
+                  )
+                  if cur.fetchone() is None:
+                      cur.execute(
+                          psycopg.sql.SQL("CREATE DATABASE {}").format(
+                              psycopg.sql.Identifier(test_db)
+                          )
+                      )
+          finally:
+              conn.close()
+          PY
+
+      - name: Alembic upgrade head
+        env:
+          DATABASE_URL: postgresql+psycopg://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_TEST_DB }}
+        run: |
+          python -m alembic upgrade head
+          python -m alembic current
+
+      - name: Unit tests
+        run: python run_tests.py
+
+      - name: PostgreSQL repository contract tests
+        env:
+          POSTGRESQL_INTEGRATION_TESTS: "1"
+          DATABASE_URL_TEST: postgresql+psycopg://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_TEST_DB }}
+          DATABASE_URL: postgresql+psycopg://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_TEST_DB }}
+        run: >-
+          python -W error::ResourceWarning -m unittest
+          tests.application.ports.test_postgresql_repository_contracts -v
+
+      - name: PostgreSQL integration tests
+        env:
+          POSTGRESQL_INTEGRATION_TESTS: "1"
+          DATABASE_URL_TEST: postgresql+psycopg://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_TEST_DB }}
+          DATABASE_URL: postgresql+psycopg://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_TEST_DB }}
+        run: >-
+          python -W error::ResourceWarning -m unittest discover
+          -s tests/integration/postgresql -p "test_*.py" -v

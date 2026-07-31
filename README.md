@@ -1,5 +1,8 @@
 # AI_RESEARCH_OS
 
+[![CI](https://github.com/edzolotukhin/AI_RESEARCH_OS/actions/workflows/ci.yml/badge.svg)](https://github.com/edzolotukhin/AI_RESEARCH_OS/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
+
 Workflow runtime for marketing research agencies.
 
 AI Research OS models research work as dependency-aware workflows: immutable
@@ -47,7 +50,7 @@ Not production-ready. Early-stage runtime core with a public repository.
 - Production Docker deployment (PostgreSQL-only Compose is available for local dev)
 - Production deployment packaging
 - Multi-user platform capabilities
-- CI pipeline and release versioning
+- Release versioning
 
 ---
 
@@ -137,14 +140,28 @@ python run_tests.py
 PostgreSQL verification (optional; 42 tests — 32 repository contracts + 10 integration; require a **test** database name and explicit opt-in):
 
 ```powershell
+# Windows
 .\scripts\test_unit.ps1
 .\scripts\test_postgres.ps1
 .\scripts\test_all.ps1
 ```
 
+The same checks run in [GitHub Actions CI](#continuous-integration) on every push and pull request.
+
 Manual commands (equivalent to `test_postgres.ps1`):
 
+```bash
+# Linux / macOS / CI-style
+export POSTGRESQL_INTEGRATION_TESTS=1
+export DATABASE_URL_TEST="postgresql+psycopg://ai_research_os:ai_research_os_dev@localhost:5432/ai_research_os_test"
+export DATABASE_URL="$DATABASE_URL_TEST"
+python -m alembic upgrade head
+python -m unittest tests.application.ports.test_postgresql_repository_contracts -v
+python -m unittest discover -s tests/integration/postgresql -p "test_*.py" -v
+```
+
 ```powershell
+# Windows (PowerShell)
 $env:POSTGRESQL_INTEGRATION_TESTS="1"
 $env:DATABASE_URL_TEST="postgresql+psycopg://ai_research_os:ai_research_os_dev@localhost:5432/ai_research_os_test"
 python -m unittest discover -s tests/integration/postgresql -p "test_*.py" -v
@@ -183,6 +200,27 @@ python run_tests.py
 ```
 
 The suite discovers **384 automated tests**; **352** run and pass by default (**32** PostgreSQL contract and integration tests are skipped unless `POSTGRESQL_INTEGRATION_TESTS=1` and `DATABASE_URL_TEST` point at a test database). With PostgreSQL configured, all **42** PostgreSQL-gated tests run (0 skipped). It validates runtime orchestration, planner contracts, dependency graphs, executor resolution, structured-output retry, agency integration, persistence ports, and the offline demo subprocess path. Coverage metrics are not published.
+
+---
+
+## Continuous Integration
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push and pull request:
+
+| Step | Command / check |
+|------|-----------------|
+| Dependencies | Python **3.11**, pip cache, `pip install -r requirements.txt` |
+| Repository hygiene | `git diff --check` on the push/PR commit range (`before..sha` or `base..head`) |
+| PostgreSQL | Service container (PostgreSQL 16), health-checked |
+| Test database | `ai_research_os_test` (created if missing) |
+| Migrations | `alembic upgrade head`, `alembic current` |
+| Unit tests | `python run_tests.py` (352 executed, 32 PostgreSQL-gated skipped) |
+| Contract tests | 32 PostgreSQL repository contract tests |
+| Integration tests | 10 PostgreSQL integration tests |
+
+CI fails on any test failure or whitespace/conflict-marker issues. Database credentials are dev-only values aligned with `docker-compose.yml`; they are not printed in logs.
+
+Local full check before a PR: `.\scripts\test_all.ps1` (Windows) or run the [manual PostgreSQL verification](#persistence) steps after `python run_tests.py`.
 
 ---
 
