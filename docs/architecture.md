@@ -71,8 +71,10 @@ See [ADR-008: Executor Catalog Contract](adr/ADR-008-Executor-Catalog-Contract.m
 | [architecture/overview.md](../architecture/overview.md) | Layers, runtime flow, principles |
 | [architecture/layers.md](../architecture/layers.md) | Layer responsibilities and forbidden dependencies |
 | [architecture/domain-model.md](../architecture/domain-model.md) | Entities, TaskDefinition vs Task |
+| [architecture/product-foundation-persistence.md](../architecture/product-foundation-persistence.md) | PF-01 persistence contract, repository ports, transactions |
 | [ARCHITECTURE.md](../ARCHITECTURE.md) | Short entry point |
 | [adr/README.md](adr/README.md) | ADR index |
+| [adr/ADR-009-Persistence-Boundary-and-Repository-Strategy.md](adr/ADR-009-Persistence-Boundary-and-Repository-Strategy.md) | Persistence ADR |
 
 ---
 

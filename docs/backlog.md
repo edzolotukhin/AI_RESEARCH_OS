@@ -23,6 +23,22 @@
 
 - [ ] Migrate `scripts/sandbox.py` off `services/project_brief_builder.py`
 
+## Product Foundation
+
+- [x] **PF-01** Persistence Architecture Contract — [ADR-009](adr/ADR-009-Persistence-Boundary-and-Repository-Strategy.md), [architecture/product-foundation-persistence.md](../architecture/product-foundation-persistence.md)
+- [ ] **PF-02** Persistence ports and in-memory contract tests
+- [ ] **PF-03** PostgreSQL adapter and migrations
+- [ ] **PF-04** Docker Compose development environment
+- [ ] **PF-05** FastAPI application boundary
+- [ ] **PF-06** Background workflow execution
+- [ ] Extract `ProjectRepository` port; decouple `Agency` from concrete infrastructure class
+- [ ] Define `ExecutionLog` persistence record and port (no domain type today)
+- [ ] Implement `load_project` / `list_projects` / `delete_project` in file or PostgreSQL adapter
+- [ ] Resolve `Project.runs` in-memory field vs persisted query model
+- [ ] Artifact blob storage strategy (filesystem vs object store)
+
+PostgreSQL, Docker, FastAPI, and background execution are **not implemented** — contract only.
+
 ## Product (not started)
 
 - [ ] Client Manager wired to production runtime
