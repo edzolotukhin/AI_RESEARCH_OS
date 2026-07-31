@@ -10,7 +10,8 @@ from application.config import ApplicationConfig, ApplicationOverrides
 from domain.ai.llm_response import LLMResponse
 from domain.project_brief import ProjectBrief
 
-from infrastructure.project_repository import ProjectRepository
+from application.ports.project_repository import ProjectRepository
+from application.services.project_service import ProjectService
 
 from runtime.workflow_context import WorkflowContext
 
@@ -43,7 +44,6 @@ class CompositionRootTests(unittest.TestCase):
             agency = create_application(
                 config=ApplicationConfig(
                     projects_root=temp_dir,
-                    workflow_run_id="test-run",
                 ),
                 overrides=ApplicationOverrides(
                     llm_client=mock_llm,
@@ -68,7 +68,6 @@ class CompositionRootTests(unittest.TestCase):
 
     def test_create_application_uses_project_repository_override(self):
         custom_repository = Mock(spec=ProjectRepository)
-        custom_repository.create_project.return_value = Path("mock-dir")
 
         mock_llm = Mock()
         mock_llm.generate.return_value = LLMResponse(
@@ -84,8 +83,30 @@ class CompositionRootTests(unittest.TestCase):
 
         project = agency.create_project("Test Project")
 
-        custom_repository.create_project.assert_called_once_with(project)
-        custom_repository.save_project.assert_called_once_with(project)
+        custom_repository.create.assert_called_once_with(project)
+        custom_repository.save.assert_not_called()
+
+    def test_create_application_uses_project_service_override(self):
+        custom_service = Mock(spec=ProjectService)
+        expected_project = Mock()
+        custom_service.create_project.return_value = expected_project
+
+        mock_llm = Mock()
+        mock_llm.generate.return_value = LLMResponse(
+            content=VALID_PLANNER_JSON,
+        )
+
+        agency = create_application(
+            overrides=ApplicationOverrides(
+                llm_client=mock_llm,
+                project_service=custom_service,
+            ),
+        )
+
+        result = agency.create_project("Override Project")
+
+        custom_service.create_project.assert_called_once_with("Override Project")
+        self.assertIs(result, expected_project)
 
 
 if __name__ == "__main__":

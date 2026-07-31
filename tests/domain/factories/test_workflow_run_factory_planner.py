@@ -126,8 +126,21 @@ class WorkflowRunFactoryPlannerTests(unittest.TestCase):
         )
         workflow_run.validate_dependency_graph()
 
+    def test_create_generates_uuid_when_run_id_is_omitted(self):
+        plan = self.service.create_plan(
+            self.project,
+            VALID_PLANNER_RESPONSE,
+        )
+        template = self.workflow_mapper.from_research_plan(
+            plan,
+            self.project,
+        )
 
+        workflow_run = self.workflow_run_factory.create(template=template)
 
+        from uuid import UUID
+
+        UUID(workflow_run.id)
 
 
 if __name__ == "__main__":

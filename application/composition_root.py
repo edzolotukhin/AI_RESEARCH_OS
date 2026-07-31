@@ -43,7 +43,15 @@ from domain.factories.workflow_run_factory import WorkflowRunFactory
 from application.planner.payload_contract import PlannerPayloadContract
 from application.structured_output.generator import StructuredOutputGenerator
 from application.structured_output.parser import StructuredOutputParser
-from infrastructure.project_repository import ProjectRepository
+from application.services.artifact_service import ArtifactService
+from application.services.knowledge_service import KnowledgeService
+from application.services.project_service import ProjectService
+from application.services.durable_workflow_service import DurableWorkflowService
+from application.services.workflow_service import WorkflowService
+from application.runtime.durable_execution_policy import (
+    supports_durable_workflow_execution,
+)
+from infrastructure.persistence.persistence_factory import build_persistence_bundle
 
 from loaders.agent_loader import AgentLoader
 
@@ -64,9 +72,42 @@ def create_application(
 
     registry = overrides.registry or Registry()
 
-    project_repository = overrides.project_repository or ProjectRepository(
+    persistence = build_persistence_bundle(
+        persistence_backend=config.persistence_backend,
         projects_root=config.projects_root,
+        database_url=config.database_url,
     )
+
+    project_repository = overrides.project_repository or persistence.project_repository
+
+    project_factory = ProjectFactory()
+
+    project_service = overrides.project_service or ProjectService(
+        project_factory=project_factory,
+        project_repository=project_repository,
+    )
+
+    workflow_run_factory = WorkflowRunFactory(
+        task_factory=TaskFactory(),
+    )
+
+    workflow_service = WorkflowService(
+        workflow_template_repository=persistence.workflow_template_repository,
+        workflow_run_repository=persistence.workflow_run_repository,
+        workflow_run_factory=workflow_run_factory,
+    )
+
+    artifact_service = ArtifactService(
+        artifact_repository=persistence.artifact_repository,
+    )
+
+    knowledge_service = KnowledgeService(
+        knowledge_repository=persistence.knowledge_repository,
+    )
+
+    # Prepared for PF-05 entry points; Agency uses ProjectService and optional
+    # durable workflow execution today.
+    _ = artifact_service, knowledge_service
 
     llm_client = overrides.llm_client or _create_llm_client(config)
 
@@ -129,12 +170,6 @@ def create_application(
         executors=agent_executors,
     )
 
-    project_factory = ProjectFactory()
-
-    workflow_run_factory = WorkflowRunFactory(
-        task_factory=TaskFactory(),
-    )
-
     executor_resolver = ExecutorResolver(
         agent_registry=registry.agents,
         tool_registry=registry.tools,
@@ -157,14 +192,22 @@ def create_application(
         completion_policy=completion_policy,
     )
 
+    durable_workflow_service: DurableWorkflowService | None = None
+    if supports_durable_workflow_execution(config):
+        durable_workflow_service = DurableWorkflowService(
+            workflow_service=workflow_service,
+            project_service=project_service,
+            execution_log_store=persistence.execution_log_store,
+            workflow_engine=workflow_engine,
+        )
+
     return Agency(
         agent_loader=agent_loader,
-        project_factory=project_factory,
-        project_repository=project_repository,
+        project_service=project_service,
         planner_agent=planner_agent,
         workflow_run_factory=workflow_run_factory,
         workflow_engine=workflow_engine,
-        workflow_run_id=config.workflow_run_id,
+        durable_workflow_service=durable_workflow_service,
     )
 
 

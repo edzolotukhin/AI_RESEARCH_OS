@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 from agency.agency import Agency
 
-from loaders.agent_loader import AgentLoader
+from application.services.project_service import ProjectService
 
 
 class AgencyFacadeTests(unittest.TestCase):
@@ -29,18 +29,40 @@ class AgencyFacadeTests(unittest.TestCase):
 
     def test_agency_receives_dependencies_via_constructor(self):
         agency = Agency(
-            agent_loader=Mock(spec=AgentLoader),
-            project_factory=Mock(),
-            project_repository=Mock(),
+            agent_loader=Mock(),
+            project_service=Mock(spec=ProjectService),
             planner_agent=Mock(),
             workflow_run_factory=Mock(),
             workflow_engine=Mock(),
-            workflow_run_id="run-test",
         )
 
         self.assertFalse(hasattr(agency, "registry"))
         self.assertFalse(hasattr(agency, "llm_client"))
         self.assertFalse(hasattr(agency, "executor_resolver"))
+
+    def test_agency_create_project_delegates_to_project_service(self):
+        project_service = Mock(spec=ProjectService)
+        expected_project = Mock()
+        project_service.create_project.return_value = expected_project
+
+        agency = Agency(
+            agent_loader=Mock(),
+            project_service=project_service,
+            planner_agent=Mock(),
+            workflow_run_factory=Mock(),
+            workflow_engine=Mock(),
+        )
+
+        result = agency.create_project("Test Project")
+
+        project_service.create_project.assert_called_once_with("Test Project")
+        self.assertIs(result, expected_project)
+
+    def test_agency_does_not_reference_project_repository(self):
+        source = inspect.getsource(Agency)
+
+        self.assertNotIn("ProjectRepository", source)
+        self.assertNotIn("_project_repository", source)
 
     def test_agency_does_not_create_infrastructure_in_init(self):
         source = inspect.getsource(Agency.__init__)

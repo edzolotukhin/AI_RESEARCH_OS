@@ -153,6 +153,9 @@ External services and technical adapters.
 | **AgentLoader / Registry** | Registers agent executors by `executor_id` |
 | **StructuredOutputParser** | Strict JSON extraction and contract validation |
 | **StructuredOutputGenerator** | LLM retry orchestration for planner output |
+| **Persistence adapters** | `FileProjectRepository`, in-memory adapters, `PostgreSQL*` adapters (`infrastructure/persistence/`) |
+
+Application persistence services (`application/services/`) sit above repository ports. `Agency` delegates project persistence to `ProjectService`; external entry points must not call repositories directly.
 
 Composition root: `application/composition_root.py`.
 

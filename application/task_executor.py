@@ -1,6 +1,7 @@
 from runtime.workflow_context import WorkflowContext
 
 from application.executor_resolver import ExecutorResolver
+from application.ports.workflow_runtime_checkpoint import WorkflowRuntimeCheckpoint
 from application.task_lifecycle_manager import TaskLifecycleManager
 
 
@@ -20,6 +21,8 @@ class TaskExecutor:
     def execute(
         self,
         context: WorkflowContext,
+        *,
+        runtime_checkpoint: WorkflowRuntimeCheckpoint | None = None,
     ) -> WorkflowContext:
         task = context.current_task
 
@@ -27,6 +30,8 @@ class TaskExecutor:
             raise ValueError("WorkflowContext.current_task is not set.")
 
         self._lifecycle.start(task)
+        if runtime_checkpoint is not None:
+            runtime_checkpoint.on_task_running(context)
 
         executor = self._resolver.resolve(task)
 

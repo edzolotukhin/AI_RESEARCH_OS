@@ -28,6 +28,8 @@ class WorkflowRun:
 
     id: str = field(default_factory=lambda: str(uuid4()))
 
+    project_id: str = ""
+
     workflow_template_id: str = ""
 
     tasks: list[Task] = field(default_factory=list)
