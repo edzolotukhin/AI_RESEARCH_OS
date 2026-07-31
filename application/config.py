@@ -21,6 +21,7 @@ class ApplicationConfig:
     projects_root: str = "agency/projects"
     persistence_backend: str = "file"
     database_url: str | None = None
+    durable_workflow_execution: bool | None = None
 
 
 @dataclass

@@ -81,6 +81,11 @@ class InMemoryWorkflowRunRepository:
     def get_task_results(self, run_id: str) -> dict[str, Any]:
         return copy.deepcopy(self._task_results.get(run_id, {}))
 
+    def get_version(self, run_id: str) -> int:
+        if run_id not in self._runs:
+            raise EntityNotFoundError(f"WorkflowRun not found: {run_id}")
+        return self._versions[run_id]
+
     def list_for_project(
         self,
         project_id: str,

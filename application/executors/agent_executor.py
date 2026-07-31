@@ -2,6 +2,8 @@ from agents.base_agent import BaseAgent
 
 from application.contracts.base_executor import BaseExecutor
 
+from application.runtime.task_result_codec import capture_task_result
+
 from runtime.workflow_context import WorkflowContext
 
 
@@ -31,6 +33,9 @@ class AgentExecutor(BaseExecutor):
 
         task = context.current_task
         if task is not None:
-            result_context.intermediate_results[task.id] = result_context
+            result_context.intermediate_results[task.id] = capture_task_result(
+                result_context,
+                task.id,
+            )
 
         return result_context

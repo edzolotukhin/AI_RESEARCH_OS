@@ -56,6 +56,10 @@ class WorkflowRunRepository(Protocol):
         """Return durable task result summaries stored for a run."""
         ...
 
+    def get_version(self, run_id: str) -> int:
+        """Return the current optimistic-lock version for a persisted run."""
+        ...
+
     def list_for_project(
         self,
         project_id: str,

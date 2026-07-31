@@ -192,6 +192,20 @@ class WorkflowRunRepositoryContractTests:
         self.assertEqual(len(all_runs), 2)
         self.assertEqual(len(ready_runs), 1)
 
+    def test_get_version_tracks_save_increments(self) -> None:
+        workflow_run = self.workflow_run_factory.create(
+            _template("template-version"),
+            run_id="run-version",
+        )
+        self.repository.create(workflow_run, project_id="project-1")
+
+        self.assertEqual(self.repository.get_version("run-version"), 0)
+
+        workflow_run.ready()
+        new_version = self.repository.save(workflow_run, expected_version=0)
+        self.assertEqual(new_version, 1)
+        self.assertEqual(self.repository.get_version("run-version"), 1)
+
 
 class InMemoryWorkflowRunRepositoryContractTests(
     WorkflowRunRepositoryContractTests,

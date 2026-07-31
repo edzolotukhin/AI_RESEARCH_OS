@@ -11,6 +11,7 @@ from loaders.agent_loader import AgentLoader
 from runtime.workflow_context import WorkflowContext
 
 if TYPE_CHECKING:
+    from application.services.durable_workflow_service import DurableWorkflowService
     from domain.project import Project
 
 
@@ -29,12 +30,14 @@ class Agency:
         planner_agent: PlannerAgent,
         workflow_run_factory: WorkflowRunFactory,
         workflow_engine: WorkflowEngine,
+        durable_workflow_service: DurableWorkflowService | None = None,
     ) -> None:
         self._agent_loader = agent_loader
         self._project_service = project_service
         self._planner_agent = planner_agent
         self._workflow_run_factory = workflow_run_factory
         self._workflow_engine = workflow_engine
+        self._durable_workflow_service = durable_workflow_service
 
         self.initialized = False
 
@@ -64,6 +67,12 @@ class Agency:
         if workflow_template is None:
             raise ValueError("Planner did not produce a WorkflowTemplate.")
 
+        if self._durable_workflow_service is not None:
+            return self._durable_workflow_service.start_research(
+                project,
+                workflow_template,
+            )
+
         workflow_run = self._workflow_run_factory.create(
             template=workflow_template,
         )
@@ -73,3 +82,12 @@ class Agency:
             workflow_template=workflow_template,
             workflow_run=workflow_run,
         )
+
+    def resume_research(self, run_id: str) -> WorkflowContext:
+        if self._durable_workflow_service is None:
+            raise RuntimeError(
+                "Durable workflow execution is not enabled for the current "
+                "persistence backend."
+            )
+
+        return self._durable_workflow_service.resume_research(run_id)

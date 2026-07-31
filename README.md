@@ -18,7 +18,7 @@ architecture itself.
 | | |
 |---|---|
 | **Phase** | Phase B runtime hardening complete |
-| **Tests** | 384 automated tests (352 run without PostgreSQL; 32 PostgreSQL-gated tests skipped unless configured) |
+| **Tests** | 418 tests discovered (385 executed by default; 33 PostgreSQL-gated tests skipped unless configured) |
 | **Demo** | Deterministic offline demo (`examples/deterministic_research_demo.py`) |
 | **Architecture** | Definition / runtime separation; dependency-aware workflow execution |
 | **License** | Source available · [All Rights Reserved](LICENSE) |
@@ -37,6 +37,7 @@ Not production-ready. Early-stage runtime core with a public repository.
 - Registered agent executors: `planner`, `search`, `analysis`, `report`, `proposal`
 - OpenAI integration for live planning path (`main.py`, requires API key)
 - Repository ports, application persistence services, and selectable backends (`file`, `memory`, `postgresql`)
+- Durable workflow checkpointing for `memory` and `postgresql` backends (PF-04)
 - PostgreSQL persistence adapter (SQLAlchemy 2.x, Alembic, Docker Compose for local PostgreSQL)
 - File-based **ProjectRepository** (transitional) and architecture documentation
 
@@ -137,7 +138,7 @@ set PERSISTENCE_BACKEND=postgresql
 python run_tests.py
 ```
 
-PostgreSQL verification (optional; 42 tests — 32 repository contracts + 10 integration; require a **test** database name and explicit opt-in):
+PostgreSQL verification (optional; **47** tests — 33 repository contract tests + 14 integration tests; require a **test** database name and explicit opt-in). Run sequentially against the shared `ai_research_os_test` database; parallel local PostgreSQL test runs are not supported yet.
 
 ```powershell
 # Windows
@@ -199,7 +200,7 @@ The demo uses in-memory storage only. It does not call OpenAI, does not require 
 python run_tests.py
 ```
 
-The suite discovers **384 automated tests**; **352** run and pass by default (**32** PostgreSQL contract and integration tests are skipped unless `POSTGRESQL_INTEGRATION_TESTS=1` and `DATABASE_URL_TEST` point at a test database). With PostgreSQL configured, all **42** PostgreSQL-gated tests run (0 skipped). It validates runtime orchestration, planner contracts, dependency graphs, executor resolution, structured-output retry, agency integration, persistence ports, and the offline demo subprocess path. Coverage metrics are not published.
+The suite discovers **418** tests; **385** run and pass by default (**33** PostgreSQL contract and integration tests are skipped unless `POSTGRESQL_INTEGRATION_TESTS=1` and `DATABASE_URL_TEST` point at a test database). With PostgreSQL configured, **47** PostgreSQL-gated tests run and pass (33 repository contract tests + 14 integration tests; 0 skipped). It validates runtime orchestration, planner contracts, dependency graphs, executor resolution, structured-output retry, agency integration, persistence ports, and the offline demo subprocess path. Coverage metrics are not published.
 
 ---
 
@@ -214,9 +215,9 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on every push and pull request:
 | PostgreSQL | Service container (PostgreSQL 16), health-checked |
 | Test database | `ai_research_os_test` (created if missing) |
 | Migrations | `alembic upgrade head`, `alembic current` |
-| Unit tests | `python run_tests.py` (352 executed, 32 PostgreSQL-gated skipped) |
-| Contract tests | 32 PostgreSQL repository contract tests |
-| Integration tests | 10 PostgreSQL integration tests |
+| Unit tests | `python run_tests.py` (385 executed, 33 PostgreSQL-gated skipped) |
+| Contract tests | 33 PostgreSQL repository contract tests |
+| Integration tests | 14 PostgreSQL integration tests (including durable runtime) |
 
 CI fails on any test failure or whitespace/conflict-marker issues. Database credentials are dev-only values aligned with `docker-compose.yml`; they are not printed in logs.
 

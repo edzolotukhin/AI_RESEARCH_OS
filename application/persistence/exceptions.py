@@ -12,3 +12,7 @@ class DuplicateEntityError(PersistenceError):
 
 class ConcurrentModificationError(PersistenceError):
     """Raised when an optimistic concurrency check fails on save."""
+
+
+class CheckpointPersistenceError(PersistenceError):
+    """Raised when a durable runtime checkpoint cannot be persisted."""

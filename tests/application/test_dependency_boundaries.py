@@ -77,6 +77,24 @@ class DependencyBoundaryTests(unittest.TestCase):
             "agency",
         )
 
+    def test_agency_does_not_import_repository_ports(self) -> None:
+        agency_files = [REPO_ROOT / "agency" / "agency.py"]
+        _assert_no_imports_matching(
+            self,
+            agency_files,
+            ("application.ports.",),
+            "agency",
+        )
+
+    def test_workflow_engine_does_not_import_persistence_infrastructure(self) -> None:
+        engine_files = [REPO_ROOT / "application" / "workflow_engine.py"]
+        _assert_no_imports_matching(
+            self,
+            engine_files,
+            ("infrastructure.", "application.ports.execution_log_store"),
+            "workflow_engine",
+        )
+
     def test_domain_does_not_import_sqlalchemy_or_postgresql(self) -> None:
         violations: list[str] = []
         for path in _python_files("domain"):

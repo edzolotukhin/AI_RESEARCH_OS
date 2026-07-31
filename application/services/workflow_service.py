@@ -107,3 +107,6 @@ class WorkflowService:
 
     def get_task_results(self, run_id: str) -> dict[str, Any]:
         return self._workflow_run_repository.get_task_results(run_id)
+
+    def get_workflow_run_version(self, run_id: str) -> int:
+        return self._workflow_run_repository.get_version(run_id)

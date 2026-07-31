@@ -103,6 +103,7 @@ class PostgreSQLWorkflowRunRepositoryContractTests(
         session_factory = self.fresh_session_factory()
         _seed_project(session_factory, project_id="project-1")
         _seed_project(session_factory, project_id="project-list")
+        _seed_project(session_factory, project_id="project-version")
         return PostgreSQLWorkflowRunRepository(session_factory)
 
 

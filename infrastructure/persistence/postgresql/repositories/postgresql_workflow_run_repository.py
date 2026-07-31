@@ -121,6 +121,13 @@ class PostgreSQLWorkflowRunRepository:
                 return {}
             return dict(model.task_results or {})
 
+    def get_version(self, run_id: str) -> int:
+        with self._session_factory.session() as session:
+            model = session.get(WorkflowRunModel, run_id)
+            if model is None:
+                raise EntityNotFoundError(f"WorkflowRun not found: {run_id}")
+            return int(model.version)
+
     def list_for_project(
         self,
         project_id: str,

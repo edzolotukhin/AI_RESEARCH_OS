@@ -19,10 +19,9 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "=== git diff --check ==="
-git diff --check
-if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
-}
+Invoke-ExternalCommand -CommandName "git diff --check" -CommandBlock {
+    git diff --check
+} | Out-Null
 
 Write-Host "All local verification checks passed."
 exit 0

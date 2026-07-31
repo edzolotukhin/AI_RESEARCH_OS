@@ -1,4 +1,6 @@
 # Run PostgreSQL contract and integration tests against Docker Compose PostgreSQL.
+# Run sequentially against the shared ai_research_os_test database; parallel local
+# PostgreSQL test runs are not supported yet.
 $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "_test_env.ps1")
@@ -18,18 +20,15 @@ foreach ($name in @(
 
 try {
     Write-Host "[1/5] Docker"
-    docker version | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "docker is not available."
-    }
-    docker compose version | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "docker compose is not available."
-    }
-    docker compose up -d postgres | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "docker compose up -d postgres failed."
-    }
+    Invoke-ExternalCommand -CommandName "docker version" -CommandBlock {
+        docker version
+    } | Out-Null
+    Invoke-ExternalCommand -CommandName "docker compose version" -CommandBlock {
+        docker compose version
+    } | Out-Null
+    Invoke-ExternalCommand -CommandName "docker compose up -d postgres" -CommandBlock {
+        docker compose up -d postgres
+    } | Out-Null
 
     $postgresConfig = Get-DockerComposePostgresConfig -RepositoryRoot $repositoryRoot
     Write-Host "[2/5] PostgreSQL health"

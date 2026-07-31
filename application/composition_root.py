@@ -46,7 +46,11 @@ from application.structured_output.parser import StructuredOutputParser
 from application.services.artifact_service import ArtifactService
 from application.services.knowledge_service import KnowledgeService
 from application.services.project_service import ProjectService
+from application.services.durable_workflow_service import DurableWorkflowService
 from application.services.workflow_service import WorkflowService
+from application.runtime.durable_execution_policy import (
+    supports_durable_workflow_execution,
+)
 from infrastructure.persistence.persistence_factory import build_persistence_bundle
 
 from loaders.agent_loader import AgentLoader
@@ -101,8 +105,9 @@ def create_application(
         knowledge_repository=persistence.knowledge_repository,
     )
 
-    # Prepared for PF-03/PF-05 entry points; Agency uses ProjectService only today.
-    _ = workflow_service, artifact_service, knowledge_service
+    # Prepared for PF-05 entry points; Agency uses ProjectService and optional
+    # durable workflow execution today.
+    _ = artifact_service, knowledge_service
 
     llm_client = overrides.llm_client or _create_llm_client(config)
 
@@ -187,12 +192,22 @@ def create_application(
         completion_policy=completion_policy,
     )
 
+    durable_workflow_service: DurableWorkflowService | None = None
+    if supports_durable_workflow_execution(config):
+        durable_workflow_service = DurableWorkflowService(
+            workflow_service=workflow_service,
+            project_service=project_service,
+            execution_log_store=persistence.execution_log_store,
+            workflow_engine=workflow_engine,
+        )
+
     return Agency(
         agent_loader=agent_loader,
         project_service=project_service,
         planner_agent=planner_agent,
         workflow_run_factory=workflow_run_factory,
         workflow_engine=workflow_engine,
+        durable_workflow_service=durable_workflow_service,
     )
 
 
