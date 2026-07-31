@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from domain.factories.task_factory import TaskFactory
 from domain.factories.workflow_run_dependency_graph_builder import (
     WorkflowRunDependencyGraphBuilder,
@@ -17,8 +19,9 @@ class WorkflowRunFactory:
     def create(
         self,
         template: WorkflowTemplate,
-        run_id: str,
+        run_id: str | None = None,
     ) -> WorkflowRun:
+        resolved_run_id = run_id or str(uuid4())
         tasks = [
             self.task_factory.create(definition)
             for definition in template.task_definitions
@@ -30,7 +33,7 @@ class WorkflowRunFactory:
         )
 
         workflow_run = WorkflowRun(
-            id=run_id,
+            id=resolved_run_id,
             workflow_template_id=template.id,
             tasks=tasks,
             dependency_graph=dependency_graph,

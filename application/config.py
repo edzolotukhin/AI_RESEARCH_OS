@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
+from application.ports.project_repository import ProjectRepository
+from application.services.project_service import ProjectService
 from infrastructure.llm.llm_client import LLMClient
-
-from infrastructure.project_repository import ProjectRepository
 
 from registry.registry import Registry
 
@@ -19,7 +19,6 @@ class ApplicationConfig:
     llm_model: str = "gpt-5"
     llm_max_tokens: int = 4096
     projects_root: str = "agency/projects"
-    workflow_run_id: str = "run-001"
 
 
 @dataclass
@@ -30,5 +29,6 @@ class ApplicationOverrides:
 
     llm_client: LLMClient | None = None
     project_repository: ProjectRepository | None = None
+    project_service: ProjectService | None = None
     registry: Registry | None = None
     planner_agent: Any | None = None

@@ -10,8 +10,8 @@ The synchronous orchestration runtime is **implemented, tested, and demonstrable
 | Planner + structured output | Integrated |
 | Offline demo | Available (`examples/deterministic_research_demo.py`) |
 | Live LLM demo path | Available (`main.py`, requires API key) |
-| Product Foundation | Not started |
-| Platform / infra (API, DB, Docker) | Planned only |
+| Product Foundation | In progress — PF-02.5 application persistence services ([ADR-009](docs/adr/ADR-009-Persistence-Boundary-and-Repository-Strategy.md)) |
+| Platform / infra (API, DB, Docker) | Planned only (PF-03–PF-06) |
 
 ---
 
@@ -65,7 +65,13 @@ The synchronous orchestration runtime is **implemented, tested, and demonstrable
 
 ## Next: Product Foundation
 
-Product-facing workflow expansion — **planned, not started** in production runtime:
+**PF-01 (complete):** persistence boundary and repository strategy documented — see [ADR-009](docs/adr/ADR-009-Persistence-Boundary-and-Repository-Strategy.md) and [architecture/product-foundation-persistence.md](architecture/product-foundation-persistence.md).
+
+**PF-02 (complete):** repository ports, file/in-memory adapters, and contract tests.
+
+**PF-02.5 (complete):** application persistence services (`ProjectService`, `WorkflowService`, etc.). Agency delegates project persistence to `ProjectService`. PostgreSQL, Docker, FastAPI, and background execution remain **planned only**.
+
+Product-facing workflow expansion — **not started** in production runtime:
 
 - Project Brief integration into the main research path
 - Research Design automation

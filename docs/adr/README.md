@@ -64,6 +64,7 @@ The following statuses are used throughout the project.
 | ADR-006 | Artifact Model | Planned |
 | ADR-007 | Agent Architecture | Planned |
 | ADR-008 | Executor Catalog Contract | Active |
+| ADR-009 | Persistence Boundary and Repository Strategy | Active |
 
 Additional ADRs will be added as the architecture evolves.
 

@@ -43,7 +43,25 @@ from domain.factories.workflow_run_factory import WorkflowRunFactory
 from application.planner.payload_contract import PlannerPayloadContract
 from application.structured_output.generator import StructuredOutputGenerator
 from application.structured_output.parser import StructuredOutputParser
-from infrastructure.project_repository import ProjectRepository
+from application.services.artifact_service import ArtifactService
+from application.services.knowledge_service import KnowledgeService
+from application.services.project_service import ProjectService
+from application.services.workflow_service import WorkflowService
+from infrastructure.persistence.file.file_project_repository import (
+    FileProjectRepository,
+)
+from infrastructure.persistence.memory.in_memory_artifact_repository import (
+    InMemoryArtifactRepository,
+)
+from infrastructure.persistence.memory.in_memory_knowledge_repository import (
+    InMemoryKnowledgeRepository,
+)
+from infrastructure.persistence.memory.in_memory_workflow_run_repository import (
+    InMemoryWorkflowRunRepository,
+)
+from infrastructure.persistence.memory.in_memory_workflow_template_repository import (
+    InMemoryWorkflowTemplateRepository,
+)
 
 from loaders.agent_loader import AgentLoader
 
@@ -64,9 +82,37 @@ def create_application(
 
     registry = overrides.registry or Registry()
 
-    project_repository = overrides.project_repository or ProjectRepository(
+    project_repository = overrides.project_repository or FileProjectRepository(
         projects_root=config.projects_root,
     )
+
+    project_factory = ProjectFactory()
+
+    project_service = overrides.project_service or ProjectService(
+        project_factory=project_factory,
+        project_repository=project_repository,
+    )
+
+    workflow_run_factory = WorkflowRunFactory(
+        task_factory=TaskFactory(),
+    )
+
+    workflow_service = WorkflowService(
+        workflow_template_repository=InMemoryWorkflowTemplateRepository(),
+        workflow_run_repository=InMemoryWorkflowRunRepository(),
+        workflow_run_factory=workflow_run_factory,
+    )
+
+    artifact_service = ArtifactService(
+        artifact_repository=InMemoryArtifactRepository(),
+    )
+
+    knowledge_service = KnowledgeService(
+        knowledge_repository=InMemoryKnowledgeRepository(),
+    )
+
+    # Prepared for PF-03/PF-05 entry points; Agency uses ProjectService only today.
+    _ = workflow_service, artifact_service, knowledge_service
 
     llm_client = overrides.llm_client or _create_llm_client(config)
 
@@ -129,12 +175,6 @@ def create_application(
         executors=agent_executors,
     )
 
-    project_factory = ProjectFactory()
-
-    workflow_run_factory = WorkflowRunFactory(
-        task_factory=TaskFactory(),
-    )
-
     executor_resolver = ExecutorResolver(
         agent_registry=registry.agents,
         tool_registry=registry.tools,
@@ -159,12 +199,10 @@ def create_application(
 
     return Agency(
         agent_loader=agent_loader,
-        project_factory=project_factory,
-        project_repository=project_repository,
+        project_service=project_service,
         planner_agent=planner_agent,
         workflow_run_factory=workflow_run_factory,
         workflow_engine=workflow_engine,
-        workflow_run_id=config.workflow_run_id,
     )
 
 
