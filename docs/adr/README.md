@@ -66,7 +66,8 @@ The following statuses are used throughout the project.
 | ADR-008 | Executor Catalog Contract | Active |
 | ADR-009 | Persistence Boundary and Repository Strategy | Active |
 | ADR-010 | Durable Workflow Checkpoint and Recovery Policy | Active |
-| ADR-011 | HTTP API Boundary and Synchronous Execution Policy | Active |
+| ADR-011 | HTTP API Boundary and Synchronous Execution Policy | Superseded (research async — see ADR-012) |
+| ADR-012 | Background Execution, Claiming, Lease and Recovery | Active |
 
 Additional ADRs will be added as the architecture evolves.
 

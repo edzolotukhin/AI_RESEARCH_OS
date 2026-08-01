@@ -7,8 +7,8 @@ Workflow runtime for marketing research agencies.
 
 AI Research OS models research work as dependency-aware workflows: immutable
 definitions (`WorkflowTemplate`, `TaskDefinition`) are materialized into runtime
-executions (`WorkflowRun`, `Task`), scheduled and executed through a synchronous
-orchestration loop. AI agents are executors inside this runtime — not the
+executions (`WorkflowRun`, `Task`), scheduled and executed through a background
+worker with durable checkpointing (PF-06). AI agents are executors inside this runtime — not the
 architecture itself.
 
 ---
@@ -40,6 +40,7 @@ Not production-ready. Early-stage runtime core with a public repository.
 - Durable workflow checkpointing for `memory` and `postgresql` backends (PF-04)
 - PostgreSQL persistence adapter (SQLAlchemy 2.x, Alembic, Docker Compose for local PostgreSQL and API)
 - **FastAPI HTTP API** (`api/`) with OpenAPI docs, health/readiness, projects, research, workflow runs, logs, artifacts (PF-05)
+- **Background worker** (`worker/`) with PostgreSQL claim/lease, heartbeat, and crash recovery (PF-06)
 - File-based **ProjectRepository** (transitional) and architecture documentation
 
 ---
@@ -188,7 +189,7 @@ The demo exercises the current runtime without network access:
 - **Dependency graph** — linear task dependencies
 - **TaskScheduler** — dependency-aware ready-task selection
 - **ExecutorResolver** — resolves demo executors from a local registry
-- **WorkflowEngine** — synchronous execution loop through workflow completion
+- **WorkflowEngine** — execution loop through workflow completion (invoked by worker for durable backends)
 
 The demo uses in-memory storage only. It does not call OpenAI, does not require `OPENAI_API_KEY`, and does not write files under `agency/projects/`.
 
@@ -217,13 +218,22 @@ Development startup is explicit — migrations are **not** run automatically on 
 ```bash
 docker compose up -d postgres
 docker compose run --rm api alembic upgrade head
-docker compose up -d api
+docker compose up -d api worker
 ```
+
+For offline smoke without a live LLM, opt in explicitly:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.smoke.yml up -d postgres api worker
+```
+
+Normal Compose does **not** enable `DETERMINISTIC_PLANNER`. Production planning requires `OPENAI_API_KEY`.
 
 - `GET /health` — liveness only (no database required)
 - `GET /ready` — readiness (`503` when PostgreSQL is unavailable, schema is missing, or Alembic revision is not at head)
-- `POST /projects/{project_id}/research` — **synchronous**; blocks until workflow completes (not `202`)
-- No Redis, worker, n8n, auth, or background execution in PF-05
+- `POST /projects/{project_id}/research` — **202 Accepted** when background execution is configured (`external` on PostgreSQL, or `embedded` on memory in tests)
+- **Memory without `embedded`**, **file**, and other unsupported topologies return **409** for research/resume
+- **PostgreSQL + external worker** is the supported multi-process deployment; **memory** is embedded/test-only
 
 ```bash
 curl http://localhost:8000/health

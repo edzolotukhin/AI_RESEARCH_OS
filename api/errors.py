@@ -5,6 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from application.execution.exceptions import ClaimConflictError
 from application.persistence.exceptions import (
     CheckpointPersistenceError,
     ConcurrentModificationError,
@@ -34,6 +35,17 @@ def _error_response(
 
 
 def register_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(ClaimConflictError)
+    async def handle_claim_conflict(
+        _: Request,
+        exc: ClaimConflictError,
+    ) -> JSONResponse:
+        return _error_response(
+            status_code=409,
+            code="run_claim_conflict",
+            message=str(exc),
+        )
+
     @app.exception_handler(EntityNotFoundError)
     async def handle_not_found(_: Request, exc: EntityNotFoundError) -> JSONResponse:
         return _error_response(
@@ -102,6 +114,12 @@ def register_exception_handlers(app: FastAPI) -> None:
                 message=message,
             )
         if "Durable workflow execution is not enabled" in message:
+            return _error_response(
+                status_code=409,
+                code="durable_execution_unavailable",
+                message=message,
+            )
+        if "Durable background workflow execution is not enabled" in message:
             return _error_response(
                 status_code=409,
                 code="durable_execution_unavailable",

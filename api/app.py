@@ -43,9 +43,10 @@ def create_fastapi_app(
         title="AI Research OS API",
         description=(
             "HTTP boundary for the AI Research OS workflow runtime. "
-            "Research execution is synchronous in PF-05: POST /projects/{id}/research "
-            "blocks until the workflow completes or fails. Live planning requires "
-            "OPENAI_API_KEY when using the default OpenAI client."
+            "POST /projects/{id}/research validates and plans synchronously, "
+            "persists the run, returns 202 Accepted, and executes the workflow "
+            "in a background worker. Live planning requires OPENAI_API_KEY when "
+            "using the default OpenAI client."
         ),
         version=API_VERSION,
         lifespan=lifespan,

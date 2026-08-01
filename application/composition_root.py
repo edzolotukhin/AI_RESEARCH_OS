@@ -51,9 +51,16 @@ from application.services.knowledge_service import KnowledgeService
 from application.services.project_service import ProjectService
 from application.services.durable_workflow_service import DurableWorkflowService
 from application.services.workflow_service import WorkflowService
+from application.services.worker_execution_service import WorkerExecutionService
+from application.execution.lease_config import LeaseConfig
+from application.runtime.background_execution_capability import (
+    resolve_background_execution_capability,
+)
 from application.runtime.durable_execution_policy import (
     supports_durable_workflow_execution,
 )
+from infrastructure.persistence.noop_run_queue import NoOpRunQueue
+
 from infrastructure.persistence.persistence_factory import build_persistence_bundle
 
 from loaders.agent_loader import AgentLoader
@@ -83,7 +90,7 @@ def create_application_container(
     Builds the application object graph and returns the full container
     for HTTP and other entry points.
     """
-    config = config or ApplicationConfig()
+    config = config or ApplicationConfig.from_env()
     overrides = overrides or ApplicationOverrides()
 
     registry = overrides.registry or Registry()
@@ -209,13 +216,29 @@ def create_application_container(
     )
 
     durable_workflow_service: DurableWorkflowService | None = None
+    worker_execution_service: WorkerExecutionService | None = None
+    background_execution = resolve_background_execution_capability(
+        config,
+        execution_port_available=persistence.workflow_run_execution_repository
+        is not None,
+    )
+    lease_config = LeaseConfig.from_env()
     if supports_durable_workflow_execution(config):
         durable_workflow_service = DurableWorkflowService(
             workflow_service=workflow_service,
             project_service=project_service,
             execution_log_store=persistence.execution_log_store,
             workflow_engine=workflow_engine,
+            execution_port=persistence.workflow_run_execution_repository,
+            run_queue=NoOpRunQueue(),
+            lease_config=lease_config,
         )
+        if background_execution.in_process_worker:
+            worker_execution_service = WorkerExecutionService(
+                durable_workflow_service=durable_workflow_service,
+                execution_port=persistence.workflow_run_execution_repository,
+                lease_config=lease_config,
+            )
 
     agency = Agency(
         agent_loader=agent_loader,
@@ -224,6 +247,7 @@ def create_application_container(
         workflow_run_factory=workflow_run_factory,
         workflow_engine=workflow_engine,
         durable_workflow_service=durable_workflow_service,
+        background_execution_enabled=background_execution.http_submission,
     )
 
     shutdown_callbacks: list = []
@@ -242,6 +266,8 @@ def create_application_container(
         knowledge_service=knowledge_service,
         execution_log_service=execution_log_service,
         durable_workflow_service=durable_workflow_service,
+        worker_execution_service=worker_execution_service,
+        background_execution=background_execution,
         readiness_check=readiness_check,
         _shutdown_callbacks=shutdown_callbacks,
     )
@@ -291,6 +317,13 @@ def _ensure_executor_catalog_matches_registry(
 
 
 def _create_llm_client(config: ApplicationConfig):
+    import os
+
+    if os.environ.get("DETERMINISTIC_PLANNER", "").lower() in {"1", "true", "yes"}:
+        from infrastructure.llm.deterministic_llm_client import DeterministicLLMClient
+
+        return DeterministicLLMClient()
+
     from infrastructure.llm.llm_configuration import LLMConfiguration
     from infrastructure.llm.openai_client import OpenAIClient
 

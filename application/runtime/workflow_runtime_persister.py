@@ -12,6 +12,8 @@ from application.services.workflow_service import WorkflowService
 from domain.value_objects.task_status import TaskStatus
 from runtime.workflow_context import WorkflowContext
 
+from application.execution.heartbeat import LeaseGuard
+
 
 class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
     """Persists WorkflowRun checkpoints and emits best-effort audit events."""
@@ -24,6 +26,7 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
         run_id: str,
         initial_version: int = 0,
         task_results: dict[str, Any] | None = None,
+        lease_guard: LeaseGuard | None = None,
     ) -> None:
         self._workflow_service = workflow_service
         self._audit = audit
@@ -31,6 +34,7 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
         self._expected_version = initial_version
         self._task_results = dict(task_results or {})
         self._last_fingerprint: str | None = None
+        self._lease_guard = lease_guard
 
     @property
     def expected_version(self) -> int:
@@ -86,6 +90,8 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
         *,
         critical: bool = False,
     ) -> None:
+        if self._lease_guard is not None:
+            self._lease_guard.validate()
         fingerprint = durable_recovery_fingerprint(context, self._task_results)
         if fingerprint == self._last_fingerprint:
             return

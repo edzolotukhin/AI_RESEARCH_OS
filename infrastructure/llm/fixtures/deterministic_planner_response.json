@@ -1,0 +1,29 @@
+{
+  "name": "Brand Health Workflow",
+  "goal": "Evaluate brand awareness, usage and loyalty.",
+  "methodology": "Quantitative brand tracking survey",
+  "stages": [
+    {
+      "id": "stage-design",
+      "name": "Research Design",
+      "description": "Define methodology and sample design.",
+      "tasks": [
+        {
+          "id": "task-methodology",
+          "title": "Define methodology",
+          "description": "Select research methods and metrics.",
+          "executor_id": "planner",
+          "dependencies": []
+        },
+        {
+          "id": "task-sample",
+          "title": "Design sample plan",
+          "description": "Define target audience and sample size.",
+          "executor_id": "search",
+          "dependencies": ["task-methodology"]
+        }
+      ]
+    }
+  ],
+  "metadata": {}
+}

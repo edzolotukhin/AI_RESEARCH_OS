@@ -20,6 +20,7 @@ def build_test_container(
     *,
     temp_dir: str | None = None,
     persistence_backend: str = "memory",
+    background_execution_mode: str | None = None,
 ) -> ApplicationContainer:
     mock_llm = Mock()
     mock_llm.generate.return_value = LLMResponse(content=VALID_PLANNER_JSON)
@@ -27,10 +28,17 @@ def build_test_container(
     if temp_dir is None:
         temp_dir = tempfile.mkdtemp()
 
+    if background_execution_mode is None:
+        if persistence_backend == "memory":
+            background_execution_mode = "embedded"
+        elif persistence_backend == "postgresql":
+            background_execution_mode = "external"
+
     container = create_application_container(
         config=ApplicationConfig(
             projects_root=temp_dir,
             persistence_backend=persistence_backend,
+            background_execution_mode=background_execution_mode,
         ),
         overrides=ApplicationOverrides(llm_client=mock_llm),
     )
@@ -52,6 +60,20 @@ def open_test_client(
 def close_test_client(context: TestClient, container: ApplicationContainer) -> None:
     context.__exit__(None, None, None)
     container.shutdown()
+
+
+def drain_background_runs(
+    container: ApplicationContainer,
+    *,
+    worker_id: str = "test-worker",
+    max_runs: int = 100,
+) -> int:
+    if container.worker_execution_service is None:
+        return 0
+    return container.worker_execution_service.drain_runnable_runs(
+        worker_id,
+        max_runs=max_runs,
+    )
 
 
 def build_test_client(
