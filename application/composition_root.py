@@ -27,6 +27,8 @@ from application.workflow_engine import WorkflowEngine
 
 from agency.agency import Agency
 
+from application.container import ApplicationContainer
+
 from agents.analysis.analysis_agent import AnalysisAgent
 from agents.planner.planner_agent_factory import PlannerAgentFactory
 from agents.planner.planner_executor import PlannerExecutor
@@ -44,6 +46,7 @@ from application.planner.payload_contract import PlannerPayloadContract
 from application.structured_output.generator import StructuredOutputGenerator
 from application.structured_output.parser import StructuredOutputParser
 from application.services.artifact_service import ArtifactService
+from application.services.execution_log_service import ExecutionLogService
 from application.services.knowledge_service import KnowledgeService
 from application.services.project_service import ProjectService
 from application.services.durable_workflow_service import DurableWorkflowService
@@ -66,6 +69,19 @@ def create_application(
     Composition Root for AI Research OS.
 
     Builds the application object graph and returns the Agency facade.
+    """
+    return create_application_container(config=config, overrides=overrides).agency
+
+
+def create_application_container(
+    config: ApplicationConfig | None = None,
+    overrides: ApplicationOverrides | None = None,
+) -> ApplicationContainer:
+    """
+    Composition Root for AI Research OS.
+
+    Builds the application object graph and returns the full container
+    for HTTP and other entry points.
     """
     config = config or ApplicationConfig()
     overrides = overrides or ApplicationOverrides()
@@ -105,9 +121,9 @@ def create_application(
         knowledge_repository=persistence.knowledge_repository,
     )
 
-    # Prepared for PF-05 entry points; Agency uses ProjectService and optional
-    # durable workflow execution today.
-    _ = artifact_service, knowledge_service
+    execution_log_service = ExecutionLogService(
+        execution_log_store=persistence.execution_log_store,
+    )
 
     llm_client = overrides.llm_client or _create_llm_client(config)
 
@@ -201,13 +217,58 @@ def create_application(
             workflow_engine=workflow_engine,
         )
 
-    return Agency(
+    agency = Agency(
         agent_loader=agent_loader,
         project_service=project_service,
         planner_agent=planner_agent,
         workflow_run_factory=workflow_run_factory,
         workflow_engine=workflow_engine,
         durable_workflow_service=durable_workflow_service,
+    )
+
+    shutdown_callbacks: list = []
+    readiness_check = _build_readiness_check(
+        config=config,
+        persistence_engine=persistence.engine,
+        shutdown_callbacks=shutdown_callbacks,
+    )
+
+    return ApplicationContainer(
+        config=config,
+        agency=agency,
+        project_service=project_service,
+        workflow_service=workflow_service,
+        artifact_service=artifact_service,
+        knowledge_service=knowledge_service,
+        execution_log_service=execution_log_service,
+        durable_workflow_service=durable_workflow_service,
+        readiness_check=readiness_check,
+        _shutdown_callbacks=shutdown_callbacks,
+    )
+
+
+def _build_readiness_check(
+    *,
+    config: ApplicationConfig,
+    persistence_engine: object | None,
+    shutdown_callbacks: list,
+):
+    if config.persistence_backend != "postgresql":
+        return lambda: (True, "ready")
+
+    if persistence_engine is None:
+        return lambda: (False, "postgresql_engine_unavailable")
+
+    from infrastructure.persistence.postgresql.readiness import (
+        build_postgresql_readiness_check,
+        resolve_expected_alembic_head,
+    )
+
+    expected_revision = resolve_expected_alembic_head()
+    return build_postgresql_readiness_check(
+        persistence_engine,
+        expected_revision,
+        shutdown_callbacks,
     )
 
 

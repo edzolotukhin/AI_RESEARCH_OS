@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,6 +23,20 @@ class ApplicationConfig:
     persistence_backend: str = "file"
     database_url: str | None = None
     durable_workflow_execution: bool | None = None
+
+    @classmethod
+    def from_env(cls) -> ApplicationConfig:
+        from infrastructure.persistence.persistence_factory import (
+            resolve_persistence_backend,
+        )
+
+        return cls(
+            llm_model=os.environ.get("LLM_MODEL", "gpt-5"),
+            llm_max_tokens=int(os.environ.get("LLM_MAX_TOKENS", "4096")),
+            projects_root=os.environ.get("PROJECTS_ROOT", "agency/projects"),
+            persistence_backend=resolve_persistence_backend(),
+            database_url=os.environ.get("DATABASE_URL"),
+        )
 
 
 @dataclass

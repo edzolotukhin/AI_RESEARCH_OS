@@ -21,6 +21,7 @@ from tests.integration.postgresql.helpers import (
 
 
 def _seed_project(session_factory, project_id: str = "project-1") -> None:
+    """Persist a contract Project through the repository port."""
     from domain.factories.project_factory import ProjectFactory
     from infrastructure.persistence.postgresql.repositories.postgresql_project_repository import (
         PostgreSQLProjectRepository,
@@ -37,6 +38,8 @@ def _seed_workflow_run(
     project_id: str = "project-1",
     run_id: str = "run-log-contract",
 ) -> None:
+    """Persist a contract WorkflowRun; requires the parent Project to exist."""
+    _seed_project(session_factory, project_id=project_id)
     from domain.factories.task_factory import TaskFactory
     from domain.factories.workflow_run_factory import WorkflowRunFactory
     from domain.task_definition import TaskDefinition
@@ -95,16 +98,18 @@ class PostgreSQLWorkflowRunRepositoryContractTests(
     WorkflowRunRepositoryContractTests,
     PostgreSQLRepositoryContractTestCase,
 ):
+    session_factory: object
+
     def build_repository(self):
         from infrastructure.persistence.postgresql.repositories.postgresql_workflow_run_repository import (
             PostgreSQLWorkflowRunRepository,
         )
 
-        session_factory = self.fresh_session_factory()
-        _seed_project(session_factory, project_id="project-1")
-        _seed_project(session_factory, project_id="project-list")
-        _seed_project(session_factory, project_id="project-version")
-        return PostgreSQLWorkflowRunRepository(session_factory)
+        self.session_factory = self.fresh_session_factory()
+        return PostgreSQLWorkflowRunRepository(self.session_factory)
+
+    def prepare_project(self, project_id: str) -> None:
+        _seed_project(self.session_factory, project_id=project_id)
 
 
 @unittest.skipUnless(
@@ -179,9 +184,76 @@ class PostgreSQLExecutionLogStoreContractTests(
         )
 
         session_factory = self.fresh_session_factory()
-        _seed_project(session_factory, project_id="project-1")
         _seed_workflow_run(session_factory, project_id="project-1", run_id="run-1")
         return PostgreSQLExecutionLogStore(session_factory)
+
+
+@unittest.skipUnless(
+    integration_tests_enabled(),
+    "PostgreSQL contract tests require POSTGRESQL_INTEGRATION_TESTS=1 "
+    "and DATABASE_URL_TEST with 'test' in the database name.",
+)
+class PostgreSQLWorkflowRunContractPrerequisiteTests(
+    PostgreSQLRepositoryContractTestCase,
+):
+    """
+    Regression tests for WorkflowRun contract FK prerequisites.
+
+    workflow_runs.project_id enforces FK → projects.id.
+    workflow_runs.workflow_template_id is intentionally NOT an FK: runs store
+    the template id from the in-memory aggregate snapshot at creation time.
+    """
+
+    def setUp(self) -> None:
+        self.session_factory = self.fresh_session_factory()
+
+    def test_prepare_project_persists_parent_before_run_create(self) -> None:
+        from infrastructure.persistence.postgresql.repositories.postgresql_project_repository import (
+            PostgreSQLProjectRepository,
+        )
+        from infrastructure.persistence.postgresql.repositories.postgresql_workflow_run_repository import (
+            PostgreSQLWorkflowRunRepository,
+        )
+        from tests.application.ports.test_workflow_run_repository_contract import (
+            _template,
+        )
+        from domain.factories.task_factory import TaskFactory
+        from domain.factories.workflow_run_factory import WorkflowRunFactory
+
+        _seed_project(self.session_factory, project_id="project-prereq")
+
+        project_repository = PostgreSQLProjectRepository(self.session_factory)
+        loaded = project_repository.get_by_id("project-prereq")
+        self.assertIsNotNone(loaded)
+
+        workflow_run = WorkflowRunFactory(task_factory=TaskFactory()).create(
+            _template("template-prereq"),
+            run_id="run-prereq",
+        )
+        run_repository = PostgreSQLWorkflowRunRepository(self.session_factory)
+        run_repository.create(workflow_run, project_id="project-prereq")
+
+        self.assertIsNotNone(run_repository.get_by_id("run-prereq"))
+
+    def test_create_rejects_missing_project_via_foreign_key(self) -> None:
+        from infrastructure.persistence.postgresql.repositories.postgresql_workflow_run_repository import (
+            PostgreSQLWorkflowRunRepository,
+        )
+        from tests.application.ports.test_workflow_run_repository_contract import (
+            _template,
+        )
+        from domain.factories.task_factory import TaskFactory
+        from domain.factories.workflow_run_factory import WorkflowRunFactory
+        from sqlalchemy.exc import IntegrityError
+
+        workflow_run = WorkflowRunFactory(task_factory=TaskFactory()).create(
+            _template("template-missing-project"),
+            run_id="run-missing-project",
+        )
+        run_repository = PostgreSQLWorkflowRunRepository(self.session_factory)
+
+        with self.assertRaises(IntegrityError):
+            run_repository.create(workflow_run, project_id="missing-project")
 
 
 if __name__ == "__main__":

@@ -18,6 +18,12 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
+Write-Host "=== API tests ==="
+& (Join-Path $PSScriptRoot "test_api.ps1")
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
+
 Write-Host "=== git diff --check ==="
 Invoke-ExternalCommand -CommandName "git diff --check" -CommandBlock {
     git diff --check
