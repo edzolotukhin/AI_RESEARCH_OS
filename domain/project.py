@@ -29,6 +29,8 @@ class Project:
 
     updated_at: str = ""
 
+    owner_principal_id: str | None = None
+
     runs: list[WorkflowRun] = field(default_factory=list)
 
     def start_research_design(self):

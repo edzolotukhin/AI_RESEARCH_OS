@@ -35,13 +35,14 @@
 - [x] **PF-05** FastAPI application boundary (ADR-011)
 - [x] **PF-06** Background workflow execution (ADR-012)
 - [x] **PF-07** External orchestration / n8n integration boundary (ADR-013)
+- [x] **PF-08** Authentication and access boundary (ADR-014)
 - [x] Extract `ProjectRepository` port; decouple `Agency` from concrete infrastructure class
 - [x] Define `ExecutionLog` persistence record and port (`ExecutionLogStore`)
 - [x] Implement `ProjectRepository` port operations in file adapter (`get_by_id`, `list`, `delete`)
 - [ ] Resolve `Project.runs` in-memory field vs persisted query model
 - [ ] Artifact blob storage strategy (filesystem vs object store)
 
-PostgreSQL, Docker, FastAPI, background execution, and external orchestration idempotency are implemented. Production auth remains deferred.
+PostgreSQL, Docker, FastAPI, background execution, external orchestration idempotency, and API key authentication are implemented.
 
 ## Product (not started)
 

@@ -60,4 +60,39 @@ def create_fastapi_app(
     app.include_router(workflow_runs.router)
     app.include_router(artifacts.router)
 
+    _configure_openapi_security(app)
+
     return app
+
+
+def _configure_openapi_security(app: FastAPI) -> None:
+    def custom_openapi():
+        if app.openapi_schema:
+            return app.openapi_schema
+        from fastapi.openapi.utils import get_openapi
+
+        openapi_schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=app.routes,
+        )
+        openapi_schema.setdefault("components", {}).setdefault(
+            "securitySchemes",
+            {},
+        )["ApiKeyBearer"] = {
+            "type": "http",
+            "scheme": "bearer",
+            "description": "Service API key issued via bootstrap CLI.",
+        }
+        public_paths = {"/health", "/ready", "/openapi.json", "/docs", "/redoc"}
+        for path, methods in openapi_schema.get("paths", {}).items():
+            if path in public_paths:
+                continue
+            for operation in methods.values():
+                if isinstance(operation, dict):
+                    operation.setdefault("security", [{"ApiKeyBearer": []}])
+        app.openapi_schema = openapi_schema
+        return app.openapi_schema
+
+    app.openapi = custom_openapi

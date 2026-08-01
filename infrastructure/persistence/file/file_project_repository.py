@@ -106,6 +106,7 @@ class FileProjectRepository:
         *,
         offset: int = 0,
         limit: int | None = None,
+        owner_principal_id: str | None = None,
     ) -> list[Project]:
         if not self._projects_root.exists():
             return []
@@ -125,8 +126,14 @@ class FileProjectRepository:
         projects: list[Project] = []
         for project_id in project_ids:
             project = self.get_by_id(project_id)
-            if project is not None:
-                projects.append(project)
+            if project is None:
+                continue
+            if (
+                owner_principal_id is not None
+                and project.owner_principal_id != owner_principal_id
+            ):
+                continue
+            projects.append(project)
 
         return projects
 

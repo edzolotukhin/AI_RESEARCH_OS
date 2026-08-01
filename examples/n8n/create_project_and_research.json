@@ -13,6 +13,15 @@
       "parameters": {
         "method": "POST",
         "url": "={{$env.AI_RESEARCH_OS_API_URL || 'http://api:8000'}}/projects",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{'Bearer ' + $env.AI_RESEARCH_OS_API_KEY}}"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\"name\": \"n8n Research Project\"}"
@@ -30,6 +39,10 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{'Bearer ' + $env.AI_RESEARCH_OS_API_KEY}}"
+            },
             {
               "name": "Idempotency-Key",
               "value": "={{$execution.id}}"

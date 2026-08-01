@@ -32,8 +32,14 @@ class ProjectService:
         self._project_factory = project_factory
         self._project_repository = project_repository
 
-    def create_project(self, name: str) -> Project:
+    def create_project(
+        self,
+        name: str,
+        *,
+        owner_principal_id: str | None = None,
+    ) -> Project:
         project = self._project_factory.create(name)
+        project.owner_principal_id = owner_principal_id
         self._project_repository.create(project)
         return project
 
@@ -48,8 +54,13 @@ class ProjectService:
         *,
         offset: int = 0,
         limit: int | None = None,
+        owner_principal_id: str | None = None,
     ) -> list[Project]:
-        return self._project_repository.list(offset=offset, limit=limit)
+        return self._project_repository.list(
+            offset=offset,
+            limit=limit,
+            owner_principal_id=owner_principal_id,
+        )
 
     def save_project(
         self,

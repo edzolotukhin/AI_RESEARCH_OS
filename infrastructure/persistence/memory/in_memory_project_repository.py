@@ -64,8 +64,15 @@ class InMemoryProjectRepository:
         *,
         offset: int = 0,
         limit: int | None = None,
+        owner_principal_id: str | None = None,
     ) -> list[Project]:
         project_ids = sorted(self._projects)
+        if owner_principal_id is not None:
+            project_ids = [
+                project_id
+                for project_id in project_ids
+                if self._projects[project_id].owner_principal_id == owner_principal_id
+            ]
         if offset:
             project_ids = project_ids[offset:]
         if limit is not None:

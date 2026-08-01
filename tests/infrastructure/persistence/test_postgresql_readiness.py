@@ -48,7 +48,7 @@ def _mock_engine(connection: MagicMock) -> MagicMock:
 class PostgreSQLReadinessLogicTests(unittest.TestCase):
 
     def test_resolve_expected_head_matches_repository(self) -> None:
-        self.assertEqual(resolve_expected_alembic_head(), "004_pf07_submission_status")
+        self.assertEqual(resolve_expected_alembic_head(), "005_pf08_auth_boundary")
 
     def test_connection_failure_returns_database_unavailable(self) -> None:
         engine = MagicMock()

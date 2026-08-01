@@ -218,8 +218,11 @@ Development startup is explicit — migrations are **not** run automatically on 
 ```bash
 docker compose up -d postgres
 docker compose run --rm api alembic upgrade head
+docker compose run --rm api python -m tools.create_api_key --name local
 docker compose up -d api worker
 ```
+
+Set `AI_RESEARCH_OS_API_KEY` in `.env` to the bootstrap plaintext (shown once). Business routes require `Authorization: Bearer <key>`. `/health` and `/ready` remain public.
 
 For offline smoke without a live LLM, opt in explicitly:
 
@@ -239,18 +242,19 @@ Normal Compose does **not** enable `DETERMINISTIC_PLANNER`. Production planning 
 
 External clients integrate via HTTP only — no direct PostgreSQL or Python imports.
 
+- `Authorization: Bearer <api-key>` on all business routes (see ADR-014)
 - `Idempotency-Key` header on `POST /research` for durable deduplication (PostgreSQL)
 - `correlation_id`, `source` in request body; optional `X-Correlation-ID` header
 - Poll `GET /workflow-runs/{id}` until `is_terminal`; then `GET /results` and `/artifacts`
 - Optional n8n: `docker compose -f docker-compose.yml -f docker-compose.n8n.yml up -d`
 - Examples: `examples/n8n/` — see ADR-013
 
-**Local dev is unauthenticated.** Do not expose to public internet.
+**Local dev requires API key authentication for business endpoints.** Bootstrap via `python -m tools.create_api_key --name local` (PostgreSQL). Do not expose unauthenticated deployments to public internet.
 
 ```bash
 curl http://localhost:8000/health
 curl http://localhost:8000/ready
-curl http://localhost:8000/docs
+curl -H "Authorization: Bearer $AI_RESEARCH_OS_API_KEY" http://localhost:8000/projects
 ```
 
 ---

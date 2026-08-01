@@ -55,7 +55,10 @@ class AgencyFacadeTests(unittest.TestCase):
 
         result = agency.create_project("Test Project")
 
-        project_service.create_project.assert_called_once_with("Test Project")
+        project_service.create_project.assert_called_once_with(
+            "Test Project",
+            owner_principal_id=None,
+        )
         self.assertIs(result, expected_project)
 
     def test_agency_does_not_reference_project_repository(self):

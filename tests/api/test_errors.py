@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from tests.api.helpers import ApiTestCase, build_test_container, close_test_client, open_test_client
+from tests.api.auth_helpers import auth_headers
+from tests.api.helpers import ApiTestCase, AuthenticatedTestClient, build_test_container, close_test_client, open_test_client
 
 
 class ErrorEnvelopeTests(ApiTestCase):
@@ -30,7 +31,11 @@ class ErrorEnvelopeTests(ApiTestCase):
         container = build_test_container(
             persistence_backend="file",
         )
-        client, _, context = open_test_client(container)
+        raw_client, _, context = open_test_client(container)
+        client = AuthenticatedTestClient(
+            raw_client,
+            auth_headers(container._test_api_key_plaintext),
+        )
         try:
             project = client.post("/projects", json={"name": "File Backend"}).json()
             response = client.post(f"/workflow-runs/{project['id']}/resume")

@@ -17,6 +17,16 @@ Open n8n at http://localhost:5678 and import JSON files from this directory.
 Set environment variable `AI_RESEARCH_OS_API_URL=http://api:8000` inside the n8n
 container (provided by `docker-compose.n8n.yml`).
 
+Bootstrap a service API key before importing workflows:
+
+```bash
+docker compose run --rm api python -m tools.create_api_key --name n8n
+```
+
+Set `AI_RESEARCH_OS_API_KEY` in your environment (or n8n credentials) to the
+plaintext value printed once. Workflows send `Authorization: Bearer` using
+`{{$env.AI_RESEARCH_OS_API_KEY}}`.
+
 ## Primary scenario
 
 1. **create_project_and_research.json** — create project, submit research with

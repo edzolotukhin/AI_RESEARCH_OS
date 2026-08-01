@@ -3,9 +3,10 @@ from __future__ import annotations
 import logging
 from uuid import uuid4
 
-from fastapi import APIRouter, Header, Query, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Response, status
 from fastapi.responses import JSONResponse
 
+from api.auth import AuthorizationDep, PrincipalDep, bearer_scheme
 from api.dependencies import (
     AgencyDep,
     ArtifactServiceDep,
@@ -56,6 +57,8 @@ def _log_research_response(
     correlation_id: str | None,
     run_id: str,
     source: str | None,
+    principal_id: str | None = None,
+    api_key_id: str | None = None,
 ) -> None:
     logger.info(
         event,
@@ -66,6 +69,8 @@ def _log_research_response(
             "status": 202,
             "run_id": run_id,
             "source": source,
+            "principal_id": principal_id,
+            "api_key_id": api_key_id,
         },
     )
 
@@ -81,6 +86,8 @@ def _replay_submission_response(
     request_id: str,
     correlation_id: str | None,
     source: str | None,
+    principal_id: str | None = None,
+    api_key_id: str | None = None,
     event: str = "research_submission_replayed",
 ):
     payload = start_research_to_response(
@@ -97,6 +104,8 @@ def _replay_submission_response(
         correlation_id=correlation_id,
         run_id=payload.run_id,
         source=source,
+        principal_id=principal_id,
+        api_key_id=api_key_id,
     )
     return payload
 
@@ -113,6 +122,8 @@ def _resolve_idempotent_replay(
     request_id: str,
     correlation_id: str | None,
     source: str | None,
+    principal_id: str | None = None,
+    api_key_id: str | None = None,
 ):
     if submission_result.replay:
         existing = container.workflow_service.get_workflow_run(
@@ -128,6 +139,8 @@ def _resolve_idempotent_replay(
             request_id=request_id,
             correlation_id=correlation_id,
             source=source,
+            principal_id=principal_id,
+            api_key_id=api_key_id,
         )
 
     load_run = container.workflow_service.get_workflow_run
@@ -148,6 +161,8 @@ def _resolve_idempotent_replay(
             request_id=request_id,
             correlation_id=correlation_id,
             source=source,
+            principal_id=principal_id,
+            api_key_id=api_key_id,
         )
 
     if not submission_result.created:
@@ -168,6 +183,8 @@ def _resolve_idempotent_replay(
                 request_id=request_id,
                 correlation_id=correlation_id,
                 source=source,
+                principal_id=principal_id,
+                api_key_id=api_key_id,
             )
 
     return None
@@ -188,6 +205,7 @@ def _resolve_idempotent_replay(
         "Supply Idempotency-Key to deduplicate external orchestrator retries."
     ),
     responses={
+        401: {"description": "Authentication required."},
         404: {"description": "Project not found."},
         409: {
             "description": (
@@ -197,18 +215,23 @@ def _resolve_idempotent_replay(
         },
         422: {"description": "Missing or invalid project brief."},
     },
+    dependencies=[Depends(bearer_scheme)],
 )
 def start_research(
     project_id: str,
     body: StartResearchRequest,
     agency: AgencyDep,
     container: ContainerDep,
+    authorization: AuthorizationDep,
+    principal: PrincipalDep,
     response: Response,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
 ) -> StartResearchResponse:
     if container.background_execution is not None:
         requires_http_background_submission(container.background_execution)
+
+    project = authorization.require_project(principal, project_id)
 
     correlation_id = body.correlation_id or x_correlation_id
     source = body.source
@@ -239,11 +262,12 @@ def start_research(
             request_id=request_id,
             correlation_id=correlation_id,
             source=source,
+            principal_id=principal.principal_id,
+            api_key_id=principal.api_key_id,
         )
         if replay_response is not None:
             return replay_response
 
-    project = agency.get_project(project_id)
     project.brief = ProjectBrief(
         client=body.brief.client,
         project_title=body.brief.project_title,
@@ -292,6 +316,8 @@ def start_research(
                     request_id=request_id,
                     correlation_id=correlation_id,
                     source=source,
+                    principal_id=principal.principal_id,
+                    api_key_id=principal.api_key_id,
                 )
         raise
     except Exception:
@@ -319,6 +345,8 @@ def start_research(
                     request_id=request_id,
                     correlation_id=correlation_id,
                     source=source,
+                    principal_id=principal.principal_id,
+                    api_key_id=principal.api_key_id,
                 )
         if (
             submission_service is not None
@@ -354,6 +382,8 @@ def start_research(
             "status": 202,
             "run_id": payload.run_id,
             "source": source,
+            "principal_id": principal.principal_id,
+            "api_key_id": principal.api_key_id,
         },
     )
     return payload
@@ -368,15 +398,21 @@ def start_research(
         "Poll workflow run status until is_terminal is true. Safe for repeated "
         "external orchestrator polling."
     ),
-    responses={404: {"description": "Workflow run not found."}},
+    dependencies=[Depends(bearer_scheme)],
+    responses={
+        401: {"description": "Authentication required."},
+        404: {"description": "Workflow run not found."},
+    },
 )
 def get_workflow_run(
     run_id: str,
     workflow_service: WorkflowServiceDep,
     artifact_service: ArtifactServiceDep,
     container: ContainerDep,
+    authorization: AuthorizationDep,
+    principal: PrincipalDep,
 ) -> WorkflowRunResponse:
-    workflow_run = workflow_service.get_workflow_run(run_id)
+    workflow_run, _ = authorization.require_run(principal, run_id)
     version = None
     try:
         version = workflow_service.get_workflow_run_version(run_id)
@@ -403,14 +439,22 @@ def get_workflow_run(
     response_model=WorkflowRunListResponse,
     summary="List workflow runs for a project",
     operation_id="listWorkflowRunsForProject",
+    dependencies=[Depends(bearer_scheme)],
+    responses={
+        401: {"description": "Authentication required."},
+        404: {"description": "Project not found."},
+    },
 )
 def list_workflow_runs_for_project(
     project_id: str,
     workflow_service: WorkflowServiceDep,
     artifact_service: ArtifactServiceDep,
     container: ContainerDep,
+    authorization: AuthorizationDep,
+    principal: PrincipalDep,
     status_filter: WorkflowStatus | None = Query(default=None, alias="status"),
 ) -> WorkflowRunListResponse:
+    authorization.require_project(principal, project_id)
     runs = workflow_service.list_workflow_runs_for_project(
         project_id,
         status=status_filter,
@@ -446,7 +490,9 @@ def list_workflow_runs_for_project(
     response_model=WorkflowRunResponse,
     summary="Submit workflow run resume for background execution",
     operation_id="resumeWorkflowRun",
+    dependencies=[Depends(bearer_scheme)],
     responses={
+        401: {"description": "Authentication required."},
         404: {"description": "Workflow run not found."},
         409: {"description": "Resume unavailable for PAUSED runs, active lease, or non-durable backend."},
     },
@@ -457,12 +503,14 @@ def resume_workflow_run(
     container: ContainerDep,
     workflow_service: WorkflowServiceDep,
     artifact_service: ArtifactServiceDep,
+    authorization: AuthorizationDep,
+    principal: PrincipalDep,
     response: Response,
 ) -> WorkflowRunResponse | JSONResponse:
     if container.background_execution is not None:
         requires_http_background_submission(container.background_execution)
 
-    workflow_run = workflow_service.get_workflow_run(run_id)
+    workflow_run, _ = authorization.require_run(principal, run_id)
     if workflow_run.is_terminal:
         version = None
         try:
@@ -513,13 +561,19 @@ def resume_workflow_run(
         "Returns task result snapshots when available. results_ready is true only "
         "when the workflow run is terminal."
     ),
-    responses={404: {"description": "Workflow run not found."}},
+    dependencies=[Depends(bearer_scheme)],
+    responses={
+        401: {"description": "Authentication required."},
+        404: {"description": "Workflow run not found."},
+    },
 )
 def get_workflow_run_results(
     run_id: str,
     workflow_service: WorkflowServiceDep,
+    authorization: AuthorizationDep,
+    principal: PrincipalDep,
 ) -> WorkflowRunResultsResponse:
-    workflow_run = workflow_service.get_workflow_run(run_id)
+    workflow_run, _ = authorization.require_run(principal, run_id)
     task_results = workflow_service.get_task_results(run_id)
     results_ready = workflow_run.is_terminal
     return WorkflowRunResultsResponse(
@@ -536,15 +590,20 @@ def get_workflow_run_results(
     response_model=ExecutionLogListResponse,
     summary="Get append-only execution logs for a workflow run",
     operation_id="getWorkflowRunLogs",
-    responses={404: {"description": "Workflow run not found."}},
+    dependencies=[Depends(bearer_scheme)],
+    responses={
+        401: {"description": "Authentication required."},
+        404: {"description": "Workflow run not found."},
+    },
 )
 def get_workflow_run_logs(
     run_id: str,
-    workflow_service: WorkflowServiceDep,
     execution_log_service: ExecutionLogServiceDep,
-    limit: int = Query(default=MAX_LOG_LIMIT, ge=1, le=MAX_LOG_LIMIT),
+    authorization: AuthorizationDep,
+    principal: PrincipalDep,
+    limit: int = Query(default=100, ge=1, le=MAX_LOG_LIMIT),
 ) -> ExecutionLogListResponse:
-    workflow_service.get_workflow_run(run_id)
+    authorization.require_run(principal, run_id)
     logs = execution_log_service.list_logs_for_run(run_id)
     bounded = logs[:limit]
     return ExecutionLogListResponse(

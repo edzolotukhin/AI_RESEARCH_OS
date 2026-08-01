@@ -7,11 +7,14 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from application.execution.exceptions import ClaimConflictError
 from application.persistence.exceptions import (
+    AccessDeniedError,
+    AuthenticationRequiredError,
     CheckpointPersistenceError,
     ConcurrentModificationError,
     DuplicateEntityError,
     EntityNotFoundError,
     IdempotencyConflictError,
+    InvalidCredentialsError,
 )
 from application.runtime.task_result_codec import NonSerializableTaskResultError
 
@@ -36,6 +39,43 @@ def _error_response(
 
 
 def register_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(AuthenticationRequiredError)
+    async def handle_authentication_required(
+        _: Request,
+        exc: AuthenticationRequiredError,
+    ) -> JSONResponse:
+        response = _error_response(
+            status_code=401,
+            code="authentication_required",
+            message=str(exc),
+        )
+        response.headers["WWW-Authenticate"] = 'Bearer realm="AI Research OS"'
+        return response
+
+    @app.exception_handler(InvalidCredentialsError)
+    async def handle_invalid_credentials(
+        _: Request,
+        exc: InvalidCredentialsError,
+    ) -> JSONResponse:
+        response = _error_response(
+            status_code=401,
+            code="authentication_required",
+            message="Authentication credentials are invalid.",
+        )
+        response.headers["WWW-Authenticate"] = 'Bearer realm="AI Research OS"'
+        return response
+
+    @app.exception_handler(AccessDeniedError)
+    async def handle_access_denied(
+        _: Request,
+        exc: AccessDeniedError,
+    ) -> JSONResponse:
+        return _error_response(
+            status_code=404,
+            code="entity_not_found",
+            message=str(exc),
+        )
+
     @app.exception_handler(ClaimConflictError)
     async def handle_claim_conflict(
         _: Request,

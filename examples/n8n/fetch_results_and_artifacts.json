@@ -12,7 +12,16 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "={{$env.AI_RESEARCH_OS_API_URL || 'http://api:8000'}}/workflow-runs/{{$json.run_id}}/results"
+        "url": "={{$env.AI_RESEARCH_OS_API_URL || 'http://api:8000'}}/workflow-runs/{{$json.run_id}}/results",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{'Bearer ' + $env.AI_RESEARCH_OS_API_KEY}}"
+            }
+          ]
+        }
       },
       "id": "fetch-results",
       "name": "Fetch Results",
@@ -23,7 +32,16 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "={{$env.AI_RESEARCH_OS_API_URL || 'http://api:8000'}}/workflow-runs/{{$json.run_id}}/artifacts"
+        "url": "={{$env.AI_RESEARCH_OS_API_URL || 'http://api:8000'}}/workflow-runs/{{$json.run_id}}/artifacts",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{'Bearer ' + $env.AI_RESEARCH_OS_API_KEY}}"
+            }
+          ]
+        }
       },
       "id": "fetch-artifacts",
       "name": "Fetch Artifacts",
