@@ -60,13 +60,15 @@ flowchart TB
 | Business | Long-lived business context | `Agency`, `Project`, `Knowledge`, artifacts |
 | Workflow | Immutable plans and runtime runs | `WorkflowTemplate`, `TaskDefinition`, `WorkflowRun`, `Task` |
 | Execution | Orchestration and task execution | `WorkflowEngine`, `TaskScheduler`, `TaskExecutor`, `ExecutorResolver` |
-| Infrastructure | External systems | OpenAI LLM client, project repository |
+| Infrastructure | OpenAI LLM client, repository adapters, API key crypto |
 
 ---
 
 # End-to-End Runtime Flow
 
-This is the path implemented today (`main.py` → `Agency.start_research`).
+### In-process demo path (`main.py`, embedded memory)
+
+This is the synchronous path used by `main.py` and the offline demo.
 
 ```mermaid
 flowchart TD
@@ -87,15 +89,27 @@ flowchart TD
     Policy --> Done[WorkflowRun terminal status]
 ```
 
-1. **main.py** builds the application through `create_application()` (composition root).
-2. **Agency** creates a `Project`, runs **PlannerAgent**, then starts workflow execution.
-3. **PlannerAgent** calls the LLM, validates structured output, builds a **ResearchPlan**, maps it to **WorkflowTemplate**.
-4. **WorkflowRunFactory** instantiates **WorkflowRun** and **Task** instances from the template.
-5. **WorkflowEngine** owns the synchronous runtime loop: schedule → execute one ready task → repeat.
-6. **TaskScheduler** updates task readiness from the dependency graph and selects ready tasks; it does not invoke executors.
-7. **TaskExecutor** resolves and invokes the executor for the selected task.
-8. **ExecutorResolver** maps `Task.executor_id` to a registered executor instance.
-9. **WorkflowCompletionPolicy** resolves final workflow status when no further progress is possible.
+### Production HTTP + worker path (PostgreSQL)
+
+```mermaid
+flowchart TD
+    Client[HTTP Client / n8n] --> API[FastAPI]
+    API --> Auth[AuthN / AuthZ]
+    Auth --> Research[POST /research → 202]
+    Research --> PG[(PostgreSQL)]
+    Worker[worker/] --> Claim[Claim / Lease]
+    Claim --> PG
+    Worker --> Engine[WorkflowEngine]
+    Engine --> Exec[Executors]
+    Exec --> PG
+    Client --> Poll[GET /workflow-runs /results]
+    Poll --> API
+```
+
+1. **FastAPI** authenticates the caller and authorizes project access.
+2. **Research submission** persists a durable run and returns **202**; idempotency is scoped per project + key.
+3. **Worker** claims the run, executes via **WorkflowEngine**, checkpoints to PostgreSQL.
+4. Client polls run status, results, logs, and artifact metadata over HTTP.
 
 ---
 
