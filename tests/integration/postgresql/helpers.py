@@ -71,6 +71,7 @@ def reset_schema(engine: Engine) -> None:
 
 def truncate_all_tables(engine: Engine) -> None:
     table_names = [
+        "research_submissions",
         "execution_log_entries",
         "workflow_tasks",
         "workflow_runs",

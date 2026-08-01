@@ -68,7 +68,12 @@ class Agency:
     ) -> list[Project]:
         return self._project_service.list_projects(offset=offset, limit=limit)
 
-    def start_research(self, project: Project) -> WorkflowContext:
+    def start_research(
+        self,
+        project: Project,
+        *,
+        run_id: str | None = None,
+    ) -> WorkflowContext:
         if not self.initialized:
             self.initialize()
 
@@ -93,6 +98,7 @@ class Agency:
                 return self._durable_workflow_service.submit_research(
                     project,
                     workflow_template,
+                    run_id=run_id,
                 )
             return self._durable_workflow_service.start_research(
                 project,

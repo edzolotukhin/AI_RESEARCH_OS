@@ -68,6 +68,7 @@ The following statuses are used throughout the project.
 | ADR-010 | Durable Workflow Checkpoint and Recovery Policy | Active |
 | ADR-011 | HTTP API Boundary and Synchronous Execution Policy | Superseded (research async — see ADR-012) |
 | ADR-012 | Background Execution, Claiming, Lease and Recovery | Active |
+| ADR-013 | External Orchestration and Idempotent Submission | Active |
 
 Additional ADRs will be added as the architecture evolves.
 

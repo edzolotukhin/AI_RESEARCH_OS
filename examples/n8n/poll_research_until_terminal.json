@@ -1,0 +1,72 @@
+{
+  "name": "AI Research OS — Poll Until Terminal",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.AI_RESEARCH_OS_API_URL || 'http://api:8000'}}/workflow-runs/{{$json.run_id}}"
+      },
+      "id": "poll-run",
+      "name": "Poll Workflow Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.is_terminal}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "terminal-check",
+      "name": "Is Terminal?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "amount": 2,
+        "unit": "seconds"
+      },
+      "id": "wait",
+      "name": "Wait 2s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [720, 480]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{ "node": "Poll Workflow Run", "type": "main", "index": 0 }]]
+    },
+    "Poll Workflow Run": {
+      "main": [[{ "node": "Is Terminal?", "type": "main", "index": 0 }]]
+    },
+    "Is Terminal?": {
+      "main": [
+        [],
+        [{ "node": "Wait 2s", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait 2s": {
+      "main": [[{ "node": "Poll Workflow Run", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "pf07-poll-terminal-v1"
+}

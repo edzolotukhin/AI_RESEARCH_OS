@@ -21,6 +21,16 @@ class ProjectBriefRequest(BaseModel):
 
 class StartResearchRequest(BaseModel):
     brief: ProjectBriefRequest
+    correlation_id: str | None = Field(
+        default=None,
+        description="Business/process correlation identifier for external orchestrators.",
+        max_length=256,
+    )
+    source: str | None = Field(
+        default=None,
+        description="External caller source label (e.g. n8n).",
+        max_length=64,
+    )
 
 
 class TaskResponse(BaseModel):
@@ -33,6 +43,13 @@ class TaskResponse(BaseModel):
     depends_on: list[str]
 
 
+class ExternalSubmissionMetadata(BaseModel):
+    correlation_id: str | None = None
+    external_request_id: str | None = None
+    source: str | None = None
+    submitted_at: str | None = None
+
+
 class WorkflowRunResponse(BaseModel):
     id: str
     project_id: str
@@ -41,6 +58,9 @@ class WorkflowRunResponse(BaseModel):
     version: int | None = None
     is_terminal: bool
     tasks: list[TaskResponse]
+    results_available: bool = False
+    artifacts_available: bool = False
+    external: ExternalSubmissionMetadata | None = None
 
 
 class WorkflowRunListResponse(BaseModel):
@@ -55,6 +75,8 @@ class StartResearchResponse(BaseModel):
     status: str
     is_terminal: bool
     tasks: list[TaskResponse]
+    idempotent_replay: bool = False
+    external: ExternalSubmissionMetadata | None = None
 
 
 class TaskResultItem(BaseModel):
@@ -64,6 +86,9 @@ class TaskResultItem(BaseModel):
 
 class WorkflowRunResultsResponse(BaseModel):
     run_id: str
+    status: str
+    is_terminal: bool
+    results_ready: bool
     task_results: list[TaskResultItem]
 
 
