@@ -25,7 +25,8 @@ Actionable future work only. Completed platform items are listed for reference; 
 
 Primary product objective: execute one real desk research methodology end-to-end on the current platform.
 
-- [ ] Wire **Client Brief → Planning → Research Design** as a coherent product path (beyond single-shot `POST /research`)
+- [ ] **DR-01** Canonical research brief contract — [ADR-015](adr/ADR-015-Desk-Research-Brief-and-Research-Contract.md) *(in progress)*
+- [ ] **DR-02** ResearchQuestion / Research Design semantic layer
 - [ ] **Search / source collection** — real retrieval, not stub executor behavior
 - [ ] **Evidence / knowledge** — provenance, ingestion, and query beyond metadata ports
 - [ ] **Analysis → Insights** — structured analytical outputs tied to sources

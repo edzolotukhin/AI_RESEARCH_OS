@@ -29,12 +29,7 @@ from tests.integration.postgresql.helpers import (
     get_test_database_url,
 )
 
-BRIEF = {
-    "client": "Purina",
-    "project_title": "External Orchestration",
-    "business_problem": "Assess market position.",
-    "research_goal": "Evaluate brand awareness.",
-}
+from tests.fixtures.research_brief import CANONICAL_BRIEF_REQUEST as BRIEF
 
 
 class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
@@ -160,7 +155,7 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
             json={
                 "brief": {
                     **BRIEF,
-                    "research_goal": "Different goal.",
+                    "objectives": ["Different objective."],
                 },
             },
             headers=headers,
@@ -191,7 +186,7 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
                 {
                     "brief": {
                         **BRIEF,
-                        "research_goal": "Different goal.",
+                        "objectives": ["Different objective."],
                     },
                 },
             )

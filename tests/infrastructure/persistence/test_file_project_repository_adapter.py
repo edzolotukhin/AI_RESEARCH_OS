@@ -4,6 +4,7 @@ import tempfile
 import unittest
 
 from domain.factories.project_factory import ProjectFactory
+from tests.fixtures.research_brief import sample_research_brief
 
 from infrastructure.persistence.file.file_project_repository import (
     FileProjectRepository,
@@ -41,20 +42,15 @@ class FileProjectRepositoryAdapterTests(unittest.TestCase):
         self.assertEqual(loaded.id, project.id)
         self.assertEqual(loaded.name, project.name)
 
-    def test_does_not_restore_nested_optional_fields(self) -> None:
-        """Documents transitional limitation — full mapping deferred to PF-03."""
-        project = self.project_factory.create("Partial Round-Trip")
-        project.status = "research_design"
+    def test_research_brief_round_trip(self) -> None:
+        project = self.project_factory.create("Brief Round-Trip")
+        project.research_brief = sample_research_brief()
 
         self.repository.create(project)
-        self.repository.save(project)
-
         loaded = self.repository.get_by_id(project.id)
 
         assert loaded is not None
-        self.assertEqual(loaded.status, "research_design")
-        self.assertIsNone(loaded.brief)
-        self.assertEqual(loaded.runs, [])
+        assert loaded.research_brief == project.research_brief
 
 
 if __name__ == "__main__":

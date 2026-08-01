@@ -5,7 +5,7 @@ from dataclasses import asdict
 from domain.client_qualification import ClientQualification
 from domain.client_request import ClientRequest
 from domain.project import Project
-from domain.project_brief import ProjectBrief
+from domain.research_brief import ResearchBrief
 from domain.research_design import (
     BusinessProblem,
     Methodology,
@@ -27,7 +27,7 @@ def project_to_model(project: Project, *, version: int) -> ProjectModel:
         status=project.status,
         client_request=_client_request_to_dict(project.client_request),
         qualification=_qualification_to_dict(project.qualification),
-        brief=_brief_to_dict(project.brief),
+        brief=_research_brief_to_dict(project.research_brief),
         research_design=_research_design_to_dict(project.research_design),
         created_at=project.created_at,
         updated_at=project.updated_at,
@@ -42,7 +42,7 @@ def project_to_update_values(project: Project) -> dict:
         "status": project.status,
         "client_request": _client_request_to_dict(project.client_request),
         "qualification": _qualification_to_dict(project.qualification),
-        "brief": _brief_to_dict(project.brief),
+        "brief": _research_brief_to_dict(project.research_brief),
         "research_design": _research_design_to_dict(project.research_design),
         "created_at": project.created_at,
         "updated_at": project.updated_at,
@@ -57,7 +57,7 @@ def project_from_model(model: ProjectModel) -> Project:
         status=model.status or ProjectStatus.LEAD,
         client_request=_client_request_from_dict(model.client_request),
         qualification=_qualification_from_dict(model.qualification),
-        brief=_brief_from_dict(model.brief),
+        research_brief=_research_brief_from_dict(model.brief),
         research_design=_research_design_from_dict(model.research_design),
         created_at=model.created_at or "",
         updated_at=model.updated_at or "",
@@ -90,16 +90,14 @@ def _qualification_from_dict(payload: dict | None) -> ClientQualification | None
     return ClientQualification(**payload)
 
 
-def _brief_to_dict(value: ProjectBrief | None) -> dict | None:
+def _research_brief_to_dict(value: ResearchBrief | None) -> dict | None:
     if value is None:
         return None
-    return asdict(value)
+    return value.to_dict()
 
 
-def _brief_from_dict(payload: dict | None) -> ProjectBrief | None:
-    if payload is None:
-        return None
-    return ProjectBrief(**payload)
+def _research_brief_from_dict(payload: dict | None) -> ResearchBrief | None:
+    return ResearchBrief.from_dict(payload)
 
 
 def _research_design_to_dict(value: ResearchDesign | None) -> dict | None:

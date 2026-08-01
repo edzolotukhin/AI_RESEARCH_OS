@@ -21,7 +21,7 @@ from domain.ai.llm_response import LLMResponse
 from domain.ai.prompt import Prompt
 from domain.planning.research_plan import ResearchPlan
 from domain.project import Project
-from domain.project_brief import ProjectBrief
+from domain.research_brief import ResearchBrief
 from domain.workflow_run import WorkflowRun
 from domain.workflow_template import WorkflowTemplate
 
@@ -72,11 +72,13 @@ class PlannerAgentTests(unittest.TestCase):
             id="project-1",
             name="Brand Health 2026",
         )
-        self.project.brief = ProjectBrief(
-            client="Purina",
-            project_title="Brand Health 2026",
-            business_problem="Assess market position.",
-            research_goal="Evaluate brand awareness.",
+        self.project.research_brief = ResearchBrief.from_dict(
+            {
+                "client": "Purina",
+                "project_title": "Brand Health 2026",
+                "business_problem": "Assess market position.",
+                "research_goal": "Evaluate brand awareness.",
+            },
         )
 
         self.context = WorkflowContext(

@@ -16,6 +16,7 @@ from application.persistence.exceptions import (
     IdempotencyConflictError,
     InvalidCredentialsError,
 )
+from domain.common.exceptions import ValidationError
 from application.runtime.task_result_codec import NonSerializableTaskResultError
 
 from api.schemas.common import ErrorDetail, ErrorResponse
@@ -122,6 +123,17 @@ def register_exception_handlers(app: FastAPI) -> None:
         return _error_response(
             status_code=409,
             code="concurrent_modification",
+            message=str(exc),
+        )
+
+    @app.exception_handler(ValidationError)
+    async def handle_validation_error(
+        _: Request,
+        exc: ValidationError,
+    ) -> JSONResponse:
+        return _error_response(
+            status_code=422,
+            code="validation_error",
             message=str(exc),
         )
 

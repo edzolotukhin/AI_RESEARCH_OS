@@ -7,7 +7,6 @@ from application.composition_root import create_application
 from application.config import ApplicationConfig, ApplicationOverrides
 
 from domain.ai.llm_response import LLMResponse
-from domain.project_brief import ProjectBrief
 
 from loaders.agent_loader import AgentLoader
 
@@ -18,16 +17,12 @@ from tests.fixtures.planner_responses import (
     UNKNOWN_EXECUTOR_PLANNER_JSON,
     VALID_PLANNER_JSON,
 )
+from tests.fixtures.research_brief import sample_research_brief
 
 
 def _project_with_brief(name: str = "Brand Health 2026") -> object:
     project = Mock()
-    project.brief = ProjectBrief(
-        client="Purina",
-        project_title=name,
-        business_problem="Assess market position.",
-        research_goal="Evaluate brand awareness.",
-    )
+    project.research_brief = sample_research_brief(title=name)
     return project
 
 
@@ -57,7 +52,7 @@ class AgencyLazyInitializationTests(unittest.TestCase):
             self.assertFalse(agency.initialized)
 
             project = agency.create_project("Brand Health 2026")
-            project.brief = _project_with_brief().brief
+            project.research_brief = _project_with_brief().research_brief
 
             context = agency.start_research(project)
 
@@ -83,7 +78,7 @@ class AgencyLazyInitializationTests(unittest.TestCase):
 
             agency.initialize()
             project = agency.create_project("Brand Health 2026")
-            project.brief = _project_with_brief().brief
+            project.research_brief = _project_with_brief().research_brief
 
             context = agency.start_research(project)
 
@@ -107,10 +102,10 @@ class AgencyLazyInitializationTests(unittest.TestCase):
             agency._agent_loader.load = tracking_load
 
             project_one = agency.create_project("Brand Health 2026")
-            project_one.brief = _project_with_brief("Brand Health 2026").brief
+            project_one.research_brief = _project_with_brief("Brand Health 2026").research_brief
 
             project_two = agency.create_project("Brand Health 2027")
-            project_two.brief = _project_with_brief("Brand Health 2027").brief
+            project_two.research_brief = _project_with_brief("Brand Health 2027").research_brief
 
             context_one = agency.start_research(project_one)
             context_two = agency.start_research(project_two)
@@ -134,7 +129,7 @@ class AgencyLazyInitializationTests(unittest.TestCase):
             agency._workflow_engine = Mock()
 
             project = agency.create_project("Brand Health 2026")
-            project.brief = _project_with_brief().brief
+            project.research_brief = _project_with_brief().research_brief
 
             with self.assertRaises(RuntimeError) as ctx:
                 agency.start_research(project)
@@ -181,12 +176,7 @@ class AgencyStartResearchTests(unittest.TestCase):
             agency.initialize()
 
             project = agency.create_project("Brand Health 2026")
-            project.brief = ProjectBrief(
-                client="Purina",
-                project_title="Brand Health 2026",
-                business_problem="Assess market position.",
-                research_goal="Evaluate brand awareness.",
-            )
+            project.research_brief = sample_research_brief()
 
             context = agency.start_research(project)
 
@@ -232,12 +222,7 @@ class AgencyStartResearchTests(unittest.TestCase):
             agency.initialize()
 
             project = agency.create_project("Brand Health 2026")
-            project.brief = ProjectBrief(
-                client="Purina",
-                project_title="Brand Health 2026",
-                business_problem="Assess market position.",
-                research_goal="Evaluate brand awareness.",
-            )
+            project.research_brief = sample_research_brief()
 
             context = agency.start_research(project)
 
@@ -268,12 +253,7 @@ class AgencyStartResearchTests(unittest.TestCase):
             agency.initialize()
 
             project = agency.create_project("Brand Health 2026")
-            project.brief = ProjectBrief(
-                client="Purina",
-                project_title="Brand Health 2026",
-                business_problem="Assess market position.",
-                research_goal="Evaluate brand awareness.",
-            )
+            project.research_brief = sample_research_brief()
 
             context = agency.start_research(project)
 

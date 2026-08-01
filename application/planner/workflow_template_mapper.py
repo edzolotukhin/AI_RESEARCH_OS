@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import asdict, replace
+
 from domain.planning.planner_task import PlannerTask
 from domain.planning.research_plan import ResearchPlan
 from domain.project import Project
+from domain.task_definition import TaskDefinition
 from domain.workflow_template import WorkflowTemplate
 from domain.workflow_template_builder import WorkflowTemplateBuilder
 
@@ -51,7 +54,13 @@ class ResearchPlanWorkflowTemplateMapper:
                     project,
                 )
 
-        return builder.build()
+        template = builder.build()
+        if project.research_brief is not None:
+            return replace(
+                template,
+                research_brief_snapshot=project.research_brief,
+            )
+        return template
 
     @staticmethod
     def _add_task(

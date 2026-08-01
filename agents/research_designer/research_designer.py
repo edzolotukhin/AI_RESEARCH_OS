@@ -30,7 +30,7 @@ class ResearchDesigner(BaseAgent):
         return self.create_user_prompt(
             f"""Project Brief
 
-{project.brief}"""
+{project.research_brief}"""
         )
 
     def parse_response(

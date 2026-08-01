@@ -4,12 +4,7 @@ import unittest
 
 from tests.api.helpers import ApiTestCase, drain_background_runs
 
-BRIEF = {
-    "client": "Purina",
-    "project_title": "Brand Health 2026",
-    "business_problem": "Assess market position.",
-    "research_goal": "Evaluate brand awareness.",
-}
+from tests.fixtures.research_brief import CANONICAL_BRIEF_REQUEST as BRIEF
 
 
 class ResearchEndpointTests(ApiTestCase):

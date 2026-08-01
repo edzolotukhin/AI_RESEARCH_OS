@@ -105,9 +105,11 @@ class Agency:
         if planning_context.project is not None:
             project = planning_context.project
 
+        if project.research_brief is not None:
+            self._project_service.save_project(project)
+
         if self._durable_workflow_service is not None:
             if self._background_execution_enabled:
-                self._project_service.save_project(project, expected_version=0)
                 return self._durable_workflow_service.submit_research(
                     project,
                     workflow_template,

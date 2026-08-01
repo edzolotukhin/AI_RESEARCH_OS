@@ -1,25 +1,23 @@
-from domain.project_brief import ProjectBrief
+from domain.research_brief import ResearchBrief
 
 
 REQUIRED_FIELDS = {
-    "client": "Клиент",
-    "research_goal": "Цель исследования",
-    "research_objectives": "Задачи исследования",
-    "target_audience": "Целевая аудитория",
-    "geography": "География исследования"
+    "title": "Research title",
+    "business_question": "Business question",
+    "objectives": "Research objectives",
 }
 
 
 class ReadinessRules:
 
     @staticmethod
-    def check(project_brief: ProjectBrief):
+    def check(research_brief: ResearchBrief):
 
         missing_fields = []
 
         for field, description in REQUIRED_FIELDS.items():
 
-            value = getattr(project_brief, field)
+            value = getattr(research_brief, field)
 
             if not value:
                 missing_fields.append(description)

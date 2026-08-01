@@ -55,7 +55,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\"brief\": {\"client\": \"Acme\", \"project_title\": \"Brand Health\", \"business_problem\": \"Assess position.\", \"research_goal\": \"Evaluate awareness.\"}, \"source\": \"n8n\"}"
+        "jsonBody": "={\"brief\": {\"title\": \"Brand Health\", \"business_question\": \"Assess position.\", \"objectives\": [\"Evaluate awareness.\"], \"language\": \"en\", \"context\": \"Client: Acme\"}, \"source\": \"n8n\"}"
       },
       "id": "submit-research",
       "name": "Submit Research",
