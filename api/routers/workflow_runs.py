@@ -13,7 +13,11 @@ from api.dependencies import (
     ExecutionLogServiceDep,
     WorkflowServiceDep,
 )
-from application.persistence.exceptions import DuplicateEntityError, EntityNotFoundError
+from application.persistence.exceptions import (
+    ConcurrentModificationError,
+    DuplicateEntityError,
+    EntityNotFoundError,
+)
 from application.runtime.background_execution_capability import (
     requires_http_background_submission,
 )
@@ -42,6 +46,131 @@ router = APIRouter(tags=["workflow-runs"])
 logger = logging.getLogger(__name__)
 
 MAX_LOG_LIMIT = 1000
+
+
+def _log_research_response(
+    *,
+    logger: logging.Logger,
+    event: str,
+    request_id: str,
+    correlation_id: str | None,
+    run_id: str,
+    source: str | None,
+) -> None:
+    logger.info(
+        event,
+        extra={
+            "request_id": request_id,
+            "correlation_id": correlation_id,
+            "route": "startResearch",
+            "status": 202,
+            "run_id": run_id,
+            "source": source,
+        },
+    )
+
+
+def _replay_submission_response(
+    *,
+    workflow_run,
+    response: Response,
+    submission,
+    idempotency_key: str | None,
+    idempotent_replay: bool,
+    logger: logging.Logger,
+    request_id: str,
+    correlation_id: str | None,
+    source: str | None,
+    event: str = "research_submission_replayed",
+):
+    payload = start_research_to_response(
+        workflow_run,
+        idempotent_replay=idempotent_replay,
+        submission=submission,
+        external_request_id=idempotency_key,
+    )
+    response.headers["Location"] = f"/workflow-runs/{payload.run_id}"
+    _log_research_response(
+        logger=logger,
+        event=event,
+        request_id=request_id,
+        correlation_id=correlation_id,
+        run_id=payload.run_id,
+        source=source,
+    )
+    return payload
+
+
+def _resolve_idempotent_replay(
+    *,
+    submission_service,
+    container,
+    submission_result,
+    project_id: str,
+    idempotency_key: str,
+    response: Response,
+    logger: logging.Logger,
+    request_id: str,
+    correlation_id: str | None,
+    source: str | None,
+):
+    if submission_result.replay:
+        existing = container.workflow_service.get_workflow_run(
+            submission_result.run_id,
+        )
+        return _replay_submission_response(
+            workflow_run=existing,
+            response=response,
+            submission=submission_result.submission,
+            idempotency_key=idempotency_key,
+            idempotent_replay=True,
+            logger=logger,
+            request_id=request_id,
+            correlation_id=correlation_id,
+            source=source,
+        )
+
+    load_run = container.workflow_service.get_workflow_run
+    existing = submission_service.resolve_visible_run(
+        project_id=project_id,
+        idempotency_key=idempotency_key,
+        run_id=submission_result.run_id,
+        load_workflow_run=load_run,
+    )
+    if existing is not None:
+        return _replay_submission_response(
+            workflow_run=existing,
+            response=response,
+            submission=submission_result.submission,
+            idempotency_key=idempotency_key,
+            idempotent_replay=not submission_result.created,
+            logger=logger,
+            request_id=request_id,
+            correlation_id=correlation_id,
+            source=source,
+        )
+
+    if not submission_result.created:
+        peer_run = submission_service.wait_for_peer_completion(
+            project_id=project_id,
+            idempotency_key=idempotency_key,
+            run_id=submission_result.run_id,
+            load_workflow_run=load_run,
+        )
+        if peer_run is not None:
+            return _replay_submission_response(
+                workflow_run=peer_run,
+                response=response,
+                submission=submission_result.submission,
+                idempotency_key=idempotency_key,
+                idempotent_replay=True,
+                logger=logger,
+                request_id=request_id,
+                correlation_id=correlation_id,
+                source=source,
+            )
+
+    return None
 
 
 @router.post(
@@ -91,7 +220,7 @@ def start_research(
 
     submission_service = container.research_submission_service
     submission_result = None
-    if submission_service is not None:
+    if submission_service is not None and idempotency_key:
         submission_result = submission_service.resolve_submission(
             project_id=project_id,
             idempotency_key=idempotency_key,
@@ -99,60 +228,20 @@ def start_research(
             correlation_id=correlation_id,
             source=source,
         )
-        if submission_result.replay:
-            existing = container.workflow_service.get_workflow_run(
-                submission_result.run_id,
-            )
-            payload = start_research_to_response(
-                existing,
-                idempotent_replay=True,
-                submission=submission_result.submission,
-                external_request_id=idempotency_key,
-            )
-            response.headers["Location"] = f"/workflow-runs/{payload.run_id}"
-            logger.info(
-                "research_submission_replayed",
-                extra={
-                    "request_id": request_id,
-                    "correlation_id": correlation_id,
-                    "route": "startResearch",
-                    "status": 202,
-                    "run_id": payload.run_id,
-                    "source": source,
-                },
-            )
-            return payload
-
-        try:
-            existing = container.workflow_service.get_workflow_run(
-                submission_result.run_id,
-            )
-        except EntityNotFoundError:
-            existing = None
-        if existing is not None:
-            submission_service.mark_completed(
-                project_id=project_id,
-                idempotency_key=idempotency_key,
-            )
-            payload = start_research_to_response(
-                existing,
-                idempotent_replay=not submission_result.created,
-                submission=submission_result.submission,
-                external_request_id=idempotency_key,
-            )
-            response.headers["Location"] = f"/workflow-runs/{payload.run_id}"
-            logger.info(
-                "research_submission_replayed",
-                extra={
-                    "request_id": request_id,
-                    "correlation_id": correlation_id,
-                    "route": "startResearch",
-                    "status": 202,
-                    "run_id": payload.run_id,
-                    "source": source,
-                },
-            )
-            return payload
+        replay_response = _resolve_idempotent_replay(
+            submission_service=submission_service,
+            container=container,
+            submission_result=submission_result,
+            project_id=project_id,
+            idempotency_key=idempotency_key,
+            response=response,
+            logger=logger,
+            request_id=request_id,
+            correlation_id=correlation_id,
+            source=source,
+        )
+        if replay_response is not None:
+            return replay_response
 
     project = agency.get_project(project_id)
     project.brief = ProjectBrief(
@@ -172,36 +261,38 @@ def start_research(
     run_id = submission_result.run_id if submission_result is not None else None
     try:
         context = agency.start_research(project, run_id=run_id)
-    except DuplicateEntityError:
+    except (DuplicateEntityError, ConcurrentModificationError):
         if (
             submission_service is not None
             and idempotency_key
+            and submission_result is not None
             and run_id is not None
         ):
-            existing = container.workflow_service.get_workflow_run(run_id)
-            submission_service.mark_completed(
+            existing = submission_service.resolve_visible_run(
                 project_id=project_id,
                 idempotency_key=idempotency_key,
+                run_id=run_id,
+                load_workflow_run=container.workflow_service.get_workflow_run,
             )
-            payload = start_research_to_response(
-                existing,
-                idempotent_replay=True,
-                submission=submission_result.submission if submission_result else None,
-                external_request_id=idempotency_key,
-            )
-            response.headers["Location"] = f"/workflow-runs/{payload.run_id}"
-            logger.info(
-                "research_submission_replayed",
-                extra={
-                    "request_id": request_id,
-                    "correlation_id": correlation_id,
-                    "route": "startResearch",
-                    "status": 202,
-                    "run_id": payload.run_id,
-                    "source": source,
-                },
-            )
-            return payload
+            if existing is None and not submission_result.created:
+                existing = submission_service.wait_for_peer_completion(
+                    project_id=project_id,
+                    idempotency_key=idempotency_key,
+                    run_id=run_id,
+                    load_workflow_run=container.workflow_service.get_workflow_run,
+                )
+            if existing is not None:
+                return _replay_submission_response(
+                    workflow_run=existing,
+                    response=response,
+                    submission=submission_result.submission,
+                    idempotency_key=idempotency_key,
+                    idempotent_replay=True,
+                    logger=logger,
+                    request_id=request_id,
+                    correlation_id=correlation_id,
+                    source=source,
+                )
         raise
     except Exception:
         if (
@@ -211,34 +302,24 @@ def start_research(
             and not submission_result.created
             and run_id is not None
         ):
-            try:
-                existing = container.workflow_service.get_workflow_run(run_id)
-            except EntityNotFoundError:
-                existing = None
+            existing = submission_service.resolve_visible_run(
+                project_id=project_id,
+                idempotency_key=idempotency_key,
+                run_id=run_id,
+                load_workflow_run=container.workflow_service.get_workflow_run,
+            )
             if existing is not None:
-                submission_service.mark_completed(
-                    project_id=project_id,
-                    idempotency_key=idempotency_key,
-                )
-                payload = start_research_to_response(
-                    existing,
-                    idempotent_replay=True,
+                return _replay_submission_response(
+                    workflow_run=existing,
+                    response=response,
                     submission=submission_result.submission,
-                    external_request_id=idempotency_key,
+                    idempotency_key=idempotency_key,
+                    idempotent_replay=True,
+                    logger=logger,
+                    request_id=request_id,
+                    correlation_id=correlation_id,
+                    source=source,
                 )
-                response.headers["Location"] = f"/workflow-runs/{payload.run_id}"
-                logger.info(
-                    "research_submission_replayed",
-                    extra={
-                        "request_id": request_id,
-                        "correlation_id": correlation_id,
-                        "route": "startResearch",
-                        "status": 202,
-                        "run_id": payload.run_id,
-                        "source": source,
-                    },
-                )
-                return payload
         if (
             submission_service is not None
             and idempotency_key

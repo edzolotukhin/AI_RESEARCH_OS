@@ -15,12 +15,11 @@ from application.runtime.research_request_fingerprint import (
 from domain.ai.llm_response import LLMResponse
 
 from api.app import create_fastapi_app
+from api.schemas.workflow_runs import StartResearchRequest
 
 from infrastructure.persistence.postgresql.repositories.postgresql_research_submission_repository import (
     PostgreSQLResearchSubmissionRepository,
 )
-
-from api.schemas.workflow_runs import StartResearchRequest
 
 from tests.api.helpers import close_test_client, drain_background_runs, open_test_client
 from tests.fixtures.planner_responses import VALID_PLANNER_JSON
@@ -61,6 +60,49 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
         self.assertEqual(response.status_code, 201)
         return response.json()["id"]
 
+    def _assert_accepted_research_response(
+        self,
+        response,
+        *,
+        label: str,
+    ) -> dict:
+        self.assertEqual(
+            response.status_code,
+            202,
+            f"{label}: status={response.status_code} body={response.text}",
+        )
+        payload = response.json()
+        self.assertIn(
+            "run_id",
+            payload,
+            f"{label}: missing run_id in body={payload}",
+        )
+        return payload
+
+    def _submit_concurrent(
+        self,
+        *,
+        container,
+        project_id: str,
+        body: dict,
+        headers: dict,
+        workers: int = 2,
+    ) -> list:
+        def _submit():
+            app = create_fastapi_app(container=container)
+            from fastapi.testclient import TestClient
+
+            with TestClient(app) as thread_client:
+                return thread_client.post(
+                    f"/projects/{project_id}/research",
+                    json=body,
+                    headers=headers,
+                )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(_submit) for _ in range(workers)]
+            return [future.result() for future in futures]
+
     def test_first_submission_with_idempotency_key_returns_202(self) -> None:
         client, _ = self._build_client()
         project_id = self._create_project(client)
@@ -69,8 +111,7 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
             json={"brief": BRIEF, "source": "n8n", "correlation_id": "corr-1"},
             headers={"Idempotency-Key": "key-first"},
         )
-        self.assertEqual(response.status_code, 202)
-        payload = response.json()
+        payload = self._assert_accepted_research_response(response, label="first")
         self.assertFalse(payload["idempotent_replay"])
         self.assertEqual(payload["external"]["source"], "n8n")
         self.assertEqual(payload["external"]["correlation_id"], "corr-1")
@@ -91,10 +132,10 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
             json=body,
             headers=headers,
         )
-        self.assertEqual(first.status_code, 202)
-        self.assertEqual(second.status_code, 202)
-        self.assertEqual(first.json()["run_id"], second.json()["run_id"])
-        self.assertTrue(second.json()["idempotent_replay"])
+        first_payload = self._assert_accepted_research_response(first, label="first")
+        second_payload = self._assert_accepted_research_response(second, label="second")
+        self.assertEqual(first_payload["run_id"], second_payload["run_id"])
+        self.assertTrue(second_payload["idempotent_replay"])
         self.assertEqual(container._test_llm_client.generate.call_count, 1)
 
     def test_same_key_different_request_returns_409(self) -> None:
@@ -120,13 +161,12 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
         self.assertEqual(second.status_code, 409)
         self.assertEqual(second.json()["error"]["code"], "idempotency_conflict")
 
-    def test_concurrent_duplicate_submissions_create_one_run(self) -> None:
+    def test_concurrent_same_key_different_payload_returns_202_and_409(self) -> None:
         client, container = self._build_client()
         project_id = self._create_project(client)
-        headers = {"Idempotency-Key": "key-concurrent"}
-        body = {"brief": BRIEF, "source": "n8n"}
+        headers = {"Idempotency-Key": "key-concurrent-conflict"}
 
-        def _submit():
+        def _submit(body: dict):
             app = create_fastapi_app(container=container)
             from fastapi.testclient import TestClient
 
@@ -138,12 +178,88 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
                 )
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            futures = [pool.submit(_submit) for _ in range(2)]
-            responses = [future.result() for future in futures]
+            first_future = pool.submit(_submit, {"brief": BRIEF, "source": "n8n"})
+            second_future = pool.submit(
+                _submit,
+                {
+                    "brief": {
+                        **BRIEF,
+                        "research_goal": "Different goal.",
+                    },
+                },
+            )
+            responses = [first_future.result(), second_future.result()]
 
-        run_ids = {response.json()["run_id"] for response in responses}
+        statuses = sorted(response.status_code for response in responses)
+        self.assertEqual(statuses, [202, 409])
+        accepted = [
+            response for response in responses if response.status_code == 202
+        ]
+        conflict = [
+            response for response in responses if response.status_code == 409
+        ]
+        self.assertEqual(len(accepted), 1)
+        self.assertEqual(len(conflict), 1)
+        self._assert_accepted_research_response(accepted[0], label="accepted")
+        self.assertEqual(conflict[0].json()["error"]["code"], "idempotency_conflict")
+
+    def test_concurrent_duplicate_submissions_create_one_run(self) -> None:
+        client, container = self._build_client()
+        project_id = self._create_project(client)
+        headers = {"Idempotency-Key": "key-concurrent"}
+        body = {"brief": BRIEF, "source": "n8n"}
+
+        responses = self._submit_concurrent(
+            container=container,
+            project_id=project_id,
+            body=body,
+            headers=headers,
+        )
+
+        payloads = [
+            self._assert_accepted_research_response(
+                response,
+                label=f"worker-{index}",
+            )
+            for index, response in enumerate(responses)
+        ]
+        run_ids = {payload["run_id"] for payload in payloads}
         self.assertEqual(len(run_ids), 1)
-        self.assertTrue(all(response.status_code == 202 for response in responses))
+
+        runs = container.workflow_service.list_workflow_runs_for_project(project_id)
+        matching = [run for run in runs if run.id in run_ids]
+        self.assertEqual(len(matching), 1)
+
+    def test_concurrent_duplicate_submissions_stress(self) -> None:
+        for iteration in range(25):
+            with self.subTest(iteration=iteration):
+                client, container = self._build_client()
+                project_id = self._create_project(client)
+                headers = {"Idempotency-Key": f"key-concurrent-stress-{iteration}"}
+                body = {"brief": BRIEF, "source": "n8n"}
+
+                responses = self._submit_concurrent(
+                    container=container,
+                    project_id=project_id,
+                    body=body,
+                    headers=headers,
+                )
+
+                payloads = [
+                    self._assert_accepted_research_response(
+                        response,
+                        label=f"iter-{iteration}-worker-{index}",
+                    )
+                    for index, response in enumerate(responses)
+                ]
+                run_ids = {payload["run_id"] for payload in payloads}
+                self.assertEqual(len(run_ids), 1)
+
+                runs = container.workflow_service.list_workflow_runs_for_project(
+                    project_id,
+                )
+                matching = [run for run in runs if run.id in run_ids]
+                self.assertEqual(len(matching), 1)
 
     def test_submission_metadata_survives_reload(self) -> None:
         client, container = self._build_client()
@@ -212,9 +328,9 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
             json=body,
             headers=headers,
         )
-        self.assertEqual(first.status_code, 202)
-        run_id = first.json()["run_id"]
-        self.assertFalse(first.json()["idempotent_replay"])
+        first_payload = self._assert_accepted_research_response(first, label="first")
+        run_id = first_payload["run_id"]
+        self.assertFalse(first_payload["idempotent_replay"])
 
         replay_client, _ = self._build_client()
         second = replay_client.post(
@@ -222,9 +338,9 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
             json=body,
             headers=headers,
         )
-        self.assertEqual(second.status_code, 202)
-        self.assertEqual(second.json()["run_id"], run_id)
-        self.assertTrue(second.json()["idempotent_replay"])
+        second_payload = self._assert_accepted_research_response(second, label="replay")
+        self.assertEqual(second_payload["run_id"], run_id)
+        self.assertTrue(second_payload["idempotent_replay"])
 
     def test_pending_submission_recovers_after_crash_before_planning(self) -> None:
         client, container = self._build_client()
@@ -254,8 +370,8 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
             json=body,
             headers={"Idempotency-Key": idempotency_key},
         )
-        self.assertEqual(response.status_code, 202)
-        self.assertEqual(response.json()["run_id"], run_id)
+        payload = self._assert_accepted_research_response(response, label="recovery")
+        self.assertEqual(payload["run_id"], run_id)
         recovery_container.workflow_service.get_workflow_run(run_id)
         self.assertEqual(recovery_container._test_llm_client.generate.call_count, 1)
 
@@ -289,9 +405,9 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
             json=body,
             headers=headers,
         )
-        self.assertEqual(second.status_code, 202)
-        self.assertEqual(second.json()["run_id"], run_id)
-        self.assertTrue(second.json()["idempotent_replay"])
+        payload = self._assert_accepted_research_response(second, label="replay")
+        self.assertEqual(payload["run_id"], run_id)
+        self.assertTrue(payload["idempotent_replay"])
         runs = replay_container.workflow_service.list_workflow_runs_for_project(
             project_id,
         )

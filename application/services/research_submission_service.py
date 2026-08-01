@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import uuid4
 
-from application.persistence.exceptions import IdempotencyConflictError
+from application.persistence.exceptions import IdempotencyConflictError, EntityNotFoundError
 from application.persistence.records import (
     ResearchSubmissionRecord,
     ResearchSubmissionStatus,
 )
 from application.ports.research_submission_repository import ResearchSubmissionRepository
+from domain.workflow_run import WorkflowRun
+
+RECONCILE_MAX_ATTEMPTS = 100
+RECONCILE_POLL_INTERVAL_SECONDS = 0.01
 
 
 @dataclass(frozen=True)
@@ -86,6 +92,84 @@ class ResearchSubmissionService:
             project_id=project_id,
             idempotency_key=idempotency_key,
         )
+
+    def resolve_visible_run(
+        self,
+        *,
+        project_id: str,
+        idempotency_key: str,
+        run_id: str,
+        load_workflow_run: Callable[[str], WorkflowRun],
+    ) -> WorkflowRun | None:
+        """Return a durable run when submission completion is already visible."""
+        return self._resolve_visible_run(
+            project_id=project_id,
+            idempotency_key=idempotency_key,
+            run_id=run_id,
+            load_workflow_run=load_workflow_run,
+        )
+
+    def wait_for_peer_completion(
+        self,
+        *,
+        project_id: str,
+        idempotency_key: str,
+        run_id: str,
+        load_workflow_run: Callable[[str], WorkflowRun],
+    ) -> WorkflowRun | None:
+        """
+        Wait for the winning concurrent submission to finish.
+
+        Returns the durable WorkflowRun when the peer completes or the run
+        becomes visible. Returns None when no progress is observed within the
+        bounded reconciliation window and this request should take over.
+        """
+        if self._submission_repository is None:
+            return None
+
+        for attempt in range(RECONCILE_MAX_ATTEMPTS):
+            resolved = self._resolve_visible_run(
+                project_id=project_id,
+                idempotency_key=idempotency_key,
+                run_id=run_id,
+                load_workflow_run=load_workflow_run,
+            )
+            if resolved is not None:
+                return resolved
+            if attempt + 1 < RECONCILE_MAX_ATTEMPTS:
+                time.sleep(RECONCILE_POLL_INTERVAL_SECONDS)
+        return None
+
+    def _resolve_visible_run(
+        self,
+        *,
+        project_id: str,
+        idempotency_key: str,
+        run_id: str,
+        load_workflow_run: Callable[[str], WorkflowRun],
+    ) -> WorkflowRun | None:
+        if self._submission_repository is None:
+            return None
+
+        record = self._submission_repository.get_by_key(
+            project_id=project_id,
+            idempotency_key=idempotency_key,
+        )
+        if record is None:
+            return None
+        if record.status == ResearchSubmissionStatus.COMPLETED:
+            return load_workflow_run(record.run_id)
+
+        try:
+            existing = load_workflow_run(run_id)
+        except EntityNotFoundError:
+            return None
+
+        self.mark_completed(
+            project_id=project_id,
+            idempotency_key=idempotency_key,
+        )
+        return existing
 
     def rollback_submission(
         self,

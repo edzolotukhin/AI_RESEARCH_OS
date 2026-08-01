@@ -73,6 +73,16 @@ class InMemoryResearchSubmissionRepository(ResearchSubmissionRepository):
             self._by_key[key] = completed
             self._by_run_id[completed.run_id] = completed
 
+    def get_by_key(
+        self,
+        *,
+        project_id: str,
+        idempotency_key: str,
+    ) -> ResearchSubmissionRecord | None:
+        key = (project_id, idempotency_key)
+        with self._lock:
+            return self._by_key.get(key)
+
     def get_by_run_id(self, run_id: str) -> ResearchSubmissionRecord | None:
         with self._lock:
             return self._by_run_id.get(run_id)

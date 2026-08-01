@@ -94,6 +94,23 @@ class PostgreSQLResearchSubmissionRepository(ResearchSubmissionRepository):
                 return
             model.status = ResearchSubmissionStatus.COMPLETED
 
+    def get_by_key(
+        self,
+        *,
+        project_id: str,
+        idempotency_key: str,
+    ) -> ResearchSubmissionRecord | None:
+        with self._session_factory.session() as session:
+            model = session.execute(
+                select(ResearchSubmissionModel).where(
+                    ResearchSubmissionModel.project_id == project_id,
+                    ResearchSubmissionModel.idempotency_key == idempotency_key,
+                )
+            ).scalar_one_or_none()
+            if model is None:
+                return None
+            return _to_record(model)
+
     def get_by_run_id(self, run_id: str) -> ResearchSubmissionRecord | None:
         with self._session_factory.session() as session:
             model = session.execute(

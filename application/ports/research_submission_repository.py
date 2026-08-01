@@ -35,5 +35,14 @@ class ResearchSubmissionRepository(ABC):
         """Mark a submission completed after WorkflowRun creation succeeds."""
 
     @abstractmethod
+    def get_by_key(
+        self,
+        *,
+        project_id: str,
+        idempotency_key: str,
+    ) -> ResearchSubmissionRecord | None:
+        """Load a submission by project and idempotency key."""
+
+    @abstractmethod
     def get_by_run_id(self, run_id: str) -> ResearchSubmissionRecord | None:
         """Load external submission metadata for a workflow run."""

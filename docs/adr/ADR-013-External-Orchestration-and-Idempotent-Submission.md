@@ -48,8 +48,10 @@ headers.
 | (absent) | Planning/submit failed; row deleted | Key reusable; treated as new submission |
 
 - **Exactly-once WorkflowRun:** one idempotency key creates at most one WorkflowRun.
-- **Planning:** best-effort once per completed run; concurrent `pending` retries may
-  duplicate planning if two requests race before the run exists (limitation).
+- **Planning:** best-effort once per completed run; concurrent `pending` peers wait for
+  the winning submission via bounded reconciliation instead of racing through planning.
+  Duplicate planning can still occur only when a stale `pending` submission times out
+  and a takeover request resumes work (crash-recovery path).
 - **Crash recovery:** stale `pending` without a run retries planning; stale `pending`
   with an existing run binds completion without creating a duplicate run.
 - **Failure:** explicit exception during planning/submit deletes the submission row
