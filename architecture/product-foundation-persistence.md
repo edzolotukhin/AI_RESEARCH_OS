@@ -56,7 +56,7 @@ flowchart TB
     T --> WR
 ```
 
-**Current state:** `Project` is persisted via `ProjectRepository` adapters (file, in-memory, PostgreSQL). Workflow templates, runs, artifacts, knowledge items, and execution logs are persisted through their respective ports. PostgreSQL is selected explicitly via `PERSISTENCE_BACKEND=postgresql` in the composition root; default local behavior remains file + in-memory.
+**Current state:** Selectable backends: `file` (transitional), `memory` (tests/embedded), `postgresql` (production path). HTTP API and worker require PostgreSQL for durable multi-process execution. Alembic head: `005_pf08_auth_boundary`.
 
 ---
 

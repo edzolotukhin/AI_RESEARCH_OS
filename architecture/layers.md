@@ -190,20 +190,39 @@ The Execution Layer reads and updates runtime objects (`WorkflowRun`, `Task`) th
 
 ---
 
-# HTTP API Layer (PF-05)
+# HTTP API Layer (PF-05+)
 
-The `api/` package is the HTTP adapter. Request flow:
+The `api/` package is the HTTP adapter.
 
 ```
-HTTP Request → FastAPI Router → API DTO → Application Service → Domain / Runtime → Repository Port
+External Client → FastAPI Router → Authentication → Authorization
+  → Application Service → Domain / Runtime → Repository Port
 ```
 
-Rules (ADR-011):
+Rules:
 
 - Routers resolve services from `ApplicationContainer`; they do not import repositories or ORM models.
-- Domain aggregates are mapped to API response DTOs before leaving the HTTP boundary.
-- Research execution is **synchronous** in PF-05 (no fake async responses).
+- Business routes require `Authorization: Bearer <api-key>` (PF-08, ADR-014).
+- `/health` and `/ready` are public; readiness validates PostgreSQL and Alembic head when configured.
+- `POST /projects/{id}/research` returns **202 Accepted** when background execution is configured (PF-06); worker completes the run.
+- Idempotent submission via `Idempotency-Key` (PF-07, PostgreSQL).
 - Application services do not raise HTTP exceptions; mapping lives in `api/errors.py`.
+
+See [ADR-011](../docs/adr/ADR-011-HTTP-API-Boundary-and-Synchronous-Execution-Policy.md), [ADR-012](../docs/adr/ADR-012-Background-Execution-Claiming-Lease-and-Recovery.md), [ADR-013](../docs/adr/ADR-013-External-Orchestration-and-Idempotent-Submission.md), [ADR-014](../docs/adr/ADR-014-Authentication-and-Access-Boundary.md).
+
+---
+
+# Worker Boundary (PF-06)
+
+The `worker/` process claims runnable workflow runs from PostgreSQL using lease/heartbeat semantics. It invokes `WorkflowEngine` in-process and does **not** depend on HTTP authentication.
+
+---
+
+# Security Boundary (PF-08)
+
+- Service API keys (Bearer); bootstrap via `python -m tools.create_api_key`
+- `AuthenticatedPrincipal` and `AuthorizationService` in the application layer
+- Project ownership via `owner_principal_id`; cross-principal access returns 404
 
 ---
 

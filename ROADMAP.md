@@ -1,132 +1,162 @@
 # AI Research OS — Roadmap
 
-## Current State
+## Current State (factual)
 
-The synchronous orchestration runtime is **implemented, tested, and demonstrable**. Phase B runtime hardening is **complete**. A deterministic offline workflow demo is available. The repository has **289 automated tests**. The project is **not production-ready** — it is an early-stage research workflow runtime, not a full agency platform.
+AI Research OS is a **workflow runtime platform** for marketing research agencies with an **advanced production foundation** and an **incomplete research product vertical**.
 
 | Dimension | Status |
 |-----------|--------|
-| Runtime core | Implemented and tested |
-| Planner + structured output | Integrated |
-| Offline demo | Available (`examples/deterministic_research_demo.py`) |
-| Live LLM demo path | Available (`main.py`, requires API key) |
-| Product Foundation | PF-03 PostgreSQL adapter implemented; PF-04+ planned ([ADR-009](docs/adr/ADR-009-Persistence-Boundary-and-Repository-Strategy.md)) |
-| Platform / infra (API, production Docker) | PF-05 FastAPI boundary complete (ADR-011); production deployment planned (PF-06+) |
+| Platform foundation (PF-01–PF-08) | **Implemented and merged** — persistence, HTTP API, worker, orchestration, auth |
+| Automated tests | **528** discovered; **467** run by default without PostgreSQL; **500+** with full CI/local PostgreSQL suites |
+| Research product vertical | **Not validated end-to-end** — agents exist as stubs; desk research flow incomplete |
+| Production deployment | **Not production-ready** — Docker Compose is dev-oriented; no SLA, observability stack, or backup automation |
+
+**Readiness framing (not percentages):**
+
+- **Infrastructure / platform foundation:** advanced
+- **Research product vertical:** incomplete
+- **End-to-end research capability:** not yet validated
 
 ---
 
-## Completed Foundations
+## Completed Foundation
 
-### Phase A — Stabilization
+Each stage below is merged into `main` with ADR coverage and automated tests unless noted.
 
-- Agency application facade and composition root
-- Planner → ResearchPlan → WorkflowTemplate → WorkflowRun pipeline
-- ADR-008 Executor Catalog Contract
-- Planner constrained to registered executor IDs
-- WorkflowEngine synchronous runtime loop
-- TaskScheduler, TaskExecutor, ExecutorResolver
-- WorkflowCompletionPolicy
-- Structured output retry and planner payload contract
-- Architecture documentation sync
-- Phase B Wave 1 cleanup: dead infrastructure, legacy services, dead registries
+### PF-01 — Persistence boundary
 
-### Phase B — Runtime Hardening
+- **Goal:** Define repository ports, aggregate ownership, and layer boundaries.
+- **Outcome:** [ADR-009](docs/adr/ADR-009-Persistence-Boundary-and-Repository-Strategy.md), [architecture/product-foundation-persistence.md](architecture/product-foundation-persistence.md).
+- **Limitation:** `Project.runs` in-memory field vs persisted query model still unresolved.
 
-- **AUD-016:** terminal `WorkflowRun` state when executor fails during execution
-- **AUD-017:** Agency initialization contract — lazy init in `start_research()`; explicit `initialize()` still supported
-- **AUD-018:** planner dependency graph validation inside structured-output retry boundary
-- Defense-in-depth graph validation retained at factory/domain layer
+### PF-02 / PF-02.5 — Ports and application services
 
-### GF-00 — Repository Readiness (partial)
+- **Goal:** Repository ports, in-memory/file adapters, contract tests, application persistence services.
+- **Outcome:** `application/ports/`, `application/services/`, Agency decoupled from concrete repositories.
 
-- **PR-A:** repository hygiene — untracked runtime project artifacts, hardened `.gitignore`
-- **PR-B:** packaging and environment contract — `requirements.txt`, `pyproject.toml`, `.env.example`
-- **PR-C:** deterministic offline research workflow demo; legacy misleading examples removed
+### PF-03 — PostgreSQL persistence
 
----
+- **Goal:** Durable relational storage for projects, runs, templates, artifacts, knowledge, logs.
+- **Outcome:** SQLAlchemy 2.x adapters, Alembic migrations (`001`–`005`), Docker Compose PostgreSQL service.
+- **Limitation:** File backend remains for transitional local use; production path is PostgreSQL.
 
-## Current Work
+### PF-04 — Durable workflow execution
 
-**GitHub Face Sprint (GF-00, in progress)**
+- **Goal:** Checkpoint workflow state; support resume after partial execution.
+- **Outcome:** [ADR-010](docs/adr/ADR-010-Durable-Workflow-Checkpoint-and-Recovery-Policy.md); durable run persistence on memory and PostgreSQL backends.
+- **Limitation:** Resume semantics are worker/API-gated; not all backends support durable submission.
 
-- Public documentation (README v2, architecture visuals)
-- CI and trust signals
-- License posture decision
-- Contribution and security documentation
+### PF-05 — FastAPI application boundary
 
-**Remaining runtime hardening (backlog, not blocking public docs)**
+- **Goal:** HTTP ingress for projects, research submission, runs, results, logs, artifacts.
+- **Outcome:** [ADR-011](docs/adr/ADR-011-HTTP-API-Boundary-and-Synchronous-Execution-Policy.md); OpenAPI; health/readiness; Docker `api` service.
+- **Limitation:** ADR-011 synchronous policy superseded for research by PF-06 (202 Accepted + background worker).
 
-- Catalog/registry desynchronization test coverage
-- Full runtime E2E test (all registered executors)
-- Planner runtime-executor semantics (`executor_id=planner` re-planning behavior)
-- Migrate `scripts/sandbox.py` off legacy `services/project_brief_builder.py`
+### PF-06 — Background worker
 
----
+- **Goal:** Multi-process durable execution with claim, lease, heartbeat, stale recovery.
+- **Outcome:** [ADR-012](docs/adr/ADR-012-Background-Execution-Claiming-Lease-and-Recovery.md); `worker/` package; Docker `worker` service; crash recovery tests.
+- **Limitation:** Worker does not use HTTP auth; memory backend is test-only for embedded execution.
 
-## Next: Product Foundation
+### PF-07 — External orchestration / n8n
 
-**PF-01 (complete):** persistence boundary and repository strategy documented — see [ADR-009](docs/adr/ADR-009-Persistence-Boundary-and-Repository-Strategy.md) and [architecture/product-foundation-persistence.md](architecture/product-foundation-persistence.md).
+- **Goal:** Machine clients integrate via HTTP; idempotent research submission.
+- **Outcome:** [ADR-013](docs/adr/ADR-013-External-Orchestration-and-Idempotent-Submission.md); `Idempotency-Key`; correlation metadata; `examples/n8n/`; optional Compose overlay.
+- **Limitation:** Example workflows are reference integrations, not a managed automation platform.
 
-**PF-02 (complete):** repository ports, file/in-memory adapters, and contract tests.
+### PF-08 — Authentication and access boundary
 
-**PF-05 (complete):** FastAPI HTTP API under `api/` with OpenAPI, health/readiness, synchronous research execution, Docker Compose `api` service (ADR-011). Authentication, background workers, and production deployment remain **planned only**.
+- **Goal:** Service API keys, principal-scoped project ownership, resource isolation.
+- **Outcome:** [ADR-014](docs/adr/ADR-014-Authentication-and-Access-Boundary.md); Bearer API keys; bootstrap CLI; cross-principal 404 policy.
+- **Limitation:** No OAuth/OIDC, RBAC, UI login, or HTTP key-management endpoints.
 
-Product-facing workflow expansion — **not started** in production runtime:
+### Phase B runtime hardening (complete)
 
-- Project Brief integration into the main research path
-- Research Design automation
-- Knowledge flow beyond static files
-- Artifacts lifecycle
-- Product-facing workflow templates
-- Client Manager wired to `create_application()`
+- Terminal workflow state on executor failure (AUD-016)
+- Agency initialization contract (AUD-017)
+- Planner dependency validation in structured-output retry (AUD-018)
+- ADR-008 executor catalog contract
 
-Existing agent stubs (Client Manager, Research Designer, etc.) are **not integrated** into the production composition root.
+### GF-00 — Repository readiness (complete)
+
+- Packaging, deterministic offline demo, license posture, CI baseline
 
 ---
 
-## Later
+## Current Product Phase — Desk Research Vertical
 
-Platform and operational capabilities — **explicitly deferred**:
+**Next priority:** prove one real research methodology end-to-end using the existing platform foundation — **not** more horizontal infrastructure.
 
-- Persistence hardening beyond file-based `ProjectRepository`
-- Workflow resume / cancel semantics
-- Observability (logging, metrics, tracing)
-- FastAPI service layer
-- PostgreSQL storage
-- Docker deployment
-- Multi-user / multi-agency capabilities
-- CRM, client portal, integrations
+Intended vertical:
+
+```
+Client Brief
+  → Planning
+  → Research Design
+  → Search / Source Collection
+  → Evidence / Knowledge
+  → Analysis
+  → Insights
+  → Writer
+  → Review
+  → Final Artifact
+```
+
+**What exists today vs what is missing:**
+
+| Stage | Platform support | Product completeness |
+|-------|------------------|----------------------|
+| Client Brief | HTTP API + `ProjectBrief` model | Partial — not full lifecycle |
+| Planning | Planner agent + structured output | Integrated for template generation |
+| Research Design | Domain models | Not automated end-to-end |
+| Search | `search` executor stub | Not product-complete |
+| Source collection / provenance | — | Not implemented |
+| Evidence / Knowledge | `KnowledgeRepository` port | Metadata persistence only |
+| Analysis | `analysis` executor stub | Not product-complete |
+| Insights | — | Not implemented |
+| Writer / Report | `report` executor stub | Not product-complete |
+| Review | — | Not implemented |
+| Final artifact | Artifact metadata API | Blob lifecycle incomplete |
+
+Agent registrations (`planner`, `search`, `analysis`, `report`, `proposal`) are **runtime executors**, not proof of a finished research product.
+
+---
+
+## Future Platform Hardening
+
+Deferred until the desk research vertical validates the foundation:
+
+- Production observability (metrics, tracing, structured ops logging)
+- Backup/restore automation
+- Deployment hardening beyond Compose dev stacks
+- Secret management external to bootstrap CLI
+- Rate limiting and API versioning
+- OAuth/OIDC and richer RBAC
+- Scale-out queue (e.g. Redis) **only if** measured need arises
+- Multi-tenant SaaS, UI, webhooks/callbacks
 
 ---
 
 ## Explicitly Not Committed
 
-This roadmap does **not** promise:
-
-- Release dates or version timelines
-- Production SLA or uptime guarantees
-- Autonomous agency replacement of human researchers
-- PyPI package publication timeline
-- Full “operating system” platform completeness
+This roadmap does **not** promise release dates, production SLAs, autonomous agency replacement, PyPI publication, or full “operating system” completeness.
 
 ---
 
 ## Maturity Labels
-
-Use these distinctions when reading project status:
 
 | Label | Meaning |
 |-------|---------|
 | **Implemented** | Code exists in the repository |
 | **Tested** | Covered by automated tests |
 | **Demonstrable** | Runnable example or demo path exists |
-| **Integrated** | Wired into `create_application()` / main runtime path |
+| **Integrated** | Wired into composition root / HTTP / worker path |
 | **Production-ready** | Suitable for external deployment without further hardening |
 
-Phase B runtime hardening is **complete** at the runtime-core level. The overall product is **not production-ready**.
+PF-01 through PF-08 are **implemented, tested, and integrated** at the platform layer. The overall product is **not production-ready**.
 
 ---
 
-## Definition of Done (phase gate)
+## Documentation source of truth
 
-A phase is complete when functionality works, architecture stays consistent, scoped documentation is updated, and the system is ready for the next phase.
+Code, migrations, automated tests, and accepted ADRs are authoritative. When a capability merges, update ROADMAP, README, and backlog in the same or next documentation pass. See [docs/README.md](docs/README.md#documentation-reality-rules).

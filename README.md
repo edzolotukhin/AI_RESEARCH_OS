@@ -17,13 +17,13 @@ architecture itself.
 
 | | |
 |---|---|
-| **Phase** | Phase B runtime hardening complete |
-| **Tests** | 464 tests discovered (419 executed by default; 45 PostgreSQL-gated skipped unless configured) |
+| **Platform** | PF-01 through PF-08 merged — persistence, HTTP API, worker, orchestration, authentication |
+| **Tests** | **528** discovered; **467** run by default (**61** PostgreSQL-gated skipped); **500+** with full PostgreSQL CI/local suites |
 | **Demo** | Deterministic offline demo (`examples/deterministic_research_demo.py`) |
-| **Architecture** | Definition / runtime separation; dependency-aware workflow execution |
+| **Architecture** | Layered runtime + HTTP/worker boundaries; PostgreSQL durable execution path |
 | **License** | Source available · [All Rights Reserved](LICENSE) |
 
-Not production-ready. Early-stage runtime core with a public repository.
+**Not production-ready.** The platform foundation is advanced; the desk research product vertical is incomplete and not validated end-to-end.
 
 ---
 
@@ -39,20 +39,26 @@ Not production-ready. Early-stage runtime core with a public repository.
 - Repository ports, application persistence services, and selectable backends (`file`, `memory`, `postgresql`)
 - Durable workflow checkpointing for `memory` and `postgresql` backends (PF-04)
 - PostgreSQL persistence adapter (SQLAlchemy 2.x, Alembic, Docker Compose for local PostgreSQL and API)
-- **FastAPI HTTP API** (`api/`) with OpenAPI docs, health/readiness, projects, research, workflow runs, logs, artifacts (PF-05)
-- **Background worker** (`worker/`) with PostgreSQL claim/lease, heartbeat, and crash recovery (PF-06)
-- File-based **ProjectRepository** (transitional) and architecture documentation
+- **FastAPI HTTP API** (`api/`) with OpenAPI, health/readiness, projects, research (**202**), runs, results, logs, artifacts (PF-05)
+- **Bearer API key authentication** and principal-scoped project ownership (PF-08, ADR-014)
+- **Background worker** (`worker/`) with PostgreSQL claim/lease, heartbeat, crash recovery (PF-06)
+- **External orchestration** — idempotent `POST /research`, correlation metadata, n8n examples (PF-07)
+- **Docker Compose** — `postgres`, `api`, `worker`; optional n8n overlay
+- File-based **ProjectRepository** (transitional dev backend) and architecture documentation
 
 ---
 
 ## What Does Not Exist Yet
 
-- Client Manager wired to production runtime
-- Product Foundation workflows (brief, design, artifacts lifecycle)
-- Authentication, authorization, and API keys
-- Production deployment packaging
-- Multi-user platform capabilities
-- Release versioning
+- **Desk research vertical** validated end-to-end (brief → design → search → analysis → report → review)
+- Product-complete **Search**, **Analysis**, **Writer**, or **Reviewer** agents (stubs exist)
+- Source collection / evidence provenance pipeline
+- Full knowledge management (repository stores metadata; not a KM product)
+- Artifact blob lifecycle (metadata API exists; object storage strategy open)
+- Client Manager / Business Consultant wired to production runtime
+- OAuth/OIDC, UI login, RBAC, organizations
+- Production observability, backup/restore automation, rate limiting
+- Multi-tenant SaaS or client portal
 
 ---
 
@@ -139,7 +145,7 @@ set PERSISTENCE_BACKEND=postgresql
 python run_tests.py
 ```
 
-PostgreSQL verification (optional; **54** PostgreSQL-gated tests — 33 repository contract + 14 integration + 5 HTTP API integration + related skips; require a **test** database name and explicit opt-in). Run sequentially against the shared `ai_research_os_test` database; parallel local PostgreSQL test runs are not supported yet.
+PostgreSQL verification (optional; requires a **test** database name and `POSTGRESQL_INTEGRATION_TESTS=1`). Run PostgreSQL suites **sequentially** — parallel runs against the shared test database are not supported.
 
 ```powershell
 # Windows
@@ -201,7 +207,9 @@ The demo uses in-memory storage only. It does not call OpenAI, does not require 
 python run_tests.py
 ```
 
-The suite discovers **464** tests by default; **419** run and pass (**45** PostgreSQL-gated tests skipped unless `POSTGRESQL_INTEGRATION_TESTS=1` and `DATABASE_URL_TEST` point at a test database). With PostgreSQL configured, **473** tests run and pass (0 skipped).
+Default discovery: **528** tests (**467** executed, **61** skipped without PostgreSQL). With PostgreSQL configured via `scripts/test_postgres.ps1` or CI, the full suite runs with **0** skips.
+
+Prefer **500+ automated tests** in prose outside this section; exact counts change as tests are added.
 
 ### HTTP API tests
 
@@ -266,16 +274,14 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on every push and pull request:
 | Step | Command / check |
 |------|-----------------|
 | Dependencies | Python **3.11**, pip cache, `pip install -r requirements.txt` |
-| Repository hygiene | `git diff --check` on the push/PR commit range (`before..sha` or `base..head`) |
-| PostgreSQL | Service container (PostgreSQL 16), health-checked |
-| Test database | `ai_research_os_test` (created if missing) |
-| Migrations | `alembic upgrade head`, `alembic current` |
-| Unit tests | `python run_tests.py` (419 executed, 45 PostgreSQL-gated skipped) |
-| Contract tests | 33 PostgreSQL repository contract tests |
-| Integration tests | 14 PostgreSQL integration tests (including durable runtime) |
-| API tests | 23 HTTP API tests (`tests/api/`) |
-| PostgreSQL API tests | 5 HTTP integration tests (`tests/integration/api/`) |
-| Docker | `docker build .` smoke check |
+| Repository hygiene | `git diff --check` |
+| PostgreSQL | Service container (PostgreSQL 16) |
+| Migrations | `alembic upgrade head` |
+| Unit tests | `python run_tests.py` |
+| PostgreSQL contracts + integration | repository contracts, `tests/integration/postgresql/` |
+| API tests | `tests/api/` + OpenAPI smoke |
+| PostgreSQL API + worker + orchestration | `tests/integration/api/`, worker crash recovery |
+| Docker | `docker build .` |
 
 CI fails on any test failure or whitespace/conflict-marker issues. Database credentials are dev-only values aligned with `docker-compose.yml`; they are not printed in logs.
 
@@ -321,11 +327,11 @@ AI_RESEARCH_OS/
 
 | Area | Status |
 |------|--------|
-| **Runtime core** | Complete — Phase B hardening done |
-| **Product Foundation** | Next planned work — not integrated in production runtime |
-| **Production platform** | Future work — FastAPI, PostgreSQL, Docker, deployment, multi-user |
+| **Platform foundation (PF-01–PF-08)** | Implemented, tested, merged |
+| **Desk research product vertical** | Incomplete — not validated end-to-end |
+| **Production operations** | Dev-oriented Docker Compose; no observability/backup SLA |
 
-See [ROADMAP.md](ROADMAP.md) for detail. The project is not production-ready.
+See [ROADMAP.md](ROADMAP.md) for detail. The project is **not production-ready**.
 
 ---
 
@@ -429,21 +435,26 @@ The **WorkflowEngine** and **TaskScheduler** never import concrete agents. New e
 
 ## Current Limitations
 
-- Single-process, synchronous runtime loop
-- File-based project persistence only; no shared database
-- No REST API or service layer
-- No UI
-- No multi-user or multi-tenant support
-- No production deployment packaging (Docker, CI, releases)
-- Live planner path requires an external LLM API key
+- **Research product** — agent executors exist; desk research methodology is not product-complete
+- **Artifact blobs** — metadata persisted; blob storage strategy not finalized
+- **Knowledge** — repository port exists; not full knowledge management
+- **Legacy projects** — pre-PF-08 rows with `NULL` owner are inaccessible until backfilled
+- **Authentication** — service API keys only; no OAuth/OIDC or RBAC
+- **File backend** — transitional; PostgreSQL is the durable production path
+- **Memory backend** — tests and embedded execution; not multi-process production
+- Live planner path requires `OPENAI_API_KEY` (or `DETERMINISTIC_PLANNER=1` for smoke)
 
-These limits are intentional at the current maturity stage. See [ROADMAP.md](ROADMAP.md).
+See [ROADMAP.md](ROADMAP.md) for deferred platform hardening.
 
 ---
 
 ## Future Direction
 
-The runtime is domain-agnostic at its core: templates, dependency graphs, and executor resolution do not assume a specific industry. Marketing research is the first domain implemented — planner output, agent executors, and project models target agency workflows today. Additional domains could reuse the same engine, scheduler, and resolver model with different templates and executors. Product Foundation work (brief, design, artifacts) and platform layers (API, persistence, deployment) are planned next; they are not part of the current runtime core.
+The runtime core is domain-agnostic: templates, dependency graphs, and executor resolution can support other industries. Marketing research is the first domain — planner output and agent executors target agency workflows today.
+
+**Next product priority:** the **Desk Research vertical** (brief → planning → design → search → evidence → analysis → insights → report → review → artifact) on top of the completed platform foundation — not additional horizontal infrastructure.
+
+Platform hardening (observability, backups, OAuth, rate limits) is explicitly deferred until that vertical validates the foundation. See [ROADMAP.md](ROADMAP.md) and [docs/backlog.md](docs/backlog.md).
 
 ---
 

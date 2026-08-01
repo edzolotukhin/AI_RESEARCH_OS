@@ -7,7 +7,7 @@
 
 ## Context
 
-Phase B runtime hardening is complete. The synchronous workflow engine, planner contract, and dependency-aware scheduling are implemented and tested (289 automated tests).
+Phase B runtime hardening is complete. The synchronous workflow engine, planner contract, and dependency-aware scheduling are implemented and tested (500+ automated tests at time of ADR-009 acceptance; suite has since grown).
 
 Current persistence is minimal:
 

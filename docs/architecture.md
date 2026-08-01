@@ -78,27 +78,35 @@ See [ADR-008: Executor Catalog Contract](adr/ADR-008-Executor-Catalog-Contract.m
 
 ---
 
-# Out of Scope
-
-The following are **not** part of the current implemented runtime:
-
-- ExecutorDefinition registry type (beyond catalog IDs)
-- StartResearch, Search Pipeline
-- Knowledge Graph, Execution Graph
-- Future integrations (n8n, web UI)
-
 # Product Foundation status
 
-**Completed:**
+**Completed (PF-01–PF-08):**
 
-- **PF-01** — Persistence Architecture Contract ([ADR-009](adr/ADR-009-Persistence-Boundary-and-Repository-Strategy.md))
-- **PF-02** — Repository ports, in-memory adapters, contract tests (`application/ports/`)
-- **PF-02.5** — Application persistence services (`application/services/`)
-- **PF-03** — PostgreSQL adapter, SQLAlchemy ORM models, Alembic migrations, Docker Compose (postgres only)
+- **PF-01–PF-03** — Persistence boundary, ports, services, PostgreSQL ([ADR-009](adr/ADR-009-Persistence-Boundary-and-Repository-Strategy.md))
+- **PF-04** — Durable checkpoints and resume ([ADR-010](adr/ADR-010-Durable-Workflow-Checkpoint-and-Recovery-Policy.md))
+- **PF-05** — FastAPI HTTP boundary ([ADR-011](adr/ADR-011-HTTP-API-Boundary-and-Synchronous-Execution-Policy.md))
+- **PF-06** — Background worker ([ADR-012](adr/ADR-012-Background-Execution-Claiming-Lease-and-Recovery.md))
+- **PF-07** — External orchestration / idempotency ([ADR-013](adr/ADR-013-External-Orchestration-and-Idempotent-Submission.md))
+- **PF-08** — Authentication and access boundary ([ADR-014](adr/ADR-014-Authentication-and-Access-Boundary.md))
 
-**Still out of scope (not implemented):**
+**Production path (HTTP + worker):**
 
-- FastAPI application boundary
-- Redis
-- Background workflow execution
-- Production deployment packaging
+```mermaid
+flowchart TD
+    Client[External Client / n8n] --> API[FastAPI]
+    API --> Auth[Authentication / Authorization]
+    Auth --> App[Application Services]
+    App --> Submit[Durable Research Submission]
+    Submit --> PG[(PostgreSQL)]
+    Worker[Background Worker] --> PG
+    Worker --> Engine[WorkflowEngine]
+    Engine --> Exec[Executors]
+    Exec --> Out[Checkpoints / Results / Artifacts]
+```
+
+**Still not product-complete:**
+
+- Desk research vertical end-to-end
+- Full knowledge management, artifact blob lifecycle, search/source provenance
+- OAuth/OIDC, UI, multi-tenant SaaS
+- Production observability and backup automation

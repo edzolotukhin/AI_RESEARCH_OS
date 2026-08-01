@@ -1,67 +1,77 @@
 # AI Research OS Backlog
 
-## Completed (Phase A / Wave 1)
+Actionable future work only. Completed platform items are listed for reference; do not re-open unless regressions appear.
 
-- [x] Synchronous workflow runtime (`WorkflowEngine`, `TaskScheduler`, `TaskExecutor`)
-- [x] `WorkflowCompletionPolicy` and dependency-aware scheduling
-- [x] Planner constrained to registered executor IDs (ADR-008)
-- [x] Structured output retry and planner payload contract
-- [x] `ProjectRepository` persistence
-- [x] Architecture documentation sync (A.4)
-- [x] Wave 1 legacy cleanup (dead infrastructure, `WorkflowPlan`, services, registries)
+---
 
-## Runtime Hardening (remaining)
+## Completed — Platform Foundation
 
-- [x] AUD-016: terminal `WorkflowRun` state when executor fails during execution
-- [x] AUD-017: Agency initialization contract — `WorkflowEngine` remains self-starting via `_ensure_running()`; `Agency.start_research()` performs lazy initialization; explicit `Agency.initialize()` remains supported
-- [x] AUD-018: planner dependency validation inside structured-output retry path — graph semantics (unknown dependency, self-dependency, cycle, duplicate task id) validated in `PlannerPayloadContract` after executor ID checks; runtime `WorkflowValidator` / factory graph validation retained; `WorkflowEngine` unchanged
+- [x] Phase B runtime hardening (AUD-016–018, ADR-008)
+- [x] **PF-01** Persistence architecture — [ADR-009](adr/ADR-009-Persistence-Boundary-and-Repository-Strategy.md)
+- [x] **PF-02** Repository ports and contract tests
+- [x] **PF-02.5** Application persistence services
+- [x] **PF-03** PostgreSQL adapter, Alembic, Docker Compose PostgreSQL
+- [x] **PF-04** Durable workflow checkpointing and resume — [ADR-010](adr/ADR-010-Durable-Workflow-Checkpoint-and-Recovery-Policy.md)
+- [x] **PF-05** FastAPI HTTP boundary — [ADR-011](adr/ADR-011-HTTP-API-Boundary-and-Synchronous-Execution-Policy.md)
+- [x] **PF-06** Background worker, lease/recovery — [ADR-012](adr/ADR-012-Background-Execution-Claiming-Lease-and-Recovery.md)
+- [x] **PF-07** External orchestration, idempotency, n8n examples — [ADR-013](adr/ADR-013-External-Orchestration-and-Idempotent-Submission.md)
+- [x] **PF-08** API key authentication, ownership, isolation — [ADR-014](adr/ADR-014-Authentication-and-Access-Boundary.md)
+- [x] Docker Compose dev stack (`postgres`, `api`, `worker`, optional `n8n` overlay)
+- [x] GF-00 repository readiness baseline
+
+---
+
+## Next — Desk Research Vertical
+
+Primary product objective: execute one real desk research methodology end-to-end on the current platform.
+
+- [ ] Wire **Client Brief → Planning → Research Design** as a coherent product path (beyond single-shot `POST /research`)
+- [ ] **Search / source collection** — real retrieval, not stub executor behavior
+- [ ] **Evidence / knowledge** — provenance, ingestion, and query beyond metadata ports
+- [ ] **Analysis → Insights** — structured analytical outputs tied to sources
+- [ ] **Writer → Review → Final artifact** — report generation and review gate
+- [ ] End-to-end vertical integration test (one methodology, real inputs, inspectable artifact)
+- [ ] Client Manager integration with production runtime (if required by vertical)
+
+---
+
+## Next — Platform hygiene (non-blocking)
+
 - [ ] Catalog/registry desynchronization test coverage
 - [ ] Full runtime E2E test (all registered executors)
-- [ ] Planner runtime-executor semantics (`executor_id=planner` re-planning behavior)
-
-## Legacy / tooling
-
-- [ ] Migrate `scripts/sandbox.py` off `services/project_brief_builder.py`
-
-## Product Foundation
-
-- [x] **PF-01** Persistence Architecture Contract — [ADR-009](adr/ADR-009-Persistence-Boundary-and-Repository-Strategy.md), [architecture/product-foundation-persistence.md](../architecture/product-foundation-persistence.md)
-- [x] **PF-02** Persistence ports and in-memory contract tests
-- [x] **PF-02.5** Application persistence services
-- [x] **PF-03** PostgreSQL adapter, Alembic migrations, Docker Compose (postgres only)
-- [x] Full Project aggregate PostgreSQL round-trip (JSONB nested structures)
-- [x] Persist WorkflowRun `project_id` ownership on domain aggregate
-- [ ] **PF-04** Docker Compose development environment
-- [x] **PF-05** FastAPI application boundary (ADR-011)
-- [x] **PF-06** Background workflow execution (ADR-012)
-- [x] **PF-07** External orchestration / n8n integration boundary (ADR-013)
-- [x] **PF-08** Authentication and access boundary (ADR-014)
-- [x] Extract `ProjectRepository` port; decouple `Agency` from concrete infrastructure class
-- [x] Define `ExecutionLog` persistence record and port (`ExecutionLogStore`)
-- [x] Implement `ProjectRepository` port operations in file adapter (`get_by_id`, `list`, `delete`)
+- [ ] Planner `executor_id=planner` re-planning semantics
+- [ ] Migrate `scripts/sandbox.py` off legacy `services/project_brief_builder.py`
 - [ ] Resolve `Project.runs` in-memory field vs persisted query model
-- [ ] Artifact blob storage strategy (filesystem vs object store)
+- [ ] Artifact **blob** storage strategy (filesystem vs object store)
 
-PostgreSQL, Docker, FastAPI, background execution, external orchestration idempotency, and API key authentication are implemented.
+---
 
-## Product (not started)
+## Later — Platform hardening
 
-- [ ] Client Manager wired to production runtime
-- [ ] Knowledge Manager (beyond static files)
-- [ ] Business Consultant / early lifecycle automation
+- [ ] Production observability (logging, metrics, tracing)
+- [ ] Backup/restore automation
+- [ ] Deployment hardening (beyond dev Compose)
+- [ ] External secrets manager integration
+- [ ] Rate limiting
+- [ ] API versioning policy
+- [ ] OAuth/OIDC identity (if human users required)
+- [ ] Richer RBAC / organizations
 
-## Future
+---
 
-- Playbooks expansion
-- Reviewer role
-- Event System
-- Handover
+## Deferred / Not Planned Yet
 
-## GitHub Face Sprint
+- UI / client portal
+- SaaS multi-tenancy
+- Outbound webhooks/callbacks
+- Redis or distributed queue (unless scale requires)
+- Async planning pipeline
+- Automatic retry policy productization
+- CRM / billing integrations
+- Event system / handover automation (legacy roadmap ideas)
 
-- [x] **GF-00 complete** — repository readiness baseline (hygiene, packaging, demo, docs sync, license posture)
-- [x] GF-00 / PR-A: Repository Hygiene — removed tracked `agency/projects/` runtime JSON from git index; hardened `.gitignore`; removed generated `strukture.txt`; runtime creates project storage on demand; 289/289 tests pass
-- [x] GF-00 / PR-B: Packaging and Environment Contract — runtime deps in `requirements.txt` (`openai`, `python-dotenv`); Python `>=3.11,<3.15` in `pyproject.toml`; `.env.example` for `OPENAI_API_KEY`; clean venv install verified; 289/289 tests pass
-- [x] GF-00 / PR-C: Examples Cleanup and Public Demo Contract — removed legacy misleading examples; added offline `examples/deterministic_research_demo.py` (WorkflowTemplate → WorkflowRun → WorkflowEngine); subprocess test; no repo artifacts; 289/289 tests pass
-- [x] GF-00 / PR-D: Roadmap and Changelog Synchronization — `ROADMAP.md` and canonical `CHANGELOG.md` aligned with Phase B completion, GF-00 progress, and 289-test baseline
-- [x] GF-00 / PR-E: License Posture — proprietary All Rights Reserved `LICENSE`; README legal section aligned; GF-00 closed
+---
+
+## Documentation
+
+When merging platform capabilities, sync [ROADMAP.md](../ROADMAP.md), [README.md](../README.md), and this backlog. ADRs own architectural decisions.
