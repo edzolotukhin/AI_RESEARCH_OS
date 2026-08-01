@@ -33,14 +33,15 @@
 - [x] Persist WorkflowRun `project_id` ownership on domain aggregate
 - [ ] **PF-04** Docker Compose development environment
 - [x] **PF-05** FastAPI application boundary (ADR-011)
-- [ ] **PF-06** Background workflow execution
+- [x] **PF-06** Background workflow execution (ADR-012)
+- [x] **PF-07** External orchestration / n8n integration boundary (ADR-013)
 - [x] Extract `ProjectRepository` port; decouple `Agency` from concrete infrastructure class
 - [x] Define `ExecutionLog` persistence record and port (`ExecutionLogStore`)
 - [x] Implement `ProjectRepository` port operations in file adapter (`get_by_id`, `list`, `delete`)
 - [ ] Resolve `Project.runs` in-memory field vs persisted query model
 - [ ] Artifact blob storage strategy (filesystem vs object store)
 
-PostgreSQL, Docker, FastAPI, and background execution are **not implemented** — contract only.
+PostgreSQL, Docker, FastAPI, background execution, and external orchestration idempotency are implemented. Production auth remains deferred.
 
 ## Product (not started)
 

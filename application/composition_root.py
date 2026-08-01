@@ -51,6 +51,7 @@ from application.services.knowledge_service import KnowledgeService
 from application.services.project_service import ProjectService
 from application.services.durable_workflow_service import DurableWorkflowService
 from application.services.workflow_service import WorkflowService
+from application.services.research_submission_service import ResearchSubmissionService
 from application.services.worker_execution_service import WorkerExecutionService
 from application.execution.lease_config import LeaseConfig
 from application.runtime.background_execution_capability import (
@@ -240,6 +241,12 @@ def create_application_container(
                 lease_config=lease_config,
             )
 
+    research_submission_service: ResearchSubmissionService | None = None
+    if persistence.research_submission_repository is not None:
+        research_submission_service = ResearchSubmissionService(
+            submission_repository=persistence.research_submission_repository,
+        )
+
     agency = Agency(
         agent_loader=agent_loader,
         project_service=project_service,
@@ -267,6 +274,7 @@ def create_application_container(
         execution_log_service=execution_log_service,
         durable_workflow_service=durable_workflow_service,
         worker_execution_service=worker_execution_service,
+        research_submission_service=research_submission_service,
         background_execution=background_execution,
         readiness_check=readiness_check,
         _shutdown_callbacks=shutdown_callbacks,

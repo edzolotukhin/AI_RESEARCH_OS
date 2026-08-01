@@ -20,6 +20,9 @@ from infrastructure.persistence.memory.in_memory_knowledge_repository import (
 from infrastructure.persistence.memory.in_memory_project_repository import (
     InMemoryProjectRepository,
 )
+from infrastructure.persistence.memory.in_memory_research_submission_repository import (
+    InMemoryResearchSubmissionRepository,
+)
 from infrastructure.persistence.memory.in_memory_workflow_run_execution_repository import (
     InMemoryWorkflowRunExecutionRepository,
 )
@@ -43,6 +46,9 @@ from infrastructure.persistence.postgresql.repositories.postgresql_knowledge_rep
 from infrastructure.persistence.postgresql.repositories.postgresql_project_repository import (
     PostgreSQLProjectRepository,
 )
+from infrastructure.persistence.postgresql.repositories.postgresql_research_submission_repository import (
+    PostgreSQLResearchSubmissionRepository,
+)
 from infrastructure.persistence.postgresql.repositories.postgresql_workflow_run_execution_repository import (
     PostgreSQLWorkflowRunExecutionRepository,
 )
@@ -61,6 +67,7 @@ class PersistenceBundle:
     workflow_template_repository: object
     workflow_run_repository: object
     workflow_run_execution_repository: object | None
+    research_submission_repository: object | None
     artifact_repository: object
     knowledge_repository: object
     execution_log_store: object
@@ -88,6 +95,7 @@ def build_persistence_bundle(
             workflow_run_execution_repository=InMemoryWorkflowRunExecutionRepository(
                 workflow_run_repository,
             ),
+            research_submission_repository=InMemoryResearchSubmissionRepository(),
             artifact_repository=InMemoryArtifactRepository(),
             knowledge_repository=InMemoryKnowledgeRepository(),
             execution_log_store=InMemoryExecutionLogStore(),
@@ -100,6 +108,7 @@ def build_persistence_bundle(
             workflow_template_repository=InMemoryWorkflowTemplateRepository(),
             workflow_run_repository=workflow_run_repository,
             workflow_run_execution_repository=None,
+            research_submission_repository=None,
             artifact_repository=InMemoryArtifactRepository(),
             knowledge_repository=InMemoryKnowledgeRepository(),
             execution_log_store=InMemoryExecutionLogStore(),
@@ -118,6 +127,9 @@ def build_persistence_bundle(
             ),
             workflow_run_repository=PostgreSQLWorkflowRunRepository(session_factory),
             workflow_run_execution_repository=PostgreSQLWorkflowRunExecutionRepository(
+                session_factory,
+            ),
+            research_submission_repository=PostgreSQLResearchSubmissionRepository(
                 session_factory,
             ),
             artifact_repository=PostgreSQLArtifactRepository(session_factory),

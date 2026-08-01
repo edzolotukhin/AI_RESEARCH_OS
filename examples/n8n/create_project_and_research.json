@@ -1,0 +1,65 @@
+{
+  "name": "AI Research OS — Create Project and Submit Research",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.AI_RESEARCH_OS_API_URL || 'http://api:8000'}}/projects",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"name\": \"n8n Research Project\"}"
+      },
+      "id": "create-project",
+      "name": "Create Project",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.AI_RESEARCH_OS_API_URL || 'http://api:8000'}}/projects/{{$json.id}}/research",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{$execution.id}}"
+            },
+            {
+              "name": "X-Correlation-ID",
+              "value": "={{$workflow.id}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"brief\": {\"client\": \"Acme\", \"project_title\": \"Brand Health\", \"business_problem\": \"Assess position.\", \"research_goal\": \"Evaluate awareness.\"}, \"source\": \"n8n\"}"
+      },
+      "id": "submit-research",
+      "name": "Submit Research",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [720, 300]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{ "node": "Create Project", "type": "main", "index": 0 }]]
+    },
+    "Create Project": {
+      "main": [[{ "node": "Submit Research", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "pf07-create-research-v1"
+}

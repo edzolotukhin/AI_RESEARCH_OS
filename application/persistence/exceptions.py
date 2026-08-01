@@ -16,3 +16,7 @@ class ConcurrentModificationError(PersistenceError):
 
 class CheckpointPersistenceError(PersistenceError):
     """Raised when a durable runtime checkpoint cannot be persisted."""
+
+
+class IdempotencyConflictError(PersistenceError):
+    """Raised when the same idempotency key is reused with a different request."""

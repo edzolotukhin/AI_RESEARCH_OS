@@ -24,6 +24,12 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
+Write-Host "=== External orchestration tests ==="
+& (Join-Path $PSScriptRoot "test_n8n.ps1")
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
+
 Write-Host "=== API tests ==="
 & (Join-Path $PSScriptRoot "test_api.ps1")
 if ($LASTEXITCODE -ne 0) {

@@ -235,6 +235,18 @@ Normal Compose does **not** enable `DETERMINISTIC_PLANNER`. Production planning 
 - **Memory without `embedded`**, **file**, and other unsupported topologies return **409** for research/resume
 - **PostgreSQL + external worker** is the supported multi-process deployment; **memory** is embedded/test-only
 
+### External orchestration (n8n)
+
+External clients integrate via HTTP only — no direct PostgreSQL or Python imports.
+
+- `Idempotency-Key` header on `POST /research` for durable deduplication (PostgreSQL)
+- `correlation_id`, `source` in request body; optional `X-Correlation-ID` header
+- Poll `GET /workflow-runs/{id}` until `is_terminal`; then `GET /results` and `/artifacts`
+- Optional n8n: `docker compose -f docker-compose.yml -f docker-compose.n8n.yml up -d`
+- Examples: `examples/n8n/` — see ADR-013
+
+**Local dev is unauthenticated.** Do not expose to public internet.
+
 ```bash
 curl http://localhost:8000/health
 curl http://localhost:8000/ready

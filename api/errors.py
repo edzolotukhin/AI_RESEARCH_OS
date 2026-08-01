@@ -11,6 +11,7 @@ from application.persistence.exceptions import (
     ConcurrentModificationError,
     DuplicateEntityError,
     EntityNotFoundError,
+    IdempotencyConflictError,
 )
 from application.runtime.task_result_codec import NonSerializableTaskResultError
 
@@ -43,6 +44,17 @@ def register_exception_handlers(app: FastAPI) -> None:
         return _error_response(
             status_code=409,
             code="run_claim_conflict",
+            message=str(exc),
+        )
+
+    @app.exception_handler(IdempotencyConflictError)
+    async def handle_idempotency_conflict(
+        _: Request,
+        exc: IdempotencyConflictError,
+    ) -> JSONResponse:
+        return _error_response(
+            status_code=409,
+            code="idempotency_conflict",
             message=str(exc),
         )
 
