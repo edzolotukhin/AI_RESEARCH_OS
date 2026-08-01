@@ -18,6 +18,12 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
+Write-Host "=== Worker tests ==="
+& (Join-Path $PSScriptRoot "test_worker.ps1")
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
+
 Write-Host "=== API tests ==="
 & (Join-Path $PSScriptRoot "test_api.ps1")
 if ($LASTEXITCODE -ne 0) {

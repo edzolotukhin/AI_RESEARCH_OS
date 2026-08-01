@@ -23,6 +23,7 @@ class ApplicationConfig:
     persistence_backend: str = "file"
     database_url: str | None = None
     durable_workflow_execution: bool | None = None
+    background_execution_mode: str | None = None
 
     @classmethod
     def from_env(cls) -> ApplicationConfig:
@@ -36,6 +37,7 @@ class ApplicationConfig:
             projects_root=os.environ.get("PROJECTS_ROOT", "agency/projects"),
             persistence_backend=resolve_persistence_backend(),
             database_url=os.environ.get("DATABASE_URL"),
+            background_execution_mode=os.environ.get("BACKGROUND_EXECUTION_MODE"),
         )
 
 

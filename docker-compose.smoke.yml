@@ -1,0 +1,10 @@
+# Opt-in Compose override for offline smoke/integration without a live LLM.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.smoke.yml up -d postgres api worker
+services:
+  api:
+    environment:
+      DETERMINISTIC_PLANNER: "1"
+  worker:
+    environment:
+      DETERMINISTIC_PLANNER: "1"

@@ -20,6 +20,9 @@ from infrastructure.persistence.memory.in_memory_knowledge_repository import (
 from infrastructure.persistence.memory.in_memory_project_repository import (
     InMemoryProjectRepository,
 )
+from infrastructure.persistence.memory.in_memory_workflow_run_execution_repository import (
+    InMemoryWorkflowRunExecutionRepository,
+)
 from infrastructure.persistence.memory.in_memory_workflow_run_repository import (
     InMemoryWorkflowRunRepository,
 )
@@ -40,6 +43,9 @@ from infrastructure.persistence.postgresql.repositories.postgresql_knowledge_rep
 from infrastructure.persistence.postgresql.repositories.postgresql_project_repository import (
     PostgreSQLProjectRepository,
 )
+from infrastructure.persistence.postgresql.repositories.postgresql_workflow_run_execution_repository import (
+    PostgreSQLWorkflowRunExecutionRepository,
+)
 from infrastructure.persistence.postgresql.repositories.postgresql_workflow_run_repository import (
     PostgreSQLWorkflowRunRepository,
 )
@@ -54,6 +60,7 @@ class PersistenceBundle:
     project_repository: object
     workflow_template_repository: object
     workflow_run_repository: object
+    workflow_run_execution_repository: object | None
     artifact_repository: object
     knowledge_repository: object
     execution_log_store: object
@@ -73,20 +80,26 @@ def build_persistence_bundle(
     backend = (persistence_backend or resolve_persistence_backend()).lower()
 
     if backend == "memory":
+        workflow_run_repository = InMemoryWorkflowRunRepository()
         return PersistenceBundle(
             project_repository=InMemoryProjectRepository(),
             workflow_template_repository=InMemoryWorkflowTemplateRepository(),
-            workflow_run_repository=InMemoryWorkflowRunRepository(),
+            workflow_run_repository=workflow_run_repository,
+            workflow_run_execution_repository=InMemoryWorkflowRunExecutionRepository(
+                workflow_run_repository,
+            ),
             artifact_repository=InMemoryArtifactRepository(),
             knowledge_repository=InMemoryKnowledgeRepository(),
             execution_log_store=InMemoryExecutionLogStore(),
         )
 
     if backend == "file":
+        workflow_run_repository = InMemoryWorkflowRunRepository()
         return PersistenceBundle(
             project_repository=FileProjectRepository(projects_root=projects_root),
             workflow_template_repository=InMemoryWorkflowTemplateRepository(),
-            workflow_run_repository=InMemoryWorkflowRunRepository(),
+            workflow_run_repository=workflow_run_repository,
+            workflow_run_execution_repository=None,
             artifact_repository=InMemoryArtifactRepository(),
             knowledge_repository=InMemoryKnowledgeRepository(),
             execution_log_store=InMemoryExecutionLogStore(),
@@ -104,6 +117,9 @@ def build_persistence_bundle(
                 session_factory,
             ),
             workflow_run_repository=PostgreSQLWorkflowRunRepository(session_factory),
+            workflow_run_execution_repository=PostgreSQLWorkflowRunExecutionRepository(
+                session_factory,
+            ),
             artifact_repository=PostgreSQLArtifactRepository(session_factory),
             knowledge_repository=PostgreSQLKnowledgeRepository(session_factory),
             execution_log_store=PostgreSQLExecutionLogStore(session_factory),

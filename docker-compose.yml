@@ -37,5 +37,28 @@ services:
       retries: 10
       start_period: 20s
 
+  worker:
+    build: .
+    container_name: ai_research_os_worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PERSISTENCE_BACKEND: postgresql
+      DATABASE_URL: postgresql+psycopg://ai_research_os:ai_research_os_dev@postgres:5432/ai_research_os
+      PROJECTS_ROOT: /tmp/projects
+      WORKER_LEASE_DURATION_SECONDS: "30"
+      WORKER_HEARTBEAT_INTERVAL_SECONDS: "10"
+      WORKER_POLL_INTERVAL_SECONDS: "1"
+    command: ["python", "-m", "worker.main"]
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD-SHELL", "python -m worker.healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
 volumes:
   postgres_data:

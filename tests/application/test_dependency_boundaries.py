@@ -157,6 +157,16 @@ class DependencyBoundaryTests(unittest.TestCase):
                         )
         self.assertEqual(violations, [])
 
+    def test_worker_does_not_import_fastapi_routers(self) -> None:
+        violations: list[str] = []
+        for path in _python_files("worker"):
+            for imported in _imports_from_file(path):
+                if imported.startswith("api."):
+                    violations.append(
+                        f"{path.relative_to(REPO_ROOT)} -> {imported}"
+                    )
+        self.assertEqual(violations, [])
+
     def test_fastapi_imports_confined_to_api_package(self) -> None:
         violations: list[str] = []
         for path in REPO_ROOT.rglob("*.py"):

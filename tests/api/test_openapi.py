@@ -40,20 +40,18 @@ class OpenAPISmokeTests(ApiTestCase):
         forbidden = {"Project", "WorkflowRun", "WorkflowContext", "ArtifactRecord"}
         self.assertFalse(model_names.intersection(forbidden))
 
-    def test_start_research_documents_synchronous_execution(self) -> None:
+    def test_start_research_documents_background_execution(self) -> None:
         schema = self.client.get("/openapi.json").json()
         operation = schema["paths"]["/projects/{project_id}/research"]["post"]
         self.assertEqual(operation["operationId"], "startResearch")
-        self.assertIn("200", operation["responses"])
-        self.assertNotIn("202", operation["responses"])
+        self.assertIn("202", operation["responses"])
         description = " ".join(
             [
                 operation.get("summary", ""),
                 operation.get("description", ""),
-                schema["info"].get("description", ""),
             ]
         ).lower()
-        self.assertIn("synchronous", description)
+        self.assertIn("background", description)
 
     def test_docs_and_redoc_are_available(self) -> None:
         self.assertEqual(self.client.get("/docs").status_code, 200)

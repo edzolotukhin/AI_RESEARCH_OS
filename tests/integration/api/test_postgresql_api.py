@@ -9,7 +9,7 @@ from domain.ai.llm_response import LLMResponse
 
 from api.app import create_fastapi_app
 
-from tests.api.helpers import close_test_client, open_test_client
+from tests.api.helpers import close_test_client, drain_background_runs, open_test_client
 from tests.fixtures.planner_responses import VALID_PLANNER_JSON
 from tests.integration.postgresql.helpers import (
     PostgreSQLIntegrationTestCase,
@@ -49,23 +49,26 @@ class PostgreSQLApiIntegrationTests(PostgreSQLIntegrationTestCase):
         self.assertEqual(reloaded.name, "PG HTTP Project")
 
     def test_start_research_persists_run_accessible_via_http(self) -> None:
-        client, _container = self._build_client()
+        client, container = self._build_client()
         project = client.post("/projects", json={"name": "PG Research Project"}).json()
         started = client.post(
             f"/projects/{project['id']}/research",
             json={"brief": BRIEF},
-        ).json()
-        run_response = client.get(f"/workflow-runs/{started['run_id']}")
+        )
+        self.assertEqual(started.status_code, 202)
+        drain_background_runs(container)
+        run_response = client.get(f"/workflow-runs/{started.json()['run_id']}")
         self.assertEqual(run_response.status_code, 200)
         self.assertEqual(run_response.json()["project_id"], project["id"])
 
     def test_get_logs_and_results_via_http(self) -> None:
-        client, _container = self._build_client()
+        client, container = self._build_client()
         project = client.post("/projects", json={"name": "PG Logs Project"}).json()
         started = client.post(
             f"/projects/{project['id']}/research",
             json={"brief": BRIEF},
         ).json()
+        drain_background_runs(container)
         logs = client.get(f"/workflow-runs/{started['run_id']}/logs").json()["items"]
         results = client.get(
             f"/workflow-runs/{started['run_id']}/results",
@@ -81,6 +84,7 @@ class PostgreSQLApiIntegrationTests(PostgreSQLIntegrationTestCase):
             json={"brief": BRIEF},
         ).json()
         run_id = started["run_id"]
+        drain_background_runs(container)
         mock_llm = container._test_llm_client if hasattr(container, "_test_llm_client") else None
         if mock_llm is not None:
             mock_llm.generate.reset_mock()

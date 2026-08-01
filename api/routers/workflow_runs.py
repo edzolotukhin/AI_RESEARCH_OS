@@ -1,11 +1,16 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Response, status
+from fastapi.responses import JSONResponse
 
 from api.dependencies import (
     AgencyDep,
+    ContainerDep,
     ExecutionLogServiceDep,
     WorkflowServiceDep,
+)
+from application.runtime.background_execution_capability import (
+    requires_http_background_submission,
 )
 from api.mappers.response_mappers import (
     execution_log_to_response,
@@ -32,17 +37,20 @@ MAX_LOG_LIMIT = 1000
 @router.post(
     "/projects/{project_id}/research",
     response_model=StartResearchResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Start research for a project (synchronous)",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Submit research for background execution",
     operation_id="startResearch",
     description=(
-        "Executes planning and workflow runtime synchronously in the request "
-        "process. Returns 200 with the terminal or current run state when "
-        "complete; does not return 202 and does not continue in a background "
-        "worker if the client disconnects. Live planning requires OPENAI_API_KEY."
+        "Validates the request and runs planning synchronously in the API "
+        "process. Persists WorkflowTemplate and WorkflowRun, submits the run "
+        "for background worker execution, and returns 202 Accepted. "
+        "WorkflowEngine execution occurs only in the worker. Poll "
+        "GET /workflow-runs/{run_id} for progress. Planning latency affects "
+        "the HTTP response time."
     ),
     responses={
         404: {"description": "Project not found."},
+        409: {"description": "Background durable execution unavailable for this backend."},
         422: {"description": "Missing or invalid project brief."},
     },
 )
@@ -50,7 +58,11 @@ def start_research(
     project_id: str,
     body: StartResearchRequest,
     agency: AgencyDep,
+    container: ContainerDep,
+    response: Response,
 ) -> StartResearchResponse:
+    if container.background_execution is not None:
+        requires_http_background_submission(container.background_execution)
     project = agency.get_project(project_id)
     project.brief = ProjectBrief(
         client=body.brief.client,
@@ -66,7 +78,9 @@ def start_research(
         comments=body.brief.comments,
     )
     context = agency.start_research(project)
-    return start_research_to_response(context.workflow_run)
+    payload = start_research_to_response(context.workflow_run)
+    response.headers["Location"] = f"/workflow-runs/{payload.run_id}"
+    return payload
 
 
 @router.get(
@@ -118,25 +132,37 @@ def list_workflow_runs_for_project(
 @router.post(
     "/workflow-runs/{run_id}/resume",
     response_model=WorkflowRunResponse,
-    summary="Resume a workflow run (synchronous)",
+    summary="Submit workflow run resume for background execution",
     operation_id="resumeWorkflowRun",
     responses={
         404: {"description": "Workflow run not found."},
-        409: {"description": "Resume unavailable for PAUSED runs or non-durable backend."},
+        409: {"description": "Resume unavailable for PAUSED runs, active lease, or non-durable backend."},
     },
 )
 def resume_workflow_run(
     run_id: str,
     agency: AgencyDep,
+    container: ContainerDep,
     workflow_service: WorkflowServiceDep,
-) -> WorkflowRunResponse:
-    context = agency.resume_research(run_id)
-    version = None
-    try:
-        version = workflow_service.get_workflow_run_version(run_id)
-    except Exception:
+    response: Response,
+) -> WorkflowRunResponse | JSONResponse:
+    if container.background_execution is not None:
+        requires_http_background_submission(container.background_execution)
+
+    workflow_run = workflow_service.get_workflow_run(run_id)
+    if workflow_run.is_terminal:
         version = None
-    return workflow_run_to_response(context.workflow_run, version=version)
+        try:
+            version = workflow_service.get_workflow_run_version(run_id)
+        except Exception:
+            version = None
+        return workflow_run_to_response(workflow_run, version=version)
+
+    context = agency.submit_resume(run_id)
+    payload = workflow_run_to_response(context.workflow_run, version=None)
+    response.status_code = status.HTTP_202_ACCEPTED
+    response.headers["Location"] = f"/workflow-runs/{run_id}"
+    return payload
 
 
 @router.get(

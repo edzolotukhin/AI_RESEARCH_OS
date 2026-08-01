@@ -11,6 +11,11 @@ from application.services.knowledge_service import KnowledgeService
 from application.services.project_service import ProjectService
 from application.services.durable_workflow_service import DurableWorkflowService
 from application.services.workflow_service import WorkflowService
+from application.services.worker_execution_service import WorkerExecutionService
+
+from application.runtime.background_execution_capability import (
+    BackgroundExecutionCapability,
+)
 
 
 ReadinessCheck = Callable[[], tuple[bool, str]]
@@ -29,8 +34,17 @@ class ApplicationContainer:
     knowledge_service: KnowledgeService
     execution_log_service: ExecutionLogService
     durable_workflow_service: DurableWorkflowService | None = None
+    worker_execution_service: WorkerExecutionService | None = None
+    background_execution: BackgroundExecutionCapability | None = None
     readiness_check: ReadinessCheck | None = None
     _shutdown_callbacks: list[ShutdownCallback] = field(default_factory=list)
+
+    @property
+    def http_background_submission_supported(self) -> bool:
+        return (
+            self.background_execution is not None
+            and self.background_execution.http_submission
+        )
 
     def check_readiness(self) -> tuple[bool, str]:
         if self.readiness_check is not None:
