@@ -1,8 +1,8 @@
 # ADR-015: Desk Research Brief and Research Contract
 
-**Status:** Active (DR-01)  
-**Date:** 2026-07-29  
-**Deciders:** Platform / Desk Research vertical  
+**Status:** Active (DR-01)
+**Date:** 2026-07-29
+**Deciders:** Platform / Desk Research vertical
 
 ## Context
 
