@@ -54,8 +54,16 @@ class Agency:
     def shutdown(self) -> None:
         self.initialized = False
 
-    def create_project(self, name: str) -> Project:
-        return self._project_service.create_project(name)
+    def create_project(
+        self,
+        name: str,
+        *,
+        owner_principal_id: str | None = None,
+    ) -> Project:
+        return self._project_service.create_project(
+            name,
+            owner_principal_id=owner_principal_id,
+        )
 
     def get_project(self, project_id: str) -> Project:
         return self._project_service.get_project(project_id)
@@ -65,8 +73,13 @@ class Agency:
         *,
         offset: int = 0,
         limit: int | None = None,
+        owner_principal_id: str | None = None,
     ) -> list[Project]:
-        return self._project_service.list_projects(offset=offset, limit=limit)
+        return self._project_service.list_projects(
+            offset=offset,
+            limit=limit,
+            owner_principal_id=owner_principal_id,
+        )
 
     def start_research(
         self,

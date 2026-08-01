@@ -7,7 +7,8 @@ from application.config import ApplicationConfig
 
 from api.app import create_fastapi_app
 
-from tests.api.helpers import ApiTestCase, build_test_container, open_test_client, close_test_client
+from tests.api.auth_helpers import auth_headers
+from tests.api.helpers import ApiTestCase, AuthenticatedTestClient, build_test_container, open_test_client, close_test_client
 
 
 class AppFactoryImportSafetyTests(unittest.TestCase):
@@ -44,11 +45,19 @@ class ApplicationContainerIsolationTests(ApiTestCase):
     def test_separate_apps_do_not_share_project_state(self) -> None:
         client_one, container_one, context_one = open_test_client()
         client_two, container_two, context_two = open_test_client()
+        auth_one = AuthenticatedTestClient(
+            client_one,
+            auth_headers(container_one._test_api_key_plaintext),
+        )
+        auth_two = AuthenticatedTestClient(
+            client_two,
+            auth_headers(container_two._test_api_key_plaintext),
+        )
         try:
-            project_one = client_one.post("/projects", json={"name": "App One"}).json()
-            listed_two = client_two.get("/projects").json()["items"]
+            project_one = auth_one.post("/projects", json={"name": "App One"}).json()
+            listed_two = auth_two.get("/projects").json()["items"]
             self.assertEqual(
-                client_two.get(f"/projects/{project_one['id']}").status_code,
+                auth_two.get(f"/projects/{project_one['id']}").status_code,
                 404,
             )
             self.assertEqual(listed_two, [])

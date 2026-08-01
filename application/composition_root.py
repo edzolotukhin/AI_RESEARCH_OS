@@ -53,6 +53,8 @@ from application.services.durable_workflow_service import DurableWorkflowService
 from application.services.workflow_service import WorkflowService
 from application.services.research_submission_service import ResearchSubmissionService
 from application.services.worker_execution_service import WorkerExecutionService
+from application.services.authentication_service import AuthenticationService
+from application.services.authorization_service import AuthorizationService
 from application.execution.lease_config import LeaseConfig
 from application.runtime.background_execution_capability import (
     resolve_background_execution_capability,
@@ -63,6 +65,9 @@ from application.runtime.durable_execution_policy import (
 from infrastructure.persistence.noop_run_queue import NoOpRunQueue
 
 from infrastructure.persistence.persistence_factory import build_persistence_bundle
+from infrastructure.security.sha256_api_key_material_provider import (
+    Sha256ApiKeyMaterialProvider,
+)
 
 from loaders.agent_loader import AgentLoader
 
@@ -247,6 +252,20 @@ def create_application_container(
             submission_repository=persistence.research_submission_repository,
         )
 
+    authentication_service: AuthenticationService | None = None
+    authorization_service: AuthorizationService | None = None
+    if persistence.api_key_repository is not None:
+        material_provider = Sha256ApiKeyMaterialProvider()
+        authentication_service = AuthenticationService(
+            api_key_repository=persistence.api_key_repository,
+            material_provider=material_provider,
+        )
+        authorization_service = AuthorizationService(
+            project_service=project_service,
+            workflow_service=workflow_service,
+            artifact_service=artifact_service,
+        )
+
     agency = Agency(
         agent_loader=agent_loader,
         project_service=project_service,
@@ -275,6 +294,8 @@ def create_application_container(
         durable_workflow_service=durable_workflow_service,
         worker_execution_service=worker_execution_service,
         research_submission_service=research_submission_service,
+        authentication_service=authentication_service,
+        authorization_service=authorization_service,
         background_execution=background_execution,
         readiness_check=readiness_check,
         _shutdown_callbacks=shutdown_callbacks,

@@ -1,0 +1,64 @@
+from __future__ import annotations
+
+from application.persistence.exceptions import AccessDeniedError, EntityNotFoundError
+from application.security.principal import AuthenticatedPrincipal
+from application.services.artifact_service import ArtifactService
+from application.services.project_service import ProjectService
+from application.services.workflow_service import WorkflowService
+from domain.project import Project
+from domain.workflow_run import WorkflowRun
+
+
+class AuthorizationService:
+    """Enforces principal-scoped access to projects and derived resources."""
+
+    def __init__(
+        self,
+        *,
+        project_service: ProjectService,
+        workflow_service: WorkflowService,
+        artifact_service: ArtifactService | None = None,
+    ) -> None:
+        self._project_service = project_service
+        self._workflow_service = workflow_service
+        self._artifact_service = artifact_service
+
+    def require_project(
+        self,
+        principal: AuthenticatedPrincipal,
+        project_id: str,
+    ) -> Project:
+        try:
+            project = self._project_service.get_project(project_id)
+        except EntityNotFoundError as exc:
+            raise AccessDeniedError(str(exc)) from exc
+
+        if project.owner_principal_id != principal.principal_id:
+            raise AccessDeniedError(f"Project not found: {project_id}")
+        return project
+
+    def require_run(
+        self,
+        principal: AuthenticatedPrincipal,
+        run_id: str,
+    ) -> tuple[WorkflowRun, Project]:
+        try:
+            workflow_run = self._workflow_service.get_workflow_run(run_id)
+        except EntityNotFoundError as exc:
+            raise AccessDeniedError(str(exc)) from exc
+
+        project = self.require_project(principal, workflow_run.project_id)
+        return workflow_run, project
+
+    def list_visible_projects(
+        self,
+        principal: AuthenticatedPrincipal,
+        *,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> list[Project]:
+        return self._project_service.list_projects(
+            owner_principal_id=principal.principal_id,
+            offset=offset,
+            limit=limit,
+        )

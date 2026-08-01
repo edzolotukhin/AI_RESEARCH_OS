@@ -105,7 +105,10 @@ class CompositionRootTests(unittest.TestCase):
 
         result = agency.create_project("Override Project")
 
-        custom_service.create_project.assert_called_once_with("Override Project")
+        custom_service.create_project.assert_called_once_with(
+            "Override Project",
+            owner_principal_id=None,
+        )
         self.assertIs(result, expected_project)
 
 

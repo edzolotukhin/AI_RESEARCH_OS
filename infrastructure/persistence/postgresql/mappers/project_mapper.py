@@ -31,6 +31,7 @@ def project_to_model(project: Project, *, version: int) -> ProjectModel:
         research_design=_research_design_to_dict(project.research_design),
         created_at=project.created_at,
         updated_at=project.updated_at,
+        owner_principal_id=project.owner_principal_id,
         version=version,
     )
 
@@ -45,6 +46,7 @@ def project_to_update_values(project: Project) -> dict:
         "research_design": _research_design_to_dict(project.research_design),
         "created_at": project.created_at,
         "updated_at": project.updated_at,
+        "owner_principal_id": project.owner_principal_id,
     }
 
 
@@ -59,6 +61,7 @@ def project_from_model(model: ProjectModel) -> Project:
         research_design=_research_design_from_dict(model.research_design),
         created_at=model.created_at or "",
         updated_at=model.updated_at or "",
+        owner_principal_id=model.owner_principal_id,
         runs=[],
     )
 

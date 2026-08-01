@@ -13,6 +13,7 @@ from domain.ai.llm_response import LLMResponse
 
 from api.app import create_fastapi_app
 
+from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
 from tests.fixtures.planner_responses import VALID_PLANNER_JSON
 
 
@@ -43,6 +44,8 @@ def build_test_container(
         overrides=ApplicationOverrides(llm_client=mock_llm),
     )
     container._test_llm_client = mock_llm  # test helper only
+    if container.authentication_service is not None:
+        bootstrap_test_api_key(container)
     return container
 
 
@@ -85,13 +88,59 @@ def build_test_client(
     return client, app_container
 
 
+class AuthenticatedTestClient:
+    """Injects default Authorization headers for protected API tests."""
+
+    def __init__(self, client: TestClient, auth_headers: dict[str, str]):
+        self._client = client
+        self._auth_headers = auth_headers
+
+    def _merge_headers(self, headers: dict[str, str] | None) -> dict[str, str]:
+        merged = dict(self._auth_headers)
+        if headers:
+            merged.update(headers)
+        return merged
+
+    def get(self, url: str, **kwargs):
+        kwargs["headers"] = self._merge_headers(kwargs.get("headers"))
+        return self._client.get(url, **kwargs)
+
+    def post(self, url: str, **kwargs):
+        kwargs["headers"] = self._merge_headers(kwargs.get("headers"))
+        return self._client.post(url, **kwargs)
+
+    def put(self, url: str, **kwargs):
+        kwargs["headers"] = self._merge_headers(kwargs.get("headers"))
+        return self._client.put(url, **kwargs)
+
+    def patch(self, url: str, **kwargs):
+        kwargs["headers"] = self._merge_headers(kwargs.get("headers"))
+        return self._client.patch(url, **kwargs)
+
+    def delete(self, url: str, **kwargs):
+        kwargs["headers"] = self._merge_headers(kwargs.get("headers"))
+        return self._client.delete(url, **kwargs)
+
+
 class ApiTestCase(unittest.TestCase):
-    client: TestClient
+    client: AuthenticatedTestClient | TestClient
     container: ApplicationContainer
     _client_context: TestClient
+    auth_headers: dict[str, str]
+    _raw_client: TestClient
 
     def setUp(self) -> None:
-        self.client, self.container, self._client_context = open_test_client()
+        raw_client, self.container, self._client_context = open_test_client()
+        self._raw_client = raw_client
+        plaintext = getattr(self.container, "_test_api_key_plaintext", None)
+        if plaintext is None and self.container.authentication_service is not None:
+            plaintext = bootstrap_test_api_key(self.container)
+        self.auth_headers = auth_headers(plaintext) if plaintext else {}
+        self.client = (
+            AuthenticatedTestClient(raw_client, self.auth_headers)
+            if self.auth_headers
+            else raw_client
+        )
 
     def tearDown(self) -> None:
         close_test_client(self._client_context, self.container)

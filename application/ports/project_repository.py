@@ -51,6 +51,7 @@ class ProjectRepository(Protocol):
         *,
         offset: int = 0,
         limit: int | None = None,
+        owner_principal_id: str | None = None,
     ) -> list[Project]:
         """List persisted projects in stable identifier order."""
         ...

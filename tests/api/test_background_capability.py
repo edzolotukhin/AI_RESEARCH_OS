@@ -5,7 +5,8 @@ from unittest.mock import patch
 
 from application.composition_root import create_application_container
 from application.config import ApplicationConfig, ApplicationOverrides
-from tests.api.helpers import ApiTestCase, build_test_container, close_test_client, drain_background_runs, open_test_client
+from tests.api.auth_helpers import auth_headers
+from tests.api.helpers import ApiTestCase, AuthenticatedTestClient, build_test_container, close_test_client, drain_background_runs, open_test_client
 
 BRIEF = {
     "client": "Purina",
@@ -30,7 +31,11 @@ class HttpBackgroundCapabilityTests(ApiTestCase):
             persistence_backend="memory",
             background_execution_mode="disabled",
         )
-        client, _, context = open_test_client(container)
+        raw_client, _, context = open_test_client(container)
+        client = AuthenticatedTestClient(
+            raw_client,
+            auth_headers(container._test_api_key_plaintext),
+        )
         try:
             project = client.post("/projects", json={"name": "No Consumer"}).json()
             response = client.post(
@@ -47,7 +52,11 @@ class HttpBackgroundCapabilityTests(ApiTestCase):
 
     def test_file_backend_research_returns_409(self) -> None:
         container = build_test_container(persistence_backend="file")
-        client, _, context = open_test_client(container)
+        raw_client, _, context = open_test_client(container)
+        client = AuthenticatedTestClient(
+            raw_client,
+            auth_headers(container._test_api_key_plaintext),
+        )
         try:
             project = client.post("/projects", json={"name": "File Backend"}).json()
             response = client.post(
@@ -83,7 +92,11 @@ class HttpBackgroundCapabilityTests(ApiTestCase):
             persistence_backend="memory",
             background_execution_mode="disabled",
         )
-        client, _, context = open_test_client(container)
+        raw_client, _, context = open_test_client(container)
+        client = AuthenticatedTestClient(
+            raw_client,
+            auth_headers(container._test_api_key_plaintext),
+        )
         try:
             project = client.post("/projects", json={"name": "No Engine"}).json()
             with patch.object(

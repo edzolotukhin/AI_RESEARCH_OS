@@ -20,3 +20,15 @@ class CheckpointPersistenceError(PersistenceError):
 
 class IdempotencyConflictError(PersistenceError):
     """Raised when the same idempotency key is reused with a different request."""
+
+
+class AuthenticationRequiredError(PersistenceError):
+    """Raised when a protected operation is invoked without credentials."""
+
+
+class InvalidCredentialsError(PersistenceError):
+    """Raised when supplied credentials are missing, malformed, or invalid."""
+
+
+class AccessDeniedError(PersistenceError):
+    """Raised when an authenticated principal cannot access a resource."""

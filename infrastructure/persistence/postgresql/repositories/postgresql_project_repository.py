@@ -64,9 +64,14 @@ class PostgreSQLProjectRepository:
         *,
         offset: int = 0,
         limit: int | None = None,
+        owner_principal_id: str | None = None,
     ) -> list[Project]:
         with self._session_factory.session() as session:
             statement = select(ProjectModel).order_by(ProjectModel.id)
+            if owner_principal_id is not None:
+                statement = statement.where(
+                    ProjectModel.owner_principal_id == owner_principal_id,
+                )
             if offset:
                 statement = statement.offset(offset)
             if limit is not None:

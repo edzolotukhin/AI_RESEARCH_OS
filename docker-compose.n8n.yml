@@ -12,6 +12,7 @@ services:
       WEBHOOK_URL: http://localhost:5678/
       GENERIC_TIMEZONE: UTC
       AI_RESEARCH_OS_API_URL: http://api:8000
+      AI_RESEARCH_OS_API_KEY: ${AI_RESEARCH_OS_API_KEY}
     volumes:
       - n8n_data:/home/node/.n8n
     depends_on:

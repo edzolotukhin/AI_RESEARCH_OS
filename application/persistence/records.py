@@ -46,6 +46,21 @@ class ArtifactRecord:
     version: int = 1
 
 
+@dataclass(frozen=True)
+class ApiKeyRecord:
+    """Durable API key metadata (application/persistence layer)."""
+
+    id: str
+    principal_id: str
+    name: str
+    key_prefix: str
+    key_hash: str
+    is_active: bool
+    created_at: datetime
+    last_used_at: datetime | None = None
+    revoked_at: datetime | None = None
+
+
 class ResearchSubmissionStatus:
     """Explicit idempotency lifecycle for research submissions."""
 

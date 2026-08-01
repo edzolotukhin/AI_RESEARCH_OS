@@ -21,7 +21,8 @@ from infrastructure.persistence.postgresql.repositories.postgresql_research_subm
     PostgreSQLResearchSubmissionRepository,
 )
 
-from tests.api.helpers import close_test_client, drain_background_runs, open_test_client
+from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
+from tests.api.helpers import AuthenticatedTestClient, close_test_client, drain_background_runs, open_test_client
 from tests.fixtures.planner_responses import VALID_PLANNER_JSON
 from tests.integration.postgresql.helpers import (
     PostgreSQLIntegrationTestCase,
@@ -50,13 +51,19 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
             overrides=ApplicationOverrides(llm_client=mock_llm),
         )
         container._test_llm_client = mock_llm
+        bootstrap_test_api_key(container)
         self.addCleanup(container.shutdown)
         client, _, context = open_test_client(container)
         self.addCleanup(lambda: close_test_client(context, container))
+        self.auth_headers = auth_headers(container._test_api_key_plaintext)
         return client, container
 
     def _create_project(self, client) -> str:
-        response = client.post("/projects", json={"name": "External Project"})
+        response = client.post(
+            "/projects",
+            json={"name": "External Project"},
+            headers=self.auth_headers,
+        )
         self.assertEqual(response.status_code, 201)
         return response.json()["id"]
 
@@ -109,7 +116,7 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
         response = client.post(
             f"/projects/{project_id}/research",
             json={"brief": BRIEF, "source": "n8n", "correlation_id": "corr-1"},
-            headers={"Idempotency-Key": "key-first"},
+            headers={"Idempotency-Key": "key-first", **self.auth_headers},
         )
         payload = self._assert_accepted_research_response(response, label="first")
         self.assertFalse(payload["idempotent_replay"])
@@ -120,7 +127,7 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
     def test_duplicate_same_request_returns_same_run(self) -> None:
         client, container = self._build_client()
         project_id = self._create_project(client)
-        headers = {"Idempotency-Key": "key-replay"}
+        headers = {"Idempotency-Key": "key-replay", **self.auth_headers}
         body = {"brief": BRIEF, "source": "n8n", "correlation_id": "corr-replay"}
         first = client.post(
             f"/projects/{project_id}/research",
@@ -141,7 +148,7 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
     def test_same_key_different_request_returns_409(self) -> None:
         client, _ = self._build_client()
         project_id = self._create_project(client)
-        headers = {"Idempotency-Key": "key-conflict"}
+        headers = {"Idempotency-Key": "key-conflict", **self.auth_headers}
         first = client.post(
             f"/projects/{project_id}/research",
             json={"brief": BRIEF},
@@ -164,7 +171,7 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
     def test_concurrent_same_key_different_payload_returns_202_and_409(self) -> None:
         client, container = self._build_client()
         project_id = self._create_project(client)
-        headers = {"Idempotency-Key": "key-concurrent-conflict"}
+        headers = {"Idempotency-Key": "key-concurrent-conflict", **self.auth_headers}
 
         def _submit(body: dict):
             app = create_fastapi_app(container=container)
@@ -206,7 +213,7 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
     def test_concurrent_duplicate_submissions_create_one_run(self) -> None:
         client, container = self._build_client()
         project_id = self._create_project(client)
-        headers = {"Idempotency-Key": "key-concurrent"}
+        headers = {"Idempotency-Key": "key-concurrent", **self.auth_headers}
         body = {"brief": BRIEF, "source": "n8n"}
 
         responses = self._submit_concurrent(
@@ -235,7 +242,7 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
             with self.subTest(iteration=iteration):
                 client, container = self._build_client()
                 project_id = self._create_project(client)
-                headers = {"Idempotency-Key": f"key-concurrent-stress-{iteration}"}
+                headers = {"Idempotency-Key": f"key-concurrent-stress-{iteration}", **self.auth_headers}
                 body = {"brief": BRIEF, "source": "n8n"}
 
                 responses = self._submit_concurrent(
@@ -267,7 +274,7 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
         started = client.post(
             f"/projects/{project_id}/research",
             json={"brief": BRIEF, "source": "n8n", "correlation_id": "corr-reload"},
-            headers={"Idempotency-Key": "key-reload"},
+            headers={"Idempotency-Key": "key-reload", **self.auth_headers},
         ).json()
         run_id = started["run_id"]
 
@@ -282,8 +289,9 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
             overrides=ApplicationOverrides(llm_client=mock_llm),
         )
         self.addCleanup(reloaded_container.shutdown)
-        reloaded_client, _, context = open_test_client(reloaded_container)
+        reloaded_raw, _, context = open_test_client(reloaded_container)
         self.addCleanup(lambda: close_test_client(context, reloaded_container))
+        reloaded_client = AuthenticatedTestClient(reloaded_raw, self.auth_headers)
 
         payload = reloaded_client.get(f"/workflow-runs/{run_id}").json()
         self.assertEqual(payload["external"]["correlation_id"], "corr-reload")
@@ -295,10 +303,14 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
         started = client.post(
             f"/projects/{project_id}/research",
             json={"brief": BRIEF},
+            headers=self.auth_headers,
         ).json()
         run_id = started["run_id"]
         drain_background_runs(container)
-        payload = client.get(f"/workflow-runs/{run_id}").json()
+        payload = client.get(
+            f"/workflow-runs/{run_id}",
+            headers=self.auth_headers,
+        ).json()
         self.assertTrue(payload["is_terminal"])
         self.assertIn("results_available", payload)
         self.assertIn("artifacts_available", payload)
@@ -309,19 +321,26 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
         started = client.post(
             f"/projects/{project_id}/research",
             json={"brief": BRIEF},
+            headers=self.auth_headers,
         ).json()
         run_id = started["run_id"]
-        pending = client.get(f"/workflow-runs/{run_id}/results").json()
+        pending = client.get(
+            f"/workflow-runs/{run_id}/results",
+            headers=self.auth_headers,
+        ).json()
         self.assertFalse(pending["results_ready"])
         drain_background_runs(container)
-        terminal = client.get(f"/workflow-runs/{run_id}/results").json()
+        terminal = client.get(
+            f"/workflow-runs/{run_id}/results",
+            headers=self.auth_headers,
+        ).json()
         self.assertTrue(terminal["results_ready"])
         self.assertTrue(terminal["is_terminal"])
 
     def test_api_restart_replay_returns_same_run_id(self) -> None:
-        client, _ = self._build_client()
+        client, container = self._build_client()
         project_id = self._create_project(client)
-        headers = {"Idempotency-Key": "key-restart-replay"}
+        headers = {"Idempotency-Key": "key-restart-replay", **self.auth_headers}
         body = {"brief": BRIEF, "source": "n8n", "correlation_id": "corr-restart"}
         first = client.post(
             f"/projects/{project_id}/research",
@@ -332,7 +351,20 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
         run_id = first_payload["run_id"]
         self.assertFalse(first_payload["idempotent_replay"])
 
-        replay_client, _ = self._build_client()
+        mock_llm = Mock()
+        mock_llm.generate.return_value = LLMResponse(content=VALID_PLANNER_JSON)
+        replay_container = create_application_container(
+            config=ApplicationConfig(
+                persistence_backend="postgresql",
+                database_url=get_test_database_url(),
+                background_execution_mode="external",
+            ),
+            overrides=ApplicationOverrides(llm_client=mock_llm),
+        )
+        self.addCleanup(replay_container.shutdown)
+        replay_raw, _, replay_context = open_test_client(replay_container)
+        self.addCleanup(lambda: close_test_client(replay_context, replay_container))
+        replay_client = AuthenticatedTestClient(replay_raw, self.auth_headers)
         second = replay_client.post(
             f"/projects/{project_id}/research",
             json=body,
@@ -345,6 +377,7 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
     def test_pending_submission_recovers_after_crash_before_planning(self) -> None:
         client, container = self._build_client()
         project_id = self._create_project(client)
+        original_auth_headers = dict(self.auth_headers)
         idempotency_key = "key-crash-before-planning"
         run_id = str(uuid4())
         body = {"brief": BRIEF, "source": "n8n", "correlation_id": "corr-crash"}
@@ -368,7 +401,7 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
         response = recovery_client.post(
             f"/projects/{project_id}/research",
             json=body,
-            headers={"Idempotency-Key": idempotency_key},
+            headers={"Idempotency-Key": idempotency_key, **original_auth_headers},
         )
         payload = self._assert_accepted_research_response(response, label="recovery")
         self.assertEqual(payload["run_id"], run_id)
@@ -380,7 +413,7 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
     ) -> None:
         client, container = self._build_client()
         project_id = self._create_project(client)
-        headers = {"Idempotency-Key": "key-crash-before-complete"}
+        headers = {"Idempotency-Key": "key-crash-before-complete", **self.auth_headers}
         body = {"brief": BRIEF, "source": "n8n"}
         first = client.post(
             f"/projects/{project_id}/research",
