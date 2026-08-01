@@ -65,6 +65,8 @@ The following statuses are used throughout the project.
 | ADR-007 | Agent Architecture | Planned |
 | ADR-008 | Executor Catalog Contract | Active |
 | ADR-009 | Persistence Boundary and Repository Strategy | Active |
+| ADR-010 | Durable Workflow Checkpoint and Recovery Policy | Active |
+| ADR-011 | HTTP API Boundary and Synchronous Execution Policy | Active |
 
 Additional ADRs will be added as the architecture evolves.
 

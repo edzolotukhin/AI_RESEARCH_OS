@@ -178,3 +178,24 @@ jobs:
         run: >-
           python -W error::ResourceWarning -m unittest discover
           -s tests/integration/postgresql -p "test_*.py" -v
+
+      - name: API tests
+        run: >-
+          python -W error::ResourceWarning -m unittest discover
+          -s tests/api -p "test_*.py" -v
+
+      - name: PostgreSQL API integration tests
+        env:
+          POSTGRESQL_INTEGRATION_TESTS: "1"
+          DATABASE_URL_TEST: postgresql+psycopg://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_TEST_DB }}
+          DATABASE_URL: postgresql+psycopg://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_TEST_DB }}
+        run: >-
+          python -W error::ResourceWarning -m unittest discover
+          -s tests/integration/api -p "test_*.py" -v
+
+      - name: OpenAPI smoke test
+        run: >-
+          python -c "from tests.api.helpers import build_test_client; c,_=build_test_client(); assert c.get('/openapi.json').status_code==200"
+
+      - name: Docker image build smoke
+        run: docker build .

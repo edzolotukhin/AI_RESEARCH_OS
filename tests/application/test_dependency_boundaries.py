@@ -138,6 +138,39 @@ class DependencyBoundaryTests(unittest.TestCase):
                     )
         self.assertEqual(violations, [])
 
+    def test_api_does_not_import_infrastructure_adapters(self) -> None:
+        _assert_no_imports_matching(
+            self,
+            _python_files("api"),
+            ("infrastructure.", "application.ports."),
+            "api",
+        )
+
+    def test_domain_and_application_do_not_import_fastapi(self) -> None:
+        violations: list[str] = []
+        for relative in ("domain", "application"):
+            for path in _python_files(relative):
+                for imported in _imports_from_file(path):
+                    if imported == "fastapi" or imported.startswith("fastapi."):
+                        violations.append(
+                            f"{path.relative_to(REPO_ROOT)} -> {imported}"
+                        )
+        self.assertEqual(violations, [])
+
+    def test_fastapi_imports_confined_to_api_package(self) -> None:
+        violations: list[str] = []
+        for path in REPO_ROOT.rglob("*.py"):
+            if path.is_relative_to(REPO_ROOT / "tests"):
+                continue
+            if path.is_relative_to(REPO_ROOT / "api"):
+                continue
+            for imported in _imports_from_file(path):
+                if imported == "fastapi" or imported.startswith("fastapi."):
+                    violations.append(
+                        f"{path.relative_to(REPO_ROOT)} -> {imported}"
+                    )
+        self.assertEqual(violations, [])
+
 
 if __name__ == "__main__":
     unittest.main()

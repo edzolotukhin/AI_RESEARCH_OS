@@ -32,7 +32,7 @@
 - [x] Full Project aggregate PostgreSQL round-trip (JSONB nested structures)
 - [x] Persist WorkflowRun `project_id` ownership on domain aggregate
 - [ ] **PF-04** Docker Compose development environment
-- [ ] **PF-05** FastAPI application boundary
+- [x] **PF-05** FastAPI application boundary (ADR-011)
 - [ ] **PF-06** Background workflow execution
 - [x] Extract `ProjectRepository` port; decouple `Agency` from concrete infrastructure class
 - [x] Define `ExecutionLog` persistence record and port (`ExecutionLogStore`)

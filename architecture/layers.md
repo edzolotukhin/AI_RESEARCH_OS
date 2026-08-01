@@ -190,8 +190,26 @@ The Execution Layer reads and updates runtime objects (`WorkflowRun`, `Task`) th
 
 ---
 
+# HTTP API Layer (PF-05)
+
+The `api/` package is the HTTP adapter. Request flow:
+
+```
+HTTP Request → FastAPI Router → API DTO → Application Service → Domain / Runtime → Repository Port
+```
+
+Rules (ADR-011):
+
+- Routers resolve services from `ApplicationContainer`; they do not import repositories or ORM models.
+- Domain aggregates are mapped to API response DTOs before leaving the HTTP boundary.
+- Research execution is **synchronous** in PF-05 (no fake async responses).
+- Application services do not raise HTTP exceptions; mapping lives in `api/errors.py`.
+
+---
+
 # Related Documents
 
 - [overview.md](overview.md)
 - [domain-model.md](domain-model.md)
 - [ADR-008: Executor Catalog Contract](../docs/adr/ADR-008-Executor-Catalog-Contract.md)
+- [ADR-011: HTTP API Boundary and Synchronous Execution Policy](../docs/adr/ADR-011-HTTP-API-Boundary-and-Synchronous-Execution-Policy.md)

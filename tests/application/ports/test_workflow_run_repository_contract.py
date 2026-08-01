@@ -54,6 +54,10 @@ class WorkflowRunRepositoryContractTests:
     def build_repository(self) -> WorkflowRunRepository:
         raise NotImplementedError
 
+    def prepare_project(self, project_id: str) -> None:
+        """Persist prerequisite Project when the adapter enforces FK integrity."""
+        return None
+
     def setUp(self) -> None:
         self.repository = self.build_repository()
         self.workflow_run_factory = WorkflowRunFactory(
@@ -66,6 +70,7 @@ class WorkflowRunRepositoryContractTests:
             run_id="run-contract-1",
         )
 
+        self.prepare_project("project-1")
         self.repository.create(workflow_run, project_id="project-1")
 
         loaded = self.repository.get_by_id("run-contract-1")
@@ -79,6 +84,7 @@ class WorkflowRunRepositoryContractTests:
             run_id="run-dup",
         )
 
+        self.prepare_project("project-1")
         self.repository.create(workflow_run, project_id="project-1")
 
         with self.assertRaises(DuplicateEntityError):
@@ -98,6 +104,7 @@ class WorkflowRunRepositoryContractTests:
             _template("template-results"),
             run_id="run-results",
         )
+        self.prepare_project("project-1")
         self.repository.create(workflow_run, project_id="project-1")
 
         task_id = workflow_run.tasks[0].id
@@ -125,6 +132,7 @@ class WorkflowRunRepositoryContractTests:
             _template("template-version-init"),
             run_id="run-version-init",
         )
+        self.prepare_project("project-1")
         self.repository.create(workflow_run, project_id="project-1")
 
         first_version = self.repository.save(workflow_run, expected_version=0)
@@ -135,6 +143,7 @@ class WorkflowRunRepositoryContractTests:
             _template("template-version-stale-first"),
             run_id="run-version-stale-first",
         )
+        self.prepare_project("project-1")
         self.repository.create(workflow_run, project_id="project-1")
 
         with self.assertRaises(ConcurrentModificationError):
@@ -145,6 +154,7 @@ class WorkflowRunRepositoryContractTests:
             _template("template-version"),
             run_id="run-version",
         )
+        self.prepare_project("project-1")
         self.repository.create(workflow_run, project_id="project-1")
         self.repository.save(workflow_run, expected_version=0)
 
@@ -156,6 +166,7 @@ class WorkflowRunRepositoryContractTests:
             _template("template-version-second"),
             run_id="run-version-second",
         )
+        self.prepare_project("project-1")
         self.repository.create(workflow_run, project_id="project-1")
 
         first_version = self.repository.save(workflow_run, expected_version=0)
@@ -177,6 +188,7 @@ class WorkflowRunRepositoryContractTests:
             run_id="run-list-2",
         )
 
+        self.prepare_project("project-list")
         self.repository.create(first, project_id="project-list")
         self.repository.create(second, project_id="project-list")
 
@@ -197,6 +209,7 @@ class WorkflowRunRepositoryContractTests:
             _template("template-version"),
             run_id="run-version",
         )
+        self.prepare_project("project-1")
         self.repository.create(workflow_run, project_id="project-1")
 
         self.assertEqual(self.repository.get_version("run-version"), 0)

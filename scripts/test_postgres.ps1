@@ -19,7 +19,7 @@ foreach ($name in @(
 }
 
 try {
-    Write-Host "[1/5] Docker"
+    Write-Host "[1/7] Docker"
     Invoke-ExternalCommand -CommandName "docker version" -CommandBlock {
         docker version
     } | Out-Null
@@ -31,11 +31,11 @@ try {
     } | Out-Null
 
     $postgresConfig = Get-DockerComposePostgresConfig -RepositoryRoot $repositoryRoot
-    Write-Host "[2/5] PostgreSQL health"
+    Write-Host "[2/7] PostgreSQL health"
     Wait-PostgresContainerHealthy -ContainerName $postgresConfig.ContainerName
     Write-Host "PostgreSQL container is healthy."
 
-    Write-Host "[3/5] Alembic"
+    Write-Host "[3/7] Alembic"
     Ensure-PostgresTestDatabase `
         -ContainerName $postgresConfig.ContainerName `
         -User $postgresConfig.User `
@@ -52,7 +52,7 @@ try {
 
     $warningArgs = @("-W", "error::ResourceWarning")
 
-    Write-Host "[4/5] Repository contracts"
+    Write-Host "[4/7] Repository contracts"
     Invoke-PythonCommand -Arguments (
         $warningArgs + @(
             "-m", "unittest",
@@ -61,7 +61,7 @@ try {
         )
     )
 
-    Write-Host "[5/5] Integration tests"
+    Write-Host "[5/7] PostgreSQL integration tests"
     Invoke-PythonCommand -Arguments (
         $warningArgs + @(
             "-m", "unittest", "discover",
@@ -69,6 +69,22 @@ try {
             "-p", "test_*.py",
             "-v"
         )
+    )
+
+    Write-Host "[6/7] PostgreSQL API integration tests"
+    Invoke-PythonCommand -Arguments (
+        $warningArgs + @(
+            "-m", "unittest", "discover",
+            "-s", "tests/integration/api",
+            "-p", "test_*.py",
+            "-v"
+        )
+    )
+
+    Write-Host "[7/7] OpenAPI smoke"
+    Invoke-PythonCommand -Arguments @(
+        "-c",
+        "from tests.api.helpers import build_test_client; c,_=build_test_client(); assert c.get('/openapi.json').status_code==200"
     )
 
     Write-Host "PostgreSQL verification passed."

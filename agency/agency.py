@@ -51,6 +51,17 @@ class Agency:
     def create_project(self, name: str) -> Project:
         return self._project_service.create_project(name)
 
+    def get_project(self, project_id: str) -> Project:
+        return self._project_service.get_project(project_id)
+
+    def list_projects(
+        self,
+        *,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> list[Project]:
+        return self._project_service.list_projects(offset=offset, limit=limit)
+
     def start_research(self, project: Project) -> WorkflowContext:
         if not self.initialized:
             self.initialize()
