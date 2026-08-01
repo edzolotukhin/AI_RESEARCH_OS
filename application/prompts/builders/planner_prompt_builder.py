@@ -39,18 +39,27 @@ class PlannerPromptBuilder(PromptBuilder):
     ) -> Prompt:
         project = context.project
 
-        if project.brief is None:
+        if project.research_brief is None:
             raise ValueError(
-                "ProjectBrief is required to build planner prompt."
+                "ResearchBrief is required to build planner prompt."
             )
 
-        brief = project.brief
+        brief = project.research_brief
 
         variables = {
-            "client": brief.client,
-            "project_title": brief.project_title,
-            "business_problem": brief.business_problem,
-            "research_goal": brief.research_goal,
+            "title": brief.title,
+            "business_question": brief.business_question,
+            "objectives": _format_list(brief.objectives),
+            "geography": _format_list(brief.geography),
+            "market": brief.market or "Not specified",
+            "target_entities": _format_list(brief.target_entities),
+            "timeframe": brief.timeframe or "Not specified",
+            "constraints": _format_list(brief.constraints),
+            "deliverables": _format_list(brief.deliverables),
+            "language": brief.language,
+            "context": brief.context or "Not specified",
+            "known_information": _format_list(brief.known_information),
+            "exclusions": _format_list(brief.exclusions),
             "executor_catalog": self._executor_catalog.format_for_prompt(),
         }
 
@@ -76,3 +85,9 @@ class PlannerPromptBuilder(PromptBuilder):
             system=system_prompt,
             user=user_prompt,
         )
+
+
+def _format_list(items: tuple[str, ...]) -> str:
+    if not items:
+        return "None specified"
+    return "\n".join(f"- {item}" for item in items)

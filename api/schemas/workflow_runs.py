@@ -2,25 +2,54 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from domain.research_brief import ResearchBrief
 
 
-class ProjectBriefRequest(BaseModel):
-    client: str = Field(min_length=1, examples=["Purina"])
-    project_title: str = Field(min_length=1, examples=["Brand Health 2026"])
-    business_problem: str = Field(min_length=1)
-    research_goal: str = Field(min_length=1)
-    research_objectives: list[str] = Field(default_factory=list)
-    research_object: str = ""
-    target_audience: str = ""
-    geography: str = ""
+class ResearchBriefRequest(BaseModel):
+    title: str = ""
+    business_question: str = ""
+    objectives: list[str] = Field(default_factory=list)
+    geography: list[str] = Field(default_factory=list)
+    market: str = ""
+    target_entities: list[str] = Field(default_factory=list)
+    timeframe: str = ""
     constraints: list[str] = Field(default_factory=list)
-    timeline: str = ""
-    comments: str = ""
+    deliverables: list[str] = Field(default_factory=list)
+    language: str = Field(default="en", min_length=2, max_length=16)
+    context: str = ""
+    known_information: list[str] = Field(default_factory=list)
+    exclusions: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy_brief(cls, data: object) -> object:
+        if isinstance(data, dict) and (
+            "business_problem" in data or "project_title" in data
+        ):
+            return ResearchBrief.from_dict(data).to_dict()
+        return data
+
+
+class ResearchBriefResponse(BaseModel):
+    title: str
+    business_question: str
+    objectives: list[str]
+    geography: list[str]
+    market: str
+    target_entities: list[str]
+    timeframe: str
+    constraints: list[str]
+    deliverables: list[str]
+    language: str
+    context: str
+    known_information: list[str]
+    exclusions: list[str]
 
 
 class StartResearchRequest(BaseModel):
-    brief: ProjectBriefRequest
+    brief: ResearchBriefRequest
     correlation_id: str | None = Field(
         default=None,
         description="Business/process correlation identifier for external orchestrators.",
@@ -61,6 +90,7 @@ class WorkflowRunResponse(BaseModel):
     results_available: bool = False
     artifacts_available: bool = False
     external: ExternalSubmissionMetadata | None = None
+    research_brief: ResearchBriefResponse | None = None
 
 
 class WorkflowRunListResponse(BaseModel):
@@ -77,6 +107,7 @@ class StartResearchResponse(BaseModel):
     tasks: list[TaskResponse]
     idempotent_replay: bool = False
     external: ExternalSubmissionMetadata | None = None
+    research_brief: ResearchBriefResponse | None = None
 
 
 class TaskResultItem(BaseModel):

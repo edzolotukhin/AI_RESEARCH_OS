@@ -15,12 +15,7 @@ from tests.integration.postgresql.helpers import (
     get_test_database_url,
 )
 
-BRIEF = {
-    "client": "Purina",
-    "project_title": "Idempotency Boundary",
-    "business_problem": "Assess market position.",
-    "research_goal": "Evaluate brand awareness.",
-}
+from tests.fixtures.research_brief import CANONICAL_BRIEF_REQUEST as BRIEF
 
 
 class CrossPrincipalIdempotencyIntegrationTests(PostgreSQLIntegrationTestCase):

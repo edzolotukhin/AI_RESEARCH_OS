@@ -1,6 +1,6 @@
 from domain.ai_task import AITask
 from domain.project import Project
-from domain.project_brief import ProjectBrief
+from domain.research_brief import ResearchBrief
 
 from constants.prompts import Prompts
 
@@ -27,17 +27,6 @@ class ProjectBriefTask(AITask):
         data: dict
     ) -> Project:
 
-        project.brief = ProjectBrief(
-            client=data["client"],
-            project_title=data["project_title"],
-            business_problem=data["business_problem"],
-            research_goal=data["research_goal"],
-            research_objectives=data["research_objectives"],
-            target_audience=data["target_audience"],
-            geography=data["geography"],
-            constraints=data["constraints"],
-            timeline=data["timeline"],
-            comments=data["comments"]
-        )
+        project.research_brief = ResearchBrief.from_dict(data)
 
         return project

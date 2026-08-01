@@ -1,20 +1,43 @@
-# PROJECT
+# RESEARCH BRIEF
 
-Client:
-{client}
+Title:
+{title}
 
-Project:
-{project_title}
+Business Question:
+{business_question}
 
----
+Objectives:
+{objectives}
 
-# BUSINESS CONTEXT
+Geography:
+{geography}
 
-Business Problem:
-{business_problem}
+Market:
+{market}
 
-Research Goal:
-{research_goal}
+Target Entities:
+{target_entities}
+
+Timeframe:
+{timeframe}
+
+Constraints:
+{constraints}
+
+Deliverables:
+{deliverables}
+
+Language:
+{language}
+
+Context:
+{context}
+
+Known Information:
+{known_information}
+
+Exclusions:
+{exclusions}
 
 ---
 

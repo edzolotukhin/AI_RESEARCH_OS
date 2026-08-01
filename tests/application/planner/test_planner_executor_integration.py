@@ -126,17 +126,12 @@ class PlannerPromptExecutorTests(unittest.TestCase):
         )
 
         from domain.project import Project
-        from domain.project_brief import ProjectBrief
         from domain.workflow_run import WorkflowRun
         from runtime.workflow_context import WorkflowContext
+        from tests.fixtures.research_brief import sample_research_brief
 
         project = Project(id="1", name="Test")
-        project.brief = ProjectBrief(
-            client="Purina",
-            project_title="Brand Health 2026",
-            business_problem="Assess market position.",
-            research_goal="Evaluate brand awareness.",
-        )
+        project.research_brief = sample_research_brief()
         context = WorkflowContext(
             workflow_run=WorkflowRun(id="planning"),
             project=project,

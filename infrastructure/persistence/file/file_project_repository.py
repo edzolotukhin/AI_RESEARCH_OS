@@ -13,6 +13,7 @@ from application.persistence.exceptions import (
 )
 from application.ports.project_repository import ProjectRepository
 from domain.project import Project
+from domain.research_brief import ResearchBrief
 from domain.value_objects.project_status import ProjectStatus
 
 
@@ -186,15 +187,21 @@ class FileProjectRepository:
     def _project_to_dict(project: Project) -> dict[str, Any]:
         payload = asdict(project)
         payload["runs"] = []
+        if project.research_brief is not None:
+            payload["research_brief"] = project.research_brief.to_dict()
         return payload
 
     @staticmethod
     def _project_from_dict(payload: dict[str, Any]) -> Project:
+        research_brief = ResearchBrief.from_dict(
+            payload.get("research_brief") or payload.get("brief"),
+        )
         return Project(
             id=payload["id"],
             name=payload["name"],
             status=payload.get("status", ProjectStatus.LEAD),
             created_at=payload.get("created_at", ""),
             updated_at=payload.get("updated_at", ""),
+            research_brief=research_brief,
             runs=[],
         )

@@ -19,6 +19,8 @@ from application.persistence.exceptions import (
     DuplicateEntityError,
     EntityNotFoundError,
 )
+from application.research.brief_normalizer import normalize_research_brief_payload
+from application.research.brief_validator import validate_research_brief
 from application.runtime.background_execution_capability import (
     requires_http_background_submission,
 )
@@ -40,13 +42,27 @@ from api.schemas.workflow_runs import (
     WorkflowRunResponse,
     WorkflowRunResultsResponse,
 )
-from domain.project_brief import ProjectBrief
 from domain.workflow_status import WorkflowStatus
 
 router = APIRouter(tags=["workflow-runs"])
 logger = logging.getLogger(__name__)
 
 MAX_LOG_LIMIT = 1000
+
+
+def _brief_snapshot_for_template(workflow_service, workflow_template_id: str):
+    try:
+        template = workflow_service.get_template(workflow_template_id)
+    except Exception:
+        return None
+    return template.research_brief_snapshot
+
+
+def _brief_snapshot_for_run(workflow_service, workflow_run):
+    return _brief_snapshot_for_template(
+        workflow_service,
+        workflow_run.workflow_template_id,
+    )
 
 
 def _log_research_response(
@@ -86,6 +102,7 @@ def _replay_submission_response(
     request_id: str,
     correlation_id: str | None,
     source: str | None,
+    workflow_service,
     principal_id: str | None = None,
     api_key_id: str | None = None,
     event: str = "research_submission_replayed",
@@ -95,6 +112,7 @@ def _replay_submission_response(
         idempotent_replay=idempotent_replay,
         submission=submission,
         external_request_id=idempotency_key,
+        research_brief=_brief_snapshot_for_run(workflow_service, workflow_run),
     )
     response.headers["Location"] = f"/workflow-runs/{payload.run_id}"
     _log_research_response(
@@ -139,6 +157,7 @@ def _resolve_idempotent_replay(
             request_id=request_id,
             correlation_id=correlation_id,
             source=source,
+            workflow_service=container.workflow_service,
             principal_id=principal_id,
             api_key_id=api_key_id,
         )
@@ -161,6 +180,7 @@ def _resolve_idempotent_replay(
             request_id=request_id,
             correlation_id=correlation_id,
             source=source,
+            workflow_service=container.workflow_service,
             principal_id=principal_id,
             api_key_id=api_key_id,
         )
@@ -183,6 +203,7 @@ def _resolve_idempotent_replay(
                 request_id=request_id,
                 correlation_id=correlation_id,
                 source=source,
+                workflow_service=container.workflow_service,
                 principal_id=principal_id,
                 api_key_id=api_key_id,
             )
@@ -236,9 +257,15 @@ def start_research(
     correlation_id = body.correlation_id or x_correlation_id
     source = body.source
     request_id = str(uuid4())
+
+    research_brief = normalize_research_brief_payload(
+        body.brief.model_dump(mode="json"),
+    )
+    validate_research_brief(research_brief)
+
     fingerprint = compute_research_request_fingerprint(
         project_id=project_id,
-        brief=body.brief.model_dump(mode="json"),
+        brief=research_brief.to_fingerprint_dict(),
     )
 
     submission_service = container.research_submission_service
@@ -268,19 +295,7 @@ def start_research(
         if replay_response is not None:
             return replay_response
 
-    project.brief = ProjectBrief(
-        client=body.brief.client,
-        project_title=body.brief.project_title,
-        business_problem=body.brief.business_problem,
-        research_goal=body.brief.research_goal,
-        research_objectives=list(body.brief.research_objectives),
-        research_object=body.brief.research_object,
-        target_audience=body.brief.target_audience,
-        geography=body.brief.geography,
-        constraints=list(body.brief.constraints),
-        timeline=body.brief.timeline,
-        comments=body.brief.comments,
-    )
+    project.research_brief = research_brief
 
     run_id = submission_result.run_id if submission_result is not None else None
     try:
@@ -316,6 +331,7 @@ def start_research(
                     request_id=request_id,
                     correlation_id=correlation_id,
                     source=source,
+                    workflow_service=container.workflow_service,
                     principal_id=principal.principal_id,
                     api_key_id=principal.api_key_id,
                 )
@@ -345,6 +361,7 @@ def start_research(
                     request_id=request_id,
                     correlation_id=correlation_id,
                     source=source,
+                    workflow_service=container.workflow_service,
                     principal_id=principal.principal_id,
                     api_key_id=principal.api_key_id,
                 )
@@ -371,6 +388,7 @@ def start_research(
         idempotent_replay=False,
         submission=submission_result.submission if submission_result else None,
         external_request_id=idempotency_key,
+        research_brief=research_brief,
     )
     response.headers["Location"] = f"/workflow-runs/{payload.run_id}"
     logger.info(
@@ -431,6 +449,7 @@ def get_workflow_run(
         results_available=bool(task_results),
         artifacts_available=bool(artifacts),
         submission=submission,
+        research_brief=_brief_snapshot_for_run(workflow_service, workflow_run),
     )
 
 
@@ -480,6 +499,7 @@ def list_workflow_runs_for_project(
                 results_available=bool(task_results),
                 artifacts_available=bool(artifacts),
                 submission=submission,
+                research_brief=_brief_snapshot_for_run(workflow_service, workflow_run),
             )
         )
     return WorkflowRunListResponse(items=items, count=len(items))
@@ -530,6 +550,7 @@ def resume_workflow_run(
             results_available=bool(task_results),
             artifacts_available=bool(artifacts),
             submission=submission,
+            research_brief=_brief_snapshot_for_run(workflow_service, workflow_run),
         )
 
     context = agency.submit_resume(run_id)
@@ -546,6 +567,7 @@ def resume_workflow_run(
         results_available=bool(task_results),
         artifacts_available=bool(artifacts),
         submission=submission,
+        research_brief=_brief_snapshot_for_run(workflow_service, context.workflow_run),
     )
     response.status_code = status.HTTP_202_ACCEPTED
     response.headers["Location"] = f"/workflow-runs/{run_id}"

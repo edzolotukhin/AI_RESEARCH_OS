@@ -5,7 +5,7 @@ from __future__ import annotations
 from domain.client_qualification import ClientQualification
 from domain.client_request import ClientRequest
 from domain.project import Project
-from domain.project_brief import ProjectBrief
+from domain.research_brief import ResearchBrief
 from domain.research_design import (
     BusinessProblem,
     Methodology,
@@ -41,19 +41,16 @@ def build_rich_project(project_id: str = "project-rich") -> Project:
             next_question="Confirm sample size",
             missing_information=["budget", "timeline detail"],
         ),
-        brief=ProjectBrief(
-            client="Acme GmbH",
-            project_title="Pricing Research",
-            business_problem="Launch price unknown",
-            research_goal="Determine optimal price band",
-            research_objectives=["Assess WTP", "Map competitor prices"],
-            research_object="Premium widget",
-            target_audience="Buyers 25-45",
-            geography="Germany",
-            constraints=["4-week timeline"],
-            timeline="Q4 2026",
-            comments="Prefer online panel",
-            attachments=["brief.pdf"],
+        research_brief=ResearchBrief(
+            title="Pricing Research",
+            business_question="Launch price unknown",
+            objectives=("Assess WTP", "Map competitor prices"),
+            geography=("Germany",),
+            target_entities=("Premium widget", "Buyers 25-45"),
+            timeframe="Q4 2026",
+            constraints=("4-week timeline",),
+            context="Acme GmbH Prefer online panel",
+            language="en",
         ),
         research_design=ResearchDesign(
             business_problem=BusinessProblem(
@@ -114,9 +111,9 @@ def assert_projects_semantically_equal(
     assert actual.qualification is not None
     assert actual.qualification == expected.qualification
 
-    assert expected.brief is not None
-    assert actual.brief is not None
-    assert actual.brief == expected.brief
+    assert expected.research_brief is not None
+    assert actual.research_brief is not None
+    assert actual.research_brief == expected.research_brief
 
     assert expected.research_design is not None
     assert actual.research_design is not None

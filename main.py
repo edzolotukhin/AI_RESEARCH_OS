@@ -1,6 +1,6 @@
 from application.composition_root import create_application
 
-from domain.project_brief import ProjectBrief
+from tests.fixtures.research_brief import sample_research_brief
 
 
 def main():
@@ -15,16 +15,7 @@ def main():
 
     project = agency.create_project("Architecture Test")
 
-    project.brief = ProjectBrief(
-        client="Purina",
-        project_title="Brand Health 2026",
-        business_problem=(
-            "Assess the current market position of the brand."
-        ),
-        research_goal=(
-            "Evaluate brand awareness, usage and loyalty."
-        ),
-    )
+    project.research_brief = sample_research_brief()
 
     print(f"Project created: {project.name}")
 

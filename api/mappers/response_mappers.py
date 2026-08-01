@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from application.persistence.records import ArtifactRecord, ExecutionLogEntry, ResearchSubmissionRecord
 from domain.project import Project
+from domain.research_brief import ResearchBrief
 from domain.workflow_run import WorkflowRun
 
+from api.mappers.research_brief_mappers import research_brief_to_response
 from api.schemas.artifacts import ArtifactResponse
 from api.schemas.projects import ProjectResponse
 from api.schemas.workflow_runs import (
@@ -50,6 +52,7 @@ def workflow_run_to_response(
     results_available: bool = False,
     artifacts_available: bool = False,
     submission: ResearchSubmissionRecord | None = None,
+    research_brief: ResearchBrief | None = None,
 ) -> WorkflowRunResponse:
     return WorkflowRunResponse(
         id=workflow_run.id,
@@ -62,6 +65,7 @@ def workflow_run_to_response(
         results_available=results_available,
         artifacts_available=artifacts_available,
         external=external_submission_to_response(submission),
+        research_brief=research_brief_to_response(research_brief),
     )
 
 
@@ -83,6 +87,7 @@ def start_research_to_response(
     idempotent_replay: bool = False,
     submission: ResearchSubmissionRecord | None = None,
     external_request_id: str | None = None,
+    research_brief: ResearchBrief | None = None,
 ) -> StartResearchResponse:
     return StartResearchResponse(
         run_id=workflow_run.id,
@@ -96,6 +101,7 @@ def start_research_to_response(
             submission,
             external_request_id=external_request_id,
         ),
+        research_brief=research_brief_to_response(research_brief),
     )
 
 

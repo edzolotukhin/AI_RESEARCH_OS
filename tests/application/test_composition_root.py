@@ -8,7 +8,7 @@ from application.composition_root import create_application
 from application.config import ApplicationConfig, ApplicationOverrides
 
 from domain.ai.llm_response import LLMResponse
-from domain.project_brief import ProjectBrief
+from tests.fixtures.research_brief import sample_research_brief
 
 from application.ports.project_repository import ProjectRepository
 from application.services.project_service import ProjectService
@@ -53,12 +53,7 @@ class CompositionRootTests(unittest.TestCase):
             agency.initialize()
 
             project = agency.create_project("Brand Health 2026")
-            project.brief = ProjectBrief(
-                client="Purina",
-                project_title="Brand Health 2026",
-                business_problem="Assess market position.",
-                research_goal="Evaluate brand awareness.",
-            )
+            project.research_brief = sample_research_brief()
 
             context = agency.start_research(project)
 

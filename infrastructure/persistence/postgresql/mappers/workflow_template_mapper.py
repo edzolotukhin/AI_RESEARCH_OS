@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
+from domain.research_brief import ResearchBrief
 from domain.task_definition import TaskDefinition
 from domain.value_objects.executor_type import ExecutorType
 from domain.workflow_template import WorkflowTemplate
@@ -26,6 +27,11 @@ def workflow_template_to_model(
                 _task_definition_to_dict(definition)
                 for definition in template.task_definitions
             ],
+            "research_brief": (
+                template.research_brief_snapshot.to_dict()
+                if template.research_brief_snapshot is not None
+                else None
+            ),
         },
         created_at=created_at,
     )
@@ -41,6 +47,9 @@ def workflow_template_from_model(model: WorkflowTemplateModel) -> WorkflowTempla
         id=model.id,
         name=snapshot.get("name", model.name),
         task_definitions=definitions,
+        research_brief_snapshot=ResearchBrief.from_dict(
+            snapshot.get("research_brief"),
+        ),
     )
 
 

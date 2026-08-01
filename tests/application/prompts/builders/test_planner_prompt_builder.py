@@ -8,7 +8,7 @@ from application.prompts.builders.planner_prompt_builder import (
 
 from domain.ai.prompt import Prompt
 from domain.project import Project
-from domain.project_brief import ProjectBrief
+from tests.fixtures.research_brief import sample_research_brief
 
 from domain.workflow_run import WorkflowRun
 
@@ -43,15 +43,9 @@ def test_build_returns_prompt():
         name="Architecture Test",
     )
 
-    project.brief = ProjectBrief(
-        client="Purina",
-        project_title="Brand Health 2026",
-        business_problem=(
-            "Assess the current market position of the brand."
-        ),
-        research_goal=(
-            "Evaluate brand awareness, usage and loyalty."
-        ),
+    project.research_brief = sample_research_brief(
+        business_question="Assess the current market position of the brand.",
+        objectives=("Evaluate brand awareness, usage and loyalty.",),
     )
 
     context = WorkflowContext(
@@ -103,5 +97,5 @@ def test_build_raises_when_project_brief_is_missing():
     except ValueError as exc:
         assert (
             str(exc)
-            == "ProjectBrief is required to build planner prompt."
+            == "ResearchBrief is required to build planner prompt."
         )

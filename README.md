@@ -43,6 +43,7 @@ architecture itself.
 - **Bearer API key authentication** and principal-scoped project ownership (PF-08, ADR-014)
 - **Background worker** (`worker/`) with PostgreSQL claim/lease, heartbeat, crash recovery (PF-06)
 - **External orchestration** — idempotent `POST /research`, correlation metadata, n8n examples (PF-07)
+- **Structured research brief** — canonical `ResearchBrief` contract on research submission (DR-01, ADR-015)
 - **Docker Compose** — `postgres`, `api`, `worker`; optional n8n overlay
 - File-based **ProjectRepository** (transitional dev backend) and architecture documentation
 
@@ -50,7 +51,7 @@ architecture itself.
 
 ## What Does Not Exist Yet
 
-- **Desk research vertical** validated end-to-end (brief → design → search → analysis → report → review)
+- **Desk research vertical** validated end-to-end (brief contract in DR-01; search/analysis/report still open)
 - Product-complete **Search**, **Analysis**, **Writer**, or **Reviewer** agents (stubs exist)
 - Source collection / evidence provenance pipeline
 - Full knowledge management (repository stores metadata; not a KM product)
