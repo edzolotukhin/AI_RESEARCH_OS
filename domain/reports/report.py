@@ -26,6 +26,9 @@ class Report:
     evidence_refs: tuple[str, ...]
     citation_registry: dict[str, dict[str, Any]]
     deduplication_key: str = ""
+    revision_number: int = 1
+    previous_report_id: str | None = None
+    approval_status: str = "draft"
     metadata: dict[str, Any] = field(default_factory=dict)
     version: int = 0
 
@@ -47,6 +50,9 @@ class Report:
             "evidence_refs": list(self.evidence_refs),
             "citation_registry": dict(self.citation_registry),
             "deduplication_key": self.deduplication_key,
+            "revision_number": self.revision_number,
+            "previous_report_id": self.previous_report_id,
+            "approval_status": self.approval_status,
             "metadata": dict(self.metadata),
             "version": self.version,
         }
@@ -72,6 +78,9 @@ class Report:
             evidence_refs=tuple(payload.get("evidence_refs", ())),
             citation_registry=dict(payload.get("citation_registry", {})),
             deduplication_key=str(payload.get("deduplication_key", "")),
+            revision_number=int(payload.get("revision_number", 1)),
+            previous_report_id=payload.get("previous_report_id"),
+            approval_status=str(payload.get("approval_status", "draft")),
             metadata=dict(payload.get("metadata", {})),
             version=int(payload.get("version", 0)),
         )

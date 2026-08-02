@@ -130,6 +130,11 @@ class WorkflowRunResponse(BaseModel):
     finding_count: int = 0
     insights_available: bool = False
     insight_count: int = 0
+    reviews_available: bool = False
+    review_count: int = 0
+    final_review_verdict: str | None = None
+    final_artifact_available: bool = False
+    final_artifact_id: str | None = None
     external: ExternalSubmissionMetadata | None = None
     research_brief: ResearchBriefResponse | None = None
     research_design: ResearchDesignResponse | None = None

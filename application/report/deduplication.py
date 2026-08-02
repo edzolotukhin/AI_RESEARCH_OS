@@ -16,13 +16,15 @@ def compute_report_deduplication_key(
     workflow_run_id: str,
     report_type: str = DR06_RESEARCH_REPORT_TYPE,
     generation_method: str,
+    revision_number: int = 1,
 ) -> str:
-    """One canonical desk-research report per workflow run (DR-06 v1)."""
+    """One immutable report revision per run/type/method/revision (DR-07)."""
     canonical = "|".join(
         [
             workflow_run_id,
             _normalize_text(report_type),
             generation_method,
+            str(revision_number),
         ],
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

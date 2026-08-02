@@ -9,12 +9,14 @@ from application.services.workflow_service import WorkflowService
 from application.services.evidence_service import EvidenceService
 from application.services.finding_service import FindingService, InsightService
 from application.services.report_query_service import ReportQueryService
+from application.services.review_query_service import ReviewQueryService
 from application.services.source_service import SourceService
 from domain.evidence.evidence import Evidence
 from domain.findings.finding import Finding
 from domain.findings.insight import Insight
 from domain.project import Project
 from domain.reports.report import Report
+from domain.reviews.review_result import ReviewResult
 from domain.sources.source import Source
 from domain.workflow_run import WorkflowRun
 
@@ -33,6 +35,7 @@ class AuthorizationService:
         finding_service: FindingService | None = None,
         insight_service: InsightService | None = None,
         report_query_service: ReportQueryService | None = None,
+        review_query_service: ReviewQueryService | None = None,
     ) -> None:
         self._project_service = project_service
         self._workflow_service = workflow_service
@@ -42,6 +45,7 @@ class AuthorizationService:
         self._finding_service = finding_service
         self._insight_service = insight_service
         self._report_query_service = report_query_service
+        self._review_query_service = review_query_service
 
     def require_project(
         self,
@@ -139,6 +143,20 @@ class AuthorizationService:
             raise AccessDeniedError(str(exc)) from exc
         project = self.require_project(principal, report.project_id)
         return report, project
+
+    def require_review(
+        self,
+        principal: AuthenticatedPrincipal,
+        review_id: str,
+    ) -> tuple[ReviewResult, Project]:
+        if self._review_query_service is None:
+            raise AccessDeniedError(f"Review not found: {review_id}")
+        try:
+            review = self._review_query_service.get_review(review_id)
+        except EntityNotFoundError as exc:
+            raise AccessDeniedError(str(exc)) from exc
+        project = self.require_project(principal, review.project_id)
+        return review, project
 
     def require_artifact(
         self,

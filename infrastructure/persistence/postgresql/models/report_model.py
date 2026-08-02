@@ -37,5 +37,8 @@ class ReportModel(Base):
     evidence_refs: Mapped[dict] = mapped_column(JSON, nullable=False, default=list)
     citation_registry: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     deduplication_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    revision_number: Mapped[int] = mapped_column(nullable=False, default=1)
+    previous_report_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    approval_status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
     metadata_json: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
     version: Mapped[int] = mapped_column(nullable=False, default=1)

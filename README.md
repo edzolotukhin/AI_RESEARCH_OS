@@ -54,7 +54,7 @@ architecture itself.
 
 ## What Does Not Exist Yet
 
-- **DR-07 Review / Quality Gate** — not implemented; no automated review stage after report generation
+- **DR-07 Review / Quality Gate** — implemented (pending owner acceptance); independent review stage after report generation
 - **Alternate report formats** — Markdown is the current final report format; PDF, DOCX, and PPTX are not implemented
 - **Entailment guarantees** — structural provenance and citation binding exist; natural-language hallucination/entailment is not fully guaranteed
 - Product-complete **Reviewer** agent (stub exists)
@@ -441,7 +441,7 @@ The **WorkflowEngine** and **TaskScheduler** never import concrete agents. New e
 
 ## Current Limitations
 
-- **Research product** — desk research runs through Markdown report delivery (DR-06); review gate (DR-07) and multi-format exports are not implemented
+- **Research product** — desk research runs through Markdown report delivery with quality-gate review (DR-07); multi-format exports are not implemented
 - **Artifact blobs** — Markdown content is persisted in PostgreSQL; external object storage is not used
 - **Knowledge** — repository port exists; not full knowledge management
 - **Legacy projects** — pre-PF-08 rows with `NULL` owner are inaccessible until backfilled
@@ -458,7 +458,7 @@ See [ROADMAP.md](ROADMAP.md) for deferred platform hardening.
 
 The runtime core is domain-agnostic: templates, dependency graphs, and executor resolution can support other industries. Marketing research is the first domain — planner output and agent executors target agency workflows today.
 
-**Next product priority:** **DR-07 Review / Quality Gate** on the desk research vertical (brief → planning → design → search → evidence → analysis → insights → report → **review** → artifact). The platform foundation is complete; the full vertical is not.
+**Next product priority:** owner acceptance of **DR-07 Review / Quality Gate**, then n8n production E2E orchestration.
 
 Platform hardening (observability, backups, OAuth, rate limits) is explicitly deferred until that vertical validates the foundation. See [ROADMAP.md](ROADMAP.md) and [docs/backlog.md](docs/backlog.md).
 

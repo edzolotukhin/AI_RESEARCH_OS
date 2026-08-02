@@ -26,9 +26,9 @@ class ResearchDesignWorkflowMapperTests(unittest.TestCase):
         dto = parser.parse(VALID_RESEARCH_DESIGN_RESPONSE)
         self.design = factory.create(dto)
 
-    def test_maps_to_four_task_pipeline(self) -> None:
+    def test_maps_to_five_task_pipeline(self) -> None:
         template = self.mapper.from_research_design(self.design, self.project)
-        self.assertEqual(len(template.task_definitions), 4)
+        self.assertEqual(len(template.task_definitions), 5)
         task_ids = [task.id for task in template.task_definitions]
         self.assertEqual(
             task_ids,
@@ -37,6 +37,7 @@ class ResearchDesignWorkflowMapperTests(unittest.TestCase):
                 "task-extract-evidence",
                 "task-analyze",
                 "task-write-report",
+                "task-review-report",
             ],
         )
 

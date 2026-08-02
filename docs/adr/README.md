@@ -76,6 +76,7 @@ The following statuses are used throughout the project.
 | ADR-018 | Evidence and Provenance Boundary | Active (DR-04) |
 | ADR-019 | Desk Research Analysis, Findings and Insights | Active (DR-05) |
 | ADR-020 | Desk Research Report Writer and Final Artifact | Active (DR-06) |
+| ADR-021 | Desk Research Review and Quality Gate | Active (DR-07) |
 
 Additional ADRs will be added as the architecture evolves.
 

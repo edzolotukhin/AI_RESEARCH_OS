@@ -57,3 +57,25 @@ class ArtifactService:
 
     def run_has_artifacts(self, project_id: str, workflow_run_id: str) -> bool:
         return self.count_for_run(project_id, workflow_run_id) > 0
+
+    def count_approved_for_run(self, project_id: str, workflow_run_id: str) -> int:
+        return len(
+            [
+                item
+                for item in self.list_artifacts_for_project(project_id)
+                if item.run_id == workflow_run_id and item.status == "approved"
+            ],
+        )
+
+    def has_approved_artifact(self, project_id: str, workflow_run_id: str) -> bool:
+        return self.count_approved_for_run(project_id, workflow_run_id) > 0
+
+    def approved_artifact_for_run(
+        self,
+        project_id: str,
+        workflow_run_id: str,
+    ) -> ArtifactRecord | None:
+        for item in self.list_artifacts_for_project(project_id):
+            if item.run_id == workflow_run_id and item.status == "approved":
+                return item
+        return None

@@ -78,6 +78,7 @@ class ResearchEndpointTests(ApiTestCase):
                         evidence_extractor="deterministic",
                         analysis_engine="deterministic",
                         report_engine="deterministic",
+                        review_engine="deterministic",
                     ),
                     overrides=ApplicationOverrides(
                         llm_client=create_brief_aligned_llm_mock(),
@@ -112,10 +113,13 @@ class ResearchEndpointTests(ApiTestCase):
                     self.assertEqual(tasks["task-extract-evidence"], "completed")
                     self.assertEqual(tasks["task-analyze"], "completed")
                     self.assertEqual(tasks["task-write-report"], "completed")
+                    self.assertEqual(tasks["task-review-report"], "completed")
                     self.assertTrue(terminal["reports_available"])
                     self.assertGreater(terminal["report_count"], 0)
                     self.assertTrue(terminal["artifacts_available"])
                     self.assertGreater(terminal["artifact_count"], 0)
+                    self.assertTrue(terminal["final_artifact_available"])
+                    self.assertEqual(terminal["final_review_verdict"], "approve")
                 finally:
                     close_test_client(context, container)
                     container.shutdown()

@@ -329,6 +329,90 @@ class ResourceIsolationIntegrationTests(PostgreSQLIntegrationTestCase):
         self.assertEqual(foreign_run.status_code, 404)
         self.assertNotIn("report_count", foreign_run.json().get("error", {}))
 
+    def _seed_review_records(
+        self,
+        *,
+        project_id: str,
+        run_id: str,
+        report_id: str,
+    ) -> str:
+        from datetime import datetime, timezone
+        from uuid import uuid4
+
+        from domain.reviews.quality_dimension import (
+            QualityDimension,
+            QualityDimensionName,
+            QualityDimensionStatus,
+        )
+        from domain.reviews.review_result import ReviewResult
+        from domain.reviews.review_verdict import ReviewVerdict
+
+        from application.review.deduplication import compute_review_deduplication_key
+        from infrastructure.persistence.postgresql.repositories.postgresql_review_repository import (
+            PostgreSQLReviewRepository,
+        )
+
+        review_id = str(uuid4())
+        dedup_key = compute_review_deduplication_key(
+            workflow_run_id=run_id,
+            report_id=report_id,
+            review_attempt=1,
+        )
+        PostgreSQLReviewRepository(self.session_factory).create(
+            ReviewResult(
+                id=review_id,
+                project_id=project_id,
+                workflow_run_id=run_id,
+                research_design_id="design-1",
+                report_id=report_id,
+                review_attempt=1,
+                verdict=ReviewVerdict.APPROVE,
+                quality_dimensions=(
+                    QualityDimension(
+                        name=QualityDimensionName.BRIEF_COVERAGE,
+                        status=QualityDimensionStatus.PASS,
+                    ),
+                ),
+                issues=(),
+                summary="Isolation review",
+                review_method="deterministic",
+                created_at=datetime.now(timezone.utc).isoformat(),
+                deduplication_key=dedup_key,
+            ),
+        )
+        return review_id
+
+    def test_principal_b_cannot_access_foreign_reviews(self) -> None:
+        client_a, client_b, container_a = self._build_two_clients()
+        project_id, run_id = self._create_owned_run(client_a)
+        report_id, _ = self._seed_report_records(
+            project_id=project_id,
+            run_id=run_id,
+        )
+        review_id = self._seed_review_records(
+            project_id=project_id,
+            run_id=run_id,
+            report_id=report_id,
+        )
+
+        cases = [
+            ("GET", f"/projects/{project_id}/reviews"),
+            ("GET", f"/reviews/{review_id}"),
+            ("GET", f"/workflow-runs/{run_id}"),
+        ]
+        for method, path in cases:
+            with self.subTest(method=method, path=path):
+                response = client_b.get(path)
+                self.assertEqual(response.status_code, 404, response.text)
+                self.assertEqual(response.json()["error"]["code"], "entity_not_found")
+
+        run_summary = container_a.workflow_service.get_workflow_run(run_id)
+        self.assertIsNotNone(run_summary)
+        foreign_run = client_b.get(f"/workflow-runs/{run_id}")
+        self.assertEqual(foreign_run.status_code, 404)
+        self.assertNotIn("final_review_verdict", foreign_run.json().get("error", {}))
+        self.assertNotIn("review_count", foreign_run.json().get("error", {}))
+
 
 if __name__ == "__main__":
     unittest.main()

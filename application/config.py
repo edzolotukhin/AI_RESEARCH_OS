@@ -8,6 +8,7 @@ from application.ports.project_repository import ProjectRepository
 from application.ports.analysis_ports import AnalysisEngine, FindingRepository, InsightRepository
 from application.ports.evidence_ports import EvidenceExtractor, EvidenceRepository
 from application.ports.report_ports import ReportEngine, ReportRepository
+from application.ports.review_ports import SemanticReviewEngine
 from application.ports.source_ports import SearchProvider, SourceRepository, SourceRetriever
 from application.services.project_service import ProjectService
 from infrastructure.llm.llm_client import LLMClient
@@ -55,6 +56,10 @@ class ApplicationConfig:
     report_engine: str = "llm"
     report_max_findings_per_batch: int = DEFAULT_REPORT_MAX_FINDINGS_PER_BATCH
     report_max_chars_per_batch: int = DEFAULT_REPORT_MAX_CHARS_PER_BATCH
+    review_engine: str = "llm"
+    review_max_revision_attempts: int = 1
+    review_max_chars_per_section: int = 8000
+    review_max_issues_per_section: int = 5
 
     @classmethod
     def from_env(cls) -> ApplicationConfig:
@@ -115,6 +120,16 @@ class ApplicationConfig:
                     str(DEFAULT_REPORT_MAX_CHARS_PER_BATCH),
                 ),
             ),
+            review_engine=os.environ.get("REVIEW_ENGINE", "llm"),
+            review_max_revision_attempts=int(
+                os.environ.get("REVIEW_MAX_REVISION_ATTEMPTS", "1"),
+            ),
+            review_max_chars_per_section=int(
+                os.environ.get("REVIEW_MAX_CHARS_PER_SECTION", "8000"),
+            ),
+            review_max_issues_per_section=int(
+                os.environ.get("REVIEW_MAX_ISSUES_PER_SECTION", "5"),
+            ),
         )
 
 
@@ -141,3 +156,6 @@ class ApplicationOverrides:
     report_engine: ReportEngine | None = None
     report_repository: ReportRepository | None = None
     report_executor: Any | None = None
+    review_engine: SemanticReviewEngine | None = None
+    review_repository: Any | None = None
+    review_executor: Any | None = None

@@ -36,6 +36,19 @@ class ReportDeduplicationTests(unittest.TestCase):
         self.assertEqual(key_a, key_other_title)
         self.assertNotEqual(key_a, key_other_run)
 
+    def test_report_revision_number_changes_deduplication_key(self) -> None:
+        revision_one = compute_report_deduplication_key(
+            workflow_run_id="run-1",
+            generation_method="deterministic",
+            revision_number=1,
+        )
+        revision_two = compute_report_deduplication_key(
+            workflow_run_id="run-1",
+            generation_method="deterministic",
+            revision_number=2,
+        )
+        self.assertNotEqual(revision_one, revision_two)
+
     def test_artifact_key_ignores_filename_and_report_id(self) -> None:
         key_a = compute_artifact_deduplication_key(
             workflow_run_id="run-1",

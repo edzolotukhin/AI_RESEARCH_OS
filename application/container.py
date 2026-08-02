@@ -44,6 +44,7 @@ class ApplicationContainer:
     finding_service: FindingService
     insight_service: InsightService
     report_query_service: ReportQueryService
+    review_query_service: ReviewQueryService
     execution_log_service: ExecutionLogService
     durable_workflow_service: DurableWorkflowService | None = None
     worker_execution_service: WorkerExecutionService | None = None
