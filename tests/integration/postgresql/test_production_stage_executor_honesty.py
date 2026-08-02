@@ -32,6 +32,7 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
             config=postgresql_application_config(
                 deterministic_stage_executors=False,
                 search_provider="deterministic",
+                evidence_extractor="deterministic",
             ),
             overrides=ApplicationOverrides(llm_client=mock_llm),
         )
@@ -63,9 +64,12 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
         self.assertEqual(terminal["status"], "failed")
         self.assertTrue(terminal["sources_available"])
         self.assertGreater(terminal["source_count"], 0)
+        self.assertTrue(terminal["evidence_available"])
+        self.assertGreater(terminal["evidence_count"], 0)
 
         tasks = {task["definition_id"]: task["status"] for task in terminal["tasks"]}
         self.assertEqual(tasks["task-collect-evidence"], "completed")
+        self.assertEqual(tasks["task-extract-evidence"], "completed")
         self.assertEqual(tasks["task-analyze"], "failed")
         self.assertEqual(tasks["task-write-report"], "skipped")
 

@@ -5,11 +5,17 @@ from dataclasses import dataclass
 from typing import Any
 
 from application.ports.project_repository import ProjectRepository
+from application.ports.evidence_ports import EvidenceExtractor, EvidenceRepository
 from application.ports.source_ports import SearchProvider, SourceRepository, SourceRetriever
 from application.services.project_service import ProjectService
 from infrastructure.llm.llm_client import LLMClient
 
 from registry.registry import Registry
+
+from application.evidence.content_chunking import (
+    DEFAULT_EVIDENCE_EXTRACTION_CHUNK_CHARS,
+    DEFAULT_EVIDENCE_EXTRACTION_CHUNK_OVERLAP_CHARS,
+)
 
 
 @dataclass(frozen=True)
@@ -28,6 +34,11 @@ class ApplicationConfig:
     deterministic_stage_executors: bool = False
     search_provider: str = "tavily"
     search_api_key: str | None = None
+    evidence_extractor: str = "llm"
+    evidence_extraction_chunk_chars: int = DEFAULT_EVIDENCE_EXTRACTION_CHUNK_CHARS
+    evidence_extraction_chunk_overlap_chars: int = (
+        DEFAULT_EVIDENCE_EXTRACTION_CHUNK_OVERLAP_CHARS
+    )
 
     @classmethod
     def from_env(cls) -> ApplicationConfig:
@@ -49,6 +60,19 @@ class ApplicationConfig:
             in {"1", "true", "yes"},
             search_provider=os.environ.get("SEARCH_PROVIDER", "tavily"),
             search_api_key=os.environ.get("SEARCH_API_KEY"),
+            evidence_extractor=os.environ.get("EVIDENCE_EXTRACTOR", "llm"),
+            evidence_extraction_chunk_chars=int(
+                os.environ.get(
+                    "EVIDENCE_EXTRACTION_CHUNK_CHARS",
+                    str(DEFAULT_EVIDENCE_EXTRACTION_CHUNK_CHARS),
+                ),
+            ),
+            evidence_extraction_chunk_overlap_chars=int(
+                os.environ.get(
+                    "EVIDENCE_EXTRACTION_CHUNK_OVERLAP_CHARS",
+                    str(DEFAULT_EVIDENCE_EXTRACTION_CHUNK_OVERLAP_CHARS),
+                ),
+            ),
         )
 
 
@@ -67,3 +91,5 @@ class ApplicationOverrides:
     search_provider: SearchProvider | None = None
     source_retriever: SourceRetriever | None = None
     source_repository: SourceRepository | None = None
+    evidence_extractor: EvidenceExtractor | None = None
+    evidence_repository: EvidenceRepository | None = None

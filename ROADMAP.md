@@ -97,11 +97,16 @@ Each stage below is merged into `main` with ADR coverage and automated tests unl
 - **Goal:** Semantic `ResearchDesign` with research questions, information needs, and deterministic workflow mapping.
 - **Outcome:** [ADR-016](docs/adr/ADR-016-Desk-Research-Design-and-Semantic-Planning.md)
 
-### DR-03 — Search & source acquisition *(in progress)*
+### DR-03 — Search & source acquisition *(complete)*
 
 - **Goal:** Deterministic query generation, provider-neutral search, URL deduplication, bounded retrieval, durable `Source` records.
 - **Outcome:** [ADR-017](docs/adr/ADR-017-Search-Source-Acquisition-and-Provenance-Boundary.md)
-- **Limitation:** No evidence extraction yet (DR-04); analysis/report still unimplemented.
+
+### DR-04 — Evidence & provenance *(in progress)*
+
+- **Goal:** Grounded, durable `Evidence` extracted from acquired sources with run/design/source checksum binding.
+- **Outcome:** [ADR-018](docs/adr/ADR-018-Evidence-and-Provenance-Boundary.md)
+- **Limitation:** Analysis/report still unimplemented (DR-05+).
 
 Intended vertical:
 
@@ -125,10 +130,11 @@ Client Brief
 | Client Brief | HTTP API + `ProjectBrief` model | Partial — not full lifecycle |
 | Planning | Planner agent + structured output | Integrated for template generation |
 | Research Design | Domain models | Not automated end-to-end |
-| Search | `search` executor stub | Not product-complete |
-| Source collection / provenance | — | Not implemented |
-| Evidence / Knowledge | `KnowledgeRepository` port | Metadata persistence only |
-| Analysis | `analysis` executor stub | Not product-complete |
+| Search | `search` executor + Tavily/deterministic providers | Integrated (DR-03) |
+| Source collection / provenance | `Source` persistence + API | Integrated (DR-03) |
+| Evidence extraction | `evidence` executor + grounding validator | Integrated (DR-04) |
+| Evidence / Knowledge | `Evidence` + `KnowledgeRepository` port | Evidence durable; knowledge metadata only |
+| Analysis | `analysis` executor stub | Not product-complete (DR-05) |
 | Insights | — | Not implemented |
 | Writer / Report | `report` executor stub | Not product-complete |
 | Review | — | Not implemented |

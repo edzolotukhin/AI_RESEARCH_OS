@@ -121,6 +121,8 @@ class WorkflowRunResponse(BaseModel):
     artifacts_available: bool = False
     sources_available: bool = False
     source_count: int = 0
+    evidence_available: bool = False
+    evidence_count: int = 0
     external: ExternalSubmissionMetadata | None = None
     research_brief: ResearchBriefResponse | None = None
     research_design: ResearchDesignResponse | None = None

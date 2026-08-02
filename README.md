@@ -52,7 +52,7 @@ architecture itself.
 
 ## What Does Not Exist Yet
 
-- **Desk research vertical** — DR-03 search/source acquisition implemented; analysis/report still open (DR-04+)
+- **Desk research vertical** — DR-03 source acquisition and DR-04 evidence extraction implemented; analysis/report still open (DR-05+)
 - Product-complete **Search**, **Analysis**, **Writer**, or **Reviewer** agents (stubs exist)
 - Source collection / evidence provenance pipeline
 - Full knowledge management (repository stores metadata; not a KM product)

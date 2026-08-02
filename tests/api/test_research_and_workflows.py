@@ -75,6 +75,7 @@ class ResearchEndpointTests(ApiTestCase):
                         background_execution_mode="embedded",
                         deterministic_stage_executors=False,
                         search_provider="deterministic",
+                        evidence_extractor="deterministic",
                     ),
                     overrides=ApplicationOverrides(
                         llm_client=create_brief_aligned_llm_mock(),
@@ -111,6 +112,7 @@ class ResearchEndpointTests(ApiTestCase):
                         for task in terminal["tasks"]
                     }
                     self.assertEqual(tasks["task-collect-evidence"], "completed")
+                    self.assertEqual(tasks["task-extract-evidence"], "completed")
                     sources = container.source_service.list_sources_for_project(
                         project_id,
                     )

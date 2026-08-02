@@ -10,7 +10,7 @@ from application.container import ApplicationContainer
 
 from api import API_VERSION, SERVICE_NAME
 from api.errors import register_exception_handlers
-from api.routers import artifacts, health, projects, sources, workflow_runs
+from api.routers import artifacts, evidence, health, projects, sources, workflow_runs
 
 
 def create_fastapi_app(
@@ -60,6 +60,7 @@ def create_fastapi_app(
     app.include_router(workflow_runs.router)
     app.include_router(artifacts.router)
     app.include_router(sources.router)
+    app.include_router(evidence.router)
 
     _configure_openapi_security(app)
 

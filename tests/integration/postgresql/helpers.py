@@ -50,6 +50,7 @@ def postgresql_application_config(
     deterministic_stage_executors: bool = False,
     background_execution_mode: str = "external",
     search_provider: str = "deterministic",
+    evidence_extractor: str = "deterministic",
 ) -> ApplicationConfig:
     """PostgreSQL ApplicationConfig for integration tests."""
     return ApplicationConfig(
@@ -58,6 +59,7 @@ def postgresql_application_config(
         background_execution_mode=background_execution_mode,
         deterministic_stage_executors=deterministic_stage_executors,
         search_provider=search_provider,
+        evidence_extractor=evidence_extractor,
     )
 
 

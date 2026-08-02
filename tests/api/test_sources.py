@@ -30,6 +30,7 @@ class SourceApiTests(unittest.TestCase):
                     background_execution_mode="embedded",
                     deterministic_stage_executors=False,
                     search_provider="deterministic",
+                    evidence_extractor="deterministic",
                 ),
                 overrides=ApplicationOverrides(
                     llm_client=create_brief_aligned_llm_mock(),
@@ -75,6 +76,7 @@ class SourceApiTests(unittest.TestCase):
                     background_execution_mode="embedded",
                     deterministic_stage_executors=True,
                     search_provider="deterministic",
+                    evidence_extractor="deterministic",
                 ),
                 overrides=ApplicationOverrides(
                     llm_client=create_brief_aligned_llm_mock(),
@@ -89,6 +91,7 @@ class SourceApiTests(unittest.TestCase):
                     background_execution_mode="embedded",
                     deterministic_stage_executors=True,
                     search_provider="deterministic",
+                    evidence_extractor="deterministic",
                 ),
                 overrides=ApplicationOverrides(
                     llm_client=create_brief_aligned_llm_mock(),
