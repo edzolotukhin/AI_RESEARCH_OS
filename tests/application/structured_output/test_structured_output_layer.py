@@ -5,6 +5,9 @@ from pathlib import Path
 
 from application.exceptions.structured_output_error import StructuredOutputError
 from application.planner.payload_contract import PlannerPayloadContract
+from application.planner.research_design_payload_contract import (
+    ResearchDesignPayloadContract,
+)
 from tests.helpers.executor_catalog import make_test_executor_catalog
 from application.structured_output.json_extractor import JsonExtractor
 from application.structured_output.json_repair import JsonRepair
@@ -201,14 +204,18 @@ class StructuredOutputPlannerPipelineTests(unittest.TestCase):
             self._parse('{"name": "unfinished')
 
     def test_existing_planner_payloads_still_parse(self):
+        design_contract = ResearchDesignPayloadContract()
         for payload in (
             VALID_PLANNER_JSON,
             MARKDOWN_PLANNER_JSON,
             EXPLANATORY_PLANNER_JSON,
             TRAILING_COMMA_PLANNER_JSON,
         ):
-            data = self._parse(payload)
-            self.assertEqual(data["name"], "Brand Health Workflow")
+            data = self.parser.parse(
+                payload,
+                payload_contract=design_contract,
+            )
+            self.assertGreaterEqual(len(data["research_questions"]), 1)
 
 
 class StructuredOutputArchitectureTests(unittest.TestCase):
@@ -218,6 +225,10 @@ class StructuredOutputArchitectureTests(unittest.TestCase):
 
         allowed_files = {
             project_root / "application" / "structured_output" / "json_validator.py",
+            project_root
+            / "application"
+            / "planner"
+            / "deterministic_design_response.py",
         }
 
         offenders: list[str] = []
@@ -288,7 +299,7 @@ class ResponseCleanerTests(unittest.TestCase):
         cleaned = ResponseCleaner().clean(MARKDOWN_PLANNER_JSON)
 
         self.assertNotIn("```", cleaned)
-        self.assertIn('"name": "Brand Health Workflow"', cleaned)
+        self.assertIn('"research_questions"', cleaned)
 
 
 if __name__ == "__main__":

@@ -4,18 +4,18 @@ from dataclasses import asdict
 
 from domain.client_qualification import ClientQualification
 from domain.client_request import ClientRequest
-from domain.project import Project
-from domain.research_brief import ResearchBrief
-from domain.research_design import (
+from domain.legacy.methodology_proposal import (
     BusinessProblem,
     Methodology,
-    ResearchDesign,
+    MethodologyProposal,
     ResearchObjectives,
     ResearchStrategy,
     Risk,
     RiskAssessment,
     SamplingPlan,
 )
+from domain.project import Project
+from domain.research_brief import ResearchBrief
 from domain.value_objects.project_status import ProjectStatus
 from infrastructure.persistence.postgresql.models.project_model import ProjectModel
 
@@ -28,7 +28,7 @@ def project_to_model(project: Project, *, version: int) -> ProjectModel:
         client_request=_client_request_to_dict(project.client_request),
         qualification=_qualification_to_dict(project.qualification),
         brief=_research_brief_to_dict(project.research_brief),
-        research_design=_research_design_to_dict(project.research_design),
+        research_design=_methodology_proposal_to_dict(project.methodology_proposal),
         created_at=project.created_at,
         updated_at=project.updated_at,
         owner_principal_id=project.owner_principal_id,
@@ -43,7 +43,7 @@ def project_to_update_values(project: Project) -> dict:
         "client_request": _client_request_to_dict(project.client_request),
         "qualification": _qualification_to_dict(project.qualification),
         "brief": _research_brief_to_dict(project.research_brief),
-        "research_design": _research_design_to_dict(project.research_design),
+        "research_design": _methodology_proposal_to_dict(project.methodology_proposal),
         "created_at": project.created_at,
         "updated_at": project.updated_at,
         "owner_principal_id": project.owner_principal_id,
@@ -58,7 +58,7 @@ def project_from_model(model: ProjectModel) -> Project:
         client_request=_client_request_from_dict(model.client_request),
         qualification=_qualification_from_dict(model.qualification),
         research_brief=_research_brief_from_dict(model.brief),
-        research_design=_research_design_from_dict(model.research_design),
+        methodology_proposal=_methodology_proposal_from_dict(model.research_design),
         created_at=model.created_at or "",
         updated_at=model.updated_at or "",
         owner_principal_id=model.owner_principal_id,
@@ -100,16 +100,16 @@ def _research_brief_from_dict(payload: dict | None) -> ResearchBrief | None:
     return ResearchBrief.from_dict(payload)
 
 
-def _research_design_to_dict(value: ResearchDesign | None) -> dict | None:
+def _methodology_proposal_to_dict(value: MethodologyProposal | None) -> dict | None:
     if value is None:
         return None
     return asdict(value)
 
 
-def _research_design_from_dict(payload: dict | None) -> ResearchDesign | None:
+def _methodology_proposal_from_dict(payload: dict | None) -> MethodologyProposal | None:
     if payload is None:
         return None
-    return ResearchDesign(
+    return MethodologyProposal(
         business_problem=BusinessProblem(**payload.get("business_problem", {})),
         objectives=ResearchObjectives(**payload.get("objectives", {})),
         strategy=ResearchStrategy(**payload.get("strategy", {})),

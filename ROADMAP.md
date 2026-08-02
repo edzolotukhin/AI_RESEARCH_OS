@@ -87,11 +87,16 @@ Each stage below is merged into `main` with ADR coverage and automated tests unl
 
 **Next priority:** prove one real research methodology end-to-end using the existing platform foundation — **not** more horizontal infrastructure.
 
-### DR-01 — Research brief contract *(in progress)*
+### DR-01 — Research brief contract *(complete)*
 
 - **Goal:** Canonical structured `ResearchBrief` on Project; immutable snapshot on WorkflowTemplate; planner structured input.
 - **Outcome:** [ADR-015](docs/adr/ADR-015-Desk-Research-Brief-and-Research-Contract.md)
-- **Limitation:** No web search, evidence extraction, or Research Design implementation yet (DR-02+).
+
+### DR-02 — Research design & questions *(in progress)*
+
+- **Goal:** Semantic `ResearchDesign` with research questions, information needs, and deterministic workflow mapping.
+- **Outcome:** [ADR-016](docs/adr/ADR-016-Desk-Research-Design-and-Semantic-Planning.md)
+- **Limitation:** No web search, source discovery, or evidence extraction yet (DR-03+).
 
 Intended vertical:
 

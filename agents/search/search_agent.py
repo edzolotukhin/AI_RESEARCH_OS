@@ -5,7 +5,11 @@ from runtime.workflow_context import WorkflowContext
 
 class SearchAgent(BaseAgent):
     """
-    Agent for information gathering and search tasks.
+    Legacy stub — not wired in production composition root (DR-02).
+
+    Production uses UnimplementedCapabilityExecutor for the search stage until
+    DR-03. DeterministicStageExecutor is used only when
+    DETERMINISTIC_STAGE_EXECUTORS is explicitly enabled.
     """
 
     def __init__(self) -> None:

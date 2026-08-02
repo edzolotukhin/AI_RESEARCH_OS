@@ -1,6 +1,6 @@
 from domain.project import Project
-from domain.research_design import (
-    ResearchDesign,
+from domain.legacy.methodology_proposal import (
+    MethodologyProposal,
     BusinessProblem,
     ResearchObjectives,
     ResearchStrategy,
@@ -15,6 +15,13 @@ from constants.prompts import Prompts
 
 
 class ResearchDesigner(BaseAgent):
+    """
+    Deprecated legacy agent for MethodologyProposal generation.
+
+    Not wired into the desk-research production path (PlannerAgent owns
+    semantic ResearchDesign). Removal condition: delete when Client Manager
+    vertical is retired or migrated.
+    """
 
     def __init__(self):
         super().__init__()
@@ -39,7 +46,7 @@ class ResearchDesigner(BaseAgent):
         data: dict
     ) -> Project:
 
-        project.research_design = ResearchDesign(
+        project.methodology_proposal = MethodologyProposal(
 
             business_problem=BusinessProblem(
                 description=data["business_problem"]["description"],

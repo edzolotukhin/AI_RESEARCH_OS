@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import Mock
 
 from application.composition_root import create_application_container
-from application.config import ApplicationConfig, ApplicationOverrides
+from application.config import ApplicationOverrides
 from domain.ai.llm_response import LLMResponse
 
 from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
@@ -12,7 +12,7 @@ from tests.api.helpers import AuthenticatedTestClient, close_test_client, drain_
 from tests.fixtures.planner_responses import VALID_PLANNER_JSON
 from tests.integration.postgresql.helpers import (
     PostgreSQLIntegrationTestCase,
-    get_test_database_url,
+    postgresql_application_config,
 )
 
 BRIEF = {
@@ -29,9 +29,8 @@ class PostgreSQLApiIntegrationTests(PostgreSQLIntegrationTestCase):
         mock_llm = Mock()
         mock_llm.generate.return_value = LLMResponse(content=VALID_PLANNER_JSON)
         container = create_application_container(
-            config=ApplicationConfig(
-                persistence_backend="postgresql",
-                database_url=get_test_database_url(),
+            config=postgresql_application_config(
+                deterministic_stage_executors=True,
             ),
             overrides=ApplicationOverrides(llm_client=mock_llm),
         )
@@ -103,10 +102,7 @@ class PostgreSQLApiIntegrationTests(PostgreSQLIntegrationTestCase):
         mock_llm = Mock()
         mock_llm.generate.return_value = LLMResponse(content=VALID_PLANNER_JSON)
         reloaded_container = create_application_container(
-            config=ApplicationConfig(
-                persistence_backend="postgresql",
-                database_url=get_test_database_url(),
-            ),
+            config=postgresql_application_config(),
             overrides=ApplicationOverrides(llm_client=mock_llm),
         )
         self.addCleanup(reloaded_container.shutdown)

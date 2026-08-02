@@ -30,7 +30,10 @@ class AgencyLazyInitializationTests(unittest.TestCase):
 
     def _create_agency(self, temp_dir: str, mock_llm: Mock):
         return create_application(
-            config=ApplicationConfig(projects_root=temp_dir),
+            config=ApplicationConfig(
+                projects_root=temp_dir,
+                deterministic_stage_executors=True,
+            ),
             overrides=ApplicationOverrides(llm_client=mock_llm),
         )
 
@@ -168,6 +171,7 @@ class AgencyStartResearchTests(unittest.TestCase):
             agency = create_application(
                 config=ApplicationConfig(
                     projects_root=temp_dir,
+                    deterministic_stage_executors=True,
                 ),
                 overrides=ApplicationOverrides(
                     llm_client=mock_llm,
@@ -182,9 +186,9 @@ class AgencyStartResearchTests(unittest.TestCase):
 
         self.assertIsInstance(context, WorkflowContext)
         self.assertIsNotNone(context.workflow_template)
-        self.assertEqual(len(context.workflow_template.task_definitions), 2)
+        self.assertEqual(len(context.workflow_template.task_definitions), 3)
         self.assertIsNotNone(context.workflow_run)
-        self.assertEqual(len(context.workflow_run.tasks), 2)
+        self.assertEqual(len(context.workflow_run.tasks), 3)
         mock_llm.generate.assert_called()
 
     def test_start_research_retries_after_truncated_planner_response(self):
@@ -214,6 +218,7 @@ class AgencyStartResearchTests(unittest.TestCase):
             agency = create_application(
                 config=ApplicationConfig(
                     projects_root=temp_dir,
+                    deterministic_stage_executors=True,
                 ),
                 overrides=ApplicationOverrides(
                     llm_client=mock_llm,
@@ -228,7 +233,7 @@ class AgencyStartResearchTests(unittest.TestCase):
 
         self.assertIsInstance(context, WorkflowContext)
         self.assertIsNotNone(context.workflow_template)
-        self.assertEqual(len(context.workflow_template.task_definitions), 2)
+        self.assertEqual(len(context.workflow_template.task_definitions), 3)
         self.assertGreaterEqual(mock_llm.generate.call_count, 2)
         self.assertLessEqual(mock_llm.generate.call_count, 4)
 
@@ -245,6 +250,7 @@ class AgencyStartResearchTests(unittest.TestCase):
             agency = create_application(
                 config=ApplicationConfig(
                     projects_root=temp_dir,
+                    deterministic_stage_executors=True,
                 ),
                 overrides=ApplicationOverrides(
                     llm_client=mock_llm,

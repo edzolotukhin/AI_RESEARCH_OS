@@ -5,7 +5,11 @@ from runtime.workflow_context import WorkflowContext
 
 class AnalysisAgent(BaseAgent):
     """
-    Agent for data analysis tasks.
+    Legacy stub — not wired in production composition root (DR-02).
+
+    Production uses UnimplementedCapabilityExecutor for the analysis stage until
+    DR-05. DeterministicStageExecutor is used only when
+    DETERMINISTIC_STAGE_EXECUTORS is explicitly enabled.
     """
 
     def __init__(self) -> None:

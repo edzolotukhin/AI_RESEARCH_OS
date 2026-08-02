@@ -4,6 +4,7 @@ import logging
 import unittest
 
 from tests.api.helpers import ApiTestCase
+from tests.fixtures.research_brief import CANONICAL_BRIEF_REQUEST
 
 
 class AuthenticationApiTests(ApiTestCase):
@@ -70,14 +71,7 @@ class AuthenticationApiTests(ApiTestCase):
             project = self.client.post("/projects", json={"name": "Log Safe Project"}).json()
             self.client.post(
                 f"/projects/{project['id']}/research",
-                json={
-                    "brief": {
-                        "client": "Acme",
-                        "project_title": "Study",
-                        "business_problem": "Problem",
-                        "research_goal": "Goal",
-                    }
-                },
+                json={"brief": CANONICAL_BRIEF_REQUEST},
             )
         combined = "\n".join(record.getMessage() for record in captured.records)
         for record in captured.records:

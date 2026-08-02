@@ -1,6 +1,6 @@
 # ADR-015: Desk Research Brief and Research Contract
 
-**Status:** Active (DR-01)
+**Status:** Active (DR-01 complete)
 **Date:** 2026-07-29
 **Deciders:** Platform / Desk Research vertical
 
@@ -91,19 +91,11 @@ Normalization trims strings, deduplicates list values, defaults language. Errors
 
 `PlannerPromptBuilder` derives prompt variables from all structured brief fields. No planner behavior redesign in DR-01.
 
-### 8. ResearchQuestion boundary (DR-02 — not implemented in DR-01)
+### 8. ResearchQuestion boundary (DR-02)
 
-DR-01 establishes the **input** contract only (`ResearchBrief`). DR-02 will introduce a **ResearchQuestion** semantic planning layer between brief and task definitions.
+DR-01 established the **input** contract only (`ResearchBrief`). **DR-02** implements the semantic planning layer — see [ADR-016](ADR-016-Desk-Research-Design-and-Semantic-Planning.md).
 
-Planned minimal shape (DR-02, not present in codebase until that stage):
-
-- `id`
-- `question`
-- `objective_ref` (optional link to a brief objective)
-- `priority`
-- `rationale` (optional)
-
-DR-01 does **not** define or persist `ResearchQuestion`. The planner continues to output `TaskDefinition` entities via `ResearchPlan`. DR-02 will map planner/design output to `ResearchQuestion` without forcing a second planning system in DR-01.
+`ResearchQuestion`, `InformationNeed`, and `ResearchDesign` live in `domain/planning/research_design.py`. The planner emits `ResearchDesign`; deterministic mapping produces `WorkflowTemplate` task definitions.
 
 ### 9. Idempotency (PF-07)
 
@@ -144,4 +136,4 @@ After removal: delete `domain/project_brief.py`, drop legacy coercion in `Resear
 
 - ADR-013 (idempotency fingerprint semantics)
 - ADR-014 (ownership)
-- DR-02 (ResearchQuestion / Research Design — planned)
+- DR-02 (Research Design — [ADR-016](ADR-016-Desk-Research-Design-and-Semantic-Planning.md))

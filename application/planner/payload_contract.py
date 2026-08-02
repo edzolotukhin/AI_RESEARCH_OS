@@ -17,7 +17,10 @@ PLANNER_PAYLOAD_VALIDATION_ERRORS = (
 
 class PlannerPayloadContract(StructuredPayloadContract):
     """
-    Validates that a parsed JSON object matches the Planner payload contract.
+    Legacy ResearchPlan structured-output contract (DR-01).
+
+    Deprecated: production PlannerAgent uses ResearchDesignPayloadContract.
+    Removal condition: delete when ResearchPlan unit tests migrate or retire.
     """
 
     def __init__(

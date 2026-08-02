@@ -44,6 +44,7 @@ architecture itself.
 - **Background worker** (`worker/`) with PostgreSQL claim/lease, heartbeat, crash recovery (PF-06)
 - **External orchestration** — idempotent `POST /research`, correlation metadata, n8n examples (PF-07)
 - **Structured research brief** — canonical `ResearchBrief` contract on research submission (DR-01, ADR-015)
+- **Research design** — semantic `ResearchDesign` with questions, information needs, and immutable template snapshot (DR-02, ADR-016)
 - **Docker Compose** — `postgres`, `api`, `worker`; optional n8n overlay
 - File-based **ProjectRepository** (transitional dev backend) and architecture documentation
 
@@ -51,7 +52,7 @@ architecture itself.
 
 ## What Does Not Exist Yet
 
-- **Desk research vertical** validated end-to-end (brief contract in DR-01; search/analysis/report still open)
+- **Desk research vertical** validated end-to-end (brief + design in DR-01/DR-02; search/analysis/report still open)
 - Product-complete **Search**, **Analysis**, **Writer**, or **Reviewer** agents (stubs exist)
 - Source collection / evidence provenance pipeline
 - Full knowledge management (repository stores metadata; not a KM product)

@@ -70,7 +70,8 @@ The following statuses are used throughout the project.
 | ADR-012 | Background Execution, Claiming, Lease and Recovery | Active |
 | ADR-013 | External Orchestration and Idempotent Submission | Active |
 | ADR-014 | Authentication and Access Boundary | Active |
-| ADR-015 | Desk Research Brief and Research Contract | Active (DR-01) |
+| ADR-015 | Desk Research Brief and Research Contract | Active (DR-01 complete) |
+| ADR-016 | Desk Research Design and Semantic Planning | Active (DR-02) |
 
 Additional ADRs will be added as the architecture evolves.
 

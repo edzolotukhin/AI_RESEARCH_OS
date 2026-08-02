@@ -14,7 +14,7 @@ from domain.ai.llm_response import LLMResponse
 from api.app import create_fastapi_app
 
 from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
-from tests.fixtures.planner_responses import VALID_PLANNER_JSON
+from tests.helpers.brief_aligned_planner_llm import create_brief_aligned_llm_mock
 
 
 def build_test_container(
@@ -23,8 +23,7 @@ def build_test_container(
     persistence_backend: str = "memory",
     background_execution_mode: str | None = None,
 ) -> ApplicationContainer:
-    mock_llm = Mock()
-    mock_llm.generate.return_value = LLMResponse(content=VALID_PLANNER_JSON)
+    mock_llm = create_brief_aligned_llm_mock()
 
     if temp_dir is None:
         temp_dir = tempfile.mkdtemp()
@@ -40,6 +39,7 @@ def build_test_container(
             projects_root=temp_dir,
             persistence_backend=persistence_backend,
             background_execution_mode=background_execution_mode,
+            deterministic_stage_executors=True,
         ),
         overrides=ApplicationOverrides(llm_client=mock_llm),
     )

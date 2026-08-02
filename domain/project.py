@@ -4,7 +4,7 @@ from typing import Optional
 from domain.client_request import ClientRequest
 from domain.client_qualification import ClientQualification
 from domain.research_brief import ResearchBrief
-from domain.research_design import ResearchDesign
+from domain.legacy.methodology_proposal import MethodologyProposal
 from domain.workflow_run import WorkflowRun
 from domain.value_objects.project_status import ProjectStatus
 
@@ -23,7 +23,7 @@ class Project:
 
     research_brief: Optional[ResearchBrief] = None
 
-    research_design: Optional[ResearchDesign] = None
+    methodology_proposal: Optional[MethodologyProposal] = None
 
     created_at: str = ""
 

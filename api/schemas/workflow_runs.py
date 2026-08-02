@@ -48,6 +48,36 @@ class ResearchBriefResponse(BaseModel):
     exclusions: list[str]
 
 
+class ResearchQuestionResponse(BaseModel):
+    id: str
+    question: str
+    objective_refs: list[str]
+    priority: int
+    rationale: str
+
+
+class InformationNeedResponse(BaseModel):
+    id: str
+    research_question_id: str
+    description: str
+    priority: int
+    preferred_source_types: list[str]
+    timeframe: str
+    geography: str
+
+
+class ResearchDesignResponse(BaseModel):
+    id: str
+    research_questions: list[ResearchQuestionResponse]
+    information_needs: list[InformationNeedResponse]
+    source_strategy: list[str]
+    analysis_plan: list[str]
+    deliverable_plan: list[str]
+    assumptions: list[str]
+    limitations: list[str]
+    language: str
+
+
 class StartResearchRequest(BaseModel):
     brief: ResearchBriefRequest
     correlation_id: str | None = Field(
@@ -91,6 +121,7 @@ class WorkflowRunResponse(BaseModel):
     artifacts_available: bool = False
     external: ExternalSubmissionMetadata | None = None
     research_brief: ResearchBriefResponse | None = None
+    research_design: ResearchDesignResponse | None = None
 
 
 class WorkflowRunListResponse(BaseModel):
@@ -108,6 +139,7 @@ class StartResearchResponse(BaseModel):
     idempotent_replay: bool = False
     external: ExternalSubmissionMetadata | None = None
     research_brief: ResearchBriefResponse | None = None
+    research_design: ResearchDesignResponse | None = None
 
 
 class TaskResultItem(BaseModel):

@@ -58,8 +58,23 @@ def _brief_snapshot_for_template(workflow_service, workflow_template_id: str):
     return template.research_brief_snapshot
 
 
+def _design_snapshot_for_template(workflow_service, workflow_template_id: str):
+    try:
+        template = workflow_service.get_template(workflow_template_id)
+    except Exception:
+        return None
+    return template.research_design_snapshot
+
+
 def _brief_snapshot_for_run(workflow_service, workflow_run):
     return _brief_snapshot_for_template(
+        workflow_service,
+        workflow_run.workflow_template_id,
+    )
+
+
+def _design_snapshot_for_run(workflow_service, workflow_run):
+    return _design_snapshot_for_template(
         workflow_service,
         workflow_run.workflow_template_id,
     )
@@ -113,6 +128,7 @@ def _replay_submission_response(
         submission=submission,
         external_request_id=idempotency_key,
         research_brief=_brief_snapshot_for_run(workflow_service, workflow_run),
+        research_design=_design_snapshot_for_run(workflow_service, workflow_run),
     )
     response.headers["Location"] = f"/workflow-runs/{payload.run_id}"
     _log_research_response(
@@ -383,12 +399,17 @@ def start_research(
             idempotency_key=idempotency_key,
         )
 
+    design_snapshot = None
+    if context.workflow_template is not None:
+        design_snapshot = context.workflow_template.research_design_snapshot
+
     payload = start_research_to_response(
         context.workflow_run,
         idempotent_replay=False,
         submission=submission_result.submission if submission_result else None,
         external_request_id=idempotency_key,
         research_brief=research_brief,
+        research_design=design_snapshot,
     )
     response.headers["Location"] = f"/workflow-runs/{payload.run_id}"
     logger.info(
@@ -450,6 +471,7 @@ def get_workflow_run(
         artifacts_available=bool(artifacts),
         submission=submission,
         research_brief=_brief_snapshot_for_run(workflow_service, workflow_run),
+        research_design=_design_snapshot_for_run(workflow_service, workflow_run),
     )
 
 
@@ -500,6 +522,7 @@ def list_workflow_runs_for_project(
                 artifacts_available=bool(artifacts),
                 submission=submission,
                 research_brief=_brief_snapshot_for_run(workflow_service, workflow_run),
+                research_design=_design_snapshot_for_run(workflow_service, workflow_run),
             )
         )
     return WorkflowRunListResponse(items=items, count=len(items))
@@ -551,6 +574,7 @@ def resume_workflow_run(
             artifacts_available=bool(artifacts),
             submission=submission,
             research_brief=_brief_snapshot_for_run(workflow_service, workflow_run),
+            research_design=_design_snapshot_for_run(workflow_service, workflow_run),
         )
 
     context = agency.submit_resume(run_id)
@@ -568,6 +592,7 @@ def resume_workflow_run(
         artifacts_available=bool(artifacts),
         submission=submission,
         research_brief=_brief_snapshot_for_run(workflow_service, context.workflow_run),
+        research_design=_design_snapshot_for_run(workflow_service, context.workflow_run),
     )
     response.status_code = status.HTTP_202_ACCEPTED
     response.headers["Location"] = f"/workflow-runs/{run_id}"
