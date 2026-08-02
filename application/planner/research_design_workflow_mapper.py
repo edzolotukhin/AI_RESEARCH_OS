@@ -24,6 +24,7 @@ class ResearchDesignWorkflowMapper:
     _TASK_EXTRACT = "task-extract-evidence"
     _TASK_ANALYZE = "task-analyze"
     _TASK_REPORT = "task-write-report"
+    _TASK_REVIEW = "task-review-report"
 
     def from_research_design(
         self,
@@ -95,7 +96,22 @@ class ResearchDesignWorkflowMapper:
                 "project_id": project.id,
                 "research_design_id": design.id,
                 "purpose": "write_report",
-                "implementation_status": "planned",
+                "implementation_status": "implemented",
+            },
+        )
+        builder.add_task(
+            id=self._TASK_REVIEW,
+            name="Review research report",
+            executor_id="review",
+            executor_type=ExecutorType.AGENT,
+            depends_on=[self._TASK_REPORT],
+            metadata={
+                "stage_id": "stage-desk-research",
+                "stage_name": "Desk Research",
+                "project_id": project.id,
+                "research_design_id": design.id,
+                "purpose": "review_report",
+                "implementation_status": "implemented",
             },
         )
 

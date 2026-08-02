@@ -15,6 +15,7 @@ from api.dependencies import (
     FindingServiceDep,
     InsightServiceDep,
     ReportQueryServiceDep,
+    ReviewQueryServiceDep,
     ExecutionLogServiceDep,
     SourceServiceDep,
     WorkflowServiceDep,
@@ -140,9 +141,21 @@ def _artifact_summary_for_run(
     *,
     project_id: str,
     workflow_run_id: str,
-) -> tuple[bool, int]:
+) -> tuple[bool, int, bool, str | None]:
     count = artifact_service.count_for_run(project_id, workflow_run_id)
-    return count > 0, count
+    approved = artifact_service.approved_artifact_for_run(project_id, workflow_run_id)
+    return count > 0, count, approved is not None, approved.id if approved else None
+
+
+def _review_summary_for_run(
+    review_service,
+    *,
+    project_id: str,
+    workflow_run_id: str,
+) -> tuple[bool, int, str | None]:
+    count = review_service.count_for_run(project_id, workflow_run_id)
+    verdict = review_service.final_verdict_for_run(project_id, workflow_run_id)
+    return count > 0, count, verdict
 
 
 def _run_resource_summaries(
@@ -153,9 +166,10 @@ def _run_resource_summaries(
     insight_service,
     report_service,
     artifact_service,
+    review_service,
     project_id: str,
     workflow_run_id: str,
-) -> dict[str, bool | int]:
+) -> dict[str, bool | int | str | None]:
     sources_available, source_count = _source_summary_for_run(
         source_service,
         project_id=project_id,
@@ -181,8 +195,15 @@ def _run_resource_summaries(
         project_id=project_id,
         workflow_run_id=workflow_run_id,
     )
-    artifacts_available, artifact_count = _artifact_summary_for_run(
-        artifact_service,
+    artifacts_available, artifact_count, final_artifact_available, final_artifact_id = (
+        _artifact_summary_for_run(
+            artifact_service,
+            project_id=project_id,
+            workflow_run_id=workflow_run_id,
+        )
+    )
+    reviews_available, review_count, final_review_verdict = _review_summary_for_run(
+        review_service,
         project_id=project_id,
         workflow_run_id=workflow_run_id,
     )
@@ -199,6 +220,11 @@ def _run_resource_summaries(
         "report_count": report_count,
         "artifacts_available": artifacts_available,
         "artifact_count": artifact_count,
+        "reviews_available": reviews_available,
+        "review_count": review_count,
+        "final_review_verdict": final_review_verdict,
+        "final_artifact_available": final_artifact_available,
+        "final_artifact_id": final_artifact_id,
     }
 
 
@@ -574,6 +600,7 @@ def get_workflow_run(
     finding_service: FindingServiceDep,
     insight_service: InsightServiceDep,
     report_service: ReportQueryServiceDep,
+    review_service: ReviewQueryServiceDep,
     container: ContainerDep,
     authorization: AuthorizationDep,
     principal: PrincipalDep,
@@ -597,6 +624,7 @@ def get_workflow_run(
         insight_service=insight_service,
         report_service=report_service,
         artifact_service=artifact_service,
+        review_service=review_service,
         project_id=workflow_run.project_id,
         workflow_run_id=workflow_run.id,
     )
@@ -616,6 +644,11 @@ def get_workflow_run(
         finding_count=summaries["finding_count"],
         insights_available=summaries["insights_available"],
         insight_count=summaries["insight_count"],
+        reviews_available=summaries["reviews_available"],
+        review_count=summaries["review_count"],
+        final_review_verdict=summaries["final_review_verdict"],
+        final_artifact_available=summaries["final_artifact_available"],
+        final_artifact_id=summaries["final_artifact_id"],
         submission=submission,
         research_brief=_brief_snapshot_for_run(workflow_service, workflow_run),
         research_design=_design_snapshot_for_run(workflow_service, workflow_run),
@@ -642,6 +675,7 @@ def list_workflow_runs_for_project(
     finding_service: FindingServiceDep,
     insight_service: InsightServiceDep,
     report_service: ReportQueryServiceDep,
+    review_service: ReviewQueryServiceDep,
     container: ContainerDep,
     authorization: AuthorizationDep,
     principal: PrincipalDep,
@@ -672,6 +706,7 @@ def list_workflow_runs_for_project(
             insight_service=insight_service,
             report_service=report_service,
             artifact_service=artifact_service,
+            review_service=review_service,
             project_id=project_id,
             workflow_run_id=workflow_run.id,
         )
@@ -692,6 +727,11 @@ def list_workflow_runs_for_project(
                 finding_count=summaries["finding_count"],
                 insights_available=summaries["insights_available"],
                 insight_count=summaries["insight_count"],
+                reviews_available=summaries["reviews_available"],
+                review_count=summaries["review_count"],
+                final_review_verdict=summaries["final_review_verdict"],
+                final_artifact_available=summaries["final_artifact_available"],
+                final_artifact_id=summaries["final_artifact_id"],
                 submission=submission,
                 research_brief=_brief_snapshot_for_run(workflow_service, workflow_run),
                 research_design=_design_snapshot_for_run(workflow_service, workflow_run),
@@ -723,6 +763,7 @@ def resume_workflow_run(
     finding_service: FindingServiceDep,
     insight_service: InsightServiceDep,
     report_service: ReportQueryServiceDep,
+    review_service: ReviewQueryServiceDep,
     authorization: AuthorizationDep,
     principal: PrincipalDep,
     response: Response,
@@ -750,6 +791,7 @@ def resume_workflow_run(
             insight_service=insight_service,
             report_service=report_service,
             artifact_service=artifact_service,
+            review_service=review_service,
             project_id=workflow_run.project_id,
             workflow_run_id=workflow_run.id,
         )
@@ -769,6 +811,11 @@ def resume_workflow_run(
             finding_count=summaries["finding_count"],
             insights_available=summaries["insights_available"],
             insight_count=summaries["insight_count"],
+            reviews_available=summaries["reviews_available"],
+            review_count=summaries["review_count"],
+            final_review_verdict=summaries["final_review_verdict"],
+            final_artifact_available=summaries["final_artifact_available"],
+            final_artifact_id=summaries["final_artifact_id"],
             submission=submission,
             research_brief=_brief_snapshot_for_run(workflow_service, workflow_run),
             research_design=_design_snapshot_for_run(workflow_service, workflow_run),
@@ -789,6 +836,7 @@ def resume_workflow_run(
         insight_service=insight_service,
         report_service=report_service,
         artifact_service=artifact_service,
+        review_service=review_service,
         project_id=context.workflow_run.project_id,
         workflow_run_id=context.workflow_run.id,
     )
@@ -808,6 +856,11 @@ def resume_workflow_run(
         finding_count=summaries["finding_count"],
         insights_available=summaries["insights_available"],
         insight_count=summaries["insight_count"],
+        reviews_available=summaries["reviews_available"],
+        review_count=summaries["review_count"],
+        final_review_verdict=summaries["final_review_verdict"],
+        final_artifact_available=summaries["final_artifact_available"],
+        final_artifact_id=summaries["final_artifact_id"],
         submission=submission,
         research_brief=_brief_snapshot_for_run(workflow_service, context.workflow_run),
         research_design=_design_snapshot_for_run(workflow_service, context.workflow_run),

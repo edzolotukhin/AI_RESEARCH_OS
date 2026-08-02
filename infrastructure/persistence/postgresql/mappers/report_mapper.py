@@ -30,6 +30,9 @@ def report_to_model(report: Report, *, version: int) -> ReportModel:
         evidence_refs=list(report.evidence_refs),
         citation_registry=dict(report.citation_registry),
         deduplication_key=report.deduplication_key,
+        revision_number=report.revision_number,
+        previous_report_id=report.previous_report_id,
+        approval_status=report.approval_status,
         metadata_json=dict(report.metadata),
         version=version,
     )
@@ -55,6 +58,9 @@ def report_from_model(model: ReportModel) -> Report:
         evidence_refs=tuple(model.evidence_refs or ()),
         citation_registry=dict(model.citation_registry or {}),
         deduplication_key=model.deduplication_key,
+        revision_number=int(getattr(model, "revision_number", 1) or 1),
+        previous_report_id=getattr(model, "previous_report_id", None),
+        approval_status=str(getattr(model, "approval_status", "draft") or "draft"),
         metadata=dict(model.metadata_json or {}),
         version=model.version,
     )

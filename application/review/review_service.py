@@ -1,0 +1,302 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+from uuid import uuid4
+
+from domain.reports.report import Report
+from domain.reviews.review_result import ReviewResult
+from domain.reviews.review_verdict import ReviewVerdict
+
+from application.persistence.exceptions import ConcurrentModificationError
+from application.persistence.records import ArtifactRecord
+from application.ports.analysis_ports import FindingRepository
+from application.ports.artifact_repository import ArtifactRepository
+from application.ports.report_ports import ReportRepository
+from application.ports.review_ports import (
+    ReviewRepository,
+    SemanticReviewEngine,
+    SemanticReviewInput,
+)
+from application.report.exceptions import ReportError
+from application.report.report_service import ReportService
+from application.review.deduplication import compute_review_deduplication_key
+from application.review.exceptions import DuplicateReviewError, ReviewError
+from application.review.structural_review import (
+    compute_quality_dimensions,
+    compute_verdict,
+    run_structural_review,
+)
+from infrastructure.review.deterministic_review_engine import (
+    build_section_inputs,
+    candidates_to_issues,
+)
+
+from runtime.workflow_context import WorkflowContext
+
+_MAX_DEDUP_RETRIES = 5
+
+
+@dataclass(frozen=True)
+class ReviewSummary:
+    review_id: str
+    verdict: str
+    report_id: str
+    artifact_id: str | None
+    review_attempt: int
+    revision_count: int
+    issue_count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "review_id": self.review_id,
+            "verdict": self.verdict,
+            "report_id": self.report_id,
+            "artifact_id": self.artifact_id,
+            "review_attempt": self.review_attempt,
+            "revision_count": self.revision_count,
+            "issue_count": self.issue_count,
+        }
+
+
+class ReviewService:
+    """Independent report quality gate with bounded revision loop (DR-07)."""
+
+    def __init__(
+        self,
+        *,
+        semantic_review_engine: SemanticReviewEngine,
+        finding_repository: FindingRepository,
+        report_repository: ReportRepository,
+        artifact_repository: ArtifactRepository,
+        review_repository: ReviewRepository,
+        report_service: ReportService,
+        max_revision_attempts: int,
+        max_chars_per_section: int = 8000,
+    ) -> None:
+        self._semantic_review_engine = semantic_review_engine
+        self._finding_repository = finding_repository
+        self._report_repository = report_repository
+        self._artifact_repository = artifact_repository
+        self._review_repository = review_repository
+        self._report_service = report_service
+        self._max_revision_attempts = max_revision_attempts
+        self._max_chars_per_section = max_chars_per_section
+
+    def review_for_context(self, context: WorkflowContext) -> ReviewSummary:
+        design = self._report_service._resolve_design(context)
+        brief = self._report_service._resolve_brief(context)
+        project_id = context.project.id
+        workflow_run_id = context.workflow_run.id
+
+        revision_count = 0
+        review_attempt = 0
+
+        while True:
+            review_attempt += 1
+            report = self._latest_report(project_id, workflow_run_id)
+            if report is None:
+                raise ReviewError(
+                    f"No report available for review in run {workflow_run_id}",
+                )
+
+            artifact = self._artifact_for_report(workflow_run_id, report.id)
+            findings = self._finding_repository.list_for_project(
+                project_id,
+                workflow_run_id=workflow_run_id,
+            )
+
+            structural_issues = run_structural_review(
+                report=report,
+                brief=brief,
+                design=design,
+                findings=findings,
+                artifact=artifact,
+            )
+
+            semantic_candidates = self._semantic_review_engine.review_report(
+                SemanticReviewInput(
+                    project_id=project_id,
+                    workflow_run_id=workflow_run_id,
+                    research_design_id=design.id,
+                    report=report,
+                    brief_objectives=brief.objectives,
+                    research_questions=tuple(
+                        question.question for question in design.research_questions
+                    ),
+                    section_inputs=build_section_inputs(
+                        report,
+                        max_chars_per_section=self._max_chars_per_section,
+                    ),
+                    existing_issues=structural_issues,
+                ),
+            )
+            all_issues = structural_issues + candidates_to_issues(semantic_candidates)
+            dimensions = compute_quality_dimensions(all_issues)
+            verdict = compute_verdict(all_issues)
+
+            review_id = self._persist_review(
+                ReviewResult(
+                    id=str(uuid4()),
+                    project_id=project_id,
+                    workflow_run_id=workflow_run_id,
+                    research_design_id=design.id,
+                    report_id=report.id,
+                    artifact_id=artifact.id if artifact is not None else None,
+                    previous_report_id=report.previous_report_id,
+                    review_attempt=review_attempt,
+                    verdict=verdict,
+                    quality_dimensions=dimensions,
+                    issues=all_issues,
+                    summary=self._build_summary(verdict, all_issues),
+                    review_method=self._semantic_review_engine.method_name,
+                    created_at=datetime.now(timezone.utc).isoformat(),
+                    deduplication_key=compute_review_deduplication_key(
+                        workflow_run_id=workflow_run_id,
+                        report_id=report.id,
+                        review_attempt=review_attempt,
+                    ),
+                ),
+                workflow_run_id=workflow_run_id,
+            )
+
+            if verdict == ReviewVerdict.APPROVE:
+                approved_artifact_id = self._approve_artifact(report, artifact)
+                return ReviewSummary(
+                    review_id=review_id,
+                    verdict=verdict.value,
+                    report_id=report.id,
+                    artifact_id=approved_artifact_id,
+                    review_attempt=review_attempt,
+                    revision_count=revision_count,
+                    issue_count=len(all_issues),
+                )
+
+            if verdict == ReviewVerdict.REJECT:
+                self._reject_artifact(artifact)
+                raise ReviewError(
+                    f"Report rejected by quality gate for run {workflow_run_id}",
+                )
+
+            if revision_count >= self._max_revision_attempts:
+                self._reject_artifact(artifact)
+                raise ReviewError(
+                    f"Review revision attempts exhausted for run {workflow_run_id}",
+                )
+
+            review_result = self._review_repository.get_by_id(review_id)
+            if review_result is None:
+                raise ReviewError(f"Review record missing after persist: {review_id}")
+
+            self._report_service.revise_for_context(context, review_result=review_result)
+            revision_count += 1
+
+    def _latest_report(self, project_id: str, workflow_run_id: str) -> Report | None:
+        reports = self._report_repository.list_for_project(
+            project_id,
+            workflow_run_id=workflow_run_id,
+        )
+        if not reports:
+            return None
+        return max(reports, key=lambda item: item.revision_number)
+
+    def _artifact_for_report(
+        self,
+        workflow_run_id: str,
+        report_id: str,
+    ) -> ArtifactRecord | None:
+        for artifact in self._artifact_repository.list_for_run(workflow_run_id):
+            if artifact.report_id == report_id:
+                return artifact
+        artifacts = self._artifact_repository.list_for_run(workflow_run_id)
+        return artifacts[0] if artifacts else None
+
+    def _persist_review(self, review: ReviewResult, *, workflow_run_id: str) -> str:
+        existing = self._review_repository.get_by_deduplication_key(
+            workflow_run_id,
+            review.deduplication_key,
+        )
+        if existing is not None:
+            return existing.id
+
+        for _ in range(_MAX_DEDUP_RETRIES):
+            try:
+                self._review_repository.create(review)
+                return review.id
+            except DuplicateReviewError:
+                existing = self._review_repository.get_by_deduplication_key(
+                    workflow_run_id,
+                    review.deduplication_key,
+                )
+                if existing is not None:
+                    return existing.id
+
+        raise ReviewError(
+            f"Failed to resolve concurrent review persistence for run {workflow_run_id}",
+        )
+
+    def _approve_artifact(
+        self,
+        report: Report,
+        artifact: ArtifactRecord | None,
+    ) -> str | None:
+        if artifact is None:
+            return None
+        updated = ArtifactRecord(
+            id=artifact.id,
+            project_id=artifact.project_id,
+            artifact_type=artifact.artifact_type,
+            title=artifact.title,
+            content=artifact.content,
+            run_id=artifact.run_id,
+            status="approved",
+            version=artifact.version,
+            media_type=artifact.media_type,
+            filename=artifact.filename,
+            content_checksum=artifact.content_checksum,
+            deduplication_key=artifact.deduplication_key,
+            report_id=report.id,
+        )
+        try:
+            self._artifact_repository.save(updated, expected_version=artifact.version)
+        except ConcurrentModificationError:
+            current = self._artifact_repository.get_by_id(artifact.id)
+            if current is not None and current.status == "approved":
+                return artifact.id
+            raise
+        return artifact.id
+
+    def _reject_artifact(self, artifact: ArtifactRecord | None) -> None:
+        if artifact is None:
+            return
+        updated = ArtifactRecord(
+            id=artifact.id,
+            project_id=artifact.project_id,
+            artifact_type=artifact.artifact_type,
+            title=artifact.title,
+            content=artifact.content,
+            run_id=artifact.run_id,
+            status="rejected",
+            version=artifact.version,
+            media_type=artifact.media_type,
+            filename=artifact.filename,
+            content_checksum=artifact.content_checksum,
+            deduplication_key=artifact.deduplication_key,
+            report_id=artifact.report_id,
+        )
+        try:
+            self._artifact_repository.save(updated, expected_version=artifact.version)
+        except ConcurrentModificationError:
+            current = self._artifact_repository.get_by_id(artifact.id)
+            if current is not None and current.status == "rejected":
+                return
+            raise
+
+    @staticmethod
+    def _build_summary(verdict: ReviewVerdict, issues: tuple) -> str:
+        if verdict == ReviewVerdict.APPROVE:
+            return "Report passed quality gate"
+        if not issues:
+            return f"Review verdict: {verdict.value}"
+        return f"{verdict.value}: {issues[0].message}"

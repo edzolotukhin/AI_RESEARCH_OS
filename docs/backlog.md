@@ -31,7 +31,7 @@ Primary product objective: execute one real desk research methodology end-to-end
 - [x] **DR-04** Evidence & provenance — [ADR-018](adr/ADR-018-Evidence-and-Provenance-Boundary.md)
 - [x] **Analysis → Findings → Insights** — DR-05 implemented
 - [x] **Report writer → Markdown final artifact** — DR-06 implemented; acceptance verification in progress
-- [ ] **Review gate** — not implemented (DR-07 — next product stage)
+- [x] **Review gate** — DR-07 implemented; owner acceptance pending
 - [ ] End-to-end vertical integration test (one methodology, real inputs, inspectable artifact)
 - [ ] Client Manager integration with production runtime (if required by vertical)
 

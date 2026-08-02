@@ -73,6 +73,7 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
         self.assertEqual(tasks["task-extract-evidence"], "completed")
         self.assertEqual(tasks["task-analyze"], "completed")
         self.assertEqual(tasks["task-write-report"], "completed")
+        self.assertEqual(tasks["task-review-report"], "completed")
 
         sources = client.get(f"/projects/{project_id}/sources").json()["items"]
         self.assertGreater(len(sources), 0)

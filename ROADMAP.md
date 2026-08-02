@@ -116,11 +116,12 @@ Each stage below is merged into `main` with ADR coverage and automated tests unl
 
 - **Goal:** Structured `Report` + Markdown `Artifact` from run-scoped Findings/Insights with citation provenance.
 - **Outcome:** [ADR-020](docs/adr/ADR-020-Desk-Research-Report-Writer-and-Final-Artifact.md)
-- **Limitation:** Markdown only; DR-07 review gate not implemented; entailment not fully guaranteed.
+- **Limitation:** Markdown only; entailment not fully guaranteed; n8n production flow not implemented.
 
-### DR-07 — Review / quality gate *(next)*
+### DR-07 — Review / quality gate *(implemented — pending owner acceptance)*
 
-- **Goal:** Post-report review stage before final sign-off.
+- **Goal:** Post-report independent review before final sign-off.
+- **Delivered:** `task-review-report`, durable `ReviewResult`, deterministic structural validators, bounded revision loop, draft/approved artifact finality, review API + workflow poll contract.
 - **Status:** Not implemented.
 
 Intended vertical:
@@ -151,7 +152,7 @@ Client Brief
 | Evidence / Knowledge | `Evidence` + `KnowledgeRepository` port | Evidence durable; knowledge metadata only |
 | Analysis / Findings / Insights | `analysis` executor (LLM/deterministic) | Findings + Insights implemented (DR-05) |
 | Report / Final artifact | `report` executor (LLM/deterministic) | Markdown report + artifact implemented (DR-06) |
-| Review | — | Not implemented (DR-07 — next) |
+| Review | `review` executor (LLM/deterministic) | Quality gate implemented (DR-07) |
 | Final artifact (PDF/DOCX/PPTX) | — | Not implemented |
 
 Agent registrations (`planner`, `search`, `analysis`, `report`, `proposal`) are **runtime executors**, not proof of a finished research product.

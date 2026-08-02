@@ -60,6 +60,7 @@ class Dr06EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
         self.assertEqual(tasks["task-extract-evidence"], "completed")
         self.assertEqual(tasks["task-analyze"], "completed")
         self.assertEqual(tasks["task-write-report"], "completed")
+        self.assertEqual(tasks["task-review-report"], "completed")
         self.assertEqual(terminal["status"], "completed")
         self.assertGreater(terminal["report_count"], 0)
         self.assertGreater(terminal["artifact_count"], 0)

@@ -51,10 +51,12 @@ from domain.factories.workflow_run_factory import WorkflowRunFactory
 from application.services.evidence_service import EvidenceService
 from application.services.finding_service import FindingService, InsightService
 from application.services.report_query_service import ReportQueryService
+from application.services.review_query_service import ReviewQueryService
 from application.services.source_service import SourceService
 from application.evidence.evidence_factory import build_evidence_executor
 from application.analysis.analysis_factory import build_analysis_executor
 from application.report.report_factory import build_report_executor
+from application.review.review_factory import build_review_executor
 from application.sources.search_factory import build_search_executor
 from application.structured_output.correction_prompt import (
     RESEARCH_DESIGN_PAYLOAD_SCHEMA,
@@ -165,9 +167,13 @@ def create_application_container(
     report_repository = (
         overrides.report_repository or persistence.report_repository
     )
+    review_repository = (
+        overrides.review_repository or persistence.review_repository
+    )
     finding_service = FindingService(finding_repository=finding_repository)
     insight_service = InsightService(insight_repository=insight_repository)
     report_query_service = ReportQueryService(report_repository=report_repository)
+    review_query_service = ReviewQueryService(review_repository=review_repository)
 
     execution_log_service = ExecutionLogService(
         execution_log_store=persistence.execution_log_store,
@@ -225,6 +231,7 @@ def create_application_container(
         finding_repository=finding_repository,
         insight_repository=insight_repository,
         report_repository=report_repository,
+        review_repository=review_repository,
         artifact_repository=persistence.artifact_repository,
         llm_client=llm_client,
     )
@@ -309,6 +316,7 @@ def create_application_container(
             finding_service=finding_service,
             insight_service=insight_service,
             report_query_service=report_query_service,
+            review_query_service=review_query_service,
         )
 
     agency = Agency(
@@ -340,6 +348,7 @@ def create_application_container(
         finding_service=finding_service,
         insight_service=insight_service,
         report_query_service=report_query_service,
+        review_query_service=review_query_service,
         execution_log_service=execution_log_service,
         durable_workflow_service=durable_workflow_service,
         worker_execution_service=worker_execution_service,
@@ -387,6 +396,7 @@ def _build_agent_executors(
     finding_repository,
     insight_repository,
     report_repository,
+    review_repository,
     artifact_repository,
     llm_client,
 ) -> dict:
@@ -407,6 +417,7 @@ def _build_agent_executors(
             ("evidence", "extract_evidence"),
             ("analysis", "analyze"),
             ("report", "write_report"),
+            ("review", "review_report"),
         ):
             executors[executor_id] = DeterministicStageExecutor(stage_key=stage_key)
         return executors
@@ -443,6 +454,22 @@ def _build_agent_executors(
             source_repository=source_repository,
             report_repository=report_repository,
             artifact_repository=artifact_repository,
+            llm_client=llm_client,
+        )
+    )
+    executors["review"] = (
+        overrides.review_executor
+        if overrides.review_executor is not None
+        else build_review_executor(
+            config=config,
+            overrides=overrides,
+            finding_repository=finding_repository,
+            insight_repository=insight_repository,
+            evidence_repository=evidence_repository,
+            source_repository=source_repository,
+            report_repository=report_repository,
+            artifact_repository=artifact_repository,
+            review_repository=review_repository,
             llm_client=llm_client,
         )
     )

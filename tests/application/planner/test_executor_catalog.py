@@ -20,6 +20,7 @@ class ExecutorCatalogTests(unittest.TestCase):
                 "evidence",
                 "analysis",
                 "report",
+                "review",
                 "proposal",
             ),
         )
