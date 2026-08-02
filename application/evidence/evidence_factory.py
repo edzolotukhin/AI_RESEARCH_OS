@@ -81,4 +81,3 @@ def build_evidence_executor(
             llm_client=llm_client,
         ),
     )
-

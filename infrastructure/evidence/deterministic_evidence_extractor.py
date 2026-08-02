@@ -56,4 +56,3 @@ class DeterministicEvidenceExtractor(EvidenceExtractor):
                 ),
             )
         return candidates
-
