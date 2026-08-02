@@ -37,6 +37,7 @@ from agents.planner.planner_executor import PlannerExecutor
 from agents.proposal.proposal_agent import ProposalAgent
 
 from application.executors.agent_executor import AgentExecutor
+from application.executors.search_executor import SearchExecutor
 from application.executors.stage_executors import (
     DeterministicStageExecutor,
     UnimplementedCapabilityExecutor,
@@ -46,6 +47,8 @@ from domain.factories.project_factory import ProjectFactory
 from domain.factories.task_factory import TaskFactory
 from domain.factories.workflow_run_factory import WorkflowRunFactory
 
+from application.services.source_service import SourceService
+from application.sources.search_factory import build_search_executor
 from application.structured_output.correction_prompt import (
     RESEARCH_DESIGN_PAYLOAD_SCHEMA,
 )
@@ -140,6 +143,9 @@ def create_application_container(
         knowledge_repository=persistence.knowledge_repository,
     )
 
+    source_repository = overrides.source_repository or persistence.source_repository
+    source_service = SourceService(source_repository=source_repository)
+
     execution_log_service = ExecutionLogService(
         execution_log_store=persistence.execution_log_store,
     )
@@ -191,6 +197,7 @@ def create_application_container(
         config=config,
         overrides=overrides,
         planner_agent=planner_agent,
+        source_repository=source_repository,
     )
 
     _ensure_executor_catalog_matches_registry(
@@ -268,6 +275,7 @@ def create_application_container(
             project_service=project_service,
             workflow_service=workflow_service,
             artifact_service=artifact_service,
+            source_service=source_service,
         )
 
     agency = Agency(
@@ -294,6 +302,7 @@ def create_application_container(
         workflow_service=workflow_service,
         artifact_service=artifact_service,
         knowledge_service=knowledge_service,
+        source_service=source_service,
         execution_log_service=execution_log_service,
         durable_workflow_service=durable_workflow_service,
         worker_execution_service=worker_execution_service,
@@ -336,6 +345,7 @@ def _build_agent_executors(
     config: ApplicationConfig,
     overrides: ApplicationOverrides,
     planner_agent,
+    source_repository,
 ) -> dict:
     use_deterministic_stages = (
         overrides.deterministic_stage_executors
@@ -348,22 +358,28 @@ def _build_agent_executors(
         "proposal": AgentExecutor(agent=ProposalAgent()),
     }
 
-    desk_research_stages = (
-        ("search", "collect_sources"),
-        ("analysis", "analyze"),
-        ("report", "write_report"),
-    )
-
     if use_deterministic_stages:
-        for executor_id, stage_key in desk_research_stages:
+        for executor_id, stage_key in (
+            ("search", "collect_sources"),
+            ("analysis", "analyze"),
+            ("report", "write_report"),
+        ):
             executors[executor_id] = DeterministicStageExecutor(stage_key=stage_key)
-    else:
-        for executor_id, stage_key in desk_research_stages:
-            executors[executor_id] = UnimplementedCapabilityExecutor(
-                capability=executor_id,
-                stage=stage_key,
-            )
+        return executors
 
+    executors["search"] = build_search_executor(
+        config=config,
+        overrides=overrides,
+        source_repository=source_repository,
+    )
+    executors["analysis"] = UnimplementedCapabilityExecutor(
+        capability="analysis",
+        stage="analyze",
+    )
+    executors["report"] = UnimplementedCapabilityExecutor(
+        capability="report",
+        stage="write_report",
+    )
     return executors
 
 

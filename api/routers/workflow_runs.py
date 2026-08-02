@@ -12,6 +12,7 @@ from api.dependencies import (
     ArtifactServiceDep,
     ContainerDep,
     ExecutionLogServiceDep,
+    SourceServiceDep,
     WorkflowServiceDep,
 )
 from application.persistence.exceptions import (
@@ -78,6 +79,16 @@ def _design_snapshot_for_run(workflow_service, workflow_run):
         workflow_service,
         workflow_run.workflow_template_id,
     )
+
+
+def _source_summary_for_run(
+    source_service,
+    *,
+    project_id: str,
+    workflow_run_id: str,
+) -> tuple[bool, int]:
+    count = source_service.count_acquired_for_run(project_id, workflow_run_id)
+    return count > 0, count
 
 
 def _log_research_response(
@@ -447,6 +458,7 @@ def get_workflow_run(
     run_id: str,
     workflow_service: WorkflowServiceDep,
     artifact_service: ArtifactServiceDep,
+    source_service: SourceServiceDep,
     container: ContainerDep,
     authorization: AuthorizationDep,
     principal: PrincipalDep,
@@ -464,11 +476,18 @@ def get_workflow_run(
         submission = container.research_submission_service.get_submission_for_run(
             run_id,
         )
+    sources_available, source_count = _source_summary_for_run(
+        source_service,
+        project_id=workflow_run.project_id,
+        workflow_run_id=workflow_run.id,
+    )
     return workflow_run_to_response(
         workflow_run,
         version=version,
         results_available=bool(task_results),
         artifacts_available=bool(artifacts),
+        sources_available=sources_available,
+        source_count=source_count,
         submission=submission,
         research_brief=_brief_snapshot_for_run(workflow_service, workflow_run),
         research_design=_design_snapshot_for_run(workflow_service, workflow_run),
@@ -490,6 +509,7 @@ def list_workflow_runs_for_project(
     project_id: str,
     workflow_service: WorkflowServiceDep,
     artifact_service: ArtifactServiceDep,
+    source_service: SourceServiceDep,
     container: ContainerDep,
     authorization: AuthorizationDep,
     principal: PrincipalDep,
@@ -514,12 +534,19 @@ def list_workflow_runs_for_project(
             submission = container.research_submission_service.get_submission_for_run(
                 workflow_run.id,
             )
+        sources_available, source_count = _source_summary_for_run(
+            source_service,
+            project_id=project_id,
+            workflow_run_id=workflow_run.id,
+        )
         items.append(
             workflow_run_to_response(
                 workflow_run,
                 version=version,
                 results_available=bool(task_results),
                 artifacts_available=bool(artifacts),
+                sources_available=sources_available,
+                source_count=source_count,
                 submission=submission,
                 research_brief=_brief_snapshot_for_run(workflow_service, workflow_run),
                 research_design=_design_snapshot_for_run(workflow_service, workflow_run),
@@ -546,6 +573,7 @@ def resume_workflow_run(
     container: ContainerDep,
     workflow_service: WorkflowServiceDep,
     artifact_service: ArtifactServiceDep,
+    source_service: SourceServiceDep,
     authorization: AuthorizationDep,
     principal: PrincipalDep,
     response: Response,
@@ -567,11 +595,18 @@ def resume_workflow_run(
             submission = container.research_submission_service.get_submission_for_run(
                 run_id,
             )
+        sources_available, source_count = _source_summary_for_run(
+            source_service,
+            project_id=workflow_run.project_id,
+            workflow_run_id=workflow_run.id,
+        )
         return workflow_run_to_response(
             workflow_run,
             version=version,
             results_available=bool(task_results),
             artifacts_available=bool(artifacts),
+            sources_available=sources_available,
+            source_count=source_count,
             submission=submission,
             research_brief=_brief_snapshot_for_run(workflow_service, workflow_run),
             research_design=_design_snapshot_for_run(workflow_service, workflow_run),
@@ -585,11 +620,18 @@ def resume_workflow_run(
         submission = container.research_submission_service.get_submission_for_run(
             run_id,
         )
+    sources_available, source_count = _source_summary_for_run(
+        source_service,
+        project_id=context.workflow_run.project_id,
+        workflow_run_id=context.workflow_run.id,
+    )
     payload = workflow_run_to_response(
         context.workflow_run,
         version=None,
         results_available=bool(task_results),
         artifacts_available=bool(artifacts),
+        sources_available=sources_available,
+        source_count=source_count,
         submission=submission,
         research_brief=_brief_snapshot_for_run(workflow_service, context.workflow_run),
         research_design=_design_snapshot_for_run(workflow_service, context.workflow_run),

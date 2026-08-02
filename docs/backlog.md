@@ -26,9 +26,9 @@ Actionable future work only. Completed platform items are listed for reference; 
 Primary product objective: execute one real desk research methodology end-to-end on the current platform.
 
 - [x] **DR-01** Canonical research brief contract — [ADR-015](adr/ADR-015-Desk-Research-Brief-and-Research-Contract.md)
-- [ ] **DR-02** Research design & research questions — [ADR-016](adr/ADR-016-Desk-Research-Design-and-Semantic-Planning.md) *(in progress)*
-- [ ] **Search / source collection** — real retrieval, not stub executor behavior
-- [ ] **Evidence / knowledge** — provenance, ingestion, and query beyond metadata ports
+- [x] **DR-02** Research design & research questions — [ADR-016](adr/ADR-016-Desk-Research-Design-and-Semantic-Planning.md)
+- [ ] **DR-03** Search / source acquisition — [ADR-017](adr/ADR-017-Search-Source-Acquisition-and-Provenance-Boundary.md) *(in progress)*
+- [ ] **Evidence / knowledge** — provenance, ingestion, and query beyond metadata ports (DR-04)
 - [ ] **Analysis → Insights** — structured analytical outputs tied to sources
 - [ ] **Writer → Review → Final artifact** — report generation and review gate
 - [ ] End-to-end vertical integration test (one methodology, real inputs, inspectable artifact)

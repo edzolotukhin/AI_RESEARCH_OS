@@ -92,11 +92,16 @@ Each stage below is merged into `main` with ADR coverage and automated tests unl
 - **Goal:** Canonical structured `ResearchBrief` on Project; immutable snapshot on WorkflowTemplate; planner structured input.
 - **Outcome:** [ADR-015](docs/adr/ADR-015-Desk-Research-Brief-and-Research-Contract.md)
 
-### DR-02 — Research design & questions *(in progress)*
+### DR-02 — Research design & questions *(complete)*
 
 - **Goal:** Semantic `ResearchDesign` with research questions, information needs, and deterministic workflow mapping.
 - **Outcome:** [ADR-016](docs/adr/ADR-016-Desk-Research-Design-and-Semantic-Planning.md)
-- **Limitation:** No web search, source discovery, or evidence extraction yet (DR-03+).
+
+### DR-03 — Search & source acquisition *(in progress)*
+
+- **Goal:** Deterministic query generation, provider-neutral search, URL deduplication, bounded retrieval, durable `Source` records.
+- **Outcome:** [ADR-017](docs/adr/ADR-017-Search-Source-Acquisition-and-Provenance-Boundary.md)
+- **Limitation:** No evidence extraction yet (DR-04); analysis/report still unimplemented.
 
 Intended vertical:
 

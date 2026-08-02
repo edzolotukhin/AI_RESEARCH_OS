@@ -57,8 +57,8 @@ class ResearchEndpointTests(ApiTestCase):
         self.assertTrue(terminal["is_terminal"])
         self.assertEqual(terminal["status"], "completed")
 
-    def test_production_mode_fails_on_unimplemented_search_stage(self) -> None:
-        with self.subTest("honest failure without deterministic stage executors"):
+    def test_production_mode_fails_on_unimplemented_analysis_stage(self) -> None:
+        with self.subTest("honest failure after search completes"):
             from application.composition_root import create_application_container
             from application.config import ApplicationConfig, ApplicationOverrides
             from tests.api.helpers import close_test_client, open_test_client
@@ -74,6 +74,7 @@ class ResearchEndpointTests(ApiTestCase):
                         persistence_backend="memory",
                         background_execution_mode="embedded",
                         deterministic_stage_executors=False,
+                        search_provider="deterministic",
                     ),
                     overrides=ApplicationOverrides(
                         llm_client=create_brief_aligned_llm_mock(),
@@ -98,11 +99,22 @@ class ResearchEndpointTests(ApiTestCase):
                     ).json()["run_id"]
                     try:
                         drain_background_runs(container)
-                    except CapabilityNotImplementedError:
-                        pass
+                    except CapabilityNotImplementedError as exc:
+                        self.assertEqual(exc.capability, "analysis")
+                    else:
+                        self.fail("Expected analysis CapabilityNotImplementedError")
                     terminal = client.get(f"/workflow-runs/{run_id}").json()
                     self.assertTrue(terminal["is_terminal"])
                     self.assertEqual(terminal["status"], "failed")
+                    tasks = {
+                        task["definition_id"]: task["status"]
+                        for task in terminal["tasks"]
+                    }
+                    self.assertEqual(tasks["task-collect-evidence"], "completed")
+                    sources = container.source_service.list_sources_for_project(
+                        project_id,
+                    )
+                    self.assertGreater(len(sources), 0)
                 finally:
                     close_test_client(context, container)
                     container.shutdown()

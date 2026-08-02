@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import NullPool
 
+from application.config import ApplicationConfig
 from infrastructure.persistence.postgresql.database import Base
 from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
 
@@ -48,20 +49,15 @@ def postgresql_application_config(
     *,
     deterministic_stage_executors: bool = False,
     background_execution_mode: str = "external",
-) -> "ApplicationConfig":
-    """PostgreSQL ApplicationConfig for integration tests.
-
-    Use ``deterministic_stage_executors=True`` only when the test verifies
-    persistence, API round-trip, idempotency, or worker plumbing rather than
-    production Search/Analysis/Report behavior.
-    """
-    from application.config import ApplicationConfig
-
+    search_provider: str = "deterministic",
+) -> ApplicationConfig:
+    """PostgreSQL ApplicationConfig for integration tests."""
     return ApplicationConfig(
         persistence_backend="postgresql",
         database_url=get_test_database_url(),
         background_execution_mode=background_execution_mode,
         deterministic_stage_executors=deterministic_stage_executors,
+        search_provider=search_provider,
     )
 
 
@@ -99,6 +95,7 @@ def truncate_all_tables(engine: Engine) -> None:
         "workflow_runs",
         "workflow_templates",
         "artifacts",
+        "sources",
         "knowledge_items",
         "projects",
     ]

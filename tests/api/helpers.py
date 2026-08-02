@@ -40,6 +40,7 @@ def build_test_container(
             persistence_backend=persistence_backend,
             background_execution_mode=background_execution_mode,
             deterministic_stage_executors=True,
+            search_provider="deterministic",
         ),
         overrides=ApplicationOverrides(llm_client=mock_llm),
     )
