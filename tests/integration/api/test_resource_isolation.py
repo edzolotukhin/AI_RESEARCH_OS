@@ -131,6 +131,81 @@ class ResourceIsolationIntegrationTests(PostgreSQLIntegrationTestCase):
         runs = container_a.workflow_service.list_workflow_runs_for_project(project_id)
         self.assertEqual(len(runs), 1)
 
+    def _seed_analysis_records(
+        self,
+        *,
+        project_id: str,
+        run_id: str,
+    ) -> tuple[str, str]:
+        from datetime import datetime, timezone
+        from uuid import uuid4
+
+        from domain.findings.finding import Finding
+        from domain.findings.finding_type import FindingType
+        from domain.findings.insight import Insight
+        from infrastructure.persistence.postgresql.repositories.postgresql_finding_repository import (
+            PostgreSQLFindingRepository,
+        )
+        from infrastructure.persistence.postgresql.repositories.postgresql_insight_repository import (
+            PostgreSQLInsightRepository,
+        )
+
+        finding_repo = PostgreSQLFindingRepository(self.session_factory)
+        insight_repo = PostgreSQLInsightRepository(self.session_factory)
+        now = datetime.now(timezone.utc).isoformat()
+        finding_id = str(uuid4())
+        insight_id = str(uuid4())
+        finding_repo.create(
+            Finding(
+                id=finding_id,
+                project_id=project_id,
+                workflow_run_id=run_id,
+                research_design_id="design-1",
+                statement="Isolation finding",
+                rationale="Rationale",
+                evidence_refs=("evidence-1",),
+                finding_type=FindingType.SYNTHESIS,
+                analysis_method="deterministic",
+                deduplication_key=f"dedup-{finding_id}",
+                created_at=now,
+            ),
+        )
+        insight_repo.create(
+            Insight(
+                id=insight_id,
+                project_id=project_id,
+                workflow_run_id=run_id,
+                research_design_id="design-1",
+                statement="Isolation insight",
+                implication="Implication",
+                finding_refs=(finding_id,),
+                deduplication_key=f"dedup-{insight_id}",
+                created_at=now,
+            ),
+        )
+        return finding_id, insight_id
+
+    def test_principal_b_cannot_access_foreign_findings_or_insights(self) -> None:
+        client_a, client_b, _ = self._build_two_clients()
+        project_id, run_id = self._create_owned_run(client_a)
+        finding_id, insight_id = self._seed_analysis_records(
+            project_id=project_id,
+            run_id=run_id,
+        )
+
+        cases = [
+            ("GET", f"/projects/{project_id}/findings"),
+            ("GET", f"/findings/{finding_id}"),
+            ("GET", f"/projects/{project_id}/insights"),
+            ("GET", f"/insights/{insight_id}"),
+            ("GET", f"/workflow-runs/{run_id}"),
+        ]
+        for method, path in cases:
+            with self.subTest(method=method, path=path):
+                response = client_b.get(path)
+                self.assertEqual(response.status_code, 404, response.text)
+                self.assertEqual(response.json()["error"]["code"], "entity_not_found")
+
 
 if __name__ == "__main__":
     unittest.main()

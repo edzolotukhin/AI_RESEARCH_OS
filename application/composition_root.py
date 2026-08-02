@@ -49,8 +49,10 @@ from domain.factories.task_factory import TaskFactory
 from domain.factories.workflow_run_factory import WorkflowRunFactory
 
 from application.services.evidence_service import EvidenceService
+from application.services.finding_service import FindingService, InsightService
 from application.services.source_service import SourceService
 from application.evidence.evidence_factory import build_evidence_executor
+from application.analysis.analysis_factory import build_analysis_executor
 from application.sources.search_factory import build_search_executor
 from application.structured_output.correction_prompt import (
     RESEARCH_DESIGN_PAYLOAD_SCHEMA,
@@ -152,6 +154,14 @@ def create_application_container(
         overrides.evidence_repository or persistence.evidence_repository
     )
     evidence_service = EvidenceService(evidence_repository=evidence_repository)
+    finding_repository = (
+        overrides.finding_repository or persistence.finding_repository
+    )
+    insight_repository = (
+        overrides.insight_repository or persistence.insight_repository
+    )
+    finding_service = FindingService(finding_repository=finding_repository)
+    insight_service = InsightService(insight_repository=insight_repository)
 
     execution_log_service = ExecutionLogService(
         execution_log_store=persistence.execution_log_store,
@@ -206,6 +216,8 @@ def create_application_container(
         planner_agent=planner_agent,
         source_repository=source_repository,
         evidence_repository=evidence_repository,
+        finding_repository=finding_repository,
+        insight_repository=insight_repository,
         llm_client=llm_client,
     )
 
@@ -286,6 +298,8 @@ def create_application_container(
             artifact_service=artifact_service,
             source_service=source_service,
             evidence_service=evidence_service,
+            finding_service=finding_service,
+            insight_service=insight_service,
         )
 
     agency = Agency(
@@ -314,6 +328,8 @@ def create_application_container(
         knowledge_service=knowledge_service,
         source_service=source_service,
         evidence_service=evidence_service,
+        finding_service=finding_service,
+        insight_service=insight_service,
         execution_log_service=execution_log_service,
         durable_workflow_service=durable_workflow_service,
         worker_execution_service=worker_execution_service,
@@ -358,6 +374,8 @@ def _build_agent_executors(
     planner_agent,
     source_repository,
     evidence_repository,
+    finding_repository,
+    insight_repository,
     llm_client,
 ) -> dict:
     use_deterministic_stages = (
@@ -393,9 +411,13 @@ def _build_agent_executors(
         source_repository=source_repository,
         llm_client=llm_client,
     )
-    executors["analysis"] = UnimplementedCapabilityExecutor(
-        capability="analysis",
-        stage="analyze",
+    executors["analysis"] = build_analysis_executor(
+        config=config,
+        overrides=overrides,
+        evidence_repository=evidence_repository,
+        finding_repository=finding_repository,
+        insight_repository=insight_repository,
+        llm_client=llm_client,
     )
     executors["report"] = UnimplementedCapabilityExecutor(
         capability="report",

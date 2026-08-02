@@ -74,6 +74,7 @@ The following statuses are used throughout the project.
 | ADR-016 | Desk Research Design and Semantic Planning | Active (DR-02 complete) |
 | ADR-017 | Search, Source Acquisition and Provenance Boundary | Active (DR-03) |
 | ADR-018 | Evidence and Provenance Boundary | Active (DR-04) |
+| ADR-019 | Desk Research Analysis, Findings and Insights | Active (DR-05) |
 
 Additional ADRs will be added as the architecture evolves.
 

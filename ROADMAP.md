@@ -106,7 +106,7 @@ Each stage below is merged into `main` with ADR coverage and automated tests unl
 
 - **Goal:** Grounded, durable `Evidence` extracted from acquired sources with run/design/source checksum binding.
 - **Outcome:** [ADR-018](docs/adr/ADR-018-Evidence-and-Provenance-Boundary.md)
-- **Limitation:** Analysis/report still unimplemented (DR-05+).
+- **Limitation:** Report writing still unimplemented (DR-06).
 
 Intended vertical:
 
@@ -134,9 +134,8 @@ Client Brief
 | Source collection / provenance | `Source` persistence + API | Integrated (DR-03) |
 | Evidence extraction | `evidence` executor + grounding validator | Integrated (DR-04) |
 | Evidence / Knowledge | `Evidence` + `KnowledgeRepository` port | Evidence durable; knowledge metadata only |
-| Analysis | `analysis` executor stub | Not product-complete (DR-05) |
-| Insights | — | Not implemented |
-| Writer / Report | `report` executor stub | Not product-complete |
+| Analysis / Findings / Insights | `analysis` executor (LLM/deterministic) | Findings + Insights implemented (DR-05) |
+| Report | `report` executor stub | Not product-complete (DR-06) |
 | Review | — | Not implemented |
 | Final artifact | Artifact metadata API | Blob lifecycle incomplete |
 

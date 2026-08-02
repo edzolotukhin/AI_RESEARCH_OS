@@ -35,6 +35,12 @@ from infrastructure.persistence.memory.in_memory_workflow_run_repository import 
 from infrastructure.persistence.memory.in_memory_evidence_repository import (
     InMemoryEvidenceRepository,
 )
+from infrastructure.persistence.memory.in_memory_finding_repository import (
+    InMemoryFindingRepository,
+)
+from infrastructure.persistence.memory.in_memory_insight_repository import (
+    InMemoryInsightRepository,
+)
 from infrastructure.persistence.memory.in_memory_source_repository import (
     InMemorySourceRepository,
 )
@@ -70,6 +76,12 @@ from infrastructure.persistence.postgresql.repositories.postgresql_workflow_run_
 from infrastructure.persistence.postgresql.repositories.postgresql_evidence_repository import (
     PostgreSQLEvidenceRepository,
 )
+from infrastructure.persistence.postgresql.repositories.postgresql_finding_repository import (
+    PostgreSQLFindingRepository,
+)
+from infrastructure.persistence.postgresql.repositories.postgresql_insight_repository import (
+    PostgreSQLInsightRepository,
+)
 from infrastructure.persistence.postgresql.repositories.postgresql_source_repository import (
     PostgreSQLSourceRepository,
 )
@@ -91,6 +103,8 @@ class PersistenceBundle:
     knowledge_repository: object
     source_repository: object
     evidence_repository: object
+    finding_repository: object
+    insight_repository: object
     execution_log_store: object
     engine: Engine | None = None
 
@@ -122,6 +136,8 @@ def build_persistence_bundle(
             knowledge_repository=InMemoryKnowledgeRepository(),
             source_repository=InMemorySourceRepository(),
             evidence_repository=InMemoryEvidenceRepository(),
+            finding_repository=InMemoryFindingRepository(),
+            insight_repository=InMemoryInsightRepository(),
             execution_log_store=InMemoryExecutionLogStore(),
         )
 
@@ -138,6 +154,8 @@ def build_persistence_bundle(
             knowledge_repository=InMemoryKnowledgeRepository(),
             source_repository=InMemorySourceRepository(),
             evidence_repository=InMemoryEvidenceRepository(),
+            finding_repository=InMemoryFindingRepository(),
+            insight_repository=InMemoryInsightRepository(),
             execution_log_store=InMemoryExecutionLogStore(),
         )
 
@@ -164,6 +182,8 @@ def build_persistence_bundle(
             knowledge_repository=PostgreSQLKnowledgeRepository(session_factory),
             source_repository=PostgreSQLSourceRepository(session_factory),
             evidence_repository=PostgreSQLEvidenceRepository(session_factory),
+            finding_repository=PostgreSQLFindingRepository(session_factory),
+            insight_repository=PostgreSQLInsightRepository(session_factory),
             execution_log_store=PostgreSQLExecutionLogStore(session_factory),
             engine=engine,
         )

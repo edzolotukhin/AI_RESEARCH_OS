@@ -123,6 +123,10 @@ class WorkflowRunResponse(BaseModel):
     source_count: int = 0
     evidence_available: bool = False
     evidence_count: int = 0
+    findings_available: bool = False
+    finding_count: int = 0
+    insights_available: bool = False
+    insight_count: int = 0
     external: ExternalSubmissionMetadata | None = None
     research_brief: ResearchBriefResponse | None = None
     research_design: ResearchDesignResponse | None = None

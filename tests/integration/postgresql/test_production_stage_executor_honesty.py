@@ -1,4 +1,4 @@
-"""PostgreSQL integration test for DR-03 production stage executor honesty."""
+"""PostgreSQL integration test for production stage executor honesty."""
 
 from __future__ import annotations
 
@@ -26,13 +26,14 @@ from tests.integration.postgresql.helpers import (
 
 
 class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCase):
-    def test_production_runtime_fails_honestly_on_unimplemented_analysis(self) -> None:
+    def test_production_runtime_fails_honestly_on_unimplemented_report(self) -> None:
         mock_llm = create_brief_aligned_llm_mock()
         container = create_application_container(
             config=postgresql_application_config(
                 deterministic_stage_executors=False,
                 search_provider="deterministic",
                 evidence_extractor="deterministic",
+                analysis_engine="deterministic",
             ),
             overrides=ApplicationOverrides(llm_client=mock_llm),
         )
@@ -45,7 +46,7 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
             container._test_api_key_plaintext,
         ))
 
-        project_id = client.post("/projects", json={"name": "PG DR-03 Honesty"}).json()["id"]
+        project_id = client.post("/projects", json={"name": "PG DR-05 Honesty"}).json()["id"]
         run_id = client.post(
             f"/projects/{project_id}/research",
             json={"brief": BRIEF},
@@ -54,10 +55,10 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
         try:
             drain_background_runs(container)
         except CapabilityNotImplementedError as exc:
-            self.assertEqual(exc.capability, "analysis")
-            self.assertEqual(exc.stage, "analyze")
+            self.assertEqual(exc.capability, "report")
+            self.assertEqual(exc.stage, "write_report")
         else:
-            self.fail("Expected CapabilityNotImplementedError from production analysis stage")
+            self.fail("Expected CapabilityNotImplementedError from production report stage")
 
         terminal = client.get(f"/workflow-runs/{run_id}").json()
         self.assertTrue(terminal["is_terminal"])
@@ -66,12 +67,16 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
         self.assertGreater(terminal["source_count"], 0)
         self.assertTrue(terminal["evidence_available"])
         self.assertGreater(terminal["evidence_count"], 0)
+        self.assertTrue(terminal["findings_available"])
+        self.assertGreater(terminal["finding_count"], 0)
+        self.assertTrue(terminal["insights_available"])
+        self.assertGreater(terminal["insight_count"], 0)
 
         tasks = {task["definition_id"]: task["status"] for task in terminal["tasks"]}
         self.assertEqual(tasks["task-collect-evidence"], "completed")
         self.assertEqual(tasks["task-extract-evidence"], "completed")
-        self.assertEqual(tasks["task-analyze"], "failed")
-        self.assertEqual(tasks["task-write-report"], "skipped")
+        self.assertEqual(tasks["task-analyze"], "completed")
+        self.assertEqual(tasks["task-write-report"], "failed")
 
         sources = client.get(f"/projects/{project_id}/sources").json()["items"]
         self.assertGreater(len(sources), 0)
