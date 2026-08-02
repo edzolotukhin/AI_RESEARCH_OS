@@ -122,4 +122,3 @@ class LlmEvidenceExtractor(EvidenceExtractor):
             if validation.is_valid and isinstance(validation.data, dict):
                 return validation.data
         raise ValueError("LLM evidence payload must be a JSON object")
-
