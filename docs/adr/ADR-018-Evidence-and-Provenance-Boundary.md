@@ -54,8 +54,9 @@ sufficient alone.
 **Run-scoped semantic provenance:** aggregate Source ref arrays may contain merged
 provenance from multiple runs. Evidence extraction resolves authoritative
 run-scoped question/need IDs from `metadata.discovery_records[]` filtered by
-`(workflow_run_id, research_design_id)`. Aggregate Source arrays are not used
-when shared across runs. Extractor/LLM output is never authoritative for IDs;
+`(workflow_run_id, research_design_id)`, preferring explicit
+`information_need_id` / `research_question_id` fields on each record. Aggregate
+Source arrays are not used when a Source is shared across runs. Extractor/LLM output is never authoritative for IDs;
 application validation replaces refs before persistence.
 
 ### Bounded extraction input

@@ -72,6 +72,76 @@ def _shared_source(*, content: str) -> Source:
 
 
 class RunScopedProvenanceTests(unittest.TestCase):
+    def test_shared_source_with_same_local_ids_resolves_per_run_design(self) -> None:
+        source = Source(
+            id="source-shared",
+            project_id="project-1",
+            url="https://example.com/shared",
+            canonical_url="https://example.com/shared",
+            title="Shared report",
+            retrieved_at=datetime.now(timezone.utc).isoformat(),
+            retrieval_status=RetrievalStatus.ACQUIRED,
+            content_text="Acquired market report body text.",
+            content_checksum="shared-checksum",
+            query_refs=("sq-in-rq-1",),
+            research_question_refs=("rq-1",),
+            information_need_refs=("in-rq-1",),
+            workflow_run_refs=("run-a", "run-b"),
+            research_design_refs=("design-a", "design-b"),
+            metadata={
+                "discovery_records": [
+                    {
+                        "provider": "deterministic",
+                        "query_id": "sq-in-rq-1",
+                        "rank": 1,
+                        "workflow_run_id": "run-a",
+                        "research_design_id": "design-a",
+                        "research_question_id": "rq-1",
+                        "information_need_id": "in-rq-1",
+                    },
+                    {
+                        "provider": "deterministic",
+                        "query_id": "sq-in-rq-1",
+                        "rank": 1,
+                        "workflow_run_id": "run-b",
+                        "research_design_id": "design-b",
+                        "research_question_id": "rq-1",
+                        "information_need_id": "in-rq-1",
+                    },
+                ],
+            },
+        )
+        design_a = _design(
+            design_id="design-a",
+            rq_id="rq-1",
+            in_id="in-rq-1",
+            question="Question A",
+        )
+        design_b = _design(
+            design_id="design-b",
+            rq_id="rq-1",
+            in_id="in-rq-1",
+            question="Question B",
+        )
+
+        context_a = resolve_run_scoped_context(
+            source=source,
+            design=design_a,
+            workflow_run_id="run-a",
+            research_design_id="design-a",
+        )
+        context_b = resolve_run_scoped_context(
+            source=source,
+            design=design_b,
+            workflow_run_id="run-b",
+            research_design_id="design-b",
+        )
+
+        self.assertEqual(context_a.information_need_ids, ("in-rq-1",))
+        self.assertEqual(context_a.research_question_ids, ("rq-1",))
+        self.assertEqual(context_b.information_need_ids, ("in-rq-1",))
+        self.assertEqual(context_b.research_question_ids, ("rq-1",))
+
     def test_shared_source_resolves_run_specific_needs_from_discovery_records(self) -> None:
         source = _shared_source(content="Acquired market report body text.")
         design_a = _design(

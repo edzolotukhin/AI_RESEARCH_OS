@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 from application.persistence.exceptions import AccessDeniedError, EntityNotFoundError
+from application.persistence.records import ArtifactRecord
 from application.security.principal import AuthenticatedPrincipal
 from application.services.artifact_service import ArtifactService
 from application.services.project_service import ProjectService
 from application.services.workflow_service import WorkflowService
 from application.services.evidence_service import EvidenceService
 from application.services.finding_service import FindingService, InsightService
+from application.services.report_query_service import ReportQueryService
 from application.services.source_service import SourceService
 from domain.evidence.evidence import Evidence
 from domain.findings.finding import Finding
 from domain.findings.insight import Insight
 from domain.project import Project
+from domain.reports.report import Report
 from domain.sources.source import Source
 from domain.workflow_run import WorkflowRun
 
@@ -29,6 +32,7 @@ class AuthorizationService:
         evidence_service: EvidenceService | None = None,
         finding_service: FindingService | None = None,
         insight_service: InsightService | None = None,
+        report_query_service: ReportQueryService | None = None,
     ) -> None:
         self._project_service = project_service
         self._workflow_service = workflow_service
@@ -37,6 +41,7 @@ class AuthorizationService:
         self._evidence_service = evidence_service
         self._finding_service = finding_service
         self._insight_service = insight_service
+        self._report_query_service = report_query_service
 
     def require_project(
         self,
@@ -120,6 +125,34 @@ class AuthorizationService:
             raise AccessDeniedError(str(exc)) from exc
         project = self.require_project(principal, insight.project_id)
         return insight, project
+
+    def require_report(
+        self,
+        principal: AuthenticatedPrincipal,
+        report_id: str,
+    ) -> tuple[Report, Project]:
+        if self._report_query_service is None:
+            raise AccessDeniedError(f"Report not found: {report_id}")
+        try:
+            report = self._report_query_service.get_report(report_id)
+        except EntityNotFoundError as exc:
+            raise AccessDeniedError(str(exc)) from exc
+        project = self.require_project(principal, report.project_id)
+        return report, project
+
+    def require_artifact(
+        self,
+        principal: AuthenticatedPrincipal,
+        artifact_id: str,
+    ) -> tuple[ArtifactRecord, Project]:
+        if self._artifact_service is None:
+            raise AccessDeniedError(f"Artifact not found: {artifact_id}")
+        try:
+            artifact = self._artifact_service.get_artifact(artifact_id)
+        except EntityNotFoundError as exc:
+            raise AccessDeniedError(str(exc)) from exc
+        project = self.require_project(principal, artifact.project_id)
+        return artifact, project
 
     def list_visible_projects(
         self,

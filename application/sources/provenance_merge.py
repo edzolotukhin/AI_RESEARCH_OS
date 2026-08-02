@@ -48,6 +48,8 @@ def build_discovery_record(
     rank: int,
     workflow_run_id: str,
     research_design_id: str,
+    research_question_id: str = "",
+    information_need_id: str = "",
 ) -> dict[str, Any]:
     return {
         "provider": provider,
@@ -55,6 +57,8 @@ def build_discovery_record(
         "rank": rank,
         "workflow_run_id": workflow_run_id,
         "research_design_id": research_design_id,
+        "research_question_id": research_question_id,
+        "information_need_id": information_need_id,
     }
 
 
@@ -68,6 +72,7 @@ def merge_discovery_records(
             str(item.get("provider", "")),
             str(item.get("query_id", "")),
             str(item.get("workflow_run_id", "")),
+            str(item.get("research_design_id", "")),
             str(item.get("rank", "")),
         )
         for item in merged
@@ -77,6 +82,7 @@ def merge_discovery_records(
             str(record.get("provider", "")),
             str(record.get("query_id", "")),
             str(record.get("workflow_run_id", "")),
+            str(record.get("research_design_id", "")),
             str(record.get("rank", "")),
         )
         if key in seen:
@@ -112,6 +118,36 @@ def apply_provenance_delta(existing: Source, delta: ProvenanceDelta) -> Source:
     )
     existing.metadata = metadata
     return existing
+
+
+def discovery_record_key(record: dict[str, Any]) -> tuple[str, str, str, str, str]:
+    return (
+        str(record.get("provider", "")),
+        str(record.get("query_id", "")),
+        str(record.get("workflow_run_id", "")),
+        str(record.get("research_design_id", "")),
+        str(record.get("rank", "")),
+    )
+
+
+def has_discovery_record(
+    existing_records: list[dict[str, Any]],
+    record: dict[str, Any],
+) -> bool:
+    target = discovery_record_key(record)
+    return any(discovery_record_key(item) == target for item in existing_records)
+
+
+def missing_discovery_records(
+    existing: Source,
+    additions: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    existing_records = list(existing.metadata.get("discovery_records") or [])
+    return tuple(
+        record
+        for record in additions
+        if not has_discovery_record(existing_records, record)
+    )
 
 
 def apply_first_acquisition(existing: Source, incoming: Source) -> Source:

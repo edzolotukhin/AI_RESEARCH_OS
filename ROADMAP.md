@@ -102,11 +102,26 @@ Each stage below is merged into `main` with ADR coverage and automated tests unl
 - **Goal:** Deterministic query generation, provider-neutral search, URL deduplication, bounded retrieval, durable `Source` records.
 - **Outcome:** [ADR-017](docs/adr/ADR-017-Search-Source-Acquisition-and-Provenance-Boundary.md)
 
-### DR-04 — Evidence & provenance *(in progress)*
+### DR-04 — Evidence & provenance *(complete)*
 
 - **Goal:** Grounded, durable `Evidence` extracted from acquired sources with run/design/source checksum binding.
 - **Outcome:** [ADR-018](docs/adr/ADR-018-Evidence-and-Provenance-Boundary.md)
-- **Limitation:** Report writing still unimplemented (DR-06).
+
+### DR-05 — Analysis, findings & insights *(complete)*
+
+- **Goal:** Run-scoped Findings and Insights with provenance to Evidence.
+- **Outcome:** DR-05 analytical layer integrated with deterministic and LLM engines.
+
+### DR-06 — Report writer & final artifact *(implemented — acceptance verification)*
+
+- **Goal:** Structured `Report` + Markdown `Artifact` from run-scoped Findings/Insights with citation provenance.
+- **Outcome:** [ADR-020](docs/adr/ADR-020-Desk-Research-Report-Writer-and-Final-Artifact.md)
+- **Limitation:** Markdown only; DR-07 review gate not implemented; entailment not fully guaranteed.
+
+### DR-07 — Review / quality gate *(next)*
+
+- **Goal:** Post-report review stage before final sign-off.
+- **Status:** Not implemented.
 
 Intended vertical:
 
@@ -135,9 +150,9 @@ Client Brief
 | Evidence extraction | `evidence` executor + grounding validator | Integrated (DR-04) |
 | Evidence / Knowledge | `Evidence` + `KnowledgeRepository` port | Evidence durable; knowledge metadata only |
 | Analysis / Findings / Insights | `analysis` executor (LLM/deterministic) | Findings + Insights implemented (DR-05) |
-| Report | `report` executor stub | Not product-complete (DR-06) |
-| Review | — | Not implemented |
-| Final artifact | Artifact metadata API | Blob lifecycle incomplete |
+| Report / Final artifact | `report` executor (LLM/deterministic) | Markdown report + artifact implemented (DR-06) |
+| Review | — | Not implemented (DR-07 — next) |
+| Final artifact (PDF/DOCX/PPTX) | — | Not implemented |
 
 Agent registrations (`planner`, `search`, `analysis`, `report`, `proposal`) are **runtime executors**, not proof of a finished research product.
 

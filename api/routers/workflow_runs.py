@@ -14,6 +14,7 @@ from api.dependencies import (
     EvidenceServiceDep,
     FindingServiceDep,
     InsightServiceDep,
+    ReportQueryServiceDep,
     ExecutionLogServiceDep,
     SourceServiceDep,
     WorkflowServiceDep,
@@ -124,12 +125,34 @@ def _insight_summary_for_run(
     return count > 0, count
 
 
+def _report_summary_for_run(
+    report_service,
+    *,
+    project_id: str,
+    workflow_run_id: str,
+) -> tuple[bool, int]:
+    count = report_service.count_for_run(project_id, workflow_run_id)
+    return count > 0, count
+
+
+def _artifact_summary_for_run(
+    artifact_service,
+    *,
+    project_id: str,
+    workflow_run_id: str,
+) -> tuple[bool, int]:
+    count = artifact_service.count_for_run(project_id, workflow_run_id)
+    return count > 0, count
+
+
 def _run_resource_summaries(
     *,
     source_service,
     evidence_service,
     finding_service,
     insight_service,
+    report_service,
+    artifact_service,
     project_id: str,
     workflow_run_id: str,
 ) -> dict[str, bool | int]:
@@ -153,6 +176,16 @@ def _run_resource_summaries(
         project_id=project_id,
         workflow_run_id=workflow_run_id,
     )
+    reports_available, report_count = _report_summary_for_run(
+        report_service,
+        project_id=project_id,
+        workflow_run_id=workflow_run_id,
+    )
+    artifacts_available, artifact_count = _artifact_summary_for_run(
+        artifact_service,
+        project_id=project_id,
+        workflow_run_id=workflow_run_id,
+    )
     return {
         "sources_available": sources_available,
         "source_count": source_count,
@@ -162,6 +195,10 @@ def _run_resource_summaries(
         "finding_count": finding_count,
         "insights_available": insights_available,
         "insight_count": insight_count,
+        "reports_available": reports_available,
+        "report_count": report_count,
+        "artifacts_available": artifacts_available,
+        "artifact_count": artifact_count,
     }
 
 
@@ -536,6 +573,7 @@ def get_workflow_run(
     evidence_service: EvidenceServiceDep,
     finding_service: FindingServiceDep,
     insight_service: InsightServiceDep,
+    report_service: ReportQueryServiceDep,
     container: ContainerDep,
     authorization: AuthorizationDep,
     principal: PrincipalDep,
@@ -547,7 +585,6 @@ def get_workflow_run(
     except Exception:
         version = None
     task_results = workflow_service.get_task_results(run_id)
-    artifacts = artifact_service.list_artifacts_for_run(run_id)
     submission = None
     if container.research_submission_service is not None:
         submission = container.research_submission_service.get_submission_for_run(
@@ -558,6 +595,8 @@ def get_workflow_run(
         evidence_service=evidence_service,
         finding_service=finding_service,
         insight_service=insight_service,
+        report_service=report_service,
+        artifact_service=artifact_service,
         project_id=workflow_run.project_id,
         workflow_run_id=workflow_run.id,
     )
@@ -565,7 +604,10 @@ def get_workflow_run(
         workflow_run,
         version=version,
         results_available=bool(task_results),
-        artifacts_available=bool(artifacts),
+        artifacts_available=summaries["artifacts_available"],
+        artifact_count=summaries["artifact_count"],
+        reports_available=summaries["reports_available"],
+        report_count=summaries["report_count"],
         sources_available=summaries["sources_available"],
         source_count=summaries["source_count"],
         evidence_available=summaries["evidence_available"],
@@ -599,6 +641,7 @@ def list_workflow_runs_for_project(
     evidence_service: EvidenceServiceDep,
     finding_service: FindingServiceDep,
     insight_service: InsightServiceDep,
+    report_service: ReportQueryServiceDep,
     container: ContainerDep,
     authorization: AuthorizationDep,
     principal: PrincipalDep,
@@ -617,7 +660,6 @@ def list_workflow_runs_for_project(
         except Exception:
             version = None
         task_results = workflow_service.get_task_results(workflow_run.id)
-        artifacts = artifact_service.list_artifacts_for_run(workflow_run.id)
         submission = None
         if container.research_submission_service is not None:
             submission = container.research_submission_service.get_submission_for_run(
@@ -628,6 +670,8 @@ def list_workflow_runs_for_project(
             evidence_service=evidence_service,
             finding_service=finding_service,
             insight_service=insight_service,
+            report_service=report_service,
+            artifact_service=artifact_service,
             project_id=project_id,
             workflow_run_id=workflow_run.id,
         )
@@ -636,7 +680,10 @@ def list_workflow_runs_for_project(
                 workflow_run,
                 version=version,
                 results_available=bool(task_results),
-                artifacts_available=bool(artifacts),
+                artifacts_available=summaries["artifacts_available"],
+                artifact_count=summaries["artifact_count"],
+                reports_available=summaries["reports_available"],
+                report_count=summaries["report_count"],
                 sources_available=summaries["sources_available"],
                 source_count=summaries["source_count"],
                 evidence_available=summaries["evidence_available"],
@@ -675,6 +722,7 @@ def resume_workflow_run(
     evidence_service: EvidenceServiceDep,
     finding_service: FindingServiceDep,
     insight_service: InsightServiceDep,
+    report_service: ReportQueryServiceDep,
     authorization: AuthorizationDep,
     principal: PrincipalDep,
     response: Response,
@@ -690,7 +738,6 @@ def resume_workflow_run(
         except Exception:
             version = None
         task_results = workflow_service.get_task_results(run_id)
-        artifacts = artifact_service.list_artifacts_for_run(run_id)
         submission = None
         if container.research_submission_service is not None:
             submission = container.research_submission_service.get_submission_for_run(
@@ -701,6 +748,8 @@ def resume_workflow_run(
             evidence_service=evidence_service,
             finding_service=finding_service,
             insight_service=insight_service,
+            report_service=report_service,
+            artifact_service=artifact_service,
             project_id=workflow_run.project_id,
             workflow_run_id=workflow_run.id,
         )
@@ -708,7 +757,10 @@ def resume_workflow_run(
             workflow_run,
             version=version,
             results_available=bool(task_results),
-            artifacts_available=bool(artifacts),
+            artifacts_available=summaries["artifacts_available"],
+            artifact_count=summaries["artifact_count"],
+            reports_available=summaries["reports_available"],
+            report_count=summaries["report_count"],
             sources_available=summaries["sources_available"],
             source_count=summaries["source_count"],
             evidence_available=summaries["evidence_available"],
@@ -735,6 +787,8 @@ def resume_workflow_run(
         evidence_service=evidence_service,
         finding_service=finding_service,
         insight_service=insight_service,
+        report_service=report_service,
+        artifact_service=artifact_service,
         project_id=context.workflow_run.project_id,
         workflow_run_id=context.workflow_run.id,
     )
@@ -742,7 +796,10 @@ def resume_workflow_run(
         context.workflow_run,
         version=None,
         results_available=bool(task_results),
-        artifacts_available=bool(artifacts),
+        artifacts_available=summaries["artifacts_available"],
+        artifact_count=summaries["artifact_count"],
+        reports_available=summaries["reports_available"],
+        report_count=summaries["report_count"],
         sources_available=summaries["sources_available"],
         source_count=summaries["source_count"],
         evidence_available=summaries["evidence_available"],

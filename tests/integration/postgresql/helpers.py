@@ -52,6 +52,7 @@ def postgresql_application_config(
     search_provider: str = "deterministic",
     evidence_extractor: str = "deterministic",
     analysis_engine: str = "deterministic",
+    report_engine: str = "deterministic",
 ) -> ApplicationConfig:
     """PostgreSQL ApplicationConfig for integration tests."""
     return ApplicationConfig(
@@ -62,6 +63,7 @@ def postgresql_application_config(
         search_provider=search_provider,
         evidence_extractor=evidence_extractor,
         analysis_engine=analysis_engine,
+        report_engine=report_engine,
     )
 
 

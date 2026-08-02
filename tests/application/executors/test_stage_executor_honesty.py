@@ -11,7 +11,7 @@ from application.config import ApplicationConfig, ApplicationOverrides
 from application.exceptions.capability_not_implemented_error import (
     CapabilityNotImplementedError,
 )
-from application.executors.analysis_executor import AnalysisExecutor
+from application.executors.report_executor import ReportExecutor
 from application.executors.evidence_executor import EvidenceExecutor
 from application.executors.search_executor import SearchExecutor
 from application.executors.stage_executors import (
@@ -81,6 +81,7 @@ class StageExecutorHonestyTests(unittest.TestCase):
                     search_provider="deterministic",
                     evidence_extractor="deterministic",
                     analysis_engine="deterministic",
+                    report_engine="deterministic",
                 ),
                 overrides=ApplicationOverrides(
                     llm_client=create_brief_aligned_llm_mock(),
@@ -90,7 +91,7 @@ class StageExecutorHonestyTests(unittest.TestCase):
             self.assertIsInstance(registry["search"], SearchExecutor)
             self.assertIsInstance(registry["evidence"], EvidenceExecutor)
             self.assertIsInstance(registry["analysis"], AnalysisExecutor)
-            self.assertIsInstance(registry["report"], UnimplementedCapabilityExecutor)
+            self.assertIsInstance(registry["report"], ReportExecutor)
 
     def test_deterministic_stage_executors_only_when_explicitly_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

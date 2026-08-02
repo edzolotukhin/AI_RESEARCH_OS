@@ -27,6 +27,7 @@ from application.sources.provenance_merge import (
     has_immutable_acquired_content,
     is_successful_acquisition,
     merge_refs,
+    missing_discovery_records,
 )
 from application.sources.search_query_builder import SearchQueryBuilder
 from application.sources.url_canonicalizer import canonicalize_url
@@ -223,27 +224,42 @@ class SourceAcquisitionService:
         incoming: Source | None,
     ) -> Source:
         for attempt in range(_MAX_PROVENANCE_RETRIES):
+            pending_records = missing_discovery_records(
+                existing,
+                delta.discovery_records,
+            )
+            before_run_refs = existing.workflow_run_refs
+            before_design_refs = existing.research_design_refs
+            before_query_refs = existing.query_refs
+            before_question_refs = existing.research_question_refs
+            before_need_refs = existing.information_need_refs
+            before_metadata = dict(existing.metadata or {})
+            before_content = existing.content_text
+
             merged = apply_provenance_delta(existing, delta)
             if incoming is not None and not has_immutable_acquired_content(merged):
                 merged = apply_first_acquisition(merged, incoming)
+
             if (
-                merged.query_refs == existing.query_refs
-                and merged.research_question_refs == existing.research_question_refs
-                and merged.information_need_refs == existing.information_need_refs
-                and merged.workflow_run_refs == existing.workflow_run_refs
-                and merged.research_design_refs == existing.research_design_refs
-                and merged.metadata == existing.metadata
-                and merged.content_text == existing.content_text
+                pending_records
+                or merged.workflow_run_refs != before_run_refs
+                or merged.research_design_refs != before_design_refs
+                or merged.query_refs != before_query_refs
+                or merged.research_question_refs != before_question_refs
+                or merged.information_need_refs != before_need_refs
+                or merged.metadata != before_metadata
+                or merged.content_text != before_content
             ):
-                return existing
-            try:
-                self._source_repository.save(merged, expected_version=merged.version)
-                return merged
-            except ConcurrentModificationError:
-                reloaded = self._source_repository.get_by_id(existing.id)
-                if reloaded is None:
-                    break
-                existing = reloaded
+                try:
+                    self._source_repository.save(merged, expected_version=merged.version)
+                    return merged
+                except ConcurrentModificationError:
+                    reloaded = self._source_repository.get_by_id(existing.id)
+                    if reloaded is None:
+                        break
+                    existing = reloaded
+                    continue
+            return merged
         raise SourceAcquisitionError(
             f"Failed to merge provenance for source {existing.id}",
         )
@@ -273,6 +289,8 @@ class SourceAcquisitionService:
                     rank=item.candidate.rank,
                     workflow_run_id=workflow_run_id,
                     research_design_id=research_design_id,
+                    research_question_id=item.query.research_question_id,
+                    information_need_id=item.query.information_need_id,
                 ),
             )
         return ProvenanceDelta(

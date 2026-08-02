@@ -32,6 +32,7 @@ class EvidenceApiTests(unittest.TestCase):
                     search_provider="deterministic",
                     evidence_extractor="deterministic",
                     analysis_engine="deterministic",
+                    report_engine="deterministic",
                 ),
                 overrides=ApplicationOverrides(
                     llm_client=create_brief_aligned_llm_mock(),

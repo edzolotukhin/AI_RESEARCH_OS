@@ -9,6 +9,7 @@ from application.config import ApplicationOverrides
 from application.exceptions.capability_not_implemented_error import (
     CapabilityNotImplementedError,
 )
+from application.executors.stage_executors import UnimplementedCapabilityExecutor
 
 from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
 from tests.api.helpers import (
@@ -35,7 +36,13 @@ class Dr03EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
                 evidence_extractor="deterministic",
                 analysis_engine="deterministic",
             ),
-            overrides=ApplicationOverrides(llm_client=mock_llm),
+            overrides=ApplicationOverrides(
+                llm_client=mock_llm,
+                report_executor=UnimplementedCapabilityExecutor(
+                    capability="report",
+                    stage="write_report",
+                ),
+            ),
         )
         bootstrap_test_api_key(container)
         self.addCleanup(container.shutdown)

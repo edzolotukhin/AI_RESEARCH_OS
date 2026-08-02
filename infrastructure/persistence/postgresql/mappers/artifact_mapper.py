@@ -14,6 +14,11 @@ def artifact_to_model(record: ArtifactRecord, *, version: int) -> ArtifactModel:
         content=record.content,
         status=record.status,
         version=version,
+        media_type=record.media_type,
+        filename=record.filename,
+        content_checksum=record.content_checksum,
+        deduplication_key=record.deduplication_key,
+        report_id=record.report_id,
     )
 
 
@@ -25,6 +30,11 @@ def artifact_to_update_values(record: ArtifactRecord) -> dict:
         "title": record.title,
         "content": record.content,
         "status": record.status,
+        "media_type": record.media_type,
+        "filename": record.filename,
+        "content_checksum": record.content_checksum,
+        "deduplication_key": record.deduplication_key,
+        "report_id": record.report_id,
     }
 
 
@@ -38,4 +48,9 @@ def artifact_from_model(model: ArtifactModel) -> ArtifactRecord:
         content=model.content,
         status=model.status,
         version=model.version,
+        media_type=model.media_type,
+        filename=model.filename,
+        content_checksum=model.content_checksum,
+        deduplication_key=model.deduplication_key,
+        report_id=model.report_id,
     )

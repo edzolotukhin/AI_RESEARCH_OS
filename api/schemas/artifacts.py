@@ -11,9 +11,21 @@ class ArtifactResponse(BaseModel):
     title: str
     status: str
     version: int
+    media_type: str = ""
+    filename: str = ""
+    content_checksum: str = ""
+    report_id: str | None = None
     content_preview: str = Field(
-        description="Metadata-only preview; binary blob storage is not implemented.",
+        description="Short preview; use GET /artifacts/{id}/content for full body.",
     )
+
+
+class ArtifactContentResponse(BaseModel):
+    id: str
+    media_type: str
+    filename: str
+    content: str
+    content_checksum: str
 
 
 class ArtifactListResponse(BaseModel):

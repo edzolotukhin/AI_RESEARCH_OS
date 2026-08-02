@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
+from application.persistence.exceptions import ConcurrentModificationError
 from application.persistence.records import ArtifactRecord
-from application.ports.artifact_repository import ArtifactRepository
+from application.report.exceptions import DuplicateArtifactError
 from infrastructure.persistence.postgresql.concurrency import atomic_update_version
 from infrastructure.persistence.postgresql.mappers.artifact_mapper import (
     artifact_from_model,
@@ -19,6 +21,37 @@ class PostgreSQLArtifactRepository:
 
     def __init__(self, session_factory: DatabaseSessionFactory) -> None:
         self._session_factory = session_factory
+
+    def create(self, artifact: ArtifactRecord) -> int:
+        with self._session_factory.session() as session:
+            try:
+                session.add(artifact_to_model(artifact, version=1))
+                session.flush()
+            except IntegrityError as exc:
+                session.rollback()
+                raise DuplicateArtifactError(
+                    f"Artifact already exists for run/key: "
+                    f"{artifact.run_id}/{artifact.deduplication_key}",
+                ) from exc
+            artifact.version = 1
+            return 1
+
+    def get_by_deduplication_key(
+        self,
+        workflow_run_id: str,
+        deduplication_key: str,
+    ) -> ArtifactRecord | None:
+        from sqlalchemy import select
+
+        with self._session_factory.session() as session:
+            statement = select(ArtifactModel).where(
+                ArtifactModel.run_id == workflow_run_id,
+                ArtifactModel.deduplication_key == deduplication_key,
+            )
+            model = session.scalars(statement).first()
+            if model is None:
+                return None
+            return artifact_from_model(model)
 
     def save(
         self,
