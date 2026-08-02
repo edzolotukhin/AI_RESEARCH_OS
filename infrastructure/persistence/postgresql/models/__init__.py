@@ -13,6 +13,7 @@ from infrastructure.persistence.postgresql.models.workflow_run_model import (
     WorkflowRunModel,
 )
 from infrastructure.persistence.postgresql.models.evidence_model import EvidenceModel
+from infrastructure.persistence.postgresql.models.finding_model import FindingModel, InsightModel
 from infrastructure.persistence.postgresql.models.source_model import SourceModel
 from infrastructure.persistence.postgresql.models.workflow_template_model import (
     WorkflowTemplateModel,
@@ -24,6 +25,8 @@ __all__ = [
     "KnowledgeItemModel",
     "ProjectModel",
     "EvidenceModel",
+    "FindingModel",
+    "InsightModel",
     "SourceModel",
     "WorkflowRunModel",
     "WorkflowTaskModel",

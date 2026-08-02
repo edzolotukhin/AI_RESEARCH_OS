@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from application.ports.project_repository import ProjectRepository
+from application.ports.analysis_ports import AnalysisEngine, FindingRepository, InsightRepository
 from application.ports.evidence_ports import EvidenceExtractor, EvidenceRepository
 from application.ports.source_ports import SearchProvider, SourceRepository, SourceRetriever
 from application.services.project_service import ProjectService
@@ -12,6 +13,10 @@ from infrastructure.llm.llm_client import LLMClient
 
 from registry.registry import Registry
 
+from application.analysis.evidence_batching import (
+    DEFAULT_ANALYSIS_MAX_CHARS_PER_BATCH,
+    DEFAULT_ANALYSIS_MAX_EVIDENCE_PER_BATCH,
+)
 from application.evidence.content_chunking import (
     DEFAULT_EVIDENCE_EXTRACTION_CHUNK_CHARS,
     DEFAULT_EVIDENCE_EXTRACTION_CHUNK_OVERLAP_CHARS,
@@ -39,6 +44,9 @@ class ApplicationConfig:
     evidence_extraction_chunk_overlap_chars: int = (
         DEFAULT_EVIDENCE_EXTRACTION_CHUNK_OVERLAP_CHARS
     )
+    analysis_engine: str = "llm"
+    analysis_max_evidence_per_batch: int = DEFAULT_ANALYSIS_MAX_EVIDENCE_PER_BATCH
+    analysis_max_chars_per_batch: int = DEFAULT_ANALYSIS_MAX_CHARS_PER_BATCH
 
     @classmethod
     def from_env(cls) -> ApplicationConfig:
@@ -73,6 +81,19 @@ class ApplicationConfig:
                     str(DEFAULT_EVIDENCE_EXTRACTION_CHUNK_OVERLAP_CHARS),
                 ),
             ),
+            analysis_engine=os.environ.get("ANALYSIS_ENGINE", "llm"),
+            analysis_max_evidence_per_batch=int(
+                os.environ.get(
+                    "ANALYSIS_MAX_EVIDENCE_PER_BATCH",
+                    str(DEFAULT_ANALYSIS_MAX_EVIDENCE_PER_BATCH),
+                ),
+            ),
+            analysis_max_chars_per_batch=int(
+                os.environ.get(
+                    "ANALYSIS_MAX_CHARS_PER_BATCH",
+                    str(DEFAULT_ANALYSIS_MAX_CHARS_PER_BATCH),
+                ),
+            ),
         )
 
 
@@ -93,3 +114,6 @@ class ApplicationOverrides:
     source_repository: SourceRepository | None = None
     evidence_extractor: EvidenceExtractor | None = None
     evidence_repository: EvidenceRepository | None = None
+    analysis_engine: AnalysisEngine | None = None
+    finding_repository: FindingRepository | None = None
+    insight_repository: InsightRepository | None = None
