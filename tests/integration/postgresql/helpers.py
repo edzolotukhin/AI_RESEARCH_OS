@@ -44,6 +44,27 @@ def get_test_database_url() -> str:
     return database_url
 
 
+def postgresql_application_config(
+    *,
+    deterministic_stage_executors: bool = False,
+    background_execution_mode: str = "external",
+) -> "ApplicationConfig":
+    """PostgreSQL ApplicationConfig for integration tests.
+
+    Use ``deterministic_stage_executors=True`` only when the test verifies
+    persistence, API round-trip, idempotency, or worker plumbing rather than
+    production Search/Analysis/Report behavior.
+    """
+    from application.config import ApplicationConfig
+
+    return ApplicationConfig(
+        persistence_backend="postgresql",
+        database_url=get_test_database_url(),
+        background_execution_mode=background_execution_mode,
+        deterministic_stage_executors=deterministic_stage_executors,
+    )
+
+
 def create_test_engine() -> Engine:
     return create_engine(
         get_test_database_url(),

@@ -24,6 +24,7 @@ class ApplicationConfig:
     database_url: str | None = None
     durable_workflow_execution: bool | None = None
     background_execution_mode: str | None = None
+    deterministic_stage_executors: bool = False
 
     @classmethod
     def from_env(cls) -> ApplicationConfig:
@@ -38,6 +39,11 @@ class ApplicationConfig:
             persistence_backend=resolve_persistence_backend(),
             database_url=os.environ.get("DATABASE_URL"),
             background_execution_mode=os.environ.get("BACKGROUND_EXECUTION_MODE"),
+            deterministic_stage_executors=os.environ.get(
+                "DETERMINISTIC_STAGE_EXECUTORS",
+                "",
+            ).lower()
+            in {"1", "true", "yes"},
         )
 
 
@@ -52,3 +58,4 @@ class ApplicationOverrides:
     project_service: ProjectService | None = None
     registry: Registry | None = None
     planner_agent: Any | None = None
+    deterministic_stage_executors: bool | None = None

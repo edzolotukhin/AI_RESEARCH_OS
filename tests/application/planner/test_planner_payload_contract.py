@@ -14,8 +14,9 @@ from domain.ai.llm_response import LLMResponse
 from domain.ai.prompt import Prompt
 
 from tests.fixtures.planner_responses import (
-    UNKNOWN_EXECUTOR_PLANNER_JSON,
-    VALID_PLANNER_JSON,
+    INVALID_DUPLICATE_QUESTION_JSON,
+    LEGACY_PLANNER_JSON,
+    LEGACY_UNKNOWN_EXECUTOR_PLANNER_JSON,
 )
 from tests.helpers.executor_catalog import make_test_executor_catalog
 
@@ -81,7 +82,7 @@ class PlannerPayloadContractTests(unittest.TestCase):
         self.parser = StructuredOutputParser()
 
     def test_unknown_executor_id_is_contract_violation(self):
-        payload = self.parser.parse(UNKNOWN_EXECUTOR_PLANNER_JSON)
+        payload = self.parser.parse(LEGACY_UNKNOWN_EXECUTOR_PLANNER_JSON)
 
         self.assertFalse(self.contract.accepts(payload))
         self.assertIn("ResearchLead", self.contract.last_validation_error)
@@ -93,7 +94,7 @@ class PlannerPayloadContractTests(unittest.TestCase):
         self.assertIn("Missing required field 'name'", self.contract.last_validation_error)
 
     def test_accepts_valid_linear_dag(self):
-        payload = self.parser.parse(VALID_PLANNER_JSON)
+        payload = self.parser.parse(LEGACY_PLANNER_JSON)
 
         self.assertTrue(self.contract.accepts(payload))
         self.assertEqual(self.contract.last_validation_error, "")
@@ -276,8 +277,8 @@ class PlannerPayloadContractRetryPolicyTests(unittest.TestCase):
 
     def test_unknown_executor_id_allows_structured_output_retry(self):
         self.llm_client.generate.side_effect = [
-            LLMResponse(content=UNKNOWN_EXECUTOR_PLANNER_JSON),
-            LLMResponse(content=VALID_PLANNER_JSON, finish_reason="stop"),
+            LLMResponse(content=LEGACY_UNKNOWN_EXECUTOR_PLANNER_JSON),
+            LLMResponse(content=LEGACY_PLANNER_JSON, finish_reason="stop"),
         ]
 
         payload = self.generator.generate(
@@ -291,7 +292,7 @@ class PlannerPayloadContractRetryPolicyTests(unittest.TestCase):
     def test_unknown_dependency_allows_structured_output_retry(self):
         self.llm_client.generate.side_effect = [
             LLMResponse(content=UNKNOWN_DEPENDENCY_PLANNER_JSON),
-            LLMResponse(content=VALID_PLANNER_JSON, finish_reason="stop"),
+            LLMResponse(content=LEGACY_PLANNER_JSON, finish_reason="stop"),
         ]
 
         payload = self.generator.generate(
@@ -305,7 +306,7 @@ class PlannerPayloadContractRetryPolicyTests(unittest.TestCase):
     def test_cycle_allows_structured_output_retry(self):
         self.llm_client.generate.side_effect = [
             LLMResponse(content=CYCLE_TWO_NODE_PLANNER_JSON),
-            LLMResponse(content=VALID_PLANNER_JSON, finish_reason="stop"),
+            LLMResponse(content=LEGACY_PLANNER_JSON, finish_reason="stop"),
         ]
 
         payload = self.generator.generate(
@@ -327,7 +328,7 @@ class PlannerPayloadContractRetryPolicyTests(unittest.TestCase):
             side_effect=RuntimeError("programming defect"),
         ):
             self.llm_client.generate.return_value = LLMResponse(
-                content=VALID_PLANNER_JSON,
+                content=LEGACY_PLANNER_JSON,
             )
 
             with self.assertRaises(RuntimeError):

@@ -1,3 +1,11 @@
+"""
+Legacy qualitative/quantitative methodology proposal (pre-DR-02).
+
+Not the desk-research semantic ResearchDesign in domain.planning.research_design.
+Removal condition: drop projects.research_design JSONB column and ResearchDesigner
+agent when Client Manager / fieldwork vertical is retired or migrated.
+"""
+
 from dataclasses import dataclass, field
 
 
@@ -47,7 +55,14 @@ class RiskAssessment:
 
 
 @dataclass
-class ResearchDesign:
+class MethodologyProposal:
+    """
+    Deprecated project-level methodology proposal aggregate.
+
+    Persisted in PostgreSQL projects.research_design JSONB for backward
+    compatibility only. No production desk-research path writes this field.
+    """
+
     business_problem: BusinessProblem = field(default_factory=BusinessProblem)
     objectives: ResearchObjectives = field(default_factory=ResearchObjectives)
     strategy: ResearchStrategy = field(default_factory=ResearchStrategy)

@@ -5,7 +5,7 @@ from application.dto.planner_task_dto import PlannerTaskDTO
 from application.dto.research_stage_dto import ResearchStageDTO
 from application.factories.research_plan_factory import ResearchPlanFactory
 
-from tests.fixtures.planner_responses import VALID_PLANNER_RESPONSE
+from tests.fixtures.planner_responses import LEGACY_PLANNER_RESPONSE
 
 
 class ResearchPlanFactoryTests(unittest.TestCase):
@@ -15,9 +15,9 @@ class ResearchPlanFactoryTests(unittest.TestCase):
 
     def test_create_from_dto(self):
         dto = PlannerPlanDTO(
-            name=VALID_PLANNER_RESPONSE["name"],
-            goal=VALID_PLANNER_RESPONSE["goal"],
-            methodology=VALID_PLANNER_RESPONSE["methodology"],
+            name=LEGACY_PLANNER_RESPONSE["name"],
+            goal=LEGACY_PLANNER_RESPONSE["goal"],
+            methodology=LEGACY_PLANNER_RESPONSE["methodology"],
             stages=(
                 ResearchStageDTO(
                     id="stage-design",

@@ -15,8 +15,8 @@ from domain.ai.llm_response import LLMResponse
 from domain.ai.prompt import Prompt
 
 from tests.fixtures.planner_responses import (
+    LEGACY_PLANNER_JSON,
     TRUNCATED_PLANNER_JSON,
-    VALID_PLANNER_JSON,
 )
 
 
@@ -40,7 +40,7 @@ class StructuredOutputGeneratorTests(unittest.TestCase):
 
     def test_valid_json_on_first_attempt_uses_single_llm_call(self):
         self.llm_client.generate.return_value = LLMResponse(
-            content=VALID_PLANNER_JSON,
+            content=LEGACY_PLANNER_JSON,
             finish_reason="stop",
         )
 
@@ -55,7 +55,7 @@ class StructuredOutputGeneratorTests(unittest.TestCase):
     def test_malformed_json_then_valid_json_retries_once(self):
         self.llm_client.generate.side_effect = [
             LLMResponse(content="{ invalid json"),
-            LLMResponse(content=VALID_PLANNER_JSON, finish_reason="stop"),
+            LLMResponse(content=LEGACY_PLANNER_JSON, finish_reason="stop"),
         ]
 
         payload = self.generator.generate(
@@ -78,7 +78,7 @@ class StructuredOutputGeneratorTests(unittest.TestCase):
 
         self.llm_client.generate.side_effect = [
             LLMResponse(content=invalid_contract),
-            LLMResponse(content=VALID_PLANNER_JSON, finish_reason="stop"),
+            LLMResponse(content=LEGACY_PLANNER_JSON, finish_reason="stop"),
         ]
 
         payload = self.generator.generate(
@@ -143,7 +143,7 @@ class StructuredOutputGeneratorTests(unittest.TestCase):
                 max_output_tokens=4096,
             ),
             LLMResponse(
-                content=VALID_PLANNER_JSON,
+                content=LEGACY_PLANNER_JSON,
                 finish_reason="stop",
             ),
         ]
@@ -215,8 +215,8 @@ class StructuredOutputCorrectionPromptBuilderTests(unittest.TestCase):
             truncated=True,
         )
 
-        self.assertIn('"stages"', correction.user)
-        self.assertIn('"executor_id"', correction.user)
+        self.assertIn('"research_questions"', correction.user)
+        self.assertIn('"source_strategy"', correction.user)
 
     def test_truncated_correction_prompt_requests_compact_regeneration(self):
         correction = self.builder.build(

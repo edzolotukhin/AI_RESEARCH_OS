@@ -1,7 +1,9 @@
 from agents.base_agent import BaseAgent
 
-from application.planner.contracts import PlannerService, WorkflowTemplateMapper
-from application.planner.payload_contract import PlannerPayloadContract
+from application.planner.contracts import PlannerDesignService, ResearchDesignWorkflowMapperProtocol
+from application.planner.research_design_payload_contract import (
+    ResearchDesignPayloadContract,
+)
 from application.prompts.builders.planner_prompt_builder import (
     PlannerPromptBuilder,
 )
@@ -12,20 +14,21 @@ from runtime.workflow_context import WorkflowContext
 
 class PlannerAgent(BaseAgent):
     """
-    Агент планирования исследования.
+    Single planning authority: transforms ResearchBrief into ResearchDesign
+    and deterministically derives WorkflowTemplate.
     """
 
     def __init__(
         self,
-        planner_service: PlannerService,
-        workflow_mapper: WorkflowTemplateMapper,
+        planner_design_service: PlannerDesignService,
+        workflow_mapper: ResearchDesignWorkflowMapperProtocol,
         prompt_builder: PlannerPromptBuilder,
         structured_output_generator: StructuredOutputGenerator,
-        payload_contract: PlannerPayloadContract,
+        payload_contract: ResearchDesignPayloadContract,
     ) -> None:
         super().__init__("planner")
 
-        self._planner_service = planner_service
+        self._planner_design_service = planner_design_service
         self._workflow_mapper = workflow_mapper
         self._prompt_builder = prompt_builder
         self._structured_output_generator = structured_output_generator
@@ -40,19 +43,19 @@ class PlannerAgent(BaseAgent):
 
         prompt = self._prompt_builder.build(context)
 
-        plan_data = self._structured_output_generator.generate(
+        design_data = self._structured_output_generator.generate(
             prompt,
             payload_contract=self._payload_contract,
         )
 
-        research_plan = self._planner_service.create_plan(
+        research_design = self._planner_design_service.create_design(
             context.project,
-            plan_data,
+            design_data,
         )
 
         context.workflow_template = (
-            self._workflow_mapper.from_research_plan(
-                research_plan,
+            self._workflow_mapper.from_research_design(
+                research_design,
                 context.project,
             )
         )

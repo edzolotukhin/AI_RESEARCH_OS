@@ -47,6 +47,10 @@ class ResearchBrief:
         """Semantic payload for PF-07 idempotency fingerprinting."""
         return self.to_dict()
 
+    def normalized_objectives(self) -> tuple[str, ...]:
+        """Deterministic objective identities for traceability checks."""
+        return tuple(normalize_objective_text(objective) for objective in self.objectives)
+
     @classmethod
     def from_dict(cls, payload: dict[str, Any] | None) -> ResearchBrief | None:
         if payload is None:
@@ -68,6 +72,11 @@ class ResearchBrief:
             known_information=_tuple_of_str(payload.get("known_information")),
             exclusions=_tuple_of_str(payload.get("exclusions")),
         )
+
+
+def normalize_objective_text(value: str) -> str:
+    """Stable normalized form for objective_refs and brief objectives."""
+    return " ".join(value.lower().split())
 
 
 def _tuple_of_str(value: Any) -> tuple[str, ...]:

@@ -5,30 +5,38 @@ from application.exceptions.structured_output_error import StructuredOutputError
 from domain.ai.llm_response import LLMResponse
 from domain.ai.prompt import Prompt
 
-PLANNER_PAYLOAD_SCHEMA = """
+RESEARCH_DESIGN_PAYLOAD_SCHEMA = """
 {
-  "name": "string",
-  "goal": "string",
-  "methodology": "string",
-  "stages": [
+  "research_questions": [
     {
       "id": "string",
-      "name": "string",
-      "description": "string",
-      "tasks": [
-        {
-          "id": "string",
-          "title": "string",
-          "description": "string",
-          "executor_id": "string",
-          "dependencies": ["string"]
-        }
-      ]
+      "question": "string",
+      "objective_refs": ["string"],
+      "priority": 1,
+      "rationale": "string"
     }
   ],
-  "metadata": {}
+  "information_needs": [
+    {
+      "id": "string",
+      "research_question_id": "string",
+      "description": "string",
+      "priority": 1,
+      "preferred_source_types": ["string"],
+      "timeframe": "string",
+      "geography": "string"
+    }
+  ],
+  "source_strategy": ["string"],
+  "analysis_plan": ["string"],
+  "deliverable_plan": ["string"],
+  "assumptions": ["string"],
+  "limitations": ["string"],
+  "language": "string"
 }
 """.strip()
+
+PLANNER_PAYLOAD_SCHEMA = RESEARCH_DESIGN_PAYLOAD_SCHEMA
 
 _INVALID_RESPONSE_PREVIEW_LIMIT = 800
 

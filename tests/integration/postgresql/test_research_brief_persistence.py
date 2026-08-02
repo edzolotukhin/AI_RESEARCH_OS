@@ -1,31 +1,25 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import Mock
 
 from application.composition_root import create_application_container
-from application.config import ApplicationConfig, ApplicationOverrides
-from domain.ai.llm_response import LLMResponse
+from application.config import ApplicationOverrides
 
 from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
-from tests.api.helpers import AuthenticatedTestClient, close_test_client, drain_background_runs, open_test_client
-from tests.fixtures.planner_responses import VALID_PLANNER_JSON
+from tests.api.helpers import AuthenticatedTestClient, close_test_client, open_test_client
+from tests.helpers.brief_aligned_planner_llm import create_brief_aligned_llm_mock
 from tests.fixtures.research_brief import CANONICAL_BRIEF_REQUEST
 from tests.integration.postgresql.helpers import (
     PostgreSQLIntegrationTestCase,
-    get_test_database_url,
+    postgresql_application_config,
 )
 
 
 class ResearchBriefPostgreSQLIntegrationTests(PostgreSQLIntegrationTestCase):
     def _build_client(self):
-        mock_llm = Mock()
-        mock_llm.generate.return_value = LLMResponse(content=VALID_PLANNER_JSON)
+        mock_llm = create_brief_aligned_llm_mock()
         container = create_application_container(
-            config=ApplicationConfig(
-                persistence_backend="postgresql",
-                database_url=get_test_database_url(),
-            ),
+            config=postgresql_application_config(),
             overrides=ApplicationOverrides(llm_client=mock_llm),
         )
         container._test_llm_client = mock_llm
@@ -49,7 +43,6 @@ class ResearchBriefPostgreSQLIntegrationTests(PostgreSQLIntegrationTestCase):
             json={"brief": updated_brief},
         ).json()
         run_id = started["run_id"]
-        drain_background_runs(container)
 
         reloaded_project = container.project_service.get_project(project_id)
         self.assertIsNotNone(reloaded_project.research_brief)

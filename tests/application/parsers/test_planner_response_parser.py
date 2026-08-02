@@ -3,7 +3,7 @@ import unittest
 from application.exceptions.planner_parser_error import PlannerParserError
 from application.parsers.planner_response_parser import PlannerResponseParser
 
-from tests.fixtures.planner_responses import VALID_PLANNER_RESPONSE
+from tests.fixtures.planner_responses import LEGACY_PLANNER_RESPONSE
 
 
 class PlannerResponseParserTests(unittest.TestCase):
@@ -12,7 +12,7 @@ class PlannerResponseParserTests(unittest.TestCase):
         self.parser = PlannerResponseParser()
 
     def test_parse_valid_response(self):
-        dto = self.parser.parse(VALID_PLANNER_RESPONSE)
+        dto = self.parser.parse(LEGACY_PLANNER_RESPONSE)
 
         self.assertEqual(dto.name, "Brand Health Workflow")
         self.assertEqual(
@@ -27,7 +27,7 @@ class PlannerResponseParserTests(unittest.TestCase):
         )
 
     def test_parse_missing_name_raises_error(self):
-        invalid = dict(VALID_PLANNER_RESPONSE)
+        invalid = dict(LEGACY_PLANNER_RESPONSE)
         del invalid["name"]
 
         with self.assertRaises(PlannerParserError):

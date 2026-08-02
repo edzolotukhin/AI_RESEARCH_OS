@@ -2,14 +2,17 @@ from __future__ import annotations
 
 from application.config import ApplicationConfig, ApplicationOverrides
 from application.executor_resolver import ExecutorResolver
-from application.factories.research_plan_factory import ResearchPlanFactory
-from application.parsers.planner_response_parser import PlannerResponseParser
+from application.factories.research_design_factory import ResearchDesignFactory
+from application.parsers.research_design_parser import ResearchDesignParser
+from application.planner.research_design_workflow_mapper import (
+    ResearchDesignWorkflowMapper,
+)
+from application.planner.design_service import PlannerDesignServiceImpl
+from application.planner.research_design_payload_contract import (
+    ResearchDesignPayloadContract,
+)
 from application.planner.executor_catalog import ExecutorCatalog
 from application.planner.executor_definitions import AGENT_EXECUTOR_CAPABILITIES
-from application.planner.service import PlannerServiceImpl
-from application.planner.workflow_template_mapper import (
-    ResearchPlanWorkflowTemplateMapper,
-)
 from application.prompts.builders.planner_prompt_builder import (
     PlannerPromptBuilder,
 )
@@ -29,20 +32,23 @@ from agency.agency import Agency
 
 from application.container import ApplicationContainer
 
-from agents.analysis.analysis_agent import AnalysisAgent
 from agents.planner.planner_agent_factory import PlannerAgentFactory
 from agents.planner.planner_executor import PlannerExecutor
 from agents.proposal.proposal_agent import ProposalAgent
-from agents.report.report_agent import ReportAgent
-from agents.search.search_agent import SearchAgent
 
 from application.executors.agent_executor import AgentExecutor
+from application.executors.stage_executors import (
+    DeterministicStageExecutor,
+    UnimplementedCapabilityExecutor,
+)
 
 from domain.factories.project_factory import ProjectFactory
 from domain.factories.task_factory import TaskFactory
 from domain.factories.workflow_run_factory import WorkflowRunFactory
 
-from application.planner.payload_contract import PlannerPayloadContract
+from application.structured_output.correction_prompt import (
+    RESEARCH_DESIGN_PAYLOAD_SCHEMA,
+)
 from application.structured_output.generator import StructuredOutputGenerator
 from application.structured_output.parser import StructuredOutputParser
 from application.services.artifact_service import ArtifactService
@@ -152,42 +158,40 @@ def create_application_container(
         executor_catalog=executor_catalog,
     )
 
-    workflow_template_mapper = ResearchPlanWorkflowTemplateMapper()
+    workflow_template_mapper = ResearchDesignWorkflowMapper()
 
     structured_output_parser = StructuredOutputParser()
-    planner_payload_contract = PlannerPayloadContract(
-        executor_catalog=executor_catalog,
-        response_parser=PlannerResponseParser(),
+    planner_payload_contract = ResearchDesignPayloadContract(
+        response_parser=ResearchDesignParser(),
     )
     structured_output_generator = StructuredOutputGenerator(
         llm_client=llm_client,
         parser=structured_output_parser,
         executor_catalog=executor_catalog,
+        payload_schema=RESEARCH_DESIGN_PAYLOAD_SCHEMA,
     )
 
-    planner_service = PlannerServiceImpl(
-        response_parser=PlannerResponseParser(),
-        plan_factory=ResearchPlanFactory(),
+    planner_design_service = PlannerDesignServiceImpl(
+        response_parser=ResearchDesignParser(),
+        design_factory=ResearchDesignFactory(),
     )
 
     if overrides.planner_agent is not None:
         planner_agent = overrides.planner_agent
     else:
         planner_agent = PlannerAgentFactory(
-            planner_service=planner_service,
+            planner_design_service=planner_design_service,
             workflow_mapper=workflow_template_mapper,
             prompt_builder=planner_prompt_builder,
             structured_output_generator=structured_output_generator,
             payload_contract=planner_payload_contract,
         ).create()
 
-    agent_executors = {
-        "planner": PlannerExecutor(agent=planner_agent),
-        "search": AgentExecutor(agent=SearchAgent()),
-        "analysis": AgentExecutor(agent=AnalysisAgent()),
-        "report": AgentExecutor(agent=ReportAgent()),
-        "proposal": AgentExecutor(agent=ProposalAgent()),
-    }
+    agent_executors = _build_agent_executors(
+        config=config,
+        overrides=overrides,
+        planner_agent=planner_agent,
+    )
 
     _ensure_executor_catalog_matches_registry(
         executor_catalog,
@@ -325,6 +329,42 @@ def _build_readiness_check(
         expected_revision,
         shutdown_callbacks,
     )
+
+
+def _build_agent_executors(
+    *,
+    config: ApplicationConfig,
+    overrides: ApplicationOverrides,
+    planner_agent,
+) -> dict:
+    use_deterministic_stages = (
+        overrides.deterministic_stage_executors
+        if overrides.deterministic_stage_executors is not None
+        else config.deterministic_stage_executors
+    )
+
+    executors = {
+        "planner": PlannerExecutor(agent=planner_agent),
+        "proposal": AgentExecutor(agent=ProposalAgent()),
+    }
+
+    desk_research_stages = (
+        ("search", "collect_sources"),
+        ("analysis", "analyze"),
+        ("report", "write_report"),
+    )
+
+    if use_deterministic_stages:
+        for executor_id, stage_key in desk_research_stages:
+            executors[executor_id] = DeterministicStageExecutor(stage_key=stage_key)
+    else:
+        for executor_id, stage_key in desk_research_stages:
+            executors[executor_id] = UnimplementedCapabilityExecutor(
+                capability=executor_id,
+                stage=stage_key,
+            )
+
+    return executors
 
 
 def _ensure_executor_catalog_matches_registry(

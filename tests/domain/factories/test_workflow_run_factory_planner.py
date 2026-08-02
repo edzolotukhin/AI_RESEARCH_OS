@@ -24,7 +24,7 @@ from domain.project import Project
 
 
 
-from tests.fixtures.planner_responses import VALID_PLANNER_RESPONSE
+from tests.fixtures.planner_responses import LEGACY_PLANNER_RESPONSE
 
 
 
@@ -68,7 +68,7 @@ class WorkflowRunFactoryPlannerTests(unittest.TestCase):
 
             self.project,
 
-            VALID_PLANNER_RESPONSE,
+            LEGACY_PLANNER_RESPONSE,
 
         )
 
@@ -129,7 +129,7 @@ class WorkflowRunFactoryPlannerTests(unittest.TestCase):
     def test_create_generates_uuid_when_run_id_is_omitted(self):
         plan = self.service.create_plan(
             self.project,
-            VALID_PLANNER_RESPONSE,
+            LEGACY_PLANNER_RESPONSE,
         )
         template = self.workflow_mapper.from_research_plan(
             plan,

@@ -16,7 +16,7 @@ from domain.project import Project
 
 
 
-from tests.fixtures.planner_responses import VALID_PLANNER_RESPONSE
+from tests.fixtures.planner_responses import LEGACY_PLANNER_RESPONSE
 
 
 
@@ -52,7 +52,7 @@ class PlannerServiceImplTests(unittest.TestCase):
 
             self.project,
 
-            VALID_PLANNER_RESPONSE,
+            LEGACY_PLANNER_RESPONSE,
 
         )
 
@@ -74,7 +74,7 @@ class PlannerServiceImplTests(unittest.TestCase):
 
             self.project,
 
-            VALID_PLANNER_RESPONSE,
+            LEGACY_PLANNER_RESPONSE,
 
         )
 

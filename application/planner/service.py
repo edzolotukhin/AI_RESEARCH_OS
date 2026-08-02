@@ -27,15 +27,11 @@ from .contracts import PlannerService
 
 
 class PlannerServiceImpl(PlannerService):
-
     """
+    Legacy ResearchPlan builder (DR-01).
 
-    Default implementation of PlannerService.
-
-
-
-    Converts validated structured planner data into a ResearchPlan.
-
+    Deprecated: production PlannerAgent uses PlannerDesignServiceImpl.
+    Removal condition: delete when ResearchPlan unit tests migrate or retire.
     """
 
 

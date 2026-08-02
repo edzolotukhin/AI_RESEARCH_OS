@@ -44,6 +44,7 @@ class CompositionRootTests(unittest.TestCase):
             agency = create_application(
                 config=ApplicationConfig(
                     projects_root=temp_dir,
+                    deterministic_stage_executors=True,
                 ),
                 overrides=ApplicationOverrides(
                     llm_client=mock_llm,

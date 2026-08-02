@@ -8,7 +8,7 @@ from uuid import uuid4
 from sqlalchemy import text
 
 from application.composition_root import create_application_container
-from application.config import ApplicationConfig, ApplicationOverrides
+from application.config import ApplicationOverrides
 from application.runtime.research_request_fingerprint import (
     compute_research_request_fingerprint,
 )
@@ -23,10 +23,10 @@ from infrastructure.persistence.postgresql.repositories.postgresql_research_subm
 
 from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
 from tests.api.helpers import AuthenticatedTestClient, close_test_client, drain_background_runs, open_test_client
-from tests.fixtures.planner_responses import VALID_PLANNER_JSON
+from tests.helpers.brief_aligned_planner_llm import create_brief_aligned_llm_mock
 from tests.integration.postgresql.helpers import (
     PostgreSQLIntegrationTestCase,
-    get_test_database_url,
+    postgresql_application_config,
 )
 
 from tests.fixtures.research_brief import CANONICAL_BRIEF_REQUEST as BRIEF
@@ -35,13 +35,10 @@ from tests.fixtures.research_brief import CANONICAL_BRIEF_REQUEST as BRIEF
 class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
 
     def _build_client(self):
-        mock_llm = Mock()
-        mock_llm.generate.return_value = LLMResponse(content=VALID_PLANNER_JSON)
+        mock_llm = create_brief_aligned_llm_mock()
         container = create_application_container(
-            config=ApplicationConfig(
-                persistence_backend="postgresql",
-                database_url=get_test_database_url(),
-                background_execution_mode="external",
+            config=postgresql_application_config(
+                deterministic_stage_executors=True,
             ),
             overrides=ApplicationOverrides(llm_client=mock_llm),
         )
@@ -273,14 +270,9 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
         ).json()
         run_id = started["run_id"]
 
-        mock_llm = Mock()
-        mock_llm.generate.return_value = LLMResponse(content=VALID_PLANNER_JSON)
+        mock_llm = create_brief_aligned_llm_mock()
         reloaded_container = create_application_container(
-            config=ApplicationConfig(
-                persistence_backend="postgresql",
-                database_url=get_test_database_url(),
-                background_execution_mode="external",
-            ),
+            config=postgresql_application_config(),
             overrides=ApplicationOverrides(llm_client=mock_llm),
         )
         self.addCleanup(reloaded_container.shutdown)
@@ -346,14 +338,9 @@ class ExternalOrchestrationIntegrationTests(PostgreSQLIntegrationTestCase):
         run_id = first_payload["run_id"]
         self.assertFalse(first_payload["idempotent_replay"])
 
-        mock_llm = Mock()
-        mock_llm.generate.return_value = LLMResponse(content=VALID_PLANNER_JSON)
+        mock_llm = create_brief_aligned_llm_mock()
         replay_container = create_application_container(
-            config=ApplicationConfig(
-                persistence_backend="postgresql",
-                database_url=get_test_database_url(),
-                background_execution_mode="external",
-            ),
+            config=postgresql_application_config(),
             overrides=ApplicationOverrides(llm_client=mock_llm),
         )
         self.addCleanup(replay_container.shutdown)

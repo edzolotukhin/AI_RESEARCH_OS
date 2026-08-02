@@ -4,18 +4,18 @@ from __future__ import annotations
 
 from domain.client_qualification import ClientQualification
 from domain.client_request import ClientRequest
-from domain.project import Project
-from domain.research_brief import ResearchBrief
-from domain.research_design import (
+from domain.legacy.methodology_proposal import (
     BusinessProblem,
     Methodology,
-    ResearchDesign,
+    MethodologyProposal,
     ResearchObjectives,
     ResearchStrategy,
     Risk,
     RiskAssessment,
     SamplingPlan,
 )
+from domain.project import Project
+from domain.research_brief import ResearchBrief
 from domain.value_objects.project_status import ProjectStatus
 
 
@@ -52,7 +52,7 @@ def build_rich_project(project_id: str = "project-rich") -> Project:
             context="Acme GmbH Prefer online panel",
             language="en",
         ),
-        research_design=ResearchDesign(
+        methodology_proposal=MethodologyProposal(
             business_problem=BusinessProblem(
                 description="Price sensitivity for launch",
                 business_decision="Set launch price",
@@ -115,6 +115,6 @@ def assert_projects_semantically_equal(
     assert actual.research_brief is not None
     assert actual.research_brief == expected.research_brief
 
-    assert expected.research_design is not None
-    assert actual.research_design is not None
-    assert actual.research_design == expected.research_design
+    assert expected.methodology_proposal is not None
+    assert actual.methodology_proposal is not None
+    assert actual.methodology_proposal == expected.methodology_proposal
