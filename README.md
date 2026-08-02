@@ -259,9 +259,9 @@ External clients integrate via HTTP only — no direct PostgreSQL or Python impo
 - `Authorization: Bearer <api-key>` on all business routes (see ADR-014)
 - `Idempotency-Key` header on `POST /research` for durable deduplication (PostgreSQL)
 - `correlation_id`, `source` in request body; optional `X-Correlation-ID` header
-- Poll `GET /workflow-runs/{id}` until `is_terminal`; then `GET /results` and `/artifacts`
+- Poll `GET /workflow-runs/{id}` until `is_terminal`; require DR-07 finality (`final_review_verdict=approve`, `final_artifact_available=true`); then fetch `/artifacts/{id}` and `/content`
 - Optional n8n: `docker compose -f docker-compose.yml -f docker-compose.n8n.yml up -d`
-- Examples: `examples/n8n/` — see ADR-013
+- **Canonical workflow:** `examples/n8n/desk_research_product_acceptance.json` — see `examples/n8n/README.md` and ADR-013
 
 **Local dev requires API key authentication for business endpoints.** Bootstrap via `python -m tools.create_api_key --name local` (PostgreSQL). Do not expose unauthenticated deployments to public internet.
 
@@ -458,7 +458,7 @@ See [ROADMAP.md](ROADMAP.md) for deferred platform hardening.
 
 The runtime core is domain-agnostic: templates, dependency graphs, and executor resolution can support other industries. Marketing research is the first domain — planner output and agent executors target agency workflows today.
 
-**Next product priority:** owner acceptance of **DR-07 Review / Quality Gate**, then n8n production E2E orchestration.
+**Next product priority:** live Desk Research product validation (real OpenAI + Tavily). External orchestration contract is validated deterministically via `scripts/test_n8n.ps1`.
 
 Platform hardening (observability, backups, OAuth, rate limits) is explicitly deferred until that vertical validates the foundation. See [ROADMAP.md](ROADMAP.md) and [docs/backlog.md](docs/backlog.md).
 

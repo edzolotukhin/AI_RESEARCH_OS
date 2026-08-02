@@ -1,0 +1,17 @@
+# Minimal n8n container for native workflow import validation (no api/postgres deps).
+services:
+  n8n:
+    image: n8nio/n8n:1.98.1
+    container_name: ai_research_os_n8n_acceptance
+    ports:
+      - "5679:5678"
+    environment:
+      N8N_HOST: localhost
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://localhost:5679/
+      GENERIC_TIMEZONE: UTC
+      AI_RESEARCH_OS_API_URL: http://api:8000
+      AI_RESEARCH_OS_API_KEY: test-key-not-used-for-import
+      N8N_POLL_INTERVAL_SECONDS: "3"
+      N8N_MAX_POLL_ATTEMPTS: "120"

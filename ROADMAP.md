@@ -62,7 +62,8 @@ Each stage below is merged into `main` with ADR coverage and automated tests unl
 
 - **Goal:** Machine clients integrate via HTTP; idempotent research submission.
 - **Outcome:** [ADR-013](docs/adr/ADR-013-External-Orchestration-and-Idempotent-Submission.md); `Idempotency-Key`; correlation metadata; `examples/n8n/`; optional Compose overlay.
-- **Limitation:** Example workflows are reference integrations, not a managed automation platform.
+- **Product acceptance:** canonical workflow `desk_research_product_acceptance.json`; deterministic E2E via `scripts/test_n8n.ps1`.
+- **Limitation:** Validates orchestration contract only — not live research quality. Broad business automations (email, CRM, Drive) not implemented.
 
 ### PF-08 — Authentication and access boundary
 
@@ -116,13 +117,19 @@ Each stage below is merged into `main` with ADR coverage and automated tests unl
 
 - **Goal:** Structured `Report` + Markdown `Artifact` from run-scoped Findings/Insights with citation provenance.
 - **Outcome:** [ADR-020](docs/adr/ADR-020-Desk-Research-Report-Writer-and-Final-Artifact.md)
-- **Limitation:** Markdown only; entailment not fully guaranteed; n8n production flow not implemented.
+- **Limitation:** Markdown only; entailment not fully guaranteed.
 
 ### DR-07 — Review / quality gate *(implemented — pending owner acceptance)*
 
 - **Goal:** Post-report independent review before final sign-off.
 - **Delivered:** `task-review-report`, durable `ReviewResult`, deterministic structural validators, bounded revision loop, draft/approved artifact finality, review API + workflow poll contract.
-- **Status:** Not implemented.
+- **Outcome:** [ADR-021](docs/adr/ADR-021-Desk-Research-Review-and-Quality-Gate.md)
+
+### n8n product acceptance *(implemented — deterministic contract)*
+
+- **Goal:** One production-like external orchestration flow through public API only.
+- **Delivered:** `examples/n8n/desk_research_product_acceptance.json`; `tests/integration/api/test_n8n_product_acceptance.py`; `scripts/test_n8n.ps1`.
+- **Limitation:** CI uses deterministic stages — live desk-research quality validation is the next milestone.
 
 Intended vertical:
 

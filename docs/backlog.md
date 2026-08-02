@@ -32,7 +32,8 @@ Primary product objective: execute one real desk research methodology end-to-end
 - [x] **Analysis → Findings → Insights** — DR-05 implemented
 - [x] **Report writer → Markdown final artifact** — DR-06 implemented; acceptance verification in progress
 - [x] **Review gate** — DR-07 implemented; owner acceptance pending
-- [ ] End-to-end vertical integration test (one methodology, real inputs, inspectable artifact)
+- [x] **n8n product acceptance** — canonical external orchestration E2E (deterministic contract); `scripts/test_n8n.ps1`
+- [ ] Live desk-research product validation (real OpenAI + Tavily)
 - [ ] Client Manager integration with production runtime (if required by vertical)
 
 ---
