@@ -206,6 +206,129 @@ class ResourceIsolationIntegrationTests(PostgreSQLIntegrationTestCase):
                 self.assertEqual(response.status_code, 404, response.text)
                 self.assertEqual(response.json()["error"]["code"], "entity_not_found")
 
+    def _seed_report_records(
+        self,
+        *,
+        project_id: str,
+        run_id: str,
+    ) -> tuple[str, str]:
+        from datetime import datetime, timezone
+        from uuid import uuid4
+
+        from application.persistence.records import ArtifactRecord
+        from application.report.deduplication import (
+            DR06_RESEARCH_REPORT_TYPE,
+            compute_artifact_deduplication_key,
+            compute_content_checksum,
+            compute_report_deduplication_key,
+        )
+        from domain.reports.report import Report
+        from domain.reports.report_section import ReportSection
+        from infrastructure.persistence.postgresql.repositories.postgresql_artifact_repository import (
+            PostgreSQLArtifactRepository,
+        )
+        from infrastructure.persistence.postgresql.repositories.postgresql_report_repository import (
+            PostgreSQLReportRepository,
+        )
+
+        now = datetime.now(timezone.utc).isoformat()
+        report_id = str(uuid4())
+        artifact_id = str(uuid4())
+        content = "# Isolation Report\n\nBody."
+        report_dedup = compute_report_deduplication_key(
+            workflow_run_id=run_id,
+            report_type=DR06_RESEARCH_REPORT_TYPE,
+            generation_method="deterministic",
+        )
+        artifact_dedup = compute_artifact_deduplication_key(
+            workflow_run_id=run_id,
+            artifact_type=DR06_RESEARCH_REPORT_TYPE,
+        )
+        PostgreSQLReportRepository(self.session_factory).create(
+            Report(
+                id=report_id,
+                project_id=project_id,
+                workflow_run_id=run_id,
+                research_design_id="design-1",
+                title="Isolation Report",
+                language="en",
+                sections=(
+                    ReportSection(
+                        id=str(uuid4()),
+                        title="Section",
+                        content="Grounded content.",
+                        finding_refs=("finding-1",),
+                        insight_refs=("insight-1",),
+                        evidence_refs=("evidence-1",),
+                        citation_ids=("S1",),
+                    ),
+                ),
+                executive_summary="Summary",
+                limitations=(),
+                created_at=now,
+                generation_method="deterministic",
+                finding_refs=("finding-1",),
+                insight_refs=("insight-1",),
+                evidence_refs=("evidence-1",),
+                citation_registry={
+                    "S1": {
+                        "citation_id": "S1",
+                        "source_id": "source-1",
+                        "title": "Source",
+                        "canonical_url": "https://example.com",
+                        "published_at": None,
+                        "retrieved_at": now,
+                        "source_type": "web",
+                    },
+                },
+                deduplication_key=report_dedup,
+            ),
+        )
+        PostgreSQLArtifactRepository(self.session_factory).create(
+            ArtifactRecord(
+                id=artifact_id,
+                project_id=project_id,
+                artifact_type=DR06_RESEARCH_REPORT_TYPE,
+                title="Isolation Report",
+                content=content,
+                run_id=run_id,
+                status="Generated",
+                media_type="text/markdown",
+                filename="isolation-report.md",
+                content_checksum=compute_content_checksum(content),
+                deduplication_key=artifact_dedup,
+                report_id=report_id,
+            ),
+        )
+        return report_id, artifact_id
+
+    def test_principal_b_cannot_access_foreign_reports_or_artifacts(self) -> None:
+        client_a, client_b, container_a = self._build_two_clients()
+        project_id, run_id = self._create_owned_run(client_a)
+        report_id, artifact_id = self._seed_report_records(
+            project_id=project_id,
+            run_id=run_id,
+        )
+
+        cases = [
+            ("GET", f"/projects/{project_id}/reports"),
+            ("GET", f"/reports/{report_id}"),
+            ("GET", f"/artifacts/{artifact_id}"),
+            ("GET", f"/artifacts/{artifact_id}/content"),
+            ("GET", f"/workflow-runs/{run_id}"),
+        ]
+        for method, path in cases:
+            with self.subTest(method=method, path=path):
+                response = client_b.get(path)
+                self.assertEqual(response.status_code, 404, response.text)
+                self.assertEqual(response.json()["error"]["code"], "entity_not_found")
+
+        run_summary = container_a.workflow_service.get_workflow_run(run_id)
+        self.assertIsNotNone(run_summary)
+        foreign_run = client_b.get(f"/workflow-runs/{run_id}")
+        self.assertEqual(foreign_run.status_code, 404)
+        self.assertNotIn("report_count", foreign_run.json().get("error", {}))
+
 
 if __name__ == "__main__":
     unittest.main()

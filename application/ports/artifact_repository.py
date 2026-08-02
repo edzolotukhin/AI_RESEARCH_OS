@@ -17,8 +17,20 @@ class ArtifactRepository(Protocol):
         """Persist artifact metadata. Returns the new record version."""
         ...
 
+    def create(self, artifact: ArtifactRecord) -> int:
+        """Append-only artifact create with deduplication enforcement."""
+        ...
+
     def get_by_id(self, artifact_id: str) -> ArtifactRecord | None:
         """Load artifact metadata by identifier."""
+        ...
+
+    def get_by_deduplication_key(
+        self,
+        workflow_run_id: str,
+        deduplication_key: str,
+    ) -> ArtifactRecord | None:
+        """Resolve durable artifact identity for a run."""
         ...
 
     def list_for_project(self, project_id: str) -> list[ArtifactRecord]:

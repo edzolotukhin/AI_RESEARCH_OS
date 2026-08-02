@@ -66,6 +66,77 @@ class ProvenanceMergeTests(unittest.TestCase):
         self.assertTrue(is_successful_acquisition(RetrievalStatus.TRUNCATED))
         self.assertFalse(is_successful_acquisition(RetrievalStatus.FAILED))
 
+    def test_merge_discovery_records_scopes_by_research_design(self) -> None:
+        from application.sources.provenance_merge import merge_discovery_records
+
+        existing = [
+            {
+                "provider": "deterministic",
+                "query_id": "sq-in-1",
+                "rank": 1,
+                "workflow_run_id": "run-1",
+                "research_design_id": "design-1",
+            },
+        ]
+        merged = merge_discovery_records(
+            existing,
+            (
+                {
+                    "provider": "deterministic",
+                    "query_id": "sq-in-1",
+                    "rank": 1,
+                    "workflow_run_id": "run-2",
+                    "research_design_id": "design-2",
+                },
+            ),
+        )
+        self.assertEqual(len(merged), 2)
+
+    def test_missing_discovery_records_detects_run_two_provenance(self) -> None:
+        from application.sources.provenance_merge import (
+            build_discovery_record,
+            missing_discovery_records,
+        )
+
+        existing = Source(
+            id="s1",
+            project_id="p1",
+            url="https://example.com/a",
+            canonical_url="https://example.com/a",
+            title="Title",
+            retrieved_at="2026-01-01T00:00:00+00:00",
+            retrieval_status=RetrievalStatus.ACQUIRED,
+            content_text="body",
+            metadata={
+                "discovery_records": [
+                    build_discovery_record(
+                        provider="deterministic",
+                        query_id="sq-in-1",
+                        rank=1,
+                        workflow_run_id="run-1",
+                        research_design_id="design-1",
+                        research_question_id="rq-1",
+                        information_need_id="in-1",
+                    ),
+                ],
+            },
+        )
+        pending = missing_discovery_records(
+            existing,
+            (
+                build_discovery_record(
+                    provider="deterministic",
+                    query_id="sq-in-1",
+                    rank=1,
+                    workflow_run_id="run-2",
+                    research_design_id="design-2",
+                    research_question_id="rq-1",
+                    information_need_id="in-1",
+                ),
+            ),
+        )
+        self.assertEqual(len(pending), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -119,6 +119,9 @@ class WorkflowRunResponse(BaseModel):
     tasks: list[TaskResponse]
     results_available: bool = False
     artifacts_available: bool = False
+    artifact_count: int = 0
+    reports_available: bool = False
+    report_count: int = 0
     sources_available: bool = False
     source_count: int = 0
     evidence_available: bool = False

@@ -45,6 +45,8 @@ architecture itself.
 - **External orchestration** — idempotent `POST /research`, correlation metadata, n8n examples (PF-07)
 - **Structured research brief** — canonical `ResearchBrief` contract on research submission (DR-01, ADR-015)
 - **Research design** — semantic `ResearchDesign` with questions, information needs, and immutable template snapshot (DR-02, ADR-016)
+- **Desk research pipeline (deterministic path)** — Brief → Design → Search → Sources → Evidence → Findings → Insights → Markdown research report + durable artifact (DR-03–DR-06). A workflow may reach `WorkflowStatus.COMPLETED` when all stages persist successfully.
+- **Report writer** — structured `Report` with application-owned citation registry (`[S1]`, `[S2]`, …) and Markdown final artifact with checksum (DR-06, ADR-020)
 - **Docker Compose** — `postgres`, `api`, `worker`; optional n8n overlay
 - File-based **ProjectRepository** (transitional dev backend) and architecture documentation
 
@@ -52,15 +54,17 @@ architecture itself.
 
 ## What Does Not Exist Yet
 
-- **Desk research vertical** — DR-03 source acquisition, DR-04 evidence extraction, and DR-05 analysis/findings/insights implemented; report still open (DR-06)
-- Product-complete **Search**, **Analysis**, **Writer**, or **Reviewer** agents (stubs exist)
-- Source collection / evidence provenance pipeline
+- **DR-07 Review / Quality Gate** — not implemented; no automated review stage after report generation
+- **Alternate report formats** — Markdown is the current final report format; PDF, DOCX, and PPTX are not implemented
+- **Entailment guarantees** — structural provenance and citation binding exist; natural-language hallucination/entailment is not fully guaranteed
+- Product-complete **Reviewer** agent (stub exists)
 - Full knowledge management (repository stores metadata; not a KM product)
-- Artifact blob lifecycle (metadata API exists; object storage strategy open)
 - Client Manager / Business Consultant wired to production runtime
 - OAuth/OIDC, UI login, RBAC, organizations
 - Production observability, backup/restore automation, rate limiting
 - Multi-tenant SaaS or client portal
+
+The desk research vertical executes through Markdown report delivery but is **not** the full Brief → … → Review → multi-format artifact product yet.
 
 ---
 
@@ -437,8 +441,8 @@ The **WorkflowEngine** and **TaskScheduler** never import concrete agents. New e
 
 ## Current Limitations
 
-- **Research product** — agent executors exist; desk research methodology is not product-complete
-- **Artifact blobs** — metadata persisted; blob storage strategy not finalized
+- **Research product** — desk research runs through Markdown report delivery (DR-06); review gate (DR-07) and multi-format exports are not implemented
+- **Artifact blobs** — Markdown content is persisted in PostgreSQL; external object storage is not used
 - **Knowledge** — repository port exists; not full knowledge management
 - **Legacy projects** — pre-PF-08 rows with `NULL` owner are inaccessible until backfilled
 - **Authentication** — service API keys only; no OAuth/OIDC or RBAC
@@ -454,7 +458,7 @@ See [ROADMAP.md](ROADMAP.md) for deferred platform hardening.
 
 The runtime core is domain-agnostic: templates, dependency graphs, and executor resolution can support other industries. Marketing research is the first domain — planner output and agent executors target agency workflows today.
 
-**Next product priority:** the **Desk Research vertical** (brief → planning → design → search → evidence → analysis → insights → report → review → artifact) on top of the completed platform foundation — not additional horizontal infrastructure.
+**Next product priority:** **DR-07 Review / Quality Gate** on the desk research vertical (brief → planning → design → search → evidence → analysis → insights → report → **review** → artifact). The platform foundation is complete; the full vertical is not.
 
 Platform hardening (observability, backups, OAuth, rate limits) is explicitly deferred until that vertical validates the foundation. See [ROADMAP.md](ROADMAP.md) and [docs/backlog.md](docs/backlog.md).
 

@@ -57,8 +57,8 @@ class ResearchEndpointTests(ApiTestCase):
         self.assertTrue(terminal["is_terminal"])
         self.assertEqual(terminal["status"], "completed")
 
-    def test_production_mode_fails_on_unimplemented_report_stage(self) -> None:
-        with self.subTest("honest failure after analysis completes"):
+    def test_production_mode_completes_desk_research_pipeline(self) -> None:
+        with self.subTest("full pipeline including report and artifact"):
             from application.composition_root import create_application_container
             from application.config import ApplicationConfig, ApplicationOverrides
             from tests.api.helpers import close_test_client, open_test_client
@@ -77,6 +77,7 @@ class ResearchEndpointTests(ApiTestCase):
                         search_provider="deterministic",
                         evidence_extractor="deterministic",
                         analysis_engine="deterministic",
+                        report_engine="deterministic",
                     ),
                     overrides=ApplicationOverrides(
                         llm_client=create_brief_aligned_llm_mock(),
@@ -93,21 +94,16 @@ class ResearchEndpointTests(ApiTestCase):
                     client = AuthenticatedTestClient(raw, headers)
                     project_id = client.post(
                         "/projects",
-                        json={"name": "Honest Failure Project"},
+                        json={"name": "Completed Pipeline Project"},
                     ).json()["id"]
                     run_id = client.post(
                         f"/projects/{project_id}/research",
                         json={"brief": BRIEF},
                     ).json()["run_id"]
-                    try:
-                        drain_background_runs(container)
-                    except CapabilityNotImplementedError as exc:
-                        self.assertEqual(exc.capability, "report")
-                    else:
-                        self.fail("Expected report CapabilityNotImplementedError")
+                    drain_background_runs(container)
                     terminal = client.get(f"/workflow-runs/{run_id}").json()
                     self.assertTrue(terminal["is_terminal"])
-                    self.assertEqual(terminal["status"], "failed")
+                    self.assertEqual(terminal["status"], "completed")
                     tasks = {
                         task["definition_id"]: task["status"]
                         for task in terminal["tasks"]
@@ -115,11 +111,11 @@ class ResearchEndpointTests(ApiTestCase):
                     self.assertEqual(tasks["task-collect-evidence"], "completed")
                     self.assertEqual(tasks["task-extract-evidence"], "completed")
                     self.assertEqual(tasks["task-analyze"], "completed")
-                    self.assertEqual(tasks["task-write-report"], "failed")
-                    self.assertTrue(terminal["findings_available"])
-                    self.assertGreater(terminal["finding_count"], 0)
-                    self.assertTrue(terminal["insights_available"])
-                    self.assertGreater(terminal["insight_count"], 0)
+                    self.assertEqual(tasks["task-write-report"], "completed")
+                    self.assertTrue(terminal["reports_available"])
+                    self.assertGreater(terminal["report_count"], 0)
+                    self.assertTrue(terminal["artifacts_available"])
+                    self.assertGreater(terminal["artifact_count"], 0)
                 finally:
                     close_test_client(context, container)
                     container.shutdown()

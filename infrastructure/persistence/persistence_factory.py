@@ -41,6 +41,9 @@ from infrastructure.persistence.memory.in_memory_finding_repository import (
 from infrastructure.persistence.memory.in_memory_insight_repository import (
     InMemoryInsightRepository,
 )
+from infrastructure.persistence.memory.in_memory_report_repository import (
+    InMemoryReportRepository,
+)
 from infrastructure.persistence.memory.in_memory_source_repository import (
     InMemorySourceRepository,
 )
@@ -82,6 +85,9 @@ from infrastructure.persistence.postgresql.repositories.postgresql_finding_repos
 from infrastructure.persistence.postgresql.repositories.postgresql_insight_repository import (
     PostgreSQLInsightRepository,
 )
+from infrastructure.persistence.postgresql.repositories.postgresql_report_repository import (
+    PostgreSQLReportRepository,
+)
 from infrastructure.persistence.postgresql.repositories.postgresql_source_repository import (
     PostgreSQLSourceRepository,
 )
@@ -105,6 +111,7 @@ class PersistenceBundle:
     evidence_repository: object
     finding_repository: object
     insight_repository: object
+    report_repository: object
     execution_log_store: object
     engine: Engine | None = None
 
@@ -138,6 +145,7 @@ def build_persistence_bundle(
             evidence_repository=InMemoryEvidenceRepository(),
             finding_repository=InMemoryFindingRepository(),
             insight_repository=InMemoryInsightRepository(),
+            report_repository=InMemoryReportRepository(),
             execution_log_store=InMemoryExecutionLogStore(),
         )
 
@@ -156,6 +164,7 @@ def build_persistence_bundle(
             evidence_repository=InMemoryEvidenceRepository(),
             finding_repository=InMemoryFindingRepository(),
             insight_repository=InMemoryInsightRepository(),
+            report_repository=InMemoryReportRepository(),
             execution_log_store=InMemoryExecutionLogStore(),
         )
 
@@ -184,6 +193,7 @@ def build_persistence_bundle(
             evidence_repository=PostgreSQLEvidenceRepository(session_factory),
             finding_repository=PostgreSQLFindingRepository(session_factory),
             insight_repository=PostgreSQLInsightRepository(session_factory),
+            report_repository=PostgreSQLReportRepository(session_factory),
             execution_log_store=PostgreSQLExecutionLogStore(session_factory),
             engine=engine,
         )

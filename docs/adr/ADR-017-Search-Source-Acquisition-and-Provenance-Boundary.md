@@ -100,7 +100,11 @@ Each durable `Source` therefore stores:
 - `workflow_run_refs[]` — which runs discovered/linked the source
 - `research_design_refs[]` — which design snapshots contributed
 - existing `query_refs[]`, `research_question_refs[]`, `information_need_refs[]`
-- `metadata.discovery_records[]` — provider, query_id, rank, run/design per discovery
+- `metadata.discovery_records[]` — provider, query_id, rank, workflow_run_id,
+  research_design_id, research_question_id, information_need_id per discovery
+
+When a later run discovers an existing canonical Source, DR-03 merges a new
+run/design-scoped discovery record without re-fetching immutable acquired content.
 
 `GET /workflow-runs/{id}` `source_count` / `sources_available` are computed from
 sources whose `workflow_run_refs` contains that run ID (not project-wide totals).
@@ -121,7 +125,8 @@ the same canonical URL **merge provenance only** — they do not overwrite
 ### Provenance merge semantics
 
 Reference arrays merge with stable first-seen order and uniqueness. Discovery records
-dedupe on `(provider, query_id, workflow_run_id, rank)`.
+dedupe on `(provider, query_id, workflow_run_id, research_design_id, rank)` so the
+same design-local query ID may appear in multiple runs/designs without collision.
 
 ### Redirect validation
 

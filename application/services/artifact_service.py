@@ -45,3 +45,15 @@ class ArtifactService:
 
     def list_artifacts_for_run(self, run_id: str) -> list[ArtifactRecord]:
         return self._artifact_repository.list_for_run(run_id)
+
+    def count_for_run(self, project_id: str, workflow_run_id: str) -> int:
+        return len(
+            [
+                item
+                for item in self.list_artifacts_for_project(project_id)
+                if item.run_id == workflow_run_id
+            ],
+        )
+
+    def run_has_artifacts(self, project_id: str, workflow_run_id: str) -> bool:
+        return self.count_for_run(project_id, workflow_run_id) > 0

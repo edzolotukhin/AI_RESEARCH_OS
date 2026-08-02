@@ -44,6 +44,11 @@ class ArtifactRecord:
     run_id: str | None = None
     status: str = "Draft"
     version: int = 1
+    media_type: str = ""
+    filename: str = ""
+    content_checksum: str = ""
+    deduplication_key: str = ""
+    report_id: str | None = None
 
 
 @dataclass(frozen=True)

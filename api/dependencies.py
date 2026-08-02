@@ -11,6 +11,7 @@ from application.services.execution_log_service import ExecutionLogService
 from application.services.project_service import ProjectService
 from application.services.evidence_service import EvidenceService
 from application.services.finding_service import FindingService, InsightService
+from application.services.report_query_service import ReportQueryService
 from application.services.source_service import SourceService
 from application.services.workflow_service import WorkflowService
 
@@ -61,6 +62,10 @@ def get_insight_service(container: ContainerDep) -> InsightService:
     return container.insight_service
 
 
+def get_report_query_service(container: ContainerDep) -> ReportQueryService:
+    return container.report_query_service
+
+
 AgencyDep = Annotated[Agency, Depends(get_agency)]
 ProjectServiceDep = Annotated[ProjectService, Depends(get_project_service)]
 WorkflowServiceDep = Annotated[WorkflowService, Depends(get_workflow_service)]
@@ -69,6 +74,7 @@ SourceServiceDep = Annotated[SourceService, Depends(get_source_service)]
 EvidenceServiceDep = Annotated[EvidenceService, Depends(get_evidence_service)]
 FindingServiceDep = Annotated[FindingService, Depends(get_finding_service)]
 InsightServiceDep = Annotated[InsightService, Depends(get_insight_service)]
+ReportQueryServiceDep = Annotated[ReportQueryService, Depends(get_report_query_service)]
 ExecutionLogServiceDep = Annotated[
     ExecutionLogService,
     Depends(get_execution_log_service),

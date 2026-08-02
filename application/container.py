@@ -14,6 +14,7 @@ from application.services.workflow_service import WorkflowService
 from application.services.research_submission_service import ResearchSubmissionService
 from application.services.evidence_service import EvidenceService
 from application.services.finding_service import FindingService, InsightService
+from application.services.report_query_service import ReportQueryService
 from application.services.source_service import SourceService
 from application.services.worker_execution_service import WorkerExecutionService
 from application.services.authentication_service import AuthenticationService
@@ -42,6 +43,7 @@ class ApplicationContainer:
     evidence_service: EvidenceService
     finding_service: FindingService
     insight_service: InsightService
+    report_query_service: ReportQueryService
     execution_log_service: ExecutionLogService
     durable_workflow_service: DurableWorkflowService | None = None
     worker_execution_service: WorkerExecutionService | None = None
