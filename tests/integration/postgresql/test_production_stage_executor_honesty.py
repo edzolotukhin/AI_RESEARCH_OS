@@ -1,4 +1,4 @@
-"""PostgreSQL integration test for DR-02 production stage executor honesty."""
+"""PostgreSQL integration test for DR-03 production stage executor honesty."""
 
 from __future__ import annotations
 
@@ -26,11 +26,12 @@ from tests.integration.postgresql.helpers import (
 
 
 class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCase):
-    def test_production_runtime_fails_honestly_on_unimplemented_search(self) -> None:
+    def test_production_runtime_fails_honestly_on_unimplemented_analysis(self) -> None:
         mock_llm = create_brief_aligned_llm_mock()
         container = create_application_container(
             config=postgresql_application_config(
                 deterministic_stage_executors=False,
+                search_provider="deterministic",
             ),
             overrides=ApplicationOverrides(llm_client=mock_llm),
         )
@@ -43,7 +44,7 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
             container._test_api_key_plaintext,
         ))
 
-        project_id = client.post("/projects", json={"name": "PG Honest Failure"}).json()["id"]
+        project_id = client.post("/projects", json={"name": "PG DR-03 Honesty"}).json()["id"]
         run_id = client.post(
             f"/projects/{project_id}/research",
             json={"brief": BRIEF},
@@ -52,32 +53,25 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
         try:
             drain_background_runs(container)
         except CapabilityNotImplementedError as exc:
-            self.assertEqual(exc.capability, "search")
-            self.assertEqual(exc.stage, "collect_sources")
+            self.assertEqual(exc.capability, "analysis")
+            self.assertEqual(exc.stage, "analyze")
         else:
-            self.fail("Expected CapabilityNotImplementedError from production search stage")
+            self.fail("Expected CapabilityNotImplementedError from production analysis stage")
 
         terminal = client.get(f"/workflow-runs/{run_id}").json()
         self.assertTrue(terminal["is_terminal"])
         self.assertEqual(terminal["status"], "failed")
-        self.assertFalse(terminal["artifacts_available"])
+        self.assertTrue(terminal["sources_available"])
+        self.assertGreater(terminal["source_count"], 0)
 
         tasks = {task["definition_id"]: task["status"] for task in terminal["tasks"]}
-        self.assertEqual(tasks["task-collect-evidence"], "failed")
-        self.assertEqual(tasks["task-analyze"], "skipped")
+        self.assertEqual(tasks["task-collect-evidence"], "completed")
+        self.assertEqual(tasks["task-analyze"], "failed")
         self.assertEqual(tasks["task-write-report"], "skipped")
 
-        results = client.get(f"/workflow-runs/{run_id}/results").json()
-        self.assertTrue(results["is_terminal"])
-        self.assertEqual(results["status"], "failed")
-        report_results = [
-            item for item in results["task_results"]
-            if item["task_id"] == "task-write-report"
-        ]
-        self.assertEqual(report_results, [])
-
-        artifacts = client.get(f"/workflow-runs/{run_id}/artifacts").json()
-        self.assertEqual(artifacts["items"], [])
+        sources = client.get(f"/projects/{project_id}/sources").json()["items"]
+        self.assertGreater(len(sources), 0)
+        self.assertTrue(all("provider" not in item.get("metadata", {}) for item in sources))
 
 
 if __name__ == "__main__":

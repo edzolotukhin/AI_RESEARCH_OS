@@ -12,6 +12,7 @@ from infrastructure.persistence.postgresql.models.task_model import WorkflowTask
 from infrastructure.persistence.postgresql.models.workflow_run_model import (
     WorkflowRunModel,
 )
+from infrastructure.persistence.postgresql.models.source_model import SourceModel
 from infrastructure.persistence.postgresql.models.workflow_template_model import (
     WorkflowTemplateModel,
 )
@@ -21,6 +22,7 @@ __all__ = [
     "ExecutionLogEntryModel",
     "KnowledgeItemModel",
     "ProjectModel",
+    "SourceModel",
     "WorkflowRunModel",
     "WorkflowTaskModel",
     "WorkflowTemplateModel",

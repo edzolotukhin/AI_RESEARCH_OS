@@ -71,7 +71,8 @@ The following statuses are used throughout the project.
 | ADR-013 | External Orchestration and Idempotent Submission | Active |
 | ADR-014 | Authentication and Access Boundary | Active |
 | ADR-015 | Desk Research Brief and Research Contract | Active (DR-01 complete) |
-| ADR-016 | Desk Research Design and Semantic Planning | Active (DR-02) |
+| ADR-016 | Desk Research Design and Semantic Planning | Active (DR-02 complete) |
+| ADR-017 | Search, Source Acquisition and Provenance Boundary | Active (DR-03) |
 
 Additional ADRs will be added as the architecture evolves.
 

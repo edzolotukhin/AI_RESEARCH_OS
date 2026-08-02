@@ -32,6 +32,9 @@ from infrastructure.persistence.memory.in_memory_workflow_run_execution_reposito
 from infrastructure.persistence.memory.in_memory_workflow_run_repository import (
     InMemoryWorkflowRunRepository,
 )
+from infrastructure.persistence.memory.in_memory_source_repository import (
+    InMemorySourceRepository,
+)
 from infrastructure.persistence.memory.in_memory_workflow_template_repository import (
     InMemoryWorkflowTemplateRepository,
 )
@@ -61,6 +64,9 @@ from infrastructure.persistence.postgresql.repositories.postgresql_workflow_run_
 from infrastructure.persistence.postgresql.repositories.postgresql_workflow_run_repository import (
     PostgreSQLWorkflowRunRepository,
 )
+from infrastructure.persistence.postgresql.repositories.postgresql_source_repository import (
+    PostgreSQLSourceRepository,
+)
 from infrastructure.persistence.postgresql.repositories.postgresql_workflow_template_repository import (
     PostgreSQLWorkflowTemplateRepository,
 )
@@ -77,6 +83,7 @@ class PersistenceBundle:
     api_key_repository: object | None
     artifact_repository: object
     knowledge_repository: object
+    source_repository: object
     execution_log_store: object
     engine: Engine | None = None
 
@@ -106,6 +113,7 @@ def build_persistence_bundle(
             api_key_repository=InMemoryApiKeyRepository(),
             artifact_repository=InMemoryArtifactRepository(),
             knowledge_repository=InMemoryKnowledgeRepository(),
+            source_repository=InMemorySourceRepository(),
             execution_log_store=InMemoryExecutionLogStore(),
         )
 
@@ -120,6 +128,7 @@ def build_persistence_bundle(
             api_key_repository=InMemoryApiKeyRepository(),
             artifact_repository=InMemoryArtifactRepository(),
             knowledge_repository=InMemoryKnowledgeRepository(),
+            source_repository=InMemorySourceRepository(),
             execution_log_store=InMemoryExecutionLogStore(),
         )
 
@@ -144,6 +153,7 @@ def build_persistence_bundle(
             api_key_repository=PostgreSQLApiKeyRepository(session_factory),
             artifact_repository=PostgreSQLArtifactRepository(session_factory),
             knowledge_repository=PostgreSQLKnowledgeRepository(session_factory),
+            source_repository=PostgreSQLSourceRepository(session_factory),
             execution_log_store=PostgreSQLExecutionLogStore(session_factory),
             engine=engine,
         )

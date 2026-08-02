@@ -119,6 +119,8 @@ class WorkflowRunResponse(BaseModel):
     tasks: list[TaskResponse]
     results_available: bool = False
     artifacts_available: bool = False
+    sources_available: bool = False
+    source_count: int = 0
     external: ExternalSubmissionMetadata | None = None
     research_brief: ResearchBriefResponse | None = None
     research_design: ResearchDesignResponse | None = None

@@ -11,6 +11,7 @@ from application.config import ApplicationConfig, ApplicationOverrides
 from application.exceptions.capability_not_implemented_error import (
     CapabilityNotImplementedError,
 )
+from application.executors.search_executor import SearchExecutor
 from application.executors.stage_executors import (
     DeterministicStageExecutor,
     UnimplementedCapabilityExecutor,
@@ -69,20 +70,22 @@ class StageExecutorHonestyTests(unittest.TestCase):
         self.assertEqual(ctx.exception.capability, "search")
         self.assertEqual(ctx.exception.stage, "collect_sources")
 
-    def test_production_composition_root_registers_unimplemented_stages(self) -> None:
+    def test_production_composition_root_registers_search_executor(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             container = create_application_container(
                 config=ApplicationConfig(
                     projects_root=temp_dir,
                     deterministic_stage_executors=False,
+                    search_provider="deterministic",
                 ),
                 overrides=ApplicationOverrides(
                     llm_client=create_brief_aligned_llm_mock(),
                 ),
             )
             registry = container.agency._agent_loader._executors
-            executor = registry["search"]
-            self.assertIsInstance(executor, UnimplementedCapabilityExecutor)
+            self.assertIsInstance(registry["search"], SearchExecutor)
+            self.assertIsInstance(registry["analysis"], UnimplementedCapabilityExecutor)
+            self.assertIsInstance(registry["report"], UnimplementedCapabilityExecutor)
 
     def test_deterministic_stage_executors_only_when_explicitly_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

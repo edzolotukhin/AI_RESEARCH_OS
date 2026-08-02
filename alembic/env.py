@@ -12,6 +12,7 @@ from infrastructure.persistence.postgresql.models import (  # noqa: F401
     ExecutionLogEntryModel,
     KnowledgeItemModel,
     ProjectModel,
+    SourceModel,
     WorkflowRunModel,
     WorkflowTaskModel,
     WorkflowTemplateModel,

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from application.ports.project_repository import ProjectRepository
+from application.ports.source_ports import SearchProvider, SourceRepository, SourceRetriever
 from application.services.project_service import ProjectService
 from infrastructure.llm.llm_client import LLMClient
 
@@ -25,6 +26,8 @@ class ApplicationConfig:
     durable_workflow_execution: bool | None = None
     background_execution_mode: str | None = None
     deterministic_stage_executors: bool = False
+    search_provider: str = "tavily"
+    search_api_key: str | None = None
 
     @classmethod
     def from_env(cls) -> ApplicationConfig:
@@ -44,6 +47,8 @@ class ApplicationConfig:
                 "",
             ).lower()
             in {"1", "true", "yes"},
+            search_provider=os.environ.get("SEARCH_PROVIDER", "tavily"),
+            search_api_key=os.environ.get("SEARCH_API_KEY"),
         )
 
 
@@ -59,3 +64,6 @@ class ApplicationOverrides:
     registry: Registry | None = None
     planner_agent: Any | None = None
     deterministic_stage_executors: bool | None = None
+    search_provider: SearchProvider | None = None
+    source_retriever: SourceRetriever | None = None
+    source_repository: SourceRepository | None = None
