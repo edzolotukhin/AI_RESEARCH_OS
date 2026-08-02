@@ -1,0 +1,24 @@
+# Deterministic desk-research stack for n8n native acceptance validation.
+services:
+  api:
+    environment:
+      BACKGROUND_EXECUTION_MODE: external
+      SEARCH_PROVIDER: deterministic
+      EVIDENCE_EXTRACTOR: deterministic
+      ANALYSIS_ENGINE: deterministic
+      REPORT_ENGINE: deterministic
+      REVIEW_ENGINE: deterministic
+      DETERMINISTIC_PLANNER: "1"
+  worker:
+    environment:
+      BACKGROUND_EXECUTION_MODE: external
+      SEARCH_PROVIDER: deterministic
+      EVIDENCE_EXTRACTOR: deterministic
+      ANALYSIS_ENGINE: deterministic
+      REPORT_ENGINE: deterministic
+      REVIEW_ENGINE: deterministic
+      DETERMINISTIC_PLANNER: "1"
+  n8n:
+    container_name: ai_research_os_n8n_acceptance
+    ports:
+      - "5679:5678"

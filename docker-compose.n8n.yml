@@ -13,6 +13,8 @@ services:
       GENERIC_TIMEZONE: UTC
       AI_RESEARCH_OS_API_URL: http://api:8000
       AI_RESEARCH_OS_API_KEY: ${AI_RESEARCH_OS_API_KEY}
+      N8N_POLL_INTERVAL_SECONDS: ${N8N_POLL_INTERVAL_SECONDS:-3}
+      N8N_MAX_POLL_ATTEMPTS: ${N8N_MAX_POLL_ATTEMPTS:-120}
     volumes:
       - n8n_data:/home/node/.n8n
     depends_on:

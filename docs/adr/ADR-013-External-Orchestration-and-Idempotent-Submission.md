@@ -93,8 +93,8 @@ migration strategy and is planned for a later phase.
 
 ### Authentication
 
-**Deferred to PF-08.** Local n8n integration is unauthenticated with explicit
-documentation warning. Do not expose local stack to public internet.
+Bearer API keys (PF-08). n8n workflows use `Authorization: Bearer {{$env.AI_RESEARCH_OS_API_KEY}}`.
+Never commit or log plaintext keys.
 
 ### n8n local development
 

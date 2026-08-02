@@ -17,7 +17,7 @@ foreach ($name in @(
 }
 
 try {
-    Write-Host "[1/3] Docker PostgreSQL"
+    Write-Host "[1/5] Docker PostgreSQL"
     Invoke-ExternalCommand -CommandName "docker compose up -d postgres" -CommandBlock {
         docker compose up -d postgres
     } | Out-Null
@@ -25,7 +25,7 @@ try {
     $postgresConfig = Get-DockerComposePostgresConfig -RepositoryRoot $repositoryRoot
     Wait-PostgresContainerHealthy -ContainerName $postgresConfig.ContainerName
 
-    Write-Host "[2/3] Alembic"
+    Write-Host "[2/5] Alembic"
     Ensure-PostgresTestDatabase `
         -ContainerName $postgresConfig.ContainerName `
         -User $postgresConfig.User `
@@ -37,11 +37,27 @@ try {
         -TestDatabase $postgresConfig.TestDatabase
     Invoke-PythonCommand -Arguments @("-m", "alembic", "upgrade", "head")
 
-    Write-Host "[3/3] External orchestration integration"
+    Write-Host "[3/5] External orchestration integration"
     Invoke-PythonCommand -Arguments @(
         "-W", "error::ResourceWarning",
         "-m", "unittest",
         "tests.integration.api.test_external_orchestration",
+        "-v"
+    )
+
+    Write-Host "[4/5] n8n product acceptance"
+    Invoke-PythonCommand -Arguments @(
+        "-W", "error::ResourceWarning",
+        "-m", "unittest",
+        "tests.integration.api.test_n8n_product_acceptance",
+        "-v"
+    )
+
+    Write-Host "[5/5] n8n native workflow validation"
+    Invoke-PythonCommand -Arguments @(
+        "-W", "error::ResourceWarning",
+        "-m", "unittest",
+        "tests.integration.n8n.test_n8n_native_workflow",
         "-v"
     )
 
