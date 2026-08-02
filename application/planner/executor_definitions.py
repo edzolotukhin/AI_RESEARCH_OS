@@ -25,7 +25,12 @@ AGENT_EXECUTOR_CAPABILITIES: tuple[ExecutorCapability, ...] = (
     ExecutorCapability(
         executor_id="search",
         executor_type=ExecutorType.AGENT,
-        description="Collects evidence and research data",
+        description="Collects external research sources",
+    ),
+    ExecutorCapability(
+        executor_id="evidence",
+        executor_type=ExecutorType.AGENT,
+        description="Extracts grounded evidence from acquired sources",
     ),
     ExecutorCapability(
         executor_id="analysis",

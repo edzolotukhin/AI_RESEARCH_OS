@@ -21,6 +21,7 @@ class ResearchDesignWorkflowMapper:
     """
 
     _TASK_COLLECT = "task-collect-evidence"
+    _TASK_EXTRACT = "task-extract-evidence"
     _TASK_ANALYZE = "task-analyze"
     _TASK_REPORT = "task-write-report"
 
@@ -39,7 +40,7 @@ class ResearchDesignWorkflowMapper:
 
         builder.add_task(
             id=self._TASK_COLLECT,
-            name="Collect evidence",
+            name="Collect sources",
             executor_id="search",
             executor_type=ExecutorType.AGENT,
             depends_on=[],
@@ -49,7 +50,22 @@ class ResearchDesignWorkflowMapper:
                 "project_id": project.id,
                 "research_design_id": design.id,
                 "purpose": "collect_sources",
-                "implementation_status": "planned",
+                "implementation_status": "implemented",
+            },
+        )
+        builder.add_task(
+            id=self._TASK_EXTRACT,
+            name="Extract evidence",
+            executor_id="evidence",
+            executor_type=ExecutorType.AGENT,
+            depends_on=[self._TASK_COLLECT],
+            metadata={
+                "stage_id": "stage-desk-research",
+                "stage_name": "Desk Research",
+                "project_id": project.id,
+                "research_design_id": design.id,
+                "purpose": "extract_evidence",
+                "implementation_status": "implemented",
             },
         )
         builder.add_task(
@@ -57,7 +73,7 @@ class ResearchDesignWorkflowMapper:
             name="Analyze findings",
             executor_id="analysis",
             executor_type=ExecutorType.AGENT,
-            depends_on=[self._TASK_COLLECT],
+            depends_on=[self._TASK_EXTRACT],
             metadata={
                 "stage_id": "stage-desk-research",
                 "stage_name": "Desk Research",

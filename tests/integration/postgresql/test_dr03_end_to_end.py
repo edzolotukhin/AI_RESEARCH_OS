@@ -32,6 +32,7 @@ class Dr03EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
             config=postgresql_application_config(
                 deterministic_stage_executors=False,
                 search_provider="deterministic",
+                evidence_extractor="deterministic",
             ),
             overrides=ApplicationOverrides(llm_client=mock_llm),
         )
@@ -56,6 +57,7 @@ class Dr03EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
         terminal = client.get(f"/workflow-runs/{run_id}").json()
         tasks = {task["definition_id"]: task["status"] for task in terminal["tasks"]}
         self.assertEqual(tasks["task-collect-evidence"], "completed")
+        self.assertEqual(tasks["task-extract-evidence"], "completed")
         self.assertEqual(tasks["task-analyze"], "failed")
         self.assertEqual(tasks["task-write-report"], "skipped")
         self.assertEqual(terminal["status"], "failed")

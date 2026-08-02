@@ -27,8 +27,8 @@ Primary product objective: execute one real desk research methodology end-to-end
 
 - [x] **DR-01** Canonical research brief contract — [ADR-015](adr/ADR-015-Desk-Research-Brief-and-Research-Contract.md)
 - [x] **DR-02** Research design & research questions — [ADR-016](adr/ADR-016-Desk-Research-Design-and-Semantic-Planning.md)
-- [ ] **DR-03** Search / source acquisition — [ADR-017](adr/ADR-017-Search-Source-Acquisition-and-Provenance-Boundary.md) *(in progress)*
-- [ ] **Evidence / knowledge** — provenance, ingestion, and query beyond metadata ports (DR-04)
+- [x] **DR-03** Search / source acquisition — [ADR-017](adr/ADR-017-Search-Source-Acquisition-and-Provenance-Boundary.md)
+- [ ] **DR-04** Evidence & provenance — [ADR-018](adr/ADR-018-Evidence-and-Provenance-Boundary.md) *(in progress)*
 - [ ] **Analysis → Insights** — structured analytical outputs tied to sources
 - [ ] **Writer → Review → Final artifact** — report generation and review gate
 - [ ] End-to-end vertical integration test (one methodology, real inputs, inspectable artifact)

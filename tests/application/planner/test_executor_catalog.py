@@ -17,6 +17,7 @@ class ExecutorCatalogTests(unittest.TestCase):
             (
                 "planner",
                 "search",
+                "evidence",
                 "analysis",
                 "report",
                 "proposal",

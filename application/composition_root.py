@@ -37,6 +37,7 @@ from agents.planner.planner_executor import PlannerExecutor
 from agents.proposal.proposal_agent import ProposalAgent
 
 from application.executors.agent_executor import AgentExecutor
+from application.executors.evidence_executor import EvidenceExecutor
 from application.executors.search_executor import SearchExecutor
 from application.executors.stage_executors import (
     DeterministicStageExecutor,
@@ -47,7 +48,9 @@ from domain.factories.project_factory import ProjectFactory
 from domain.factories.task_factory import TaskFactory
 from domain.factories.workflow_run_factory import WorkflowRunFactory
 
+from application.services.evidence_service import EvidenceService
 from application.services.source_service import SourceService
+from application.evidence.evidence_factory import build_evidence_executor
 from application.sources.search_factory import build_search_executor
 from application.structured_output.correction_prompt import (
     RESEARCH_DESIGN_PAYLOAD_SCHEMA,
@@ -145,6 +148,10 @@ def create_application_container(
 
     source_repository = overrides.source_repository or persistence.source_repository
     source_service = SourceService(source_repository=source_repository)
+    evidence_repository = (
+        overrides.evidence_repository or persistence.evidence_repository
+    )
+    evidence_service = EvidenceService(evidence_repository=evidence_repository)
 
     execution_log_service = ExecutionLogService(
         execution_log_store=persistence.execution_log_store,
@@ -198,6 +205,8 @@ def create_application_container(
         overrides=overrides,
         planner_agent=planner_agent,
         source_repository=source_repository,
+        evidence_repository=evidence_repository,
+        llm_client=llm_client,
     )
 
     _ensure_executor_catalog_matches_registry(
@@ -276,6 +285,7 @@ def create_application_container(
             workflow_service=workflow_service,
             artifact_service=artifact_service,
             source_service=source_service,
+            evidence_service=evidence_service,
         )
 
     agency = Agency(
@@ -303,6 +313,7 @@ def create_application_container(
         artifact_service=artifact_service,
         knowledge_service=knowledge_service,
         source_service=source_service,
+        evidence_service=evidence_service,
         execution_log_service=execution_log_service,
         durable_workflow_service=durable_workflow_service,
         worker_execution_service=worker_execution_service,
@@ -346,6 +357,8 @@ def _build_agent_executors(
     overrides: ApplicationOverrides,
     planner_agent,
     source_repository,
+    evidence_repository,
+    llm_client,
 ) -> dict:
     use_deterministic_stages = (
         overrides.deterministic_stage_executors
@@ -361,6 +374,7 @@ def _build_agent_executors(
     if use_deterministic_stages:
         for executor_id, stage_key in (
             ("search", "collect_sources"),
+            ("evidence", "extract_evidence"),
             ("analysis", "analyze"),
             ("report", "write_report"),
         ):
@@ -371,6 +385,13 @@ def _build_agent_executors(
         config=config,
         overrides=overrides,
         source_repository=source_repository,
+    )
+    executors["evidence"] = build_evidence_executor(
+        config=config,
+        overrides=overrides,
+        evidence_repository=evidence_repository,
+        source_repository=source_repository,
+        llm_client=llm_client,
     )
     executors["analysis"] = UnimplementedCapabilityExecutor(
         capability="analysis",
