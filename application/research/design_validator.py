@@ -4,6 +4,13 @@ from domain.common.exceptions import ValidationError
 from domain.planning.research_design import ResearchDesign
 from domain.research_brief import ResearchBrief, normalize_objective_text
 
+from application.planner.objective_coverage import (
+    ObjectiveCoverageValidationError,
+    evaluate_objective_coverage,
+    find_invalid_objective_refs,
+    find_uncovered_objectives,
+)
+
 
 def validate_research_design(
     design: ResearchDesign,
@@ -69,58 +76,18 @@ def validate_research_design(
         raise ValidationError("ResearchDesign.deliverable_plan must not be empty.")
 
     if brief is not None:
-        invalid_refs = find_invalid_objective_refs(brief, design)
-        if invalid_refs:
-            raise ValidationError(
-                "ResearchQuestion objective_refs must match brief objectives: "
-                + ", ".join(
-                    f"{question_id} -> {ref!r}"
-                    for question_id, ref in invalid_refs
-                ),
-            )
-        uncovered = find_uncovered_objectives(brief, design)
-        if uncovered:
-            raise ValidationError(
-                "ResearchDesign does not cover brief objectives: "
-                + ", ".join(uncovered),
-            )
+        failure = evaluate_objective_coverage(brief, design)
+        if failure is not None:
+            raise ObjectiveCoverageValidationError.from_failure(failure)
 
 
-def find_invalid_objective_refs(
-    brief: ResearchBrief,
-    design: ResearchDesign,
-) -> tuple[tuple[str, str], ...]:
-    """Refs that do not resolve to a brief objective after normalization."""
-    if not brief.objectives:
-        return ()
-
-    valid = set(brief.normalized_objectives())
-    invalid: list[tuple[str, str]] = []
-    for question in design.research_questions:
-        for ref in question.objective_refs:
-            if normalize_objective_text(ref) not in valid:
-                invalid.append((question.id, ref))
-    return tuple(invalid)
-
-
-def find_uncovered_objectives(
-    brief: ResearchBrief,
-    design: ResearchDesign,
-) -> tuple[str, ...]:
-    """Return brief objectives not referenced by any research question."""
-    if not brief.objectives:
-        return ()
-
-    covered: set[str] = set()
-    for question in design.research_questions:
-        for ref in question.objective_refs:
-            covered.add(normalize_objective_text(ref))
-
-    uncovered: list[str] = []
-    for objective in brief.objectives:
-        if normalize_objective_text(objective) not in covered:
-            uncovered.append(objective)
-    return tuple(uncovered)
+# Re-export objective traceability helpers for existing imports.
+__all__ = [
+    "find_invalid_objective_refs",
+    "find_orphan_questions",
+    "find_uncovered_objectives",
+    "validate_research_design",
+]
 
 
 def find_orphan_questions(

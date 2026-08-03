@@ -121,6 +121,93 @@ class StructuredOutputCorrectionPromptBuilder:
             user=user_prompt,
         )
 
+    def build_objective_coverage_correction(
+        self,
+        *,
+        original_prompt: Prompt,
+        brief,
+        failure,
+        previous_design_json: str,
+        planner_bounds: PlannerBounds | None = None,
+        payload_schema: str = RESEARCH_DESIGN_PAYLOAD_SCHEMA,
+    ) -> Prompt:
+        bounds = planner_bounds or PlannerBounds.from_env()
+        sections = [
+            original_prompt.user,
+            "OBJECTIVE COVERAGE CORRECTION",
+            "\n".join(
+                [
+                    "The previous ResearchDesign JSON is syntactically valid but fails "
+                    "brief objective coverage validation.",
+                    "Repair objective_refs while staying within planner output limits.",
+                    "Use exact brief objective text verbatim in every objective_refs entry.",
+                    "Do not invent objectives that are not listed in the brief.",
+                    "Consolidate overlapping objectives into shared research questions "
+                    "with multiple objective_refs when needed.",
+                    bounds.format_compact_instruction(),
+                    "Return JSON only.",
+                ]
+            ),
+            "PLANNER OUTPUT LIMITS",
+            bounds.format_for_prompt(),
+        ]
+
+        if failure.uncovered_objectives:
+            sections.extend(
+                [
+                    "UNCOVERED BRIEF OBJECTIVES",
+                    "Each objective below must appear verbatim in at least one "
+                    "research_questions[].objective_refs array:",
+                    *[f"- {objective}" for objective in failure.uncovered_objectives],
+                ]
+            )
+
+        if failure.invalid_objective_refs:
+            invalid_lines = [
+                f"- question {question_id}: remove or replace {ref!r}"
+                for question_id, ref in failure.invalid_objective_refs
+            ]
+            sections.extend(
+                [
+                    "INVALID OBJECTIVE REFS",
+                    "These objective_refs do not match any brief objective:",
+                    *invalid_lines,
+                    "Replace each invalid ref with exact brief objective text or remove it.",
+                ]
+            )
+
+        if brief.objectives:
+            sections.extend(
+                [
+                    "CANONICAL BRIEF OBJECTIVES",
+                    "objective_refs must cite these exact strings only:",
+                    *[f"- {objective}" for objective in brief.objectives],
+                ]
+            )
+
+        sections.extend(
+            [
+                "EXPECTED PAYLOAD CONTRACT",
+                payload_schema.strip(),
+                "PREVIOUS RESEARCH DESIGN JSON",
+                self._safe_response_preview(previous_design_json),
+                "Return only one corrected JSON object.",
+            ]
+        )
+
+        return Prompt(
+            system="\n\n".join(
+                [
+                    original_prompt.system,
+                    "When correcting objective coverage:",
+                    "- Return only one JSON object.",
+                    "- Cover every brief objective exactly once across objective_refs.",
+                    "- Do not use markdown or code fences.",
+                ]
+            ),
+            user="\n\n".join(sections),
+        )
+
     @staticmethod
     def _truncated_requirements(bounds: PlannerBounds) -> str:
         return "\n".join(

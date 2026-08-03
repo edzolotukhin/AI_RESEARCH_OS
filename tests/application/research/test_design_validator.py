@@ -7,6 +7,7 @@ import unittest
 from domain.common.exceptions import ValidationError
 from domain.planning.research_design import ResearchDesign, ResearchQuestion
 
+from application.planner.objective_coverage import ObjectiveCoverageValidationError
 from application.research.design_validator import (
     find_orphan_questions,
     find_uncovered_objectives,
@@ -112,7 +113,7 @@ class ResearchDesignValidatorTests(unittest.TestCase):
         brief = sample_research_brief(
             objectives=["Evaluate brand awareness.", "Identify competitors."],
         )
-        with self.assertRaises(ValidationError):
+        with self.assertRaises(ObjectiveCoverageValidationError):
             validate_research_design(_sample_design(), brief=brief)
 
     def test_orphan_questions_visible(self) -> None:
@@ -158,7 +159,7 @@ class ResearchDesignValidatorTests(unittest.TestCase):
             ],
             information_needs=[],
         )
-        with self.assertRaises(ValidationError):
+        with self.assertRaises(ObjectiveCoverageValidationError):
             validate_research_design(design, brief=brief)
 
 
