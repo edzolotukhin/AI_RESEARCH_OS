@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from application.execution.exceptions import ClaimConflictError, LeaseLostError
@@ -8,6 +9,8 @@ from application.execution.lease_config import LeaseConfig
 from application.execution.models import ClaimResult
 from application.ports.workflow_run_execution_port import WorkflowRunExecutionPort
 from application.services.durable_workflow_service import DurableWorkflowService
+
+logger = logging.getLogger("ai_research_os.worker")
 
 
 class WorkerExecutionService:
@@ -30,10 +33,37 @@ class WorkerExecutionService:
 
     def process_once(self, worker_id: str) -> bool:
         """Claim and execute at most one runnable run. Returns True if work ran."""
-        claim = self._claim_next(worker_id)
+        try:
+            claim = self._claim_next(worker_id)
+        except Exception:
+            logger.exception(
+                "worker_claim_query_failed worker_id=%s",
+                worker_id,
+            )
+            raise
         if claim is None:
             return False
-        self.execute_claimed_run(claim, worker_id)
+        logger.info(
+            "worker_claim_success run_id=%s worker_id=%s",
+            claim.run_id,
+            worker_id,
+        )
+        try:
+            self.execute_claimed_run(claim, worker_id)
+        except LeaseLostError:
+            logger.warning(
+                "worker_lease_lost run_id=%s worker_id=%s",
+                claim.run_id,
+                worker_id,
+            )
+            return True
+        except Exception:
+            logger.exception(
+                "worker_execute_failed run_id=%s worker_id=%s",
+                claim.run_id,
+                worker_id,
+            )
+            raise
         return True
 
     def execute_claimed_run(self, claim: ClaimResult, worker_id: str) -> None:

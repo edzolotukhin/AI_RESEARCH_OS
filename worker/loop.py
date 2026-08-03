@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import os
 import signal
 import threading
-import time
 
 from application.container import ApplicationContainer
 from worker.identity import generate_worker_id
+from worker.logging_config import configure_worker_logging
+
+logger = configure_worker_logging()
 
 
 class WorkerLoop:
@@ -20,7 +23,7 @@ class WorkerLoop:
         if container.worker_execution_service is None:
             raise RuntimeError("WorkerExecutionService is not configured.")
         self._container = container
-        self._worker = worker_id or generate_worker_id()
+        self._worker = worker_id or os.environ.get("WORKER_ID") or generate_worker_id()
         self._service = container.worker_execution_service
         self._lease_config = self._service._lease_config
         self._stop = threading.Event()
@@ -33,11 +36,20 @@ class WorkerLoop:
         self._stop.set()
 
     def run(self) -> None:
+        logger.info(
+            "worker_started worker_id=%s poll_interval=%s persistence_backend=%s",
+            self._worker,
+            self._lease_config.poll_interval_seconds,
+            self._container.config.persistence_backend,
+        )
         self._container.agency.initialize()
-        while not self._stop.is_set():
-            processed = self._service.process_once(self._worker)
-            if not processed:
-                self._stop.wait(self._lease_config.poll_interval_seconds)
+        try:
+            while not self._stop.is_set():
+                processed = self._service.process_once(self._worker)
+                if not processed:
+                    self._stop.wait(self._lease_config.poll_interval_seconds)
+        finally:
+            logger.info("worker_loop_stop worker_id=%s", self._worker)
 
     def run_until_idle(self, *, max_iterations: int = 100) -> int:
         """Process runnable runs until none remain. Useful in tests."""
