@@ -55,8 +55,10 @@ Do not assign executors or define runtime workflow tasks.
 
 - Cover every brief objective with at least one research question.
 - Link questions to objectives using exact objective text in `objective_refs`.
-- Define concrete information needs for each major question.
+- Consolidate related objectives instead of creating one question per objective.
+- Define concrete information needs for each major question within the configured limits.
 - Align deliverable_plan with brief deliverables where provided.
 - Use the brief language unless otherwise specified.
+- Return compact JSON only; no prose outside the JSON object.
 
 Return only the ResearchDesign JSON object described in the system prompt.

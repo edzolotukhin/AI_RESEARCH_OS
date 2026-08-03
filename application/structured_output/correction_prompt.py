@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from application.exceptions.structured_output_error import StructuredOutputError
+from application.planner.planner_bounds import PlannerBounds
 
 from domain.ai.llm_response import LLMResponse
 from domain.ai.prompt import Prompt
@@ -56,7 +57,9 @@ class StructuredOutputCorrectionPromptBuilder:
         truncated: bool,
         allowed_executor_ids: tuple[str, ...] | None = None,
         contract_validation_message: str = "",
+        planner_bounds: PlannerBounds | None = None,
     ) -> Prompt:
+        bounds = planner_bounds or PlannerBounds.from_env()
         validation_summary = self._build_validation_summary(
             error,
             contract_validation_message=contract_validation_message,
@@ -66,14 +69,17 @@ class StructuredOutputCorrectionPromptBuilder:
         )
 
         if truncated:
-            correction_requirements = self._truncated_requirements()
+            correction_requirements = self._truncated_requirements(bounds)
         else:
-            correction_requirements = self._standard_requirements()
+            correction_requirements = self._standard_requirements(bounds)
 
         sections = [
             original_prompt.user,
             "CORRECTION REQUEST",
             correction_requirements,
+            "PLANNER OUTPUT LIMITS",
+            bounds.format_for_prompt(),
+            bounds.format_compact_instruction(),
             "VALIDATION ERROR",
             validation_summary,
             "EXPECTED PAYLOAD CONTRACT",
@@ -116,26 +122,28 @@ class StructuredOutputCorrectionPromptBuilder:
         )
 
     @staticmethod
-    def _truncated_requirements() -> str:
+    def _truncated_requirements(bounds: PlannerBounds) -> str:
         return "\n".join(
             [
-                "The previous response was truncated before it finished.",
-                "Regenerate the complete JSON object from the beginning.",
-                "Keep all required fields from the payload contract.",
-                "Reduce verbosity in every string field.",
+                "The previous response exceeded the output token budget and was truncated.",
+                "Regenerate a complete compact JSON object from the beginning.",
+                "Reduce count and verbosity to satisfy the planner output limits below.",
+                bounds.format_compact_instruction(),
+                "Merge overlapping objectives into fewer research questions with multiple objective_refs.",
                 "Keep metadata as an empty object unless strictly required.",
                 "Return JSON only.",
             ]
         )
 
     @staticmethod
-    def _standard_requirements() -> str:
+    def _standard_requirements(bounds: PlannerBounds) -> str:
         return "\n".join(
             [
                 "Fix the previous invalid response.",
                 "Return only one JSON object.",
                 "Do not use markdown, code fences, or explanations.",
-                "Follow the payload contract exactly.",
+                "Follow the payload contract and planner output limits exactly.",
+                bounds.format_compact_instruction(),
                 "Preserve the intended plan meaning unless required to satisfy the contract.",
             ]
         )

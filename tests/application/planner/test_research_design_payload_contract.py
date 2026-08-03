@@ -35,6 +35,24 @@ class ResearchDesignPayloadContractTests(unittest.TestCase):
         self.assertFalse(self.contract.accepts(payload))
         self.assertIn("Duplicate research question id", self.contract.last_validation_error)
 
+    def test_rejects_excessive_information_needs(self) -> None:
+        payload = self.parser.parse(VALID_RESEARCH_DESIGN_JSON)
+        design = dict(payload)
+        design["information_needs"] = [
+            {
+                "id": f"in-{index}",
+                "research_question_id": "rq-awareness",
+                "description": f"Need {index}",
+                "priority": 1,
+                "preferred_source_types": ["reputable media"],
+                "timeframe": "2025-2026",
+                "geography": "Serbia",
+            }
+            for index in range(13)
+        ]
+        self.assertFalse(self.contract.accepts(design))
+        self.assertIn("information_needs count", self.contract.last_validation_error)
+
 
 if __name__ == "__main__":
     unittest.main()

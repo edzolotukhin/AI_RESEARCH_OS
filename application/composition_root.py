@@ -8,6 +8,7 @@ from application.planner.research_design_workflow_mapper import (
     ResearchDesignWorkflowMapper,
 )
 from application.planner.design_service import PlannerDesignServiceImpl
+from application.planner.planner_bounds import PlannerBounds
 from application.planner.research_design_payload_contract import (
     ResearchDesignPayloadContract,
 )
@@ -185,12 +186,15 @@ def create_application_container(
         AGENT_EXECUTOR_CAPABILITIES,
     )
 
+    planner_bounds = PlannerBounds.from_env()
+
     template_loader = FileTemplateLoader()
     prompt_renderer = PythonFormatPromptRenderer()
     planner_prompt_builder = PlannerPromptBuilder(
         template_loader=template_loader,
         prompt_renderer=prompt_renderer,
         executor_catalog=executor_catalog,
+        bounds=planner_bounds,
     )
 
     workflow_template_mapper = ResearchDesignWorkflowMapper()
@@ -198,6 +202,7 @@ def create_application_container(
     structured_output_parser = StructuredOutputParser()
     planner_payload_contract = ResearchDesignPayloadContract(
         response_parser=ResearchDesignParser(),
+        bounds=planner_bounds,
     )
     structured_output_generator = StructuredOutputGenerator(
         llm_client=llm_client,

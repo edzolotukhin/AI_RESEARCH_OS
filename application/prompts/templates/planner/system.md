@@ -80,6 +80,10 @@ Do not explain your reasoning.
 
 Do not wrap the JSON in markdown code fences.
 
+Do not repeat the full brief text inside every field.
+
+Keep all string fields concise (typically one sentence).
+
 The JSON must match this schema:
 
 {{
@@ -117,9 +121,13 @@ Requirements:
 - Every research question must have a unique id and non-empty question text.
 - `objective_refs` must cite brief objectives verbatim where applicable.
 - Cover every brief objective with at least one research question.
-- `source_strategy`, `analysis_plan`, and `deliverable_plan` must be non-empty lists.
+- Consolidate overlapping objectives into shared research questions (multiple `objective_refs` per question when appropriate).
+- Obey these maximum counts (hard limits):
+{planner_bounds}
+- {planner_compact_instruction}
+- `source_strategy`, `analysis_plan`, and `deliverable_plan` must be non-empty lists within the limits above.
 - `priority` must be an integer from 1 (highest) to 5 (lowest).
 - Use high-level source types only (e.g. official statistics, company reports, industry associations, regulator/government, reputable media, academic research).
 - Do not include search queries, URLs, or executor IDs.
 
-Produce a clear professional research design.
+Produce a clear professional research design that fits within the limits above.

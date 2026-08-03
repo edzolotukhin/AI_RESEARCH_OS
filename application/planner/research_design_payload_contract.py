@@ -5,6 +5,7 @@ from typing import Any
 
 from application.exceptions.planner_parser_error import PlannerParserError
 from application.parsers.research_design_parser import ResearchDesignParser
+from application.planner.planner_bounds import PlannerBounds
 from application.structured_output.contracts import StructuredPayloadContract
 
 PLANNER_PAYLOAD_VALIDATION_ERRORS = (
@@ -20,9 +21,15 @@ class ResearchDesignPayloadContract(StructuredPayloadContract):
     def __init__(
         self,
         response_parser: ResearchDesignParser | None = None,
+        bounds: PlannerBounds | None = None,
     ) -> None:
         self._response_parser = response_parser or ResearchDesignParser()
+        self._bounds = bounds or PlannerBounds.from_env()
         self._last_validation_error = ""
+
+    @property
+    def bounds(self) -> PlannerBounds:
+        return self._bounds
 
     @property
     def last_validation_error(self) -> str:
@@ -34,10 +41,64 @@ class ResearchDesignPayloadContract(StructuredPayloadContract):
             design = self._response_parser.parse(payload)
             self._validate_unique_ids(design)
             self._validate_question_references(design)
+            self._validate_cardinality_bounds(design)
             return True
         except PLANNER_PAYLOAD_VALIDATION_ERRORS as exc:
             self._last_validation_error = str(exc)
             return False
+
+    def _validate_cardinality_bounds(self, design) -> None:
+        bounds = self._bounds
+        checks = (
+            (
+                len(design.research_questions),
+                bounds.max_research_questions,
+                "research_questions",
+                "Consolidate related brief objectives into fewer questions.",
+            ),
+            (
+                len(design.information_needs),
+                bounds.max_information_needs,
+                "information_needs",
+                "Reduce or merge information needs; keep descriptions concise.",
+            ),
+            (
+                len(design.source_strategy),
+                bounds.max_source_strategies,
+                "source_strategy",
+                "Keep only the highest-value source types.",
+            ),
+            (
+                len(design.analysis_plan),
+                bounds.max_analysis_plan_items,
+                "analysis_plan",
+                "Merge overlapping analysis steps.",
+            ),
+            (
+                len(design.deliverable_plan),
+                bounds.max_deliverable_plan_items,
+                "deliverable_plan",
+                "Align to essential deliverable sections only.",
+            ),
+            (
+                len(design.assumptions),
+                bounds.max_assumptions,
+                "assumptions",
+                "Keep only essential assumptions.",
+            ),
+            (
+                len(design.limitations),
+                bounds.max_limitations,
+                "limitations",
+                "Keep only essential limitations.",
+            ),
+        )
+        for count, maximum, field_name, guidance in checks:
+            if count > maximum:
+                raise PlannerParserError(
+                    f"{field_name} count {count} exceeds maximum {maximum}. "
+                    f"{guidance}",
+                )
 
     @staticmethod
     def _validate_unique_ids(design) -> None:

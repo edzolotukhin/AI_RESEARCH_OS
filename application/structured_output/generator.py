@@ -96,6 +96,7 @@ class StructuredOutputGenerator:
                         else None
                     ),
                     contract_validation_message=contract_validation_message,
+                    planner_bounds=getattr(payload_contract, "bounds", None),
                 )
 
         if last_error is not None:

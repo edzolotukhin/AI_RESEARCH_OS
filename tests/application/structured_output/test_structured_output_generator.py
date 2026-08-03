@@ -8,6 +8,7 @@ from application.structured_output.correction_prompt import (
     PLANNER_PAYLOAD_SCHEMA,
     StructuredOutputCorrectionPromptBuilder,
 )
+from application.planner.planner_bounds import PlannerBounds
 from application.structured_output.generator import StructuredOutputGenerator
 from application.structured_output.parser import StructuredOutputParser
 
@@ -219,6 +220,7 @@ class StructuredOutputCorrectionPromptBuilderTests(unittest.TestCase):
         self.assertIn('"source_strategy"', correction.user)
 
     def test_truncated_correction_prompt_requests_compact_regeneration(self):
+        bounds = PlannerBounds()
         correction = self.builder.build(
             original_prompt=self.prompt,
             invalid_response=LLMResponse(
@@ -228,14 +230,13 @@ class StructuredOutputCorrectionPromptBuilderTests(unittest.TestCase):
             error=self.error,
             payload_schema=PLANNER_PAYLOAD_SCHEMA,
             truncated=True,
+            planner_bounds=bounds,
         )
 
-        self.assertIn("truncated", correction.user.lower())
-        self.assertIn(
-            "Regenerate the complete JSON object from the beginning",
-            correction.user,
-        )
-        self.assertIn("Reduce verbosity", correction.user)
+        self.assertIn("output token budget", correction.user.lower())
+        self.assertIn("PLANNER OUTPUT LIMITS", correction.user)
+        self.assertIn("research_questions: at most", correction.user)
+        self.assertIn("Reduce count and verbosity", correction.user)
 
 
 if __name__ == "__main__":
