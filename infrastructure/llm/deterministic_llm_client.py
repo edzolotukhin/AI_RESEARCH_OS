@@ -16,7 +16,7 @@ class DeterministicLLMClient(LLMClient):
     Returns brief-aligned ResearchDesign JSON without calling a live model.
     """
 
-    def generate(self, prompt: Prompt) -> LLMResponse:
+    def generate(self, prompt: Prompt, *, options=None) -> LLMResponse:
         return LLMResponse(
             content=build_deterministic_design_response(prompt),
         )

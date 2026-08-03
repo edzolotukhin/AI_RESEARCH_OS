@@ -14,7 +14,7 @@ from application.planner.deterministic_design_response import (
 def create_brief_aligned_llm_mock() -> Mock:
     mock = Mock()
 
-    def _generate(prompt):
+    def _generate(prompt, *, options=None):
         return LLMResponse(content=build_deterministic_design_response(prompt))
 
     mock.generate.side_effect = _generate

@@ -37,6 +37,8 @@ class ApplicationConfig:
 
     llm_model: str = "gpt-5"
     llm_max_tokens: int = 4096
+    planner_reasoning_effort: str = "minimal"
+    planner_max_output_tokens: int = 8192
     projects_root: str = "agency/projects"
     persistence_backend: str = "file"
     database_url: str | None = None
@@ -70,6 +72,13 @@ class ApplicationConfig:
         return cls(
             llm_model=os.environ.get("LLM_MODEL", "gpt-5"),
             llm_max_tokens=int(os.environ.get("LLM_MAX_TOKENS", "4096")),
+            planner_reasoning_effort=os.environ.get(
+                "PLANNER_REASONING_EFFORT",
+                "minimal",
+            ).strip().lower(),
+            planner_max_output_tokens=int(
+                os.environ.get("PLANNER_MAX_OUTPUT_TOKENS", "8192"),
+            ),
             projects_root=os.environ.get("PROJECTS_ROOT", "agency/projects"),
             persistence_backend=resolve_persistence_backend(),
             database_url=os.environ.get("DATABASE_URL"),

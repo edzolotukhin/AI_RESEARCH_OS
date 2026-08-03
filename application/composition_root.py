@@ -62,6 +62,7 @@ from application.sources.search_factory import build_search_executor
 from application.structured_output.correction_prompt import (
     RESEARCH_DESIGN_PAYLOAD_SCHEMA,
 )
+from application.structured_output.generation_policy import StructuredGenerationPolicy
 from application.structured_output.generator import StructuredOutputGenerator
 from application.structured_output.parser import StructuredOutputParser
 from application.services.artifact_service import ArtifactService
@@ -209,6 +210,15 @@ def create_application_container(
         parser=structured_output_parser,
         executor_catalog=executor_catalog,
         payload_schema=RESEARCH_DESIGN_PAYLOAD_SCHEMA,
+        generation_policy=StructuredGenerationPolicy(
+            reasoning_effort=config.planner_reasoning_effort,
+            max_output_tokens=config.planner_max_output_tokens,
+            escalation_reasoning_effort="minimal",
+            escalation_max_output_tokens=max(
+                config.planner_max_output_tokens,
+                8192,
+            ),
+        ),
     )
 
     planner_design_service = PlannerDesignServiceImpl(

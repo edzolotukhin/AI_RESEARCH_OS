@@ -3,6 +3,7 @@ from .correction_prompt import (
     PLANNER_PAYLOAD_SCHEMA,
     StructuredOutputCorrectionPromptBuilder,
 )
+from .generation_policy import StructuredGenerationPolicy
 from .generator import StructuredOutputGenerator
 from .json_extractor import JsonExtractor
 from .json_repair import JsonRepair
@@ -17,6 +18,7 @@ __all__ = [
     "PLANNER_PAYLOAD_SCHEMA",
     "ResponseCleaner",
     "StructuredOutputCorrectionPromptBuilder",
+    "StructuredGenerationPolicy",
     "StructuredOutputGenerator",
     "StructuredOutputParser",
     "StructuredPayloadContract",

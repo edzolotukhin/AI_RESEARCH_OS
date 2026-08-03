@@ -107,6 +107,8 @@ Semantic validation (`validate_research_design`) enforces:
 
 Planner structured-output contract validates parseability and ID uniqueness before workflow creation. Invalid planner output fails safely (structured-output retry, then error).
 
+**GPT-5 reasoning budget (live acceptance):** OpenAI Responses API `max_output_tokens` counts both visible output and internal reasoning tokens. Planner structured generation therefore sets explicit `reasoning.effort` (default `minimal` via `PLANNER_REASONING_EFFORT`) and a separate planner token ceiling (`PLANNER_MAX_OUTPUT_TOKENS`, default `8192`). On reasoning-budget truncation, structured-output retry lowers reasoning effort and may escalate the token ceiling once (bounded). Diagnostics expose `reasoning_tokens`, `visible_output_length`, and `reasoning_budget_exhausted` without logging chain-of-thought content.
+
 ### 11. Deferred scope
 
 DR-02 explicitly does **not** implement:

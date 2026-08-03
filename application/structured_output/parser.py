@@ -50,6 +50,11 @@ class StructuredOutputParser:
         finish_reason: str | None = None,
         output_tokens: int | None = None,
         max_output_tokens: int | None = None,
+        reasoning_tokens: int | None = None,
+        incomplete_reason: str | None = None,
+        configured_reasoning_effort: str | None = None,
+        visible_output_length: int | None = None,
+        reasoning_budget_exhausted: bool = False,
     ) -> dict[str, Any]:
         cleaned = self._cleaner.clean(raw_text)
 
@@ -62,6 +67,11 @@ class StructuredOutputParser:
                 finish_reason=finish_reason,
                 output_tokens=output_tokens,
                 max_output_tokens=max_output_tokens,
+                reasoning_tokens=reasoning_tokens,
+                incomplete_reason=incomplete_reason,
+                configured_reasoning_effort=configured_reasoning_effort,
+                visible_output_length=visible_output_length,
+                reasoning_budget_exhausted=reasoning_budget_exhausted,
             )
 
         candidates = self._extractor.extract_all(cleaned)
@@ -76,6 +86,11 @@ class StructuredOutputParser:
                 finish_reason=finish_reason,
                 output_tokens=output_tokens,
                 max_output_tokens=max_output_tokens,
+                reasoning_tokens=reasoning_tokens,
+                incomplete_reason=incomplete_reason,
+                configured_reasoning_effort=configured_reasoning_effort,
+                visible_output_length=visible_output_length,
+                reasoning_budget_exhausted=reasoning_budget_exhausted,
             )
 
         parse_results = [
@@ -118,6 +133,11 @@ class StructuredOutputParser:
                 finish_reason=finish_reason,
                 output_tokens=output_tokens,
                 max_output_tokens=max_output_tokens,
+                reasoning_tokens=reasoning_tokens,
+                incomplete_reason=incomplete_reason,
+                configured_reasoning_effort=configured_reasoning_effort,
+                visible_output_length=visible_output_length,
+                reasoning_budget_exhausted=reasoning_budget_exhausted,
             )
 
         first_candidate = candidates[0]
@@ -144,6 +164,11 @@ class StructuredOutputParser:
             finish_reason=finish_reason,
             output_tokens=output_tokens,
             max_output_tokens=max_output_tokens,
+            reasoning_tokens=reasoning_tokens,
+            incomplete_reason=incomplete_reason,
+            configured_reasoning_effort=configured_reasoning_effort,
+            visible_output_length=visible_output_length,
+            reasoning_budget_exhausted=reasoning_budget_exhausted,
         )
 
     def _parse_candidate_to_mapping(

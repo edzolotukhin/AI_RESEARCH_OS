@@ -7,9 +7,11 @@ from application.structured_output.correction_prompt import (
     PLANNER_PAYLOAD_SCHEMA,
     StructuredOutputCorrectionPromptBuilder,
 )
+from application.structured_output.generation_policy import StructuredGenerationPolicy
 from application.structured_output.parser import StructuredOutputParser
 
 from domain.ai.prompt import Prompt
+from infrastructure.llm.generation_options import LLMGenerationOptions
 from infrastructure.llm.llm_client import LLMClient
 
 
@@ -28,6 +30,7 @@ class StructuredOutputGenerator:
         max_attempts: int = DEFAULT_MAX_ATTEMPTS,
         payload_schema: str = PLANNER_PAYLOAD_SCHEMA,
         executor_catalog: ExecutorCatalog | None = None,
+        generation_policy: StructuredGenerationPolicy | None = None,
     ) -> None:
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1.")
@@ -41,6 +44,9 @@ class StructuredOutputGenerator:
         self._max_attempts = max_attempts
         self._payload_schema = payload_schema
         self._executor_catalog = executor_catalog
+        self._generation_policy = (
+            generation_policy or StructuredGenerationPolicy.planner_from_env()
+        )
 
     def generate(
         self,
@@ -52,9 +58,14 @@ class StructuredOutputGenerator:
         current_prompt = prompt
         schema = payload_schema or self._payload_schema
         last_error: StructuredOutputError | None = None
+        current_options = self._generation_policy.initial_options()
+        generation_escalated = False
 
         for attempt in range(1, self._max_attempts + 1):
-            response = self._llm_client.generate(current_prompt)
+            response = self._llm_client.generate(
+                current_prompt,
+                options=current_options,
+            )
 
             try:
                 return self._parser.parse(
@@ -64,6 +75,11 @@ class StructuredOutputGenerator:
                     finish_reason=response.finish_reason,
                     output_tokens=response.output_tokens,
                     max_output_tokens=response.max_output_tokens,
+                    reasoning_tokens=response.reasoning_tokens,
+                    incomplete_reason=response.incomplete_reason,
+                    configured_reasoning_effort=response.configured_reasoning_effort,
+                    visible_output_length=response.visible_output_length,
+                    reasoning_budget_exhausted=response.reasoning_budget_exhausted,
                 )
             except StructuredOutputError as exc:
                 enriched_error = exc.with_attempt_context(
@@ -71,12 +87,21 @@ class StructuredOutputGenerator:
                     finish_reason=response.finish_reason,
                     output_tokens=response.output_tokens,
                     max_output_tokens=response.max_output_tokens,
+                    reasoning_tokens=response.reasoning_tokens,
+                    incomplete_reason=response.incomplete_reason,
+                    configured_reasoning_effort=response.configured_reasoning_effort,
+                    visible_output_length=response.visible_output_length,
+                    reasoning_budget_exhausted=response.reasoning_budget_exhausted,
                     is_truncated=exc.is_truncated or response.was_truncated,
                 )
                 last_error = enriched_error
 
                 if attempt >= self._max_attempts:
                     raise enriched_error from exc
+
+                if response.reasoning_budget_exhausted and not generation_escalated:
+                    current_options = self._generation_policy.escalate(current_options)
+                    generation_escalated = True
 
                 contract_validation_message = getattr(
                     payload_contract,
