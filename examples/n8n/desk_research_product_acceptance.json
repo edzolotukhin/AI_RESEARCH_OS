@@ -169,7 +169,19 @@
     },
     {
       "parameters": {
-        "jsCode": "const loopState = $('Continue Poll Loop').isExecuted\n  ? $('Continue Poll Loop').first().json\n  : $('Prepare Poll Loop').first().json;\nconst poll = $input.first().json;\nconst attempt = loopState.poll_attempt + 1;\nreturn [{\n  json: {\n    ...poll,\n    run_id: loopState.run_id,\n    api_url: loopState.api_url,\n    project_id: loopState.project_id,\n    correlation_id: loopState.correlation_id,\n    idempotency_key: loopState.idempotency_key,\n    poll_attempt: attempt,\n    max_poll_attempts: loopState.max_poll_attempts,\n    poll_interval_seconds: loopState.poll_interval_seconds,\n    status: poll.status,\n    is_terminal: poll.is_terminal,\n    final_review_verdict: poll.final_review_verdict ?? null,\n    final_artifact_available: poll.final_artifact_available ?? false,\n    final_artifact_id: poll.final_artifact_id ?? null,\n  },\n}];"
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "merge-poll-state",
+      "name": "Merge Poll State",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1630, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nreturn [{\n  json: {\n    run_id: item.run_id,\n    project_id: item.project_id,\n    api_url: item.api_url,\n    correlation_id: item.correlation_id,\n    idempotency_key: item.idempotency_key,\n    poll_attempt: Number(item.poll_attempt || 0) + 1,\n    max_poll_attempts: Number(item.max_poll_attempts),\n    poll_interval_seconds: item.poll_interval_seconds,\n    status: item.status,\n    is_terminal: Boolean(item.is_terminal),\n    final_review_verdict: item.final_review_verdict ?? null,\n    final_artifact_available: Boolean(item.final_artifact_available),\n    final_artifact_id: item.final_artifact_id ?? null,\n  },\n}];"
       },
       "id": "process-poll-response",
       "name": "Process Poll Response",
@@ -180,41 +192,66 @@
     {
       "parameters": {
         "conditions": {
-          "boolean": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
             {
-              "value1": "={{$json.is_terminal}}",
-              "value2": true
+              "id": "terminal-is-terminal",
+              "leftValue": "={{ $json.is_terminal }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
             }
-          ]
-        }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       },
       "id": "terminal-check",
       "name": "Is Terminal?",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
+      "typeVersion": 2.2,
       "position": [1960, 300]
     },
     {
       "parameters": {
         "conditions": {
-          "number": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
             {
-              "value1": "={{$json.poll_attempt}}",
-              "operation": "largerEqual",
-              "value2": "={{$json.max_poll_attempts}}"
+              "id": "max-poll-attempts-reached",
+              "leftValue": "={{ $json.poll_attempt }}",
+              "rightValue": "={{ $json.max_poll_attempts }}",
+              "operator": {
+                "type": "number",
+                "operation": "largerEqual"
+              }
             }
-          ]
-        }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       },
       "id": "max-attempts-check",
       "name": "Max Poll Attempts?",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
+      "typeVersion": 2.2,
       "position": [1960, 520]
     },
     {
       "parameters": {
-        "amount": "={{ $('Set Orchestration Vars').item.json.poll_interval_seconds || $env.N8N_POLL_INTERVAL_SECONDS || 3 }}",
+        "amount": "={{ $json.poll_interval_seconds || $env.N8N_POLL_INTERVAL_SECONDS || 3 }}",
         "unit": "seconds"
       },
       "id": "wait",
@@ -236,77 +273,124 @@
     {
       "parameters": {
         "conditions": {
-          "string": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
             {
-              "value1": "={{$json.status}}",
-              "operation": "equal",
-              "value2": "completed"
+              "id": "approved-status-completed",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
             },
             {
-              "value1": "={{$json.final_review_verdict}}",
-              "operation": "equal",
-              "value2": "approve"
+              "id": "approved-review-verdict",
+              "leftValue": "={{ $json.final_review_verdict }}",
+              "rightValue": "approve",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
             },
             {
-              "value1": "={{$json.final_artifact_id}}",
-              "operation": "isNotEmpty"
+              "id": "approved-artifact-id",
+              "leftValue": "={{ $json.final_artifact_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            },
+            {
+              "id": "approved-artifact-available",
+              "leftValue": "={{ $json.final_artifact_available }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
             }
           ],
-          "boolean": [
-            {
-              "value1": "={{$json.final_artifact_available}}",
-              "value2": true
-            }
-          ]
+          "combinator": "and"
         },
-        "combineOperation": "all"
+        "options": {}
       },
       "id": "success-check",
       "name": "Approved Final Artifact?",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
+      "typeVersion": 2.2,
       "position": [2180, 180]
     },
     {
       "parameters": {
         "conditions": {
-          "string": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
             {
-              "value1": "={{$json.final_review_verdict}}",
-              "operation": "equal",
-              "value2": "reject"
+              "id": "review-rejected",
+              "leftValue": "={{ $json.final_review_verdict }}",
+              "rightValue": "reject",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
             }
-          ]
-        }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       },
       "id": "reject-check",
       "name": "Review Rejected?",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
+      "typeVersion": 2.2,
       "position": [2400, 300]
     },
     {
       "parameters": {
         "conditions": {
-          "string": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
             {
-              "value1": "={{$json.status}}",
-              "operation": "equal",
-              "value2": "failed"
+              "id": "workflow-failed",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "failed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
             }
-          ]
-        }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       },
       "id": "failed-check",
       "name": "Workflow Failed?",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
+      "typeVersion": 2.2,
       "position": [2400, 420]
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "={{$('Process Poll Response').item.json.api_url + '/artifacts/' + $('Process Poll Response').item.json.final_artifact_id}}",
+        "url": "={{$json.api_url + '/artifacts/' + $json.final_artifact_id}}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -326,7 +410,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "={{$('Process Poll Response').item.json.api_url + '/artifacts/' + $('Process Poll Response').item.json.final_artifact_id + '/content'}}",
+        "url": "={{$json.api_url + '/artifacts/' + $json.final_artifact_id + '/content'}}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -645,9 +729,17 @@
       "main": [[{ "node": "Prepare Poll Loop", "type": "main", "index": 0 }]]
     },
     "Prepare Poll Loop": {
-      "main": [[{ "node": "Poll Workflow Run", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          { "node": "Merge Poll State", "type": "main", "index": 0 },
+          { "node": "Poll Workflow Run", "type": "main", "index": 0 }
+        ]
+      ]
     },
     "Poll Workflow Run": {
+      "main": [[{ "node": "Merge Poll State", "type": "main", "index": 1 }]]
+    },
+    "Merge Poll State": {
       "main": [[{ "node": "Process Poll Response", "type": "main", "index": 0 }]]
     },
     "Process Poll Response": {
@@ -669,7 +761,12 @@
       "main": [[{ "node": "Continue Poll Loop", "type": "main", "index": 0 }]]
     },
     "Continue Poll Loop": {
-      "main": [[{ "node": "Poll Workflow Run", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          { "node": "Merge Poll State", "type": "main", "index": 0 },
+          { "node": "Poll Workflow Run", "type": "main", "index": 0 }
+        ]
+      ]
     },
     "Approved Final Artifact?": {
       "main": [
@@ -701,5 +798,5 @@
     "executionOrder": "v1",
     "executionTimeout": 3600
   },
-  "versionId": "n8n-desk-research-product-acceptance-v4"
+  "versionId": "n8n-desk-research-product-acceptance-v5"
 }

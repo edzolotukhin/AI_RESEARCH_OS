@@ -28,6 +28,30 @@ LEGACY_ARTIFACT_EXPRESSIONS = (
     "$json.final.artifact_id",
 )
 
+POLL_STATE_FIELDS = (
+    "run_id",
+    "project_id",
+    "api_url",
+    "correlation_id",
+    "idempotency_key",
+    "poll_attempt",
+    "max_poll_attempts",
+    "poll_interval_seconds",
+)
+
+POLL_RESPONSE_FIELDS = (
+    "status",
+    "is_terminal",
+    "final_review_verdict",
+    "final_artifact_available",
+    "final_artifact_id",
+)
+
+FRAGILE_POLL_NODE_REFS = (
+    "$('Continue Poll Loop')",
+    "$('Prepare Poll Loop')",
+)
+
 TERMINAL_OUTCOME_BY_ROUTE = {
     "failed": "Failed Payload",
     "rejected": "Rejected Payload",
@@ -57,6 +81,99 @@ def orchestration_assignment_names(workflow: dict) -> list[str]:
     params = node_by_name(workflow, "Set Orchestration Vars").get("parameters", {})
     assignments = params.get("assignments", {}).get("assignments", [])
     return [item["name"] for item in assignments if "name" in item]
+
+
+def merge_poll_state(loop_state: dict, poll_response: dict) -> dict:
+    """Mirror Merge Poll State combineByPosition output."""
+    merged = dict(loop_state)
+    merged.update(poll_response)
+    return merged
+
+
+def process_poll_response(merged_item: dict) -> dict:
+    """Mirror Process Poll Response Code node logic."""
+    item = merged_item
+    return {
+        "run_id": item["run_id"],
+        "project_id": item["project_id"],
+        "api_url": item["api_url"],
+        "correlation_id": item["correlation_id"],
+        "idempotency_key": item["idempotency_key"],
+        "poll_attempt": int(item.get("poll_attempt") or 0) + 1,
+        "max_poll_attempts": int(item["max_poll_attempts"]),
+        "poll_interval_seconds": item["poll_interval_seconds"],
+        "status": item["status"],
+        "is_terminal": bool(item["is_terminal"]),
+        "final_review_verdict": item.get("final_review_verdict"),
+        "final_artifact_available": bool(item.get("final_artifact_available")),
+        "final_artifact_id": item.get("final_artifact_id"),
+    }
+
+
+def continue_poll_loop(poll_state: dict) -> dict:
+    """Mirror Continue Poll Loop Code node — preserves loop state for next iteration."""
+    return {
+        "run_id": poll_state["run_id"],
+        "poll_attempt": poll_state["poll_attempt"],
+        "max_poll_attempts": poll_state["max_poll_attempts"],
+        "api_url": poll_state["api_url"],
+        "project_id": poll_state["project_id"],
+        "correlation_id": poll_state["correlation_id"],
+        "idempotency_key": poll_state["idempotency_key"],
+        "poll_interval_seconds": poll_state["poll_interval_seconds"],
+    }
+
+
+def is_terminal_branch(poll: dict) -> str:
+    """Return 'terminal' or 'continue' mirroring Is Terminal? IF node."""
+    return "terminal" if poll.get("is_terminal") else "continue"
+
+
+def max_poll_attempts_branch(poll: dict) -> str:
+    """Return 'timeout' or 'wait' mirroring Max Poll Attempts? IF node."""
+    attempt = int(poll.get("poll_attempt", 0))
+    maximum = int(poll.get("max_poll_attempts", 0))
+    return "timeout" if attempt >= maximum else "wait"
+
+
+def process_poll_response_code(workflow: dict) -> str:
+    return node_by_name(workflow, "Process Poll Response")["parameters"]["jsCode"]
+
+
+def process_poll_response_has_no_node_refs(workflow: dict) -> bool:
+    code = process_poll_response_code(workflow)
+    return not any(ref in code for ref in FRAGILE_POLL_NODE_REFS)
+
+
+def poll_loop_uses_merge_node(workflow: dict) -> bool:
+    node = node_by_name(workflow, "Merge Poll State")
+    return node["type"] == "n8n-nodes-base.merge"
+
+
+def is_terminal_if_condition(workflow: dict) -> dict | None:
+    params = node_by_name(workflow, "Is Terminal?").get("parameters", {})
+    conditions = params.get("conditions", {})
+    for item in conditions.get("conditions", []):
+        left = str(item.get("leftValue", ""))
+        if "is_terminal" in left:
+            return item
+    return None
+
+
+def is_terminal_condition_survives_export(workflow: dict) -> bool:
+    node = node_by_name(workflow, "Is Terminal?")
+    if node.get("typeVersion", 0) < 2.2:
+        return False
+    condition = is_terminal_if_condition(workflow)
+    if not condition:
+        return False
+    operator = condition.get("operator", {})
+    return (
+        operator.get("type") == "boolean"
+        and operator.get("operation") == "equals"
+        and condition.get("rightValue") is True
+        and "is_terminal" in str(condition.get("leftValue", ""))
+    )
 
 
 def resolve_artifact_metadata_url(*, api_url: str, final_artifact_id: str | None) -> str:
@@ -102,14 +219,20 @@ def terminal_route_target_node(outcome: str) -> str:
     return TERMINAL_OUTCOME_BY_ROUTE[outcome]
 
 
-def artifact_fetch_uses_process_poll_response(workflow: dict, node_name: str) -> bool:
+def artifact_fetch_uses_item_json(workflow: dict, node_name: str) -> bool:
     params = node_by_name(workflow, node_name).get("parameters", {})
     url = str(params.get("url", ""))
     return (
-        "Process Poll Response" in url
-        and "final_artifact_id" in url
+        "$json.api_url" in url
+        and "$json.final_artifact_id" in url
         and "final.artifact_id" not in url
+        and "Process Poll Response" not in url
     )
+
+
+def artifact_fetch_uses_process_poll_response(workflow: dict, node_name: str) -> bool:
+    """Deprecated alias — artifact fetch now uses $json from IF branch passthrough."""
+    return artifact_fetch_uses_item_json(workflow, node_name)
 
 
 def submit_research_uses_brief_input(workflow: dict) -> bool:
@@ -131,7 +254,7 @@ def terminal_branch_starts_with_failed_check(workflow: dict) -> bool:
 def approved_branch_requires_final_artifact_id(workflow: dict) -> bool:
     params = node_by_name(workflow, "Approved Final Artifact?").get("parameters", {})
     raw = json.dumps(params)
-    return "final_artifact_id" in raw and "isNotEmpty" in raw
+    return "final_artifact_id" in raw and "notEmpty" in raw
 
 
 def exported_workflow_by_name(exported: list[dict] | dict, name_fragment: str) -> dict:

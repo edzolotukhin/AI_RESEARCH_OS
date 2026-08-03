@@ -10,11 +10,21 @@ from pathlib import Path
 
 from tests.integration.n8n.workflow_contract_helpers import (
     ORCHESTRATION_VAR_NAMES,
+    POLL_STATE_FIELDS,
     approved_branch_requires_final_artifact_id,
+    artifact_fetch_uses_item_json,
     artifact_fetch_uses_process_poll_response,
+    continue_poll_loop,
     exported_workflow_by_name,
+    is_terminal_branch,
+    is_terminal_condition_survives_export,
     load_workflow,
+    max_poll_attempts_branch,
+    merge_poll_state,
     orchestration_assignment_names,
+    poll_loop_uses_merge_node,
+    process_poll_response,
+    process_poll_response_has_no_node_refs,
     resolve_artifact_content_url,
     resolve_artifact_metadata_url,
     resolve_terminal_outcome,
@@ -34,6 +44,7 @@ ALLOWED_NODE_PREFIXES = (
     "n8n-nodes-base.if",
     "n8n-nodes-base.wait",
     "n8n-nodes-base.code",
+    "n8n-nodes-base.merge",
 )
 
 REQUIRED_ENV_REFS = (
@@ -110,6 +121,7 @@ class N8nWorkflowJsonValidationTests(unittest.TestCase):
     def test_bounded_polling_nodes_exist(self) -> None:
         required = {
             "Prepare Poll Loop",
+            "Merge Poll State",
             "Process Poll Response",
             "Max Poll Attempts?",
             "Poll Timeout Payload",
@@ -162,6 +174,41 @@ class N8nWorkflowJsonValidationTests(unittest.TestCase):
         )
         self.assertNotIn('"client"', submit_body)
 
+    def test_process_poll_response_uses_input_only_not_node_refs(self) -> None:
+        self.assertTrue(process_poll_response_has_no_node_refs(self.workflow))
+        code = next(
+            node for node in self.workflow["nodes"] if node["name"] == "Process Poll Response"
+        )["parameters"]["jsCode"]
+        self.assertIn("$input.first().json", code)
+        self.assertNotIn("$('Continue Poll Loop')", code)
+        self.assertNotIn("$('Prepare Poll Loop')", code)
+
+    def test_poll_loop_uses_merge_node_for_state_combination(self) -> None:
+        self.assertTrue(poll_loop_uses_merge_node(self.workflow))
+        prepare_targets = {
+            target["node"]
+            for branch in self.workflow["connections"]["Prepare Poll Loop"]["main"]
+            for target in branch
+        }
+        self.assertIn("Merge Poll State", prepare_targets)
+        self.assertIn("Poll Workflow Run", prepare_targets)
+        poll_targets = {
+            target["node"]
+            for branch in self.workflow["connections"]["Poll Workflow Run"]["main"]
+            for target in branch
+        }
+        self.assertIn("Merge Poll State", poll_targets)
+
+    def test_is_terminal_condition_uses_filter_format(self) -> None:
+        self.assertTrue(is_terminal_condition_survives_export(self.workflow))
+        terminal_node = next(
+            node for node in self.workflow["nodes"] if node["name"] == "Is Terminal?"
+        )
+        self.assertGreaterEqual(terminal_node["typeVersion"], 2.2)
+        params = terminal_node["parameters"]
+        self.assertNotIn("boolean", params.get("conditions", {}))
+        self.assertIn("conditions", params.get("conditions", {}))
+
     def test_process_poll_response_preserves_final_artifact_id(self) -> None:
         code = next(
             node for node in self.workflow["nodes"] if node["name"] == "Process Poll Response"
@@ -175,12 +222,15 @@ class N8nWorkflowJsonValidationTests(unittest.TestCase):
         ):
             self.assertIn(field, code)
 
-    def test_artifact_fetch_uses_process_poll_response_identity(self) -> None:
+    def test_artifact_fetch_uses_item_json_from_terminal_branch(self) -> None:
         self.assertTrue(
-            artifact_fetch_uses_process_poll_response(self.workflow, "Fetch Artifact Metadata")
+            artifact_fetch_uses_item_json(self.workflow, "Fetch Artifact Metadata")
         )
         self.assertTrue(
-            artifact_fetch_uses_process_poll_response(self.workflow, "Fetch Artifact Content")
+            artifact_fetch_uses_item_json(self.workflow, "Fetch Artifact Content")
+        )
+        self.assertTrue(
+            artifact_fetch_uses_process_poll_response(self.workflow, "Fetch Artifact Metadata")
         )
         self.assertNotIn("final.artifact_id", self.raw)
 
@@ -264,6 +314,108 @@ class N8nWorkflowJsonValidationTests(unittest.TestCase):
             },
         )
         self.assertEqual(outcome, "rejected")
+
+    def test_initial_poll_created_non_terminal_continues_loop(self) -> None:
+        loop_state = {
+            "run_id": "run-abc",
+            "project_id": "proj-1",
+            "api_url": "http://api:8000",
+            "correlation_id": "corr-1",
+            "idempotency_key": "idem-1",
+            "poll_attempt": 0,
+            "max_poll_attempts": 120,
+            "poll_interval_seconds": 3,
+        }
+        poll_response = {
+            "status": "created",
+            "is_terminal": False,
+            "final_review_verdict": None,
+            "final_artifact_available": False,
+            "final_artifact_id": None,
+        }
+        merged = merge_poll_state(loop_state, poll_response)
+        processed = process_poll_response(merged)
+        self.assertEqual(is_terminal_branch(processed), "continue")
+        self.assertEqual(max_poll_attempts_branch(processed), "wait")
+        self.assertEqual(processed["poll_attempt"], 1)
+        continued = continue_poll_loop(processed)
+        for field in POLL_STATE_FIELDS:
+            self.assertEqual(continued[field], processed[field])
+
+    def test_second_poll_preserves_orchestration_state(self) -> None:
+        continued = {
+            "run_id": "run-abc",
+            "project_id": "proj-1",
+            "api_url": "http://api:8000",
+            "correlation_id": "corr-1",
+            "idempotency_key": "idem-1",
+            "poll_attempt": 1,
+            "max_poll_attempts": 120,
+            "poll_interval_seconds": 3,
+        }
+        poll_response = {
+            "status": "running",
+            "is_terminal": False,
+            "final_review_verdict": None,
+            "final_artifact_available": False,
+            "final_artifact_id": None,
+        }
+        processed = process_poll_response(merge_poll_state(continued, poll_response))
+        self.assertEqual(processed["run_id"], "run-abc")
+        self.assertEqual(processed["correlation_id"], "corr-1")
+        self.assertEqual(processed["idempotency_key"], "idem-1")
+        self.assertEqual(processed["poll_attempt"], 2)
+
+    def test_terminal_failed_routes_to_failed_payload(self) -> None:
+        loop_state = {
+            "run_id": "run-fail",
+            "project_id": "proj-1",
+            "api_url": "http://api:8000",
+            "correlation_id": "corr-1",
+            "idempotency_key": "idem-1",
+            "poll_attempt": 3,
+            "max_poll_attempts": 120,
+            "poll_interval_seconds": 3,
+        }
+        poll_response = {
+            "status": "failed",
+            "is_terminal": True,
+            "final_review_verdict": None,
+            "final_artifact_available": False,
+            "final_artifact_id": None,
+        }
+        processed = process_poll_response(merge_poll_state(loop_state, poll_response))
+        self.assertEqual(is_terminal_branch(processed), "terminal")
+        outcome = resolve_terminal_outcome(processed)
+        self.assertEqual(outcome, "failed")
+        self.assertEqual(terminal_route_target_node(outcome), "Failed Payload")
+
+    def test_terminal_completed_approve_routes_to_artifact_fetch(self) -> None:
+        loop_state = {
+            "run_id": "run-ok",
+            "project_id": "proj-1",
+            "api_url": "http://api:8000",
+            "correlation_id": "corr-1",
+            "idempotency_key": "idem-1",
+            "poll_attempt": 5,
+            "max_poll_attempts": 120,
+            "poll_interval_seconds": 3,
+        }
+        poll_response = {
+            "status": "completed",
+            "is_terminal": True,
+            "final_review_verdict": "approve",
+            "final_artifact_available": True,
+            "final_artifact_id": "artifact-123",
+        }
+        processed = process_poll_response(merge_poll_state(loop_state, poll_response))
+        outcome = resolve_terminal_outcome(processed)
+        self.assertEqual(outcome, "success")
+        metadata_url = resolve_artifact_metadata_url(
+            api_url=processed["api_url"],
+            final_artifact_id=processed["final_artifact_id"],
+        )
+        self.assertEqual(metadata_url, "http://api:8000/artifacts/artifact-123")
 
 
 def _reachable_from(start: str, connections: dict) -> set[str]:
@@ -447,6 +599,20 @@ class N8nNativeImportTests(unittest.TestCase):
         self.assertNotIn("final.artifact_id", exported_raw)
         self.assertTrue(terminal_branch_starts_with_failed_check(workflow))
         self.assertTrue(approved_branch_requires_final_artifact_id(workflow))
+        self.assertTrue(process_poll_response_has_no_node_refs(workflow))
+        self.assertTrue(is_terminal_condition_survives_export(workflow))
+        self.assertTrue(poll_loop_uses_merge_node(workflow))
+        exported_code = next(
+            node for node in workflow["nodes"] if node["name"] == "Process Poll Response"
+        )["parameters"]["jsCode"]
+        self.assertNotIn("$('Continue Poll Loop')", exported_code)
+        self.assertNotIn("$('Prepare Poll Loop')", exported_code)
+        self.assertTrue(
+            artifact_fetch_uses_item_json(workflow, "Fetch Artifact Metadata")
+        )
+        self.assertTrue(
+            artifact_fetch_uses_item_json(workflow, "Fetch Artifact Content")
+        )
 
 
 if __name__ == "__main__":
