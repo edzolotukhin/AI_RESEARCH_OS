@@ -132,9 +132,18 @@ Maximum wall-clock wait is approximately `N8N_MAX_POLL_ATTEMPTS × N8N_POLL_INTE
 
 ## Terminal outcomes
 
+After **Is Terminal?**, routing is authoritative and ordered:
+
+1. `status=failed` → **Failed Payload** (stop)
+2. `final_review_verdict=reject` → **Rejected Payload** (stop)
+3. `status=completed` + `approve` + `final_artifact_available=true` + non-empty `final_artifact_id` → artifact fetch
+4. other terminal states → **Contract Failure Payload** (stop)
+
+No path with `final_artifact_id=null` may reach artifact retrieval.
+
 | `outcome` | Condition | Artifact fetch |
 |---|---|---|
-| `success` | terminal + approve + final artifact available | yes |
+| `success` | terminal + approve + final artifact available + `final_artifact_id` present | yes |
 | `rejected` | `final_review_verdict=reject` | no |
 | `failed` | `status=failed` | no |
 | `contract_failure` | terminal without approved final artifact | no |

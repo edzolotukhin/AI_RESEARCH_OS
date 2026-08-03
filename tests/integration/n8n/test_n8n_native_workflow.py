@@ -10,13 +10,17 @@ from pathlib import Path
 
 from tests.integration.n8n.workflow_contract_helpers import (
     ORCHESTRATION_VAR_NAMES,
+    approved_branch_requires_final_artifact_id,
     artifact_fetch_uses_process_poll_response,
     exported_workflow_by_name,
     load_workflow,
     orchestration_assignment_names,
     resolve_artifact_content_url,
     resolve_artifact_metadata_url,
+    resolve_terminal_outcome,
     submit_research_uses_brief_input,
+    terminal_branch_starts_with_failed_check,
+    terminal_route_target_node,
     workflow_contains_stale_brief_payload,
 )
 
@@ -199,6 +203,68 @@ class N8nWorkflowJsonValidationTests(unittest.TestCase):
         )
         self.assertEqual(content_url, metadata_url + "/content")
 
+    def test_terminal_branch_checks_failed_status_first(self) -> None:
+        self.assertTrue(terminal_branch_starts_with_failed_check(self.workflow))
+
+    def test_approved_branch_requires_final_artifact_id(self) -> None:
+        self.assertTrue(approved_branch_requires_final_artifact_id(self.workflow))
+
+    def test_failed_terminal_run_routes_to_failed_payload_without_artifact_fetch(
+        self,
+    ) -> None:
+        outcome = resolve_terminal_outcome(
+            {
+                "status": "failed",
+                "is_terminal": True,
+                "final_artifact_available": False,
+                "final_artifact_id": None,
+            },
+        )
+        self.assertEqual(outcome, "failed")
+        self.assertEqual(terminal_route_target_node(outcome), "Failed Payload")
+
+    def test_completed_approve_with_artifact_routes_to_success(self) -> None:
+        outcome = resolve_terminal_outcome(
+            {
+                "status": "completed",
+                "is_terminal": True,
+                "final_review_verdict": "approve",
+                "final_artifact_available": True,
+                "final_artifact_id": "artifact-123",
+            },
+        )
+        self.assertEqual(outcome, "success")
+        self.assertEqual(
+            terminal_route_target_node(outcome),
+            "Fetch Artifact Metadata",
+        )
+
+    def test_terminal_completed_without_approved_artifact_routes_to_contract_failure(
+        self,
+    ) -> None:
+        outcome = resolve_terminal_outcome(
+            {
+                "status": "completed",
+                "is_terminal": True,
+                "final_review_verdict": "approve",
+                "final_artifact_available": False,
+                "final_artifact_id": None,
+            },
+        )
+        self.assertEqual(outcome, "contract_failure")
+
+    def test_reject_routes_to_rejected_payload(self) -> None:
+        outcome = resolve_terminal_outcome(
+            {
+                "status": "completed",
+                "is_terminal": True,
+                "final_review_verdict": "reject",
+                "final_artifact_available": False,
+                "final_artifact_id": None,
+            },
+        )
+        self.assertEqual(outcome, "rejected")
+
 
 def _reachable_from(start: str, connections: dict) -> set[str]:
     """Nodes reachable forward from connection sources named start."""
@@ -379,6 +445,8 @@ class N8nNativeImportTests(unittest.TestCase):
             artifact_fetch_uses_process_poll_response(workflow, "Fetch Artifact Content")
         )
         self.assertNotIn("final.artifact_id", exported_raw)
+        self.assertTrue(terminal_branch_starts_with_failed_check(workflow))
+        self.assertTrue(approved_branch_requires_final_artifact_id(workflow))
 
 
 if __name__ == "__main__":

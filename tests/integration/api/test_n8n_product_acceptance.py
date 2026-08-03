@@ -26,6 +26,8 @@ from tests.integration.api.n8n_orchestration_harness import (
 from tests.integration.n8n.workflow_contract_helpers import (
     resolve_artifact_content_url,
     resolve_artifact_metadata_url,
+    resolve_terminal_outcome,
+    terminal_route_target_node,
 )
 from tests.integration.postgresql.helpers import (
     PostgreSQLIntegrationTestCase,
@@ -358,6 +360,23 @@ class N8nProductAcceptanceTests(PostgreSQLIntegrationTestCase):
         self.assertNotIn("/artifacts/null", metadata_url)
         self.assertEqual(content_url, "http://api:8000/artifacts/artifact-123/content")
         self.assertNotIn("/artifacts/null", content_url)
+
+    def test_failed_terminal_workflow_run_does_not_map_to_artifact_fetch(self) -> None:
+        terminal = {
+            "status": "failed",
+            "is_terminal": True,
+            "final_review_verdict": "none",
+            "final_artifact_available": False,
+            "final_artifact_id": None,
+        }
+        outcome = resolve_terminal_outcome(terminal)
+        self.assertEqual(outcome, "failed")
+        self.assertEqual(terminal_route_target_node(outcome), "Failed Payload")
+        with self.assertRaises(ValueError):
+            resolve_artifact_metadata_url(
+                api_url="http://api:8000",
+                final_artifact_id=terminal["final_artifact_id"],
+            )
 
 
 if __name__ == "__main__":

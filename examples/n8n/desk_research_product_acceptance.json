@@ -246,6 +246,10 @@
               "value1": "={{$json.final_review_verdict}}",
               "operation": "equal",
               "value2": "approve"
+            },
+            {
+              "value1": "={{$json.final_artifact_id}}",
+              "operation": "isNotEmpty"
             }
           ],
           "boolean": [
@@ -651,7 +655,7 @@
     },
     "Is Terminal?": {
       "main": [
-        [{ "node": "Approved Final Artifact?", "type": "main", "index": 0 }],
+        [{ "node": "Workflow Failed?", "type": "main", "index": 0 }],
         [{ "node": "Max Poll Attempts?", "type": "main", "index": 0 }]
       ]
     },
@@ -670,19 +674,19 @@
     "Approved Final Artifact?": {
       "main": [
         [{ "node": "Fetch Artifact Metadata", "type": "main", "index": 0 }],
-        [{ "node": "Review Rejected?", "type": "main", "index": 0 }]
+        [{ "node": "Contract Failure Payload", "type": "main", "index": 0 }]
       ]
     },
     "Review Rejected?": {
       "main": [
         [{ "node": "Rejected Payload", "type": "main", "index": 0 }],
-        [{ "node": "Workflow Failed?", "type": "main", "index": 0 }]
+        [{ "node": "Approved Final Artifact?", "type": "main", "index": 0 }]
       ]
     },
     "Workflow Failed?": {
       "main": [
         [{ "node": "Failed Payload", "type": "main", "index": 0 }],
-        [{ "node": "Contract Failure Payload", "type": "main", "index": 0 }]
+        [{ "node": "Review Rejected?", "type": "main", "index": 0 }]
       ]
     },
     "Fetch Artifact Metadata": {
@@ -697,5 +701,5 @@
     "executionOrder": "v1",
     "executionTimeout": 3600
   },
-  "versionId": "n8n-desk-research-product-acceptance-v3"
+  "versionId": "n8n-desk-research-product-acceptance-v4"
 }
