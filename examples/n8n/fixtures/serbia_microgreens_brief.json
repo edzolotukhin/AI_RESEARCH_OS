@@ -1,0 +1,26 @@
+{
+  "title": "Serbia Microgreens Market — HoReCa Entry Assessment",
+  "business_question": "Is there a commercially attractive opportunity to supply premium locally grown microgreens to HoReCa customers in Serbia, and what should the initial market-entry strategy be?",
+  "objectives": [
+    "Assess the Serbian microgreens market size and maturity.",
+    "Estimate HoReCa demand and adoption potential.",
+    "Understand restaurant and chef usage patterns.",
+    "Map competitors and suppliers.",
+    "Review typical product assortment.",
+    "Gather indicative pricing benchmarks.",
+    "Define relevant geography and distribution channels.",
+    "Identify buyer requirements and procurement criteria.",
+    "Summarize relevant regulatory considerations.",
+    "Recommend an initial market-entry strategy."
+  ],
+  "geography": ["Serbia"],
+  "market": "Premium microgreens for HoReCa",
+  "target_entities": ["HoReCa restaurants", "chefs", "food service buyers"],
+  "timeframe": "2025-2026",
+  "constraints": [],
+  "deliverables": ["Market-entry strategy recommendations"],
+  "language": "en",
+  "context": "Commercial desk research for local premium microgreens supply.",
+  "known_information": [],
+  "exclusions": []
+}

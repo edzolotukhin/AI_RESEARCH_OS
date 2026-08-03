@@ -23,6 +23,10 @@ from tests.integration.api.n8n_orchestration_harness import (
     N8N_ACCEPTANCE_BRIEF,
     N8nOrchestrationHarness,
 )
+from tests.integration.n8n.workflow_contract_helpers import (
+    resolve_artifact_content_url,
+    resolve_artifact_metadata_url,
+)
 from tests.integration.postgresql.helpers import (
     PostgreSQLIntegrationTestCase,
     postgresql_application_config,
@@ -331,6 +335,29 @@ class N8nProductAcceptanceTests(PostgreSQLIntegrationTestCase):
                 headers=headers,
             ).json()
             self.assertTrue(content["content"].strip())
+
+    def test_workflow_run_final_artifact_id_maps_to_artifact_metadata_url(self) -> None:
+        """Canonical n8n artifact fetch must not resolve /artifacts/null when ID is present."""
+        terminal = {
+            "status": "completed",
+            "is_terminal": True,
+            "final_review_verdict": "approve",
+            "final_artifact_available": True,
+            "final_artifact_id": "artifact-123",
+        }
+        api_url = "http://api:8000"
+        metadata_url = resolve_artifact_metadata_url(
+            api_url=api_url,
+            final_artifact_id=terminal["final_artifact_id"],
+        )
+        content_url = resolve_artifact_content_url(
+            api_url=api_url,
+            final_artifact_id=terminal["final_artifact_id"],
+        )
+        self.assertEqual(metadata_url, "http://api:8000/artifacts/artifact-123")
+        self.assertNotIn("/artifacts/null", metadata_url)
+        self.assertEqual(content_url, "http://api:8000/artifacts/artifact-123/content")
+        self.assertNotIn("/artifacts/null", content_url)
 
 
 if __name__ == "__main__":

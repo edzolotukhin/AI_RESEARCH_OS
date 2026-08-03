@@ -8,6 +8,18 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from tests.integration.n8n.workflow_contract_helpers import (
+    ORCHESTRATION_VAR_NAMES,
+    artifact_fetch_uses_process_poll_response,
+    exported_workflow_by_name,
+    load_workflow,
+    orchestration_assignment_names,
+    resolve_artifact_content_url,
+    resolve_artifact_metadata_url,
+    submit_research_uses_brief_input,
+    workflow_contains_stale_brief_payload,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_PATH = REPO_ROOT / "examples" / "n8n" / "desk_research_product_acceptance.json"
 
@@ -25,6 +37,7 @@ REQUIRED_ENV_REFS = (
     "AI_RESEARCH_OS_API_KEY",
     "N8N_POLL_INTERVAL_SECONDS",
     "N8N_MAX_POLL_ATTEMPTS",
+    "N8N_RESEARCH_BRIEF_JSON",
 )
 
 SECRET_PATTERNS = (
@@ -46,12 +59,6 @@ ARTIFACT_SUCCESS_NODES = {
     "Fetch Artifact Metadata",
     "Fetch Artifact Content",
 }
-
-
-def load_workflow() -> dict:
-    payload = json.loads(WORKFLOW_PATH.read_text(encoding="utf-8"))
-    assert isinstance(payload, dict)
-    return payload
 
 
 class N8nWorkflowJsonValidationTests(unittest.TestCase):
@@ -128,6 +135,69 @@ class N8nWorkflowJsonValidationTests(unittest.TestCase):
         reachable = _reachable_from("Poll Timeout Payload", self.workflow["connections"])
         self.assertNotIn("Success Payload", reachable)
         self.assertNotIn("Fetch Artifact Content", reachable)
+
+    def test_orchestration_vars_use_assignments_not_legacy_defaults(self) -> None:
+        names = orchestration_assignment_names(self.workflow)
+        self.assertEqual(names, list(ORCHESTRATION_VAR_NAMES))
+        self.assertNotIn("my_field_1", self.raw)
+        self.assertNotIn("my_field_2", self.raw)
+        set_node = next(
+            node for node in self.workflow["nodes"] if node["name"] == "Set Orchestration Vars"
+        )
+        self.assertEqual(set_node["typeVersion"], 3.4)
+        self.assertIn("assignments", set_node["parameters"])
+
+    def test_research_brief_is_external_input_not_hardcoded(self) -> None:
+        self.assertIn("Parse Research Brief", self.node_names)
+        self.assertTrue(submit_research_uses_brief_input(self.workflow))
+        self.assertFalse(workflow_contains_stale_brief_payload(self.workflow))
+        submit_body = json.dumps(
+            next(node for node in self.workflow["nodes"] if node["name"] == "Submit Research")[
+                "parameters"
+            ]
+        )
+        self.assertNotIn('"client"', submit_body)
+
+    def test_process_poll_response_preserves_final_artifact_id(self) -> None:
+        code = next(
+            node for node in self.workflow["nodes"] if node["name"] == "Process Poll Response"
+        )["parameters"]["jsCode"]
+        for field in (
+            "final_artifact_id",
+            "final_artifact_available",
+            "final_review_verdict",
+            "api_url",
+            "run_id",
+        ):
+            self.assertIn(field, code)
+
+    def test_artifact_fetch_uses_process_poll_response_identity(self) -> None:
+        self.assertTrue(
+            artifact_fetch_uses_process_poll_response(self.workflow, "Fetch Artifact Metadata")
+        )
+        self.assertTrue(
+            artifact_fetch_uses_process_poll_response(self.workflow, "Fetch Artifact Content")
+        )
+        self.assertNotIn("final.artifact_id", self.raw)
+
+    def test_artifact_metadata_url_resolves_real_id_not_null(self) -> None:
+        url = resolve_artifact_metadata_url(
+            api_url="http://api:8000",
+            final_artifact_id="artifact-123",
+        )
+        self.assertEqual(url, "http://api:8000/artifacts/artifact-123")
+        self.assertNotIn("/artifacts/null", url)
+
+    def test_artifact_content_url_matches_metadata_identity(self) -> None:
+        metadata_url = resolve_artifact_metadata_url(
+            api_url="http://api:8000",
+            final_artifact_id="artifact-123",
+        )
+        content_url = resolve_artifact_content_url(
+            api_url="http://api:8000",
+            final_artifact_id="artifact-123",
+        )
+        self.assertEqual(content_url, metadata_url + "/content")
 
 
 def _reachable_from(start: str, connections: dict) -> set[str]:
@@ -291,6 +361,24 @@ class N8nNativeImportTests(unittest.TestCase):
             any("Desk Research" in name for name in names),
             msg=f"Expected workflow name in export, got: {names}",
         )
+
+        workflow = exported_workflow_by_name(exported, "Desk Research")
+        exported_raw = json.dumps(workflow)
+        self.assertNotIn("my_field_1", exported_raw)
+        self.assertNotIn("my_field_2", exported_raw)
+        self.assertEqual(
+            orchestration_assignment_names(workflow),
+            list(ORCHESTRATION_VAR_NAMES),
+        )
+        self.assertTrue(submit_research_uses_brief_input(workflow))
+        self.assertFalse(workflow_contains_stale_brief_payload(workflow))
+        self.assertTrue(
+            artifact_fetch_uses_process_poll_response(workflow, "Fetch Artifact Metadata")
+        )
+        self.assertTrue(
+            artifact_fetch_uses_process_poll_response(workflow, "Fetch Artifact Content")
+        )
+        self.assertNotIn("final.artifact_id", exported_raw)
 
 
 if __name__ == "__main__":

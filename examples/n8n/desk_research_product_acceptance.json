@@ -11,19 +11,39 @@
     },
     {
       "parameters": {
-        "values": {
-          "string": [
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
             {
+              "id": "orch-correlation-id",
               "name": "correlation_id",
-              "value": "={{$execution.id}}"
+              "value": "={{$execution.id}}",
+              "type": "string"
             },
             {
+              "id": "orch-idempotency-key",
               "name": "idempotency_key",
-              "value": "={{'n8n-' + $execution.id}}"
+              "value": "={{'n8n-' + $execution.id}}",
+              "type": "string"
             },
             {
+              "id": "orch-api-url",
               "name": "api_url",
-              "value": "={{$env.AI_RESEARCH_OS_API_URL || 'http://api:8000'}}"
+              "value": "={{$env.AI_RESEARCH_OS_API_URL || 'http://api:8000'}}",
+              "type": "string"
+            },
+            {
+              "id": "orch-poll-interval",
+              "name": "poll_interval_seconds",
+              "value": "={{$env.N8N_POLL_INTERVAL_SECONDS || '3'}}",
+              "type": "string"
+            },
+            {
+              "id": "orch-max-attempts",
+              "name": "max_poll_attempts",
+              "value": "={{$env.N8N_MAX_POLL_ATTEMPTS || '120'}}",
+              "type": "string"
             }
           ]
         },
@@ -32,13 +52,23 @@
       "id": "set-vars",
       "name": "Set Orchestration Vars",
       "type": "n8n-nodes-base.set",
-      "typeVersion": 3,
+      "typeVersion": 3.4,
       "position": [420, 300]
     },
     {
       "parameters": {
+        "jsCode": "const raw = $env.N8N_RESEARCH_BRIEF_JSON;\nif (!raw || !String(raw).trim()) {\n  throw new Error(\n    'N8N_RESEARCH_BRIEF_JSON is required. Set container env to a canonical ResearchBrief JSON object before executing this workflow.'\n  );\n}\nlet brief;\ntry {\n  brief = JSON.parse(String(raw));\n} catch (error) {\n  throw new Error('N8N_RESEARCH_BRIEF_JSON must be valid JSON for a ResearchBrief object.');\n}\nif (!brief || typeof brief !== 'object' || Array.isArray(brief)) {\n  throw new Error('N8N_RESEARCH_BRIEF_JSON must decode to a ResearchBrief object.');\n}\nfor (const field of ['title', 'business_question', 'language']) {\n  if (!String(brief[field] || '').trim()) {\n    throw new Error(`ResearchBrief.${field} is required.`);\n  }\n}\nif (!Array.isArray(brief.objectives) || brief.objectives.length === 0) {\n  throw new Error('ResearchBrief.objectives must contain at least one objective.');\n}\nreturn [{ json: { brief } }];"
+      },
+      "id": "parse-research-brief",
+      "name": "Parse Research Brief",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
         "method": "POST",
-        "url": "={{$json.api_url}}/projects",
+        "url": "={{$('Set Orchestration Vars').item.json.api_url}}/projects",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -62,7 +92,7 @@
       "name": "Create Project",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [640, 300]
+      "position": [860, 300]
     },
     {
       "parameters": {
@@ -87,7 +117,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ brief: { title: 'Brand Health 2026', business_question: 'Assess market position.', objectives: ['Evaluate brand awareness.'], geography: ['Germany'], market: 'Pet food', target_entities: ['Purina'], timeframe: '2026', constraints: [], deliverables: ['Executive summary'], language: 'en', context: 'Client: Purina', known_information: [], exclusions: [] }, source: 'n8n', correlation_id: $('Set Orchestration Vars').item.json.correlation_id }) }}",
+        "jsonBody": "={{ JSON.stringify({ brief: $('Parse Research Brief').item.json.brief, source: 'n8n', correlation_id: $('Set Orchestration Vars').item.json.correlation_id }) }}",
         "options": {
           "retry": {
             "enabled": true,
@@ -99,17 +129,17 @@
       "name": "Submit Research",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [860, 300]
+      "position": [1080, 300]
     },
     {
       "parameters": {
-        "jsCode": "const vars = $('Set Orchestration Vars').first().json;\nconst submit = $('Submit Research').first().json;\nconst project = $('Create Project').first().json;\nconst maxAttempts = parseInt($env.N8N_MAX_POLL_ATTEMPTS || '120', 10);\nreturn [{\n  json: {\n    run_id: submit.run_id,\n    poll_attempt: 0,\n    max_poll_attempts: maxAttempts,\n    api_url: vars.api_url,\n    correlation_id: vars.correlation_id,\n    idempotency_key: vars.idempotency_key,\n    project_id: project.id,\n  },\n}];"
+        "jsCode": "const vars = $('Set Orchestration Vars').first().json;\nconst submit = $('Submit Research').first().json;\nconst project = $('Create Project').first().json;\nconst maxAttempts = parseInt(String(vars.max_poll_attempts || $env.N8N_MAX_POLL_ATTEMPTS || '120'), 10);\nreturn [{\n  json: {\n    run_id: submit.run_id,\n    poll_attempt: 0,\n    max_poll_attempts: maxAttempts,\n    api_url: vars.api_url,\n    correlation_id: vars.correlation_id,\n    idempotency_key: vars.idempotency_key,\n    project_id: project.id,\n    poll_interval_seconds: vars.poll_interval_seconds,\n  },\n}];"
       },
       "id": "prepare-poll-loop",
       "name": "Prepare Poll Loop",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1080, 300]
+      "position": [1300, 300]
     },
     {
       "parameters": {
@@ -135,17 +165,17 @@
       "name": "Poll Workflow Run",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1300, 300]
+      "position": [1520, 300]
     },
     {
       "parameters": {
-        "jsCode": "const loopState = $('Continue Poll Loop').isExecuted\n  ? $('Continue Poll Loop').first().json\n  : $('Prepare Poll Loop').first().json;\nconst poll = $input.first().json;\nconst attempt = loopState.poll_attempt + 1;\nreturn [{\n  json: {\n    ...poll,\n    run_id: loopState.run_id,\n    api_url: loopState.api_url,\n    project_id: loopState.project_id,\n    correlation_id: loopState.correlation_id,\n    idempotency_key: loopState.idempotency_key,\n    poll_attempt: attempt,\n    max_poll_attempts: loopState.max_poll_attempts,\n  },\n}];"
+        "jsCode": "const loopState = $('Continue Poll Loop').isExecuted\n  ? $('Continue Poll Loop').first().json\n  : $('Prepare Poll Loop').first().json;\nconst poll = $input.first().json;\nconst attempt = loopState.poll_attempt + 1;\nreturn [{\n  json: {\n    ...poll,\n    run_id: loopState.run_id,\n    api_url: loopState.api_url,\n    project_id: loopState.project_id,\n    correlation_id: loopState.correlation_id,\n    idempotency_key: loopState.idempotency_key,\n    poll_attempt: attempt,\n    max_poll_attempts: loopState.max_poll_attempts,\n    poll_interval_seconds: loopState.poll_interval_seconds,\n    status: poll.status,\n    is_terminal: poll.is_terminal,\n    final_review_verdict: poll.final_review_verdict ?? null,\n    final_artifact_available: poll.final_artifact_available ?? false,\n    final_artifact_id: poll.final_artifact_id ?? null,\n  },\n}];"
       },
       "id": "process-poll-response",
       "name": "Process Poll Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1520, 300]
+      "position": [1740, 300]
     },
     {
       "parameters": {
@@ -162,7 +192,7 @@
       "name": "Is Terminal?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1740, 300]
+      "position": [1960, 300]
     },
     {
       "parameters": {
@@ -180,28 +210,28 @@
       "name": "Max Poll Attempts?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1740, 520]
+      "position": [1960, 520]
     },
     {
       "parameters": {
-        "amount": "={{ $env.N8N_POLL_INTERVAL_SECONDS || 3 }}",
+        "amount": "={{ $('Set Orchestration Vars').item.json.poll_interval_seconds || $env.N8N_POLL_INTERVAL_SECONDS || 3 }}",
         "unit": "seconds"
       },
       "id": "wait",
       "name": "Wait Poll Interval",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [1960, 620]
+      "position": [2180, 620]
     },
     {
       "parameters": {
-        "jsCode": "const item = $input.first().json;\nreturn [{\n  json: {\n    run_id: item.run_id,\n    poll_attempt: item.poll_attempt,\n    max_poll_attempts: item.max_poll_attempts,\n    api_url: item.api_url,\n    project_id: item.project_id,\n    correlation_id: item.correlation_id,\n    idempotency_key: item.idempotency_key,\n  },\n}];"
+        "jsCode": "const item = $input.first().json;\nreturn [{\n  json: {\n    run_id: item.run_id,\n    poll_attempt: item.poll_attempt,\n    max_poll_attempts: item.max_poll_attempts,\n    api_url: item.api_url,\n    project_id: item.project_id,\n    correlation_id: item.correlation_id,\n    idempotency_key: item.idempotency_key,\n    poll_interval_seconds: item.poll_interval_seconds,\n  },\n}];"
       },
       "id": "continue-poll-loop",
       "name": "Continue Poll Loop",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2180, 620]
+      "position": [2400, 620]
     },
     {
       "parameters": {
@@ -231,7 +261,7 @@
       "name": "Approved Final Artifact?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1960, 180]
+      "position": [2180, 180]
     },
     {
       "parameters": {
@@ -249,7 +279,7 @@
       "name": "Review Rejected?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [2180, 300]
+      "position": [2400, 300]
     },
     {
       "parameters": {
@@ -267,12 +297,12 @@
       "name": "Workflow Failed?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [2180, 420]
+      "position": [2400, 420]
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "={{$json.api_url + '/artifacts/' + $json.final_artifact_id}}",
+        "url": "={{$('Process Poll Response').item.json.api_url + '/artifacts/' + $('Process Poll Response').item.json.final_artifact_id}}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -287,7 +317,7 @@
       "name": "Fetch Artifact Metadata",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2180, 80]
+      "position": [2400, 80]
     },
     {
       "parameters": {
@@ -307,63 +337,91 @@
       "name": "Fetch Artifact Content",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2400, 80]
+      "position": [2620, 80]
     },
     {
       "parameters": {
-        "values": {
-          "string": [
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
             {
+              "id": "success-project-id",
               "name": "project_id",
-              "value": "={{$('Process Poll Response').item.json.project_id}}"
+              "value": "={{$('Process Poll Response').item.json.project_id}}",
+              "type": "string"
             },
             {
+              "id": "success-run-id",
               "name": "run_id",
-              "value": "={{$('Process Poll Response').item.json.run_id || $('Process Poll Response').item.json.id}}"
+              "value": "={{$('Process Poll Response').item.json.run_id || $('Process Poll Response').item.json.id}}",
+              "type": "string"
             },
             {
+              "id": "success-status",
               "name": "status",
-              "value": "={{$('Process Poll Response').item.json.status}}"
+              "value": "={{$('Process Poll Response').item.json.status}}",
+              "type": "string"
             },
             {
+              "id": "success-review-verdict",
               "name": "review_verdict",
-              "value": "={{$('Process Poll Response').item.json.final_review_verdict}}"
+              "value": "={{$('Process Poll Response').item.json.final_review_verdict}}",
+              "type": "string"
             },
             {
+              "id": "success-artifact-id",
               "name": "artifact_id",
-              "value": "={{$('Process Poll Response').item.json.final_artifact_id}}"
+              "value": "={{$('Process Poll Response').item.json.final_artifact_id}}",
+              "type": "string"
             },
             {
+              "id": "success-artifact-filename",
               "name": "artifact_filename",
-              "value": "={{$json.filename}}"
+              "value": "={{$json.filename}}",
+              "type": "string"
             },
             {
+              "id": "success-artifact-media-type",
               "name": "artifact_media_type",
-              "value": "={{$json.media_type}}"
+              "value": "={{$json.media_type}}",
+              "type": "string"
             },
             {
+              "id": "success-artifact-checksum",
               "name": "artifact_checksum",
-              "value": "={{$('Fetch Artifact Content').item.json.content_checksum}}"
+              "value": "={{$('Fetch Artifact Content').item.json.content_checksum}}",
+              "type": "string"
             },
             {
+              "id": "success-artifact-content",
               "name": "artifact_content",
-              "value": "={{$('Fetch Artifact Content').item.json.content}}"
+              "value": "={{$('Fetch Artifact Content').item.json.content}}",
+              "type": "string"
             },
             {
+              "id": "success-correlation-id",
               "name": "correlation_id",
-              "value": "={{$('Process Poll Response').item.json.correlation_id}}"
+              "value": "={{$('Process Poll Response').item.json.correlation_id}}",
+              "type": "string"
             },
             {
+              "id": "success-idempotency-key",
               "name": "idempotency_key",
-              "value": "={{$('Process Poll Response').item.json.idempotency_key}}"
+              "value": "={{$('Process Poll Response').item.json.idempotency_key}}",
+              "type": "string"
             },
             {
+              "id": "success-poll-attempt",
               "name": "poll_attempt",
-              "value": "={{String($('Process Poll Response').item.json.poll_attempt)}}"
+              "value": "={{String($('Process Poll Response').item.json.poll_attempt)}}",
+              "type": "string"
             },
             {
+              "id": "success-outcome",
               "name": "outcome",
-              "value": "success"
+              "value": "success",
+              "type": "string"
             }
           ]
         },
@@ -372,32 +430,44 @@
       "id": "success-output",
       "name": "Success Payload",
       "type": "n8n-nodes-base.set",
-      "typeVersion": 3,
-      "position": [2620, 80]
+      "typeVersion": 3.4,
+      "position": [2840, 80]
     },
     {
       "parameters": {
-        "values": {
-          "string": [
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
             {
+              "id": "rejected-run-id",
               "name": "run_id",
-              "value": "={{$json.run_id || $json.id}}"
+              "value": "={{$json.run_id || $json.id}}",
+              "type": "string"
             },
             {
+              "id": "rejected-status",
               "name": "status",
-              "value": "={{$json.status}}"
+              "value": "={{$json.status}}",
+              "type": "string"
             },
             {
+              "id": "rejected-review-verdict",
               "name": "review_verdict",
-              "value": "={{$json.final_review_verdict || 'reject'}}"
+              "value": "={{$json.final_review_verdict || 'reject'}}",
+              "type": "string"
             },
             {
+              "id": "rejected-poll-attempt",
               "name": "poll_attempt",
-              "value": "={{String($json.poll_attempt)}}"
+              "value": "={{String($json.poll_attempt)}}",
+              "type": "string"
             },
             {
+              "id": "rejected-outcome",
               "name": "outcome",
-              "value": "rejected"
+              "value": "rejected",
+              "type": "string"
             }
           ]
         },
@@ -406,32 +476,44 @@
       "id": "rejected-output",
       "name": "Rejected Payload",
       "type": "n8n-nodes-base.set",
-      "typeVersion": 3,
-      "position": [2400, 260]
+      "typeVersion": 3.4,
+      "position": [2620, 260]
     },
     {
       "parameters": {
-        "values": {
-          "string": [
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
             {
+              "id": "failed-run-id",
               "name": "run_id",
-              "value": "={{$json.run_id || $json.id}}"
+              "value": "={{$json.run_id || $json.id}}",
+              "type": "string"
             },
             {
+              "id": "failed-status",
               "name": "status",
-              "value": "={{$json.status}}"
+              "value": "={{$json.status}}",
+              "type": "string"
             },
             {
+              "id": "failed-review-verdict",
               "name": "review_verdict",
-              "value": "={{$json.final_review_verdict || 'none'}}"
+              "value": "={{$json.final_review_verdict || 'none'}}",
+              "type": "string"
             },
             {
+              "id": "failed-poll-attempt",
               "name": "poll_attempt",
-              "value": "={{String($json.poll_attempt)}}"
+              "value": "={{String($json.poll_attempt)}}",
+              "type": "string"
             },
             {
+              "id": "failed-outcome",
               "name": "outcome",
-              "value": "failed"
+              "value": "failed",
+              "type": "string"
             }
           ]
         },
@@ -440,32 +522,44 @@
       "id": "failed-output",
       "name": "Failed Payload",
       "type": "n8n-nodes-base.set",
-      "typeVersion": 3,
-      "position": [2400, 380]
+      "typeVersion": 3.4,
+      "position": [2620, 380]
     },
     {
       "parameters": {
-        "values": {
-          "string": [
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
             {
+              "id": "contract-run-id",
               "name": "run_id",
-              "value": "={{$json.run_id || $json.id}}"
+              "value": "={{$json.run_id || $json.id}}",
+              "type": "string"
             },
             {
+              "id": "contract-status",
               "name": "status",
-              "value": "={{$json.status}}"
+              "value": "={{$json.status}}",
+              "type": "string"
             },
             {
+              "id": "contract-review-verdict",
               "name": "review_verdict",
-              "value": "={{$json.final_review_verdict || 'none'}}"
+              "value": "={{$json.final_review_verdict || 'none'}}",
+              "type": "string"
             },
             {
+              "id": "contract-poll-attempt",
               "name": "poll_attempt",
-              "value": "={{String($json.poll_attempt)}}"
+              "value": "={{String($json.poll_attempt)}}",
+              "type": "string"
             },
             {
+              "id": "contract-outcome",
               "name": "outcome",
-              "value": "contract_failure"
+              "value": "contract_failure",
+              "type": "string"
             }
           ]
         },
@@ -474,36 +568,50 @@
       "id": "contract-failure-output",
       "name": "Contract Failure Payload",
       "type": "n8n-nodes-base.set",
-      "typeVersion": 3,
-      "position": [2400, 500]
+      "typeVersion": 3.4,
+      "position": [2620, 500]
     },
     {
       "parameters": {
-        "values": {
-          "string": [
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
             {
+              "id": "timeout-run-id",
               "name": "run_id",
-              "value": "={{$json.run_id || $json.id}}"
+              "value": "={{$json.run_id || $json.id}}",
+              "type": "string"
             },
             {
+              "id": "timeout-status",
               "name": "status",
-              "value": "={{$json.status || 'pending'}}"
+              "value": "={{$json.status || 'pending'}}",
+              "type": "string"
             },
             {
+              "id": "timeout-review-verdict",
               "name": "review_verdict",
-              "value": "={{$json.final_review_verdict || 'none'}}"
+              "value": "={{$json.final_review_verdict || 'none'}}",
+              "type": "string"
             },
             {
+              "id": "timeout-poll-attempt",
               "name": "poll_attempt",
-              "value": "={{String($json.poll_attempt)}}"
+              "value": "={{String($json.poll_attempt)}}",
+              "type": "string"
             },
             {
+              "id": "timeout-max-poll-attempts",
               "name": "max_poll_attempts",
-              "value": "={{String($json.max_poll_attempts)}}"
+              "value": "={{String($json.max_poll_attempts)}}",
+              "type": "string"
             },
             {
+              "id": "timeout-outcome",
               "name": "outcome",
-              "value": "poll_timeout"
+              "value": "poll_timeout",
+              "type": "string"
             }
           ]
         },
@@ -512,8 +620,8 @@
       "id": "timeout-output",
       "name": "Poll Timeout Payload",
       "type": "n8n-nodes-base.set",
-      "typeVersion": 3,
-      "position": [1960, 460]
+      "typeVersion": 3.4,
+      "position": [2180, 460]
     }
   ],
   "connections": {
@@ -521,6 +629,9 @@
       "main": [[{ "node": "Set Orchestration Vars", "type": "main", "index": 0 }]]
     },
     "Set Orchestration Vars": {
+      "main": [[{ "node": "Parse Research Brief", "type": "main", "index": 0 }]]
+    },
+    "Parse Research Brief": {
       "main": [[{ "node": "Create Project", "type": "main", "index": 0 }]]
     },
     "Create Project": {
@@ -586,5 +697,5 @@
     "executionOrder": "v1",
     "executionTimeout": 3600
   },
-  "versionId": "n8n-desk-research-product-acceptance-v2"
+  "versionId": "n8n-desk-research-product-acceptance-v3"
 }

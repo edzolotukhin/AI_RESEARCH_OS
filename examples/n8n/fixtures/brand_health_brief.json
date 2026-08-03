@@ -1,0 +1,15 @@
+{
+  "title": "Brand Health 2026",
+  "business_question": "Assess market position.",
+  "objectives": ["Evaluate brand awareness."],
+  "geography": ["Germany"],
+  "market": "Pet food",
+  "target_entities": ["Purina"],
+  "timeframe": "2026",
+  "constraints": [],
+  "deliverables": ["Executive summary"],
+  "language": "en",
+  "context": "Client: Purina",
+  "known_information": [],
+  "exclusions": []
+}
