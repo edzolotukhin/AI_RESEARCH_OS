@@ -34,9 +34,9 @@ from infrastructure.persistence.noop_run_queue import NoOpRunQueue
 from application.services.project_service import ProjectService
 
 
-def _template() -> WorkflowTemplate:
+def _template(template_id: str = "template-worker") -> WorkflowTemplate:
     return WorkflowTemplate(
-        id="template-worker",
+        id=template_id,
         name="Worker Template",
         task_definitions=[
             TaskDefinition(
@@ -125,6 +125,30 @@ class WorkerExecutionServiceTests(unittest.TestCase):
                 claim.run_id,
                 worker_id="worker-b",
             )
+
+    def test_execution_failure_does_not_block_next_runnable_claim(self) -> None:
+        from application.analysis.exceptions import AnalysisError
+
+        self.durable_service.submit_research(
+            self.project,
+            _template("template-worker-fail"),
+            run_id="run-fail",
+        )
+        self.durable_service.submit_research(
+            self.project,
+            _template("template-worker-success"),
+            run_id="run-success",
+        )
+        self.workflow_engine.run.side_effect = [
+            AnalysisError(
+                "No valid findings produced for workflow run run-fail",
+            ),
+            lambda context, checkpoint=None: context,
+        ]
+
+        self.assertTrue(self.worker_service.process_once("worker-a"))
+        self.assertTrue(self.worker_service.process_once("worker-a"))
+        self.assertEqual(self.workflow_engine.run.call_count, 2)
 
 
 if __name__ == "__main__":

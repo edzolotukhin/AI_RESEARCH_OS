@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from domain.findings.finding_type import FindingType
@@ -13,7 +14,15 @@ from application.ports.analysis_ports import (
 from application.structured_output.json_extractor import JsonExtractor
 from application.structured_output.json_validator import JsonValidator
 from domain.ai.prompt import Prompt
+from infrastructure.llm.generation_options import LLMGenerationOptions
 from infrastructure.llm.llm_client import LLMClient
+
+
+@dataclass(frozen=True)
+class FindingEngineBatchStats:
+    candidate_count: int
+    engine_dropped_count: int
+    raw_items: int
 
 
 class LlmAnalysisEngine:
@@ -21,10 +30,23 @@ class LlmAnalysisEngine:
 
     method_name = "llm"
 
-    def __init__(self, *, llm_client: LLMClient) -> None:
+    def __init__(
+        self,
+        *,
+        llm_client: LLMClient,
+        max_output_tokens: int | None = None,
+        reasoning_effort: str | None = None,
+    ) -> None:
         self._llm_client = llm_client
         self._json_extractor = JsonExtractor()
         self._json_validator = JsonValidator()
+        self._max_output_tokens = max_output_tokens
+        self._reasoning_effort = reasoning_effort
+        self._last_finding_batch_stats: FindingEngineBatchStats | None = None
+
+    @property
+    def last_finding_batch_stats(self) -> FindingEngineBatchStats | None:
+        return self._last_finding_batch_stats
 
     def analyze_findings(self, analysis_input: AnalysisInput) -> list[FindingCandidate]:
         prompt = Prompt(
@@ -47,7 +69,13 @@ class LlmAnalysisEngine:
             user=self._build_finding_payload(analysis_input),
         )
         try:
-            response = self._llm_client.generate(prompt)
+            response = self._llm_client.generate(
+                prompt,
+                options=LLMGenerationOptions(
+                    max_output_tokens=self._max_output_tokens,
+                    reasoning_effort=self._reasoning_effort,
+                ),
+            )
         except Exception as exc:
             raise AnalysisConfigurationError("LLM finding analysis failed") from exc
 
@@ -58,9 +86,13 @@ class LlmAnalysisEngine:
         }
         allowed_needs = {need.id for need in analysis_input.design.information_needs}
         candidates: list[FindingCandidate] = []
+        raw_items = 0
+        engine_dropped = 0
 
         for item in payload.get("findings", []):
+            raw_items += 1
             if not isinstance(item, dict):
+                engine_dropped += 1
                 continue
             evidence_refs = tuple(
                 str(ref).strip()
@@ -68,10 +100,12 @@ class LlmAnalysisEngine:
                 if str(ref).strip() in allowed_evidence
             )
             if not evidence_refs:
+                engine_dropped += 1
                 continue
             statement = str(item.get("statement", "")).strip()
             rationale = str(item.get("rationale", "")).strip()
             if not statement or not rationale:
+                engine_dropped += 1
                 continue
             finding_type = str(item.get("finding_type", FindingType.SYNTHESIS.value))
             if finding_type not in {member.value for member in FindingType}:
@@ -90,6 +124,12 @@ class LlmAnalysisEngine:
             metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
             if finding_type == FindingType.CONTRADICTION.value:
                 metadata = {**metadata, "conflicting_evidence": True}
+            try:
+                parsed_confidence = (
+                    float(confidence) if confidence is not None else None
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Finding confidence must be numeric") from exc
             candidates.append(
                 FindingCandidate(
                     statement=statement,
@@ -98,10 +138,16 @@ class LlmAnalysisEngine:
                     research_question_refs=question_refs,
                     information_need_refs=need_refs,
                     finding_type=finding_type,
-                    confidence=float(confidence) if confidence is not None else None,
+                    confidence=parsed_confidence,
                     metadata=metadata,
                 ),
             )
+
+        self._last_finding_batch_stats = FindingEngineBatchStats(
+            candidate_count=len(candidates),
+            engine_dropped_count=engine_dropped,
+            raw_items=raw_items,
+        )
         return candidates
 
     def analyze_insights(self, analysis_input: AnalysisInput) -> list[InsightCandidate]:
@@ -120,7 +166,13 @@ class LlmAnalysisEngine:
             user=self._build_insight_payload(analysis_input),
         )
         try:
-            response = self._llm_client.generate(prompt)
+            response = self._llm_client.generate(
+                prompt,
+                options=LLMGenerationOptions(
+                    max_output_tokens=self._max_output_tokens,
+                    reasoning_effort=self._reasoning_effort,
+                ),
+            )
         except Exception as exc:
             raise AnalysisConfigurationError("LLM insight analysis failed") from exc
 

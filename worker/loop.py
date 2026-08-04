@@ -45,7 +45,14 @@ class WorkerLoop:
         self._container.agency.initialize()
         try:
             while not self._stop.is_set():
-                processed = self._service.process_once(self._worker)
+                try:
+                    processed = self._service.process_once(self._worker)
+                except Exception:
+                    logger.exception(
+                        "worker_process_once_unexpected worker_id=%s",
+                        self._worker,
+                    )
+                    processed = False
                 if not processed:
                     self._stop.wait(self._lease_config.poll_interval_seconds)
         finally:

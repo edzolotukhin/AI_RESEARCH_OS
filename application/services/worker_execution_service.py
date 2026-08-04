@@ -30,9 +30,11 @@ class WorkerExecutionService:
         self._durable_workflow_service = durable_workflow_service
         self._execution_port = execution_port
         self._lease_config = lease_config or LeaseConfig()
+        self._last_run_error: Exception | None = None
 
     def process_once(self, worker_id: str) -> bool:
         """Claim and execute at most one runnable run. Returns True if work ran."""
+        self._last_run_error = None
         try:
             claim = self._claim_next(worker_id)
         except Exception:
@@ -40,7 +42,7 @@ class WorkerExecutionService:
                 "worker_claim_query_failed worker_id=%s",
                 worker_id,
             )
-            raise
+            return False
         if claim is None:
             return False
         logger.info(
@@ -57,13 +59,14 @@ class WorkerExecutionService:
                 worker_id,
             )
             return True
-        except Exception:
+        except Exception as exc:
+            self._last_run_error = exc
             logger.exception(
                 "worker_execute_failed run_id=%s worker_id=%s",
                 claim.run_id,
                 worker_id,
             )
-            raise
+            return True
         return True
 
     def execute_claimed_run(self, claim: ClaimResult, worker_id: str) -> None:
@@ -100,6 +103,10 @@ class WorkerExecutionService:
             if not self.process_once(worker_id):
                 break
             processed += 1
+            if self._last_run_error is not None:
+                error = self._last_run_error
+                self._last_run_error = None
+                raise error
         return processed
 
     def _claim_next(self, worker_id: str) -> ClaimResult | None:

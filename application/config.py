@@ -55,6 +55,8 @@ class ApplicationConfig:
     analysis_engine: str = "llm"
     analysis_max_evidence_per_batch: int = DEFAULT_ANALYSIS_MAX_EVIDENCE_PER_BATCH
     analysis_max_chars_per_batch: int = DEFAULT_ANALYSIS_MAX_CHARS_PER_BATCH
+    analysis_reasoning_effort: str = "minimal"
+    analysis_max_output_tokens: int = 8192
     report_engine: str = "llm"
     report_max_findings_per_batch: int = DEFAULT_REPORT_MAX_FINDINGS_PER_BATCH
     report_max_chars_per_batch: int = DEFAULT_REPORT_MAX_CHARS_PER_BATCH
@@ -115,6 +117,13 @@ class ApplicationConfig:
                     "ANALYSIS_MAX_CHARS_PER_BATCH",
                     str(DEFAULT_ANALYSIS_MAX_CHARS_PER_BATCH),
                 ),
+            ),
+            analysis_reasoning_effort=os.environ.get(
+                "ANALYSIS_REASONING_EFFORT",
+                "minimal",
+            ).strip().lower(),
+            analysis_max_output_tokens=int(
+                os.environ.get("ANALYSIS_MAX_OUTPUT_TOKENS", "8192"),
             ),
             report_engine=os.environ.get("REPORT_ENGINE", "llm"),
             report_max_findings_per_batch=int(

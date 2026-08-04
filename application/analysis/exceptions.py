@@ -19,3 +19,7 @@ class DuplicateInsightError(AnalysisError):
 
 class InvalidAnalysisProvenanceError(AnalysisError):
     """Raised when candidate references fail run-scoped provenance validation."""
+
+    def __init__(self, message: str, *, category: str | None = None) -> None:
+        super().__init__(message)
+        self.category = category

@@ -4,6 +4,15 @@ from domain.evidence.evidence import Evidence
 from domain.findings.finding import Finding
 from domain.planning.research_design import ResearchDesign
 
+from application.analysis.diagnostics import (
+    REJECTION_CATEGORY_CROSS_DESIGN_REF,
+    REJECTION_CATEGORY_CROSS_PROJECT_REF,
+    REJECTION_CATEGORY_CROSS_RUN_REF,
+    REJECTION_CATEGORY_INVALID_CONFIDENCE,
+    REJECTION_CATEGORY_INVALID_EVIDENCE_REF,
+    REJECTION_CATEGORY_MISSING_STATEMENT,
+    REJECTION_CATEGORY_MISSING_SUPPORT,
+)
 from application.analysis.exceptions import InvalidAnalysisProvenanceError
 from application.ports.analysis_ports import FindingCandidate, InsightCandidate
 
@@ -14,6 +23,7 @@ def validate_confidence(confidence: float | None) -> float | None:
     if not 0.0 <= confidence <= 1.0:
         raise InvalidAnalysisProvenanceError(
             f"Confidence must be between 0 and 1, got {confidence}",
+            category=REJECTION_CATEGORY_INVALID_CONFIDENCE,
         )
     return confidence
 
@@ -28,9 +38,15 @@ def validate_finding_candidate(
     design: ResearchDesign,
 ) -> FindingCandidate:
     if not candidate.statement.strip():
-        raise InvalidAnalysisProvenanceError("Finding statement must not be empty")
+        raise InvalidAnalysisProvenanceError(
+            "Finding statement must not be empty",
+            category=REJECTION_CATEGORY_MISSING_STATEMENT,
+        )
     if not candidate.evidence_refs:
-        raise InvalidAnalysisProvenanceError("Finding must reference at least one Evidence")
+        raise InvalidAnalysisProvenanceError(
+            "Finding must reference at least one Evidence",
+            category=REJECTION_CATEGORY_MISSING_SUPPORT,
+        )
 
     allowed_questions = {question.id for question in design.research_questions}
     allowed_needs = {need.id for need in design.information_needs}
@@ -40,18 +56,22 @@ def validate_finding_candidate(
         if evidence is None:
             raise InvalidAnalysisProvenanceError(
                 f"Unknown evidence reference: {evidence_id}",
+                category=REJECTION_CATEGORY_INVALID_EVIDENCE_REF,
             )
         if evidence.project_id != project_id:
             raise InvalidAnalysisProvenanceError(
                 f"Evidence {evidence_id} belongs to a different project",
+                category=REJECTION_CATEGORY_CROSS_PROJECT_REF,
             )
         if evidence.workflow_run_id != workflow_run_id:
             raise InvalidAnalysisProvenanceError(
                 f"Evidence {evidence_id} belongs to a different workflow run",
+                category=REJECTION_CATEGORY_CROSS_RUN_REF,
             )
         if evidence.research_design_id != research_design_id:
             raise InvalidAnalysisProvenanceError(
                 f"Evidence {evidence_id} belongs to a different research design",
+                category=REJECTION_CATEGORY_CROSS_DESIGN_REF,
             )
 
     question_refs = tuple(

@@ -27,7 +27,11 @@ def build_analysis_engine(
     if provider_name == "llm":
         if llm_client is None:
             raise ValueError("LLM client is required for ANALYSIS_ENGINE=llm")
-        return LlmAnalysisEngine(llm_client=llm_client)
+        return LlmAnalysisEngine(
+            llm_client=llm_client,
+            max_output_tokens=config.analysis_max_output_tokens,
+            reasoning_effort=config.analysis_reasoning_effort,
+        )
     raise ValueError(
         f"Unsupported ANALYSIS_ENGINE: {provider_name!r}. "
         "Expected one of: llm, deterministic.",

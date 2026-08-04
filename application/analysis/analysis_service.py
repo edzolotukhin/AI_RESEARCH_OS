@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -15,8 +16,18 @@ from application.analysis.deduplication import (
     compute_finding_deduplication_key,
     compute_insight_deduplication_key,
 )
+from application.analysis.diagnostics import (
+    FAILURE_CATEGORY_BATCH_ERROR,
+    FAILURE_CATEGORY_LLM_ERROR,
+    FAILURE_CATEGORY_PARSE_ERROR,
+    AnalysisBatchDiagnostics,
+    AnalysisFailureDiagnostics,
+    classify_provenance_rejection,
+    format_zero_findings_message,
+)
 from application.analysis.evidence_batching import batch_evidence_by_question
 from application.analysis.exceptions import (
+    AnalysisConfigurationError,
     AnalysisError,
     DuplicateFindingError,
     DuplicateInsightError,
@@ -35,6 +46,8 @@ from application.ports.analysis_ports import (
 from application.ports.evidence_ports import EvidenceRepository
 
 from runtime.workflow_context import WorkflowContext
+
+logger = logging.getLogger("ai_research_os.analysis")
 
 _MAX_DEDUP_RETRIES = 5
 
@@ -105,8 +118,16 @@ class AnalysisService:
         finding_ids: list[str] = []
         finding_candidates_rejected = 0
         batch_failures = 0
+        batch_diagnostics: list[AnalysisBatchDiagnostics] = []
 
         for batch_question_id, evidence_batch in batches:
+            normalized_question_id = (
+                None if batch_question_id == "__unscoped__" else batch_question_id
+            )
+            batch_diag = AnalysisBatchDiagnostics(
+                batch_question_id=normalized_question_id,
+                evidence_count=len(evidence_batch),
+            )
             analysis_input = AnalysisInput(
                 project_id=project_id,
                 workflow_run_id=workflow_run_id,
@@ -114,15 +135,62 @@ class AnalysisService:
                 brief=brief,
                 design=design,
                 evidence_batch=evidence_batch,
-                batch_question_id=(
-                    None if batch_question_id == "__unscoped__" else batch_question_id
-                ),
+                batch_question_id=normalized_question_id,
             )
             try:
                 candidates = self._analysis_engine.analyze_findings(analysis_input)
-            except Exception:
+            except AnalysisConfigurationError as exc:
                 batch_failures += 1
+                batch_diag.failure_category = FAILURE_CATEGORY_LLM_ERROR
+                logger.warning(
+                    "analysis_batch_failed workflow_run_id=%s batch_question_id=%s "
+                    "evidence_count=%s failure_category=%s error=%s",
+                    workflow_run_id,
+                    normalized_question_id,
+                    len(evidence_batch),
+                    batch_diag.failure_category,
+                    type(exc).__name__,
+                )
+                batch_diagnostics.append(batch_diag)
                 continue
+            except ValueError as exc:
+                batch_failures += 1
+                batch_diag.failure_category = FAILURE_CATEGORY_PARSE_ERROR
+                logger.warning(
+                    "analysis_batch_failed workflow_run_id=%s batch_question_id=%s "
+                    "evidence_count=%s failure_category=%s error=%s",
+                    workflow_run_id,
+                    normalized_question_id,
+                    len(evidence_batch),
+                    batch_diag.failure_category,
+                    str(exc),
+                )
+                batch_diagnostics.append(batch_diag)
+                continue
+            except Exception as exc:
+                batch_failures += 1
+                batch_diag.failure_category = FAILURE_CATEGORY_BATCH_ERROR
+                logger.exception(
+                    "analysis_batch_failed workflow_run_id=%s batch_question_id=%s "
+                    "evidence_count=%s failure_category=%s",
+                    workflow_run_id,
+                    normalized_question_id,
+                    len(evidence_batch),
+                    batch_diag.failure_category,
+                )
+                batch_diagnostics.append(batch_diag)
+                continue
+
+            engine_stats = getattr(
+                self._analysis_engine,
+                "last_finding_batch_stats",
+                None,
+            )
+            if engine_stats is not None:
+                batch_diag.candidate_count = engine_stats.candidate_count
+                batch_diag.engine_dropped_count = engine_stats.engine_dropped_count
+            else:
+                batch_diag.candidate_count = len(candidates)
 
             for candidate in candidates:
                 try:
@@ -140,16 +208,48 @@ class AnalysisService:
                         workflow_run_id=workflow_run_id,
                         research_design_id=research_design_id,
                     )
-                except InvalidAnalysisProvenanceError:
+                except InvalidAnalysisProvenanceError as exc:
                     finding_candidates_rejected += 1
+                    batch_diag.rejected_count += 1
+                    category = classify_provenance_rejection(exc)
+                    batch_diag.rejection_counts[category] = (
+                        batch_diag.rejection_counts.get(category, 0) + 1
+                    )
                     continue
+                batch_diag.valid_count += 1
                 if finding_id not in finding_ids:
                     finding_ids.append(finding_id)
 
-        if not finding_ids:
-            raise AnalysisError(
-                f"No valid findings produced for workflow run {workflow_run_id}",
+            logger.info(
+                "analysis_batch_complete workflow_run_id=%s batch_question_id=%s "
+                "evidence_count=%s candidate_count=%s valid_count=%s rejected_count=%s "
+                "engine_dropped_count=%s failure_category=%s rejection_counts=%s",
+                workflow_run_id,
+                normalized_question_id,
+                batch_diag.evidence_count,
+                batch_diag.candidate_count,
+                batch_diag.valid_count,
+                batch_diag.rejected_count,
+                batch_diag.engine_dropped_count,
+                batch_diag.failure_category,
+                batch_diag.rejection_counts,
             )
+            batch_diagnostics.append(batch_diag)
+
+        if not finding_ids:
+            failure_diagnostics = AnalysisFailureDiagnostics(
+                workflow_run_id=workflow_run_id,
+                evidence_count=len(evidence_items),
+                batch_count=len(batches),
+                batch_failures=batch_failures,
+                finding_candidates_rejected=finding_candidates_rejected,
+                batches=batch_diagnostics,
+            )
+            logger.error(
+                "analysis_zero_findings %s",
+                format_zero_findings_message(failure_diagnostics),
+            )
+            raise AnalysisError(format_zero_findings_message(failure_diagnostics))
 
         persisted_findings = [
             self._finding_repository.get_by_id(finding_id)
