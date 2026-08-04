@@ -13,6 +13,7 @@ def fetch_with_validated_redirects(
     *,
     max_redirects: int = 5,
     timeout: float = 10.0,
+    dns_timeout_seconds: float = 5.0,
 ) -> httpx.Response:
     """
     Fetch a URL without automatic redirect following.
@@ -21,7 +22,7 @@ def fetch_with_validated_redirects(
     """
     current = url
     for _ in range(max_redirects + 1):
-        validate_fetch_url(current)
+        validate_fetch_url(current, dns_timeout_seconds=dns_timeout_seconds)
         response = client.get(current, follow_redirects=False, timeout=timeout)
         if response.status_code not in {301, 302, 303, 307, 308}:
             return response

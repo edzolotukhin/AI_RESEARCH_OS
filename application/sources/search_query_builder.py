@@ -9,6 +9,9 @@ from application.sources.url_canonicalizer import normalize_query_text
 class SearchQueryBuilder:
     """Deterministically derive SearchQuery records from a ResearchDesign."""
 
+    def __init__(self, *, max_results: int = 5) -> None:
+        self._max_results = max_results
+
     def build_queries(self, design: ResearchDesign) -> list[SearchQuery]:
         if not design.information_needs:
             raise ValueError(
@@ -66,6 +69,6 @@ class SearchQueryBuilder:
             geography=need.geography,
             timeframe=need.timeframe,
             preferred_source_types=need.preferred_source_types,
-            max_results=5,
+            max_results=self._max_results,
             rationale="; ".join(rationale_parts),
         )

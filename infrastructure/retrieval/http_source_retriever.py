@@ -56,9 +56,11 @@ class HttpSourceRetriever(SourceRetriever):
         *,
         limits: HttpRetrievalLimits | None = None,
         http_client=None,
+        dns_timeout_seconds: float = 5.0,
     ) -> None:
         self._limits = limits or HttpRetrievalLimits()
         self._http_client = http_client
+        self._dns_timeout_seconds = dns_timeout_seconds
 
     def retrieve(self, candidate: SourceCandidate) -> Source:
         now = _utc_now_iso()
@@ -69,6 +71,7 @@ class HttpSourceRetriever(SourceRetriever):
                 candidate.url,
                 max_redirects=self._limits.max_redirects,
                 timeout=self._limits.timeout_seconds,
+                dns_timeout_seconds=self._dns_timeout_seconds,
             )
         except UnsafeUrlError as exc:
             return self._failed_source(

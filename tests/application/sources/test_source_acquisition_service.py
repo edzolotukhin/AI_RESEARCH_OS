@@ -12,6 +12,7 @@ from application.sources.exceptions import SourceAcquisitionError
 from application.sources.provenance_merge import is_successful_acquisition
 from application.sources.search_query_builder import SearchQueryBuilder
 from application.sources.source_acquisition_service import SourceAcquisitionService
+from application.sources.source_budget import SourceAcquisitionBudget
 from domain.sources.search_query import SearchQuery
 from domain.sources.source_candidate import SourceCandidate
 from domain.sources.source import Source
@@ -107,11 +108,13 @@ class SourceAcquisitionServiceTests(unittest.TestCase):
         context.current_task = run.tasks[0]
 
         repository = InMemorySourceRepository()
+        test_budget = SourceAcquisitionBudget(min_successful_sources=1)
         service = SourceAcquisitionService(
             search_provider=_DuplicateQueryProvider(),
             source_retriever=DeterministicSourceRetriever(),
             source_repository=repository,
             query_builder=SearchQueryBuilder(),
+            budget=test_budget,
         )
         summary = service.acquire_for_context(context)
         sources = repository.list_for_project("project-1")
@@ -165,11 +168,13 @@ class SourceAcquisitionServiceTests(unittest.TestCase):
             research_design_snapshot=design,
         )
         repository = InMemorySourceRepository()
+        test_budget = SourceAcquisitionBudget(min_successful_sources=1)
         service = SourceAcquisitionService(
             search_provider=DeterministicSearchProvider(),
             source_retriever=DeterministicSourceRetriever(),
             source_repository=repository,
             query_builder=SearchQueryBuilder(),
+            budget=test_budget,
         )
 
         run_a = WorkflowRunFactory(task_factory=TaskFactory()).create(
@@ -202,6 +207,7 @@ class SourceAcquisitionServiceTests(unittest.TestCase):
             source_retriever=_AlternateRetriever(),
             source_repository=repository,
             query_builder=SearchQueryBuilder(),
+            budget=test_budget,
         )
         run_b = WorkflowRunFactory(task_factory=TaskFactory()).create(
             template=template,
@@ -265,6 +271,7 @@ class SourceAcquisitionServiceTests(unittest.TestCase):
             source_retriever=_AllFailedRetriever(),
             source_repository=repository,
             query_builder=SearchQueryBuilder(),
+            budget=SourceAcquisitionBudget(min_successful_sources=1),
         )
 
         with self.assertRaises(SourceAcquisitionError):

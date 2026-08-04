@@ -10,7 +10,7 @@ from infrastructure.retrieval.redirect_fetcher import fetch_with_validated_redir
 class RedirectFetcherTests(unittest.TestCase):
     @patch("infrastructure.retrieval.redirect_fetcher.validate_fetch_url")
     def test_blocks_redirect_to_localhost(self, validate_mock) -> None:
-        def _validate(url: str) -> None:
+        def _validate(url: str, **_kwargs) -> None:
             if "127.0.0.1" in url or "localhost" in url:
                 raise UnsafeUrlError("blocked")
 
@@ -30,7 +30,7 @@ class RedirectFetcherTests(unittest.TestCase):
 
     @patch("infrastructure.retrieval.redirect_fetcher.validate_fetch_url")
     def test_blocks_redirect_to_private_ip(self, validate_mock) -> None:
-        def _validate(url: str) -> None:
+        def _validate(url: str, **_kwargs) -> None:
             if "10.0.0.5" in url:
                 raise UnsafeUrlError("private")
 

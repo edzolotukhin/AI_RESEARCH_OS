@@ -3,8 +3,13 @@ from __future__ import annotations
 from application.config import ApplicationConfig, ApplicationOverrides
 from application.executors.search_executor import SearchExecutor
 from application.ports.source_ports import SearchProvider, SourceRepository, SourceRetriever
+from application.sources.search_query_builder import SearchQueryBuilder
 from application.sources.source_acquisition_service import SourceAcquisitionService
-from infrastructure.retrieval.http_source_retriever import HttpSourceRetriever
+from application.sources.source_budget import SourceAcquisitionBudget
+from infrastructure.retrieval.http_source_retriever import (
+    HttpRetrievalLimits,
+    HttpSourceRetriever,
+)
 from infrastructure.search.deterministic_search_adapter import (
     DeterministicSearchProvider,
     DeterministicSourceRetriever,
@@ -39,7 +44,15 @@ def build_source_retriever(
 
     if config.search_provider.lower() == "deterministic":
         return DeterministicSourceRetriever()
-    return HttpSourceRetriever()
+    budget = SourceAcquisitionBudget.from_config(config)
+    return HttpSourceRetriever(
+        limits=HttpRetrievalLimits(
+            timeout_seconds=budget.http_timeout_seconds,
+            max_redirects=budget.max_redirects,
+            max_body_bytes=budget.max_body_bytes,
+        ),
+        dns_timeout_seconds=budget.dns_timeout_seconds,
+    )
 
 
 def build_source_acquisition_service(
@@ -48,10 +61,15 @@ def build_source_acquisition_service(
     overrides: ApplicationOverrides,
     source_repository: SourceRepository,
 ) -> SourceAcquisitionService:
+    budget = SourceAcquisitionBudget.from_config(config)
     return SourceAcquisitionService(
         search_provider=build_search_provider(config, overrides),
         source_retriever=build_source_retriever(config, overrides),
         source_repository=source_repository,
+        query_builder=SearchQueryBuilder(
+            max_results=budget.max_candidates_per_query,
+        ),
+        budget=budget,
     )
 
 

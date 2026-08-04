@@ -20,6 +20,7 @@ from application.evidence.exceptions import EvidenceExtractionError
 from application.evidence.run_scoped_provenance import resolve_run_scoped_context
 from application.sources.search_query_builder import SearchQueryBuilder
 from application.sources.source_acquisition_service import SourceAcquisitionService
+from application.sources.source_budget import SourceAcquisitionBudget
 from infrastructure.evidence.deterministic_evidence_extractor import (
     DeterministicEvidenceExtractor,
 )
@@ -87,6 +88,7 @@ class RepeatedRunSameLocalIdsTests(unittest.TestCase):
             source_retriever=DeterministicSourceRetriever(),
             source_repository=source_repo,
             query_builder=SearchQueryBuilder(),
+            budget=SourceAcquisitionBudget(min_successful_sources=1),
         )
         extraction = EvidenceExtractionService(
             evidence_extractor=DeterministicEvidenceExtractor(),

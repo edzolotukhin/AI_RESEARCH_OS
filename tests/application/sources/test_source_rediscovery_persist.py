@@ -18,6 +18,7 @@ from domain.workflow_template import WorkflowTemplate
 from application.sources.provenance_merge import build_discovery_record
 from application.sources.search_query_builder import SearchQueryBuilder
 from application.sources.source_acquisition_service import SourceAcquisitionService
+from application.sources.source_budget import SourceAcquisitionBudget
 from infrastructure.search.deterministic_search_adapter import (
     DeterministicSearchProvider,
     DeterministicSourceRetriever,
@@ -135,6 +136,7 @@ class SourceRediscoveryPersistTests(unittest.TestCase):
             source_retriever=DeterministicSourceRetriever(),
             source_repository=repository,
             query_builder=SearchQueryBuilder(),
+            budget=SourceAcquisitionBudget(min_successful_sources=1),
         )
 
         design = ResearchDesign(

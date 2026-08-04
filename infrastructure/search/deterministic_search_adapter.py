@@ -30,6 +30,11 @@ class DeterministicSearchProvider(SearchProvider):
                 "snippet": "Brand health overview.",
             },
             {
+                "url": "https://research.example.org/industry-trends",
+                "title": "Industry Trends Report",
+                "snippet": "Industry trends overview.",
+            },
+            {
                 "url": "https://blocked.example/internal",
                 "title": "Blocked Source",
                 "snippet": "Should fail retrieval.",

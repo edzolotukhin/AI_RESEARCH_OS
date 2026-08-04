@@ -57,6 +57,16 @@ class ApplicationConfig:
     analysis_max_chars_per_batch: int = DEFAULT_ANALYSIS_MAX_CHARS_PER_BATCH
     analysis_reasoning_effort: str = "minimal"
     analysis_max_output_tokens: int = 8192
+    source_max_candidates_per_query: int = 5
+    source_max_candidates_per_information_need: int = 5
+    source_max_sources_per_run: int = 30
+    source_http_timeout_seconds: float = 10.0
+    source_max_redirects: int = 5
+    source_max_body_bytes: int = 512_000
+    source_acquisition_max_seconds: float = 900.0
+    source_min_successful_sources: int = 3
+    source_min_information_need_coverage_ratio: float = 1.0
+    source_dns_timeout_seconds: float = 5.0
     report_engine: str = "llm"
     report_max_findings_per_batch: int = DEFAULT_REPORT_MAX_FINDINGS_PER_BATCH
     report_max_chars_per_batch: int = DEFAULT_REPORT_MAX_CHARS_PER_BATCH
@@ -124,6 +134,37 @@ class ApplicationConfig:
             ).strip().lower(),
             analysis_max_output_tokens=int(
                 os.environ.get("ANALYSIS_MAX_OUTPUT_TOKENS", "8192"),
+            ),
+            source_max_candidates_per_query=int(
+                os.environ.get("SOURCE_MAX_CANDIDATES_PER_QUERY", "5"),
+            ),
+            source_max_candidates_per_information_need=int(
+                os.environ.get(
+                    "SOURCE_MAX_CANDIDATES_PER_INFORMATION_NEED",
+                    "5",
+                ),
+            ),
+            source_max_sources_per_run=int(
+                os.environ.get("SOURCE_MAX_SOURCES_PER_RUN", "30"),
+            ),
+            source_http_timeout_seconds=float(
+                os.environ.get("SOURCE_HTTP_TIMEOUT_SECONDS", "10"),
+            ),
+            source_max_redirects=int(os.environ.get("SOURCE_MAX_REDIRECTS", "5")),
+            source_max_body_bytes=int(
+                os.environ.get("SOURCE_MAX_BODY_BYTES", "512000"),
+            ),
+            source_acquisition_max_seconds=float(
+                os.environ.get("SOURCE_ACQUISITION_MAX_SECONDS", "900"),
+            ),
+            source_min_successful_sources=int(
+                os.environ.get("SOURCE_MIN_SUCCESSFUL_SOURCES", "3"),
+            ),
+            source_min_information_need_coverage_ratio=float(
+                os.environ.get("SOURCE_MIN_INFORMATION_NEED_COVERAGE_RATIO", "1.0"),
+            ),
+            source_dns_timeout_seconds=float(
+                os.environ.get("SOURCE_DNS_TIMEOUT_SECONDS", "5"),
             ),
             report_engine=os.environ.get("REPORT_ENGINE", "llm"),
             report_max_findings_per_batch=int(

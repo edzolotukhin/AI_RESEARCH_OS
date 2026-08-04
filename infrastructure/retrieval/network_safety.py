@@ -3,6 +3,7 @@ from __future__ import annotations
 import ipaddress
 import socket
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from urllib.parse import urlparse
 
 ResolveAddresses = Callable[[str], list[str]]
@@ -42,6 +43,25 @@ def _default_resolve_host_addresses(host: str) -> list[str]:
     return list(dict.fromkeys(addresses))
 
 
+def _resolve_host_addresses_with_timeout(
+    host: str,
+    *,
+    timeout_seconds: float,
+) -> list[str]:
+    if timeout_seconds <= 0:
+        return _default_resolve_host_addresses(host)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_default_resolve_host_addresses, host)
+        try:
+            return future.result(timeout=timeout_seconds)
+        except FuturesTimeoutError as exc:
+            raise UnsafeUrlError(
+                f"DNS resolution timed out for host: {host}",
+                category="dns_resolution_failed",
+            ) from exc
+
+
 def _validate_resolved_ip(address: str) -> None:
     ip = ipaddress.ip_address(address)
     if (
@@ -61,6 +81,7 @@ def validate_fetch_url(
     url: str,
     *,
     resolve_addresses: ResolveAddresses | None = None,
+    dns_timeout_seconds: float = 5.0,
 ) -> None:
     """
     Reject unsafe fetch targets to reduce SSRF risk.
@@ -68,7 +89,11 @@ def validate_fetch_url(
     Allows http/https only. Blocks localhost, private, link-local, and
     reserved IP ranges after DNS resolution.
     """
-    resolver = resolve_addresses or _default_resolve_host_addresses
+    if resolve_addresses is None:
+        resolve_addresses = lambda host: _resolve_host_addresses_with_timeout(
+            host,
+            timeout_seconds=dns_timeout_seconds,
+        )
 
     parsed = urlparse(url.strip())
     scheme = (parsed.scheme or "").lower()
@@ -107,7 +132,7 @@ def validate_fetch_url(
         _validate_resolved_ip(str(literal_ip))
         return
 
-    addresses = resolver(host)
+    addresses = resolve_addresses(host)
     if not addresses:
         raise UnsafeUrlError(
             f"Unable to resolve host: {host}",
