@@ -30,7 +30,15 @@ def build_report_engine(
     if provider_name == "llm":
         if llm_client is None:
             raise ValueError("LLM client is required for REPORT_ENGINE=llm")
-        return LlmReportEngine(llm_client=llm_client)
+        return LlmReportEngine(
+            llm_client=llm_client,
+            max_output_tokens=config.report_max_output_tokens,
+            reasoning_effort=config.report_reasoning_effort,
+            max_sections=config.report_max_sections,
+            max_findings_per_section=config.report_max_findings_per_section,
+            max_insights_per_section=config.report_max_insights_per_section,
+            structured_output_max_attempts=config.report_structured_output_max_attempts,
+        )
     raise ValueError(
         f"Unsupported REPORT_ENGINE: {provider_name!r}. "
         "Expected one of: llm, deterministic.",

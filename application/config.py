@@ -26,6 +26,11 @@ from application.evidence.content_chunking import (
 from application.report.content_batching import (
     DEFAULT_REPORT_MAX_CHARS_PER_BATCH,
     DEFAULT_REPORT_MAX_FINDINGS_PER_BATCH,
+    DEFAULT_REPORT_MAX_FINDINGS_PER_SECTION,
+    DEFAULT_REPORT_MAX_INSIGHTS_PER_SECTION,
+    DEFAULT_REPORT_MAX_OUTPUT_TOKENS,
+    DEFAULT_REPORT_MAX_SECTIONS,
+    DEFAULT_REPORT_STRUCTURED_OUTPUT_MAX_ATTEMPTS,
 )
 
 
@@ -70,6 +75,12 @@ class ApplicationConfig:
     report_engine: str = "llm"
     report_max_findings_per_batch: int = DEFAULT_REPORT_MAX_FINDINGS_PER_BATCH
     report_max_chars_per_batch: int = DEFAULT_REPORT_MAX_CHARS_PER_BATCH
+    report_reasoning_effort: str = "minimal"
+    report_max_output_tokens: int = 8192
+    report_max_sections: int = 10
+    report_max_findings_per_section: int = 15
+    report_max_insights_per_section: int = 8
+    report_structured_output_max_attempts: int = 3
     review_engine: str = "llm"
     review_max_revision_attempts: int = 1
     review_max_chars_per_section: int = 8000
@@ -177,6 +188,37 @@ class ApplicationConfig:
                 os.environ.get(
                     "REPORT_MAX_CHARS_PER_BATCH",
                     str(DEFAULT_REPORT_MAX_CHARS_PER_BATCH),
+                ),
+            ),
+            report_reasoning_effort=os.environ.get(
+                "REPORT_REASONING_EFFORT",
+                "minimal",
+            ).strip().lower(),
+            report_max_output_tokens=int(
+                os.environ.get(
+                    "REPORT_MAX_OUTPUT_TOKENS",
+                    str(DEFAULT_REPORT_MAX_OUTPUT_TOKENS),
+                ),
+            ),
+            report_max_sections=int(
+                os.environ.get("REPORT_MAX_SECTIONS", str(DEFAULT_REPORT_MAX_SECTIONS)),
+            ),
+            report_max_findings_per_section=int(
+                os.environ.get(
+                    "REPORT_MAX_FINDINGS_PER_SECTION",
+                    str(DEFAULT_REPORT_MAX_FINDINGS_PER_SECTION),
+                ),
+            ),
+            report_max_insights_per_section=int(
+                os.environ.get(
+                    "REPORT_MAX_INSIGHTS_PER_SECTION",
+                    str(DEFAULT_REPORT_MAX_INSIGHTS_PER_SECTION),
+                ),
+            ),
+            report_structured_output_max_attempts=int(
+                os.environ.get(
+                    "REPORT_STRUCTURED_OUTPUT_MAX_ATTEMPTS",
+                    str(DEFAULT_REPORT_STRUCTURED_OUTPUT_MAX_ATTEMPTS),
                 ),
             ),
             review_engine=os.environ.get("REVIEW_ENGINE", "llm"),

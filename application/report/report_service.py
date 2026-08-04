@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -30,10 +31,21 @@ from application.report.deduplication import (
     compute_content_checksum,
     compute_report_deduplication_key,
 )
+from application.report.diagnostics import (
+    FAILURE_CATEGORY_BATCH_ERROR,
+    FAILURE_CATEGORY_LLM_ERROR,
+    FAILURE_CATEGORY_PARSE_ERROR,
+    FAILURE_CATEGORY_TRUNCATED_OUTPUT,
+    ReportBatchDiagnostics,
+    ReportFailureDiagnostics,
+    classify_provenance_rejection,
+    format_zero_sections_message,
+)
 from application.report.exceptions import (
     DuplicateArtifactError,
     DuplicateReportError,
     InvalidReportProvenanceError,
+    ReportConfigurationError,
     ReportError,
 )
 from application.report.markdown_renderer import render_report_markdown, safe_report_filename
@@ -43,6 +55,8 @@ from application.report.provenance_validation import (
 )
 
 from runtime.workflow_context import WorkflowContext
+
+logger = logging.getLogger("ai_research_os.report")
 
 _MAX_DEDUP_RETRIES = 5
 
@@ -137,10 +151,18 @@ class ReportService:
         validated_sections: list[ReportSection] = []
         sections_rejected = 0
         batch_failures = 0
+        batch_diagnostics: list[ReportBatchDiagnostics] = []
         citation_registry = CitationRegistry()
 
         for batch_question_id, finding_batch in batches:
             batch_insights = insights_for_question(list(insights), batch_question_id)
+            batch_diag = ReportBatchDiagnostics(
+                batch_question_id=(
+                    None if batch_question_id == "__unscoped__" else batch_question_id
+                ),
+                input_finding_count=len(finding_batch),
+                input_insight_count=len(batch_insights),
+            )
             report_input = ReportInput(
                 project_id=project_id,
                 workflow_run_id=workflow_run_id,
@@ -158,9 +180,52 @@ class ReportService:
             )
             try:
                 candidates = self._report_engine.generate_sections(report_input)
-            except Exception:
+            except ReportConfigurationError as exc:
                 batch_failures += 1
+                batch_diag.failure_category = _classify_batch_failure(exc)
+                batch_diag.parse_failure_category = _parse_failure_from_engine(
+                    self._report_engine,
+                )
+                _apply_engine_telemetry(batch_diag, self._report_engine)
+                batch_diagnostics.append(batch_diag)
+                logger.warning(
+                    "report_batch_failed",
+                    extra={
+                        "event": "report_batch_failed",
+                        "workflow_run_id": workflow_run_id,
+                        "batch_question_id": batch_diag.batch_question_id,
+                        "failure_category": batch_diag.failure_category,
+                        **batch_diag.to_dict(),
+                    },
+                )
                 continue
+            except Exception as exc:
+                batch_failures += 1
+                batch_diag.failure_category = FAILURE_CATEGORY_BATCH_ERROR
+                batch_diagnostics.append(batch_diag)
+                logger.exception(
+                    "report_batch_failed",
+                    extra={
+                        "event": "report_batch_failed",
+                        "workflow_run_id": workflow_run_id,
+                        "batch_question_id": batch_diag.batch_question_id,
+                        "failure_category": batch_diag.failure_category,
+                    },
+                )
+                continue
+
+            engine_stats = getattr(self._report_engine, "last_section_batch_stats", None)
+            if engine_stats is not None:
+                batch_diag.candidate_section_count = engine_stats.candidate_section_count
+                batch_diag.engine_dropped_count = engine_stats.engine_dropped_count
+                batch_diag.rejection_counts.update(engine_stats.rejection_counts)
+                batch_diag.output_tokens = engine_stats.output_tokens
+                batch_diag.reasoning_tokens = engine_stats.reasoning_tokens
+                batch_diag.visible_output_length = engine_stats.visible_output_length
+                batch_diag.finish_reason = engine_stats.finish_reason
+                batch_diag.max_output_tokens = engine_stats.max_output_tokens
+                batch_diag.reasoning_effort = engine_stats.reasoning_effort
+                batch_diag.parse_failure_category = engine_stats.parse_failure_category
 
             for candidate in candidates:
                 try:
@@ -197,13 +262,35 @@ class ReportService:
                             metadata=dict(validated.metadata or {}),
                         ),
                     )
-                except InvalidReportProvenanceError:
+                    batch_diag.valid_section_count += 1
+                except InvalidReportProvenanceError as exc:
                     sections_rejected += 1
+                    batch_diag.rejected_section_count += 1
+                    category = classify_provenance_rejection(exc)
+                    batch_diag.rejection_counts[category] = (
+                        batch_diag.rejection_counts.get(category, 0) + 1
+                    )
+
+            batch_diagnostics.append(batch_diag)
 
         if not validated_sections:
-            raise ReportError(
-                f"No valid report sections produced for workflow run {workflow_run_id}",
+            failure_diagnostics = ReportFailureDiagnostics(
+                workflow_run_id=workflow_run_id,
+                finding_count=len(findings),
+                insight_count=len(insights),
+                batch_count=len(batches),
+                batch_failures=batch_failures,
+                sections_rejected=sections_rejected,
+                batches=batch_diagnostics,
             )
+            logger.error(
+                "report_zero_sections",
+                extra={
+                    "event": "report_zero_sections",
+                    **failure_diagnostics.to_dict(),
+                },
+            )
+            raise ReportError(format_zero_sections_message(failure_diagnostics))
 
         summary_input = ReportInput(
             project_id=project_id,
@@ -532,3 +619,36 @@ class ReportService:
         raise ReportError(
             f"Failed to resolve concurrent artifact persistence for run {workflow_run_id}",
         )
+
+
+def _classify_batch_failure(exc: Exception) -> str:
+    message = str(exc).lower()
+    if "structured output" in message or "json" in message or "parse" in message:
+        return FAILURE_CATEGORY_PARSE_ERROR
+    if "truncated" in message:
+        return FAILURE_CATEGORY_TRUNCATED_OUTPUT
+    return FAILURE_CATEGORY_LLM_ERROR
+
+
+def _parse_failure_from_engine(report_engine) -> str | None:
+    engine_stats = getattr(report_engine, "last_section_batch_stats", None)
+    if engine_stats is not None and engine_stats.parse_failure_category:
+        return engine_stats.parse_failure_category
+    structured = getattr(report_engine, "_structured_output", None)
+    telemetry = getattr(structured, "last_telemetry", None)
+    if telemetry is not None:
+        return telemetry.parse_failure_category
+    return None
+
+
+def _apply_engine_telemetry(batch_diag: ReportBatchDiagnostics, report_engine) -> None:
+    engine_stats = getattr(report_engine, "last_section_batch_stats", None)
+    if engine_stats is None:
+        return
+    batch_diag.output_tokens = engine_stats.output_tokens
+    batch_diag.reasoning_tokens = engine_stats.reasoning_tokens
+    batch_diag.visible_output_length = engine_stats.visible_output_length
+    batch_diag.finish_reason = engine_stats.finish_reason
+    batch_diag.max_output_tokens = engine_stats.max_output_tokens
+    batch_diag.reasoning_effort = engine_stats.reasoning_effort
+    batch_diag.parse_failure_category = engine_stats.parse_failure_category

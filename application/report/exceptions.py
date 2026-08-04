@@ -19,3 +19,7 @@ class DuplicateArtifactError(ReportError):
 
 class InvalidReportProvenanceError(ReportError):
     """Report candidate references invalid analytical provenance."""
+
+    def __init__(self, message: str, *, category: str | None = None) -> None:
+        super().__init__(message)
+        self.category = category
