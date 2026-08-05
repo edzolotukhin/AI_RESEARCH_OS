@@ -1,6 +1,10 @@
 from runtime.workflow_context import WorkflowContext
 
 from application.executor_resolver import ExecutorResolver
+from application.execution.execution_budget_context import (
+    set_execution_stage,
+    stage_for_executor,
+)
 from application.ports.workflow_runtime_checkpoint import WorkflowRuntimeCheckpoint
 from application.task_lifecycle_manager import TaskLifecycleManager
 
@@ -36,6 +40,7 @@ class TaskExecutor:
         executor = self._resolver.resolve(task)
 
         try:
+            set_execution_stage(stage_for_executor(task.executor_id))
             context = executor.run(context)
 
             self._lifecycle.complete(task)
@@ -46,3 +51,5 @@ class TaskExecutor:
             self._lifecycle.fail(task)
 
             raise
+        finally:
+            set_execution_stage(None)

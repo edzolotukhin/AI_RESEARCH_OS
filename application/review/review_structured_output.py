@@ -12,6 +12,8 @@ from domain.ai.prompt import Prompt
 from infrastructure.llm.generation_options import LLMGenerationOptions
 from infrastructure.llm.llm_client import LLMClient
 
+from application.execution.execution_budget_retry import mark_llm_call_as_retry
+
 DEFAULT_REVIEW_MAX_OUTPUT_TOKENS = 4096
 DEFAULT_REVIEW_STRUCTURED_OUTPUT_MAX_ATTEMPTS = 3
 DEFAULT_REVIEW_MAX_ISSUES_PER_SECTION = 5
@@ -102,6 +104,8 @@ class ReviewStructuredOutputGenerator:
         )
 
         for attempt in range(1, self._max_attempts + 1):
+            if attempt > 1:
+                mark_llm_call_as_retry()
             response = self._llm_client.generate(current_prompt, options=options)
             try:
                 payload = self._parser.parse(

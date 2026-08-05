@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from application.execution.exceptions import BudgetExhaustedError
+
 
 @dataclass
 class StageBudgetUsage:
@@ -45,6 +47,22 @@ class ExecutionBudget:
     _total_output_tokens: int = 0
     _exhausted: bool = False
     _exhaustion_reason: str | None = None
+
+    def assert_can_call(self, stage: str) -> None:
+        """Fail before issuing another LLM call when a limit is already reached."""
+        if self._exhausted:
+            raise BudgetExhaustedError(
+                self._exhaustion_reason or "budget_exhausted",
+                stage=stage,
+            )
+        if self._total_llm_calls >= self.llm_max_calls_per_run:
+            raise BudgetExhaustedError("llm_max_calls_per_run", stage=stage)
+        stage_usage = self._stage_usage.get(stage)
+        stage_calls = stage_usage.llm_calls if stage_usage is not None else 0
+        if stage == "report" and stage_calls >= self.report_max_llm_calls:
+            raise BudgetExhaustedError("report_max_llm_calls", stage=stage)
+        if stage == "review" and stage_calls >= self.review_max_llm_calls:
+            raise BudgetExhaustedError("review_max_llm_calls", stage=stage)
 
     def record_llm_call(
         self,

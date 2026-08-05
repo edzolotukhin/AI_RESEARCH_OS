@@ -182,6 +182,9 @@ def create_application_container(
     )
 
     llm_client = overrides.llm_client or _create_llm_client(config)
+    from infrastructure.llm.budget_enforcing_llm_client import BudgetEnforcingLLMClient
+
+    llm_client = BudgetEnforcingLLMClient(llm_client)
 
     executor_catalog = ExecutorCatalog.from_capabilities(
         AGENT_EXECUTOR_CAPABILITIES,

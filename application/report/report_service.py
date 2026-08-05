@@ -66,6 +66,7 @@ from application.report.provenance_validation import (
     validate_section_candidate,
 )
 
+from application.execution.exceptions import BudgetExhaustedError
 from runtime.workflow_context import WorkflowContext
 
 logger = logging.getLogger("ai_research_os.report")
@@ -197,6 +198,8 @@ class ReportService:
             )
             try:
                 candidates = self._report_engine.generate_sections(report_input)
+            except BudgetExhaustedError as exc:
+                raise ReportError(str(exc)) from exc
             except ReportConfigurationError as exc:
                 batch_failures += 1
                 batch_diag.failure_category = _classify_batch_failure(exc)

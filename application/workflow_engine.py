@@ -15,6 +15,10 @@ from application.runtime.workflow_completion_policy import (
 )
 from application.task_executor import TaskExecutor
 from application.task_scheduler import TaskScheduler
+from application.execution.execution_budget_context import (
+    ensure_run_budget,
+    finalize_run_budget,
+)
 
 
 class WorkflowEngine:
@@ -47,62 +51,66 @@ class WorkflowEngine:
             return context
 
         self._ensure_running(workflow_run)
+        ensure_run_budget(context)
         if runtime_checkpoint is not None:
             runtime_checkpoint.on_workflow_started(context)
 
         first_execution_error: BaseException | None = None
 
-        while True:
-            if workflow_run.status == WorkflowStatus.CANCELLED:
-                break
+        try:
+            while True:
+                if workflow_run.status == WorkflowStatus.CANCELLED:
+                    break
 
-            scheduling_result = self._scheduler.schedule(workflow_run)
-            if runtime_checkpoint is not None and scheduling_result.has_changes:
-                runtime_checkpoint.on_scheduling(context, scheduling_result)
+                scheduling_result = self._scheduler.schedule(workflow_run)
+                if runtime_checkpoint is not None and scheduling_result.has_changes:
+                    runtime_checkpoint.on_scheduling(context, scheduling_result)
 
-            ready_task = self._scheduler.find_ready_task(workflow_run)
-            progress = RuntimeProgress.from_scheduling(
-                scheduling_result=scheduling_result,
-                ready_task=ready_task,
-                all_tasks_terminal=self._completion_policy.all_tasks_terminal(
-                    workflow_run,
-                ),
-            )
+                ready_task = self._scheduler.find_ready_task(workflow_run)
+                progress = RuntimeProgress.from_scheduling(
+                    scheduling_result=scheduling_result,
+                    ready_task=ready_task,
+                    all_tasks_terminal=self._completion_policy.all_tasks_terminal(
+                        workflow_run,
+                    ),
+                )
 
-            if ready_task is not None:
-                context.current_task = ready_task
-                try:
-                    context = self._task_executor.execute(
-                        context,
-                        runtime_checkpoint=runtime_checkpoint,
-                    )
-                    if runtime_checkpoint is not None:
-                        runtime_checkpoint.on_task_finished(context, error=None)
-                except Exception as exc:
-                    if runtime_checkpoint is not None:
-                        try:
-                            runtime_checkpoint.on_task_finished(context, error=exc)
-                        except Exception as checkpoint_exc:
-                            raise checkpoint_exc from exc
-                    if first_execution_error is None:
-                        first_execution_error = exc
-                    continue
+                if ready_task is not None:
+                    context.current_task = ready_task
+                    try:
+                        context = self._task_executor.execute(
+                            context,
+                            runtime_checkpoint=runtime_checkpoint,
+                        )
+                        if runtime_checkpoint is not None:
+                            runtime_checkpoint.on_task_finished(context, error=None)
+                    except Exception as exc:
+                        if runtime_checkpoint is not None:
+                            try:
+                                runtime_checkpoint.on_task_finished(context, error=exc)
+                            except Exception as checkpoint_exc:
+                                raise checkpoint_exc from exc
+                        if first_execution_error is None:
+                            first_execution_error = exc
+                        continue
 
-            if progress.should_stop_iteration:
-                break
+                if progress.should_stop_iteration:
+                    break
 
-        self._finalize_workflow_status(workflow_run)
+            self._finalize_workflow_status(workflow_run)
 
-        if runtime_checkpoint is not None:
-            runtime_checkpoint.on_workflow_finalized(
-                context,
-                error=first_execution_error,
-            )
+            if runtime_checkpoint is not None:
+                runtime_checkpoint.on_workflow_finalized(
+                    context,
+                    error=first_execution_error,
+                )
 
-        if first_execution_error is not None:
-            raise first_execution_error
+            if first_execution_error is not None:
+                raise first_execution_error
 
-        return context
+            return context
+        finally:
+            finalize_run_budget(context)
 
     def execute(
         self,

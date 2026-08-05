@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from application.exceptions.structured_output_error import StructuredOutputError
+from application.execution.exceptions import BudgetExhaustedError
 from application.review.exceptions import ReviewConfigurationError
 from application.review.review_structured_output import (
     DEFAULT_REVIEW_MAX_MESSAGE_CHARS,
@@ -115,6 +116,8 @@ class LlmReviewEngine:
                     payload_schema=REVIEW_ISSUES_PAYLOAD_SCHEMA,
                 )
                 self._llm_call_count += 1
+            except BudgetExhaustedError:
+                raise
             except StructuredOutputError as exc:
                 telemetry = self._structured_output.last_telemetry
                 stats = ReviewSectionEngineStats(

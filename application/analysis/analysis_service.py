@@ -45,6 +45,7 @@ from application.ports.analysis_ports import (
 )
 from application.ports.evidence_ports import EvidenceRepository
 
+from application.execution.exceptions import BudgetExhaustedError
 from runtime.workflow_context import WorkflowContext
 
 logger = logging.getLogger("ai_research_os.analysis")
@@ -139,6 +140,8 @@ class AnalysisService:
             )
             try:
                 candidates = self._analysis_engine.analyze_findings(analysis_input)
+            except BudgetExhaustedError as exc:
+                raise AnalysisError(str(exc)) from exc
             except AnalysisConfigurationError as exc:
                 batch_failures += 1
                 batch_diag.failure_category = FAILURE_CATEGORY_LLM_ERROR

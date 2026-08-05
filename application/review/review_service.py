@@ -46,6 +46,7 @@ from infrastructure.review.deterministic_review_engine import (
 )
 from infrastructure.review.llm_review_engine import LlmReviewEngine
 
+from application.execution.exceptions import BudgetExhaustedError
 from runtime.workflow_context import WorkflowContext
 
 logger = logging.getLogger("ai_research_os.review")
@@ -243,6 +244,8 @@ class ReviewService:
         )
         try:
             return self._semantic_review_engine.review_report(review_input)
+        except BudgetExhaustedError as exc:
+            raise ReviewError(str(exc)) from exc
         except ReviewConfigurationError as exc:
             diagnostics = self._build_parse_failure_diagnostics(
                 workflow_run_id=workflow_run_id,
