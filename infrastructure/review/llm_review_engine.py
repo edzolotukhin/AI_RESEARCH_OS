@@ -1,7 +1,16 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
+from application.exceptions.structured_output_error import StructuredOutputError
+from application.review.exceptions import ReviewConfigurationError
+from application.review.review_structured_output import (
+    DEFAULT_REVIEW_MAX_MESSAGE_CHARS,
+    DEFAULT_REVIEW_MAX_SUGGESTED_ACTION_CHARS,
+    REVIEW_ISSUES_PAYLOAD_SCHEMA,
+    ReviewStructuredOutputGenerator,
+)
 from domain.ai.prompt import Prompt
 from domain.reviews.review_issue import ReviewIssueSeverity, ReviewIssueType
 
@@ -10,13 +19,26 @@ from application.ports.review_ports import (
     ReviewSectionInput,
     SemanticReviewInput,
 )
-from application.review.exceptions import ReviewConfigurationError
-from application.structured_output.json_extractor import JsonExtractor
-from application.structured_output.json_validator import JsonValidator
 from infrastructure.llm.llm_client import LLMClient
 
 _VALID_ISSUE_TYPES = {member.value for member in ReviewIssueType}
 _VALID_SEVERITIES = {member.value for member in ReviewIssueSeverity}
+
+
+@dataclass
+class ReviewSectionEngineStats:
+    candidate_review_count: int = 0
+    engine_dropped_count: int = 0
+    output_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    visible_output_length: int | None = None
+    finish_reason: str | None = None
+    max_output_tokens: int | None = None
+    reasoning_effort: str | None = None
+    parse_failure_category: str | None = None
+    contract_failure_category: str | None = None
+    attempts: int = 1
+    rejection_counts: dict[str, int] = field(default_factory=dict)
 
 
 class LlmReviewEngine:
@@ -30,36 +52,93 @@ class LlmReviewEngine:
         llm_client: LLMClient,
         max_chars_per_section: int = 8000,
         max_issues_per_section: int = 5,
+        max_output_tokens: int | None = None,
+        reasoning_effort: str | None = None,
+        structured_output_max_attempts: int = 3,
+        max_message_chars: int = DEFAULT_REVIEW_MAX_MESSAGE_CHARS,
+        max_suggested_action_chars: int = DEFAULT_REVIEW_MAX_SUGGESTED_ACTION_CHARS,
     ) -> None:
-        self._llm_client = llm_client
+        self._structured_output = ReviewStructuredOutputGenerator(
+            llm_client=llm_client,
+            max_output_tokens=max_output_tokens,
+            reasoning_effort=reasoning_effort,
+            max_attempts=structured_output_max_attempts,
+        )
         self._max_chars_per_section = max_chars_per_section
         self._max_issues_per_section = max_issues_per_section
-        self._json_extractor = JsonExtractor()
-        self._json_validator = JsonValidator()
+        self._max_message_chars = max_message_chars
+        self._max_suggested_action_chars = max_suggested_action_chars
+        self._last_section_stats: ReviewSectionEngineStats | None = None
+        self._section_stats: list[ReviewSectionEngineStats] = []
+
+    @property
+    def last_section_stats(self) -> ReviewSectionEngineStats | None:
+        return self._last_section_stats
+
+    @property
+    def section_stats(self) -> tuple[ReviewSectionEngineStats, ...]:
+        return tuple(self._section_stats)
 
     def review_report(
         self,
         review_input: SemanticReviewInput,
     ) -> tuple[ReviewIssueCandidate, ...]:
         candidates: list[ReviewIssueCandidate] = []
+        self._section_stats = []
         for section_input in review_input.section_inputs:
             prompt = Prompt(
                 system=self._system_prompt(),
                 user=self._build_section_payload(review_input, section_input),
             )
             try:
-                response = self._llm_client.generate(prompt)
+                payload = self._structured_output.generate(
+                    prompt,
+                    payload_schema=REVIEW_ISSUES_PAYLOAD_SCHEMA,
+                )
+            except StructuredOutputError as exc:
+                telemetry = self._structured_output.last_telemetry
+                stats = ReviewSectionEngineStats(
+                    parse_failure_category=(
+                        telemetry.parse_failure_category if telemetry else "parse_error"
+                    ),
+                    contract_failure_category=(
+                        telemetry.contract_failure_category if telemetry else None
+                    ),
+                    output_tokens=telemetry.output_tokens if telemetry else None,
+                    reasoning_tokens=telemetry.reasoning_tokens if telemetry else None,
+                    visible_output_length=(
+                        telemetry.visible_output_length if telemetry else None
+                    ),
+                    finish_reason=telemetry.finish_reason if telemetry else None,
+                    max_output_tokens=telemetry.max_output_tokens if telemetry else None,
+                    reasoning_effort=telemetry.reasoning_effort if telemetry else None,
+                    attempts=telemetry.attempts if telemetry else 1,
+                )
+                self._last_section_stats = stats
+                self._section_stats.append(stats)
+                raise ReviewConfigurationError(
+                    "LLM semantic review failed structured output validation",
+                ) from exc
             except Exception as exc:
                 raise ReviewConfigurationError("LLM semantic review failed") from exc
 
-            payload = self._parse_payload(response.content)
-            candidates.extend(
-                self._map_issues(
-                    payload,
-                    review_input=review_input,
-                    section_input=section_input,
-                ),
+            mapped, stats = self._map_issues(
+                payload,
+                review_input=review_input,
+                section_input=section_input,
             )
+            telemetry = self._structured_output.last_telemetry
+            if telemetry is not None:
+                stats.output_tokens = telemetry.output_tokens
+                stats.reasoning_tokens = telemetry.reasoning_tokens
+                stats.visible_output_length = telemetry.visible_output_length
+                stats.finish_reason = telemetry.finish_reason
+                stats.max_output_tokens = telemetry.max_output_tokens
+                stats.reasoning_effort = telemetry.reasoning_effort
+                stats.attempts = telemetry.attempts
+            self._last_section_stats = stats
+            self._section_stats.append(stats)
+            candidates.extend(mapped)
         return tuple(candidates)
 
     def max_input_chars_per_request(
@@ -74,15 +153,14 @@ class LlmReviewEngine:
             for section_input in review_input.section_inputs
         )
 
-    @staticmethod
-    def _system_prompt() -> str:
+    def _system_prompt(self) -> str:
         return (
             "You are an independent desk-research quality reviewer. "
             "Assess whether report prose is supported by the referenced Findings "
             "and Insights. Flag probable unsupported or overstated claims, hidden "
             "contradictions, missing major caveats, and weak answers to research "
             "questions. Do NOT provide chain-of-thought. "
-            "Return JSON only with shape "
+            "Return compact JSON only with shape "
             '{"issues":[{"issue_type":"unsupported_claim",'
             '"severity":"major","message":"...",'
             '"finding_refs":["finding-id"],'
@@ -94,8 +172,11 @@ class LlmReviewEngine:
             "issue_type must be one of: "
             f"{', '.join(sorted(_VALID_ISSUE_TYPES))}. "
             "severity must be major or minor. "
+            f"Return at most {self._max_issues_per_section} issues. "
+            f"Keep each message under {self._max_message_chars} characters. "
+            "Do not include full report text in the response. "
             "Use only IDs from the provided section context. "
-            "If no semantic issues exist, return {\"issues\":[]}."
+            'If no semantic issues exist, return {"issues":[]}.'
         )
 
     def _build_section_payload(
@@ -123,20 +204,13 @@ class LlmReviewEngine:
                 lines.append(f"- {issue.issue_type.value}: {issue.message[:200]}")
         return "\n".join(lines)
 
-    def _parse_payload(self, content: str) -> dict[str, Any]:
-        for candidate in self._json_extractor.extract_all(content):
-            validation = self._json_validator.validate(candidate)
-            if validation.is_valid and isinstance(validation.data, dict):
-                return validation.data
-        raise ValueError("LLM review payload must be a JSON object")
-
     def _map_issues(
         self,
         payload: dict[str, Any],
         *,
         review_input: SemanticReviewInput,
         section_input: ReviewSectionInput,
-    ) -> list[ReviewIssueCandidate]:
+    ) -> tuple[list[ReviewIssueCandidate], ReviewSectionEngineStats]:
         section = review_input.report.sections[section_input.section_index]
         allowed_findings = set(section_input.finding_refs)
         allowed_insights = set(section_input.insight_refs)
@@ -149,20 +223,38 @@ class LlmReviewEngine:
         allowed_questions = set(section_input.research_question_refs)
 
         mapped: list[ReviewIssueCandidate] = []
+        rejection_counts: dict[str, int] = {}
+        raw_items = 0
         for item in payload.get("issues", []):
+            raw_items += 1
             if len(mapped) >= self._max_issues_per_section:
+                rejection_counts["max_issues_per_section"] = (
+                    rejection_counts.get("max_issues_per_section", 0) + 1
+                )
                 break
             if not isinstance(item, dict):
+                rejection_counts["invalid_item_shape"] = (
+                    rejection_counts.get("invalid_item_shape", 0) + 1
+                )
                 continue
 
             issue_type = str(item.get("issue_type", "")).strip()
             severity = str(item.get("severity", "")).strip()
-            message = str(item.get("message", "")).strip()
+            message = str(item.get("message", "")).strip()[: self._max_message_chars]
             if issue_type not in _VALID_ISSUE_TYPES:
+                rejection_counts["invalid_issue_type"] = (
+                    rejection_counts.get("invalid_issue_type", 0) + 1
+                )
                 continue
             if severity not in _VALID_SEVERITIES:
+                rejection_counts["invalid_severity"] = (
+                    rejection_counts.get("invalid_severity", 0) + 1
+                )
                 continue
             if not message:
+                rejection_counts["missing_message"] = (
+                    rejection_counts.get("missing_message", 0) + 1
+                )
                 continue
 
             raw_finding = [
@@ -196,8 +288,14 @@ class LlmReviewEngine:
                 finding_refs or insight_refs or evidence_refs or source_refs or question_refs,
             )
             if had_refs and not validated_refs:
+                rejection_counts["foreign_refs"] = (
+                    rejection_counts.get("foreign_refs", 0) + 1
+                )
                 continue
 
+            suggested_action = str(item.get("suggested_action", "")).strip()[
+                : self._max_suggested_action_chars
+            ]
             mapped.append(
                 ReviewIssueCandidate(
                     issue_type=issue_type,
@@ -209,7 +307,7 @@ class LlmReviewEngine:
                     evidence_refs=evidence_refs,
                     source_refs=source_refs,
                     research_question_refs=question_refs,
-                    suggested_action=str(item.get("suggested_action", "")).strip(),
+                    suggested_action=suggested_action,
                     metadata=(
                         dict(item["metadata"])
                         if isinstance(item.get("metadata"), dict)
@@ -217,4 +315,10 @@ class LlmReviewEngine:
                     ),
                 ),
             )
-        return mapped
+
+        stats = ReviewSectionEngineStats(
+            candidate_review_count=len(mapped),
+            engine_dropped_count=max(0, raw_items - len(mapped)),
+            rejection_counts=rejection_counts,
+        )
+        return mapped, stats

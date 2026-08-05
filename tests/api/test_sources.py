@@ -33,6 +33,7 @@ class SourceApiTests(unittest.TestCase):
                     evidence_extractor="deterministic",
                     analysis_engine="deterministic",
                     report_engine="deterministic",
+                    review_engine="deterministic",
                 ),
                 overrides=ApplicationOverrides(
                     llm_client=create_brief_aligned_llm_mock(),
@@ -81,6 +82,7 @@ class SourceApiTests(unittest.TestCase):
                     evidence_extractor="deterministic",
                     analysis_engine="deterministic",
                     report_engine="deterministic",
+                    review_engine="deterministic",
                 ),
                 overrides=ApplicationOverrides(
                     llm_client=create_brief_aligned_llm_mock(),
@@ -98,6 +100,7 @@ class SourceApiTests(unittest.TestCase):
                     evidence_extractor="deterministic",
                     analysis_engine="deterministic",
                     report_engine="deterministic",
+                    review_engine="deterministic",
                 ),
                 overrides=ApplicationOverrides(
                     llm_client=create_brief_aligned_llm_mock(),

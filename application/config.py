@@ -32,6 +32,10 @@ from application.report.content_batching import (
     DEFAULT_REPORT_MAX_SECTIONS,
     DEFAULT_REPORT_STRUCTURED_OUTPUT_MAX_ATTEMPTS,
 )
+from application.review.review_structured_output import (
+    DEFAULT_REVIEW_MAX_OUTPUT_TOKENS,
+    DEFAULT_REVIEW_STRUCTURED_OUTPUT_MAX_ATTEMPTS,
+)
 
 
 @dataclass(frozen=True)
@@ -85,6 +89,9 @@ class ApplicationConfig:
     review_max_revision_attempts: int = 1
     review_max_chars_per_section: int = 8000
     review_max_issues_per_section: int = 5
+    review_reasoning_effort: str = "minimal"
+    review_max_output_tokens: int = DEFAULT_REVIEW_MAX_OUTPUT_TOKENS
+    review_structured_output_max_attempts: int = DEFAULT_REVIEW_STRUCTURED_OUTPUT_MAX_ATTEMPTS
 
     @classmethod
     def from_env(cls) -> ApplicationConfig:
@@ -230,6 +237,22 @@ class ApplicationConfig:
             ),
             review_max_issues_per_section=int(
                 os.environ.get("REVIEW_MAX_ISSUES_PER_SECTION", "5"),
+            ),
+            review_reasoning_effort=os.environ.get(
+                "REVIEW_REASONING_EFFORT",
+                "minimal",
+            ).strip().lower(),
+            review_max_output_tokens=int(
+                os.environ.get(
+                    "REVIEW_MAX_OUTPUT_TOKENS",
+                    str(DEFAULT_REVIEW_MAX_OUTPUT_TOKENS),
+                ),
+            ),
+            review_structured_output_max_attempts=int(
+                os.environ.get(
+                    "REVIEW_STRUCTURED_OUTPUT_MAX_ATTEMPTS",
+                    str(DEFAULT_REVIEW_STRUCTURED_OUTPUT_MAX_ATTEMPTS),
+                ),
             ),
         )
 

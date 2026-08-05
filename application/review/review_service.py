@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -22,7 +23,16 @@ from application.ports.review_ports import (
 from application.report.exceptions import ReportError
 from application.report.report_service import ReportService
 from application.review.deduplication import compute_review_deduplication_key
-from application.review.exceptions import DuplicateReviewError, ReviewError
+from application.review.diagnostics import (
+    ReviewFailureDiagnostics,
+    ReviewSectionDiagnostics,
+    format_review_parse_failure_message,
+)
+from application.review.exceptions import (
+    DuplicateReviewError,
+    ReviewConfigurationError,
+    ReviewError,
+)
 from application.review.structural_review import (
     compute_quality_dimensions,
     compute_verdict,
@@ -32,8 +42,11 @@ from infrastructure.review.deterministic_review_engine import (
     build_section_inputs,
     candidates_to_issues,
 )
+from infrastructure.review.llm_review_engine import LlmReviewEngine
 
 from runtime.workflow_context import WorkflowContext
+
+logger = logging.getLogger("ai_research_os.review")
 
 _MAX_DEDUP_RETRIES = 5
 
@@ -115,22 +128,16 @@ class ReviewService:
                 artifact=artifact,
             )
 
-            semantic_candidates = self._semantic_review_engine.review_report(
-                SemanticReviewInput(
-                    project_id=project_id,
-                    workflow_run_id=workflow_run_id,
-                    research_design_id=design.id,
-                    report=report,
-                    brief_objectives=brief.objectives,
-                    research_questions=tuple(
-                        question.question for question in design.research_questions
-                    ),
-                    section_inputs=build_section_inputs(
-                        report,
-                        max_chars_per_section=self._max_chars_per_section,
-                    ),
-                    existing_issues=structural_issues,
+            semantic_candidates = self._run_semantic_review(
+                project_id=project_id,
+                workflow_run_id=workflow_run_id,
+                design_id=design.id,
+                report=report,
+                brief_objectives=brief.objectives,
+                research_questions=tuple(
+                    question.question for question in design.research_questions
                 ),
+                structural_issues=structural_issues,
             )
             all_issues = structural_issues + candidates_to_issues(semantic_candidates)
             dimensions = compute_quality_dimensions(all_issues)
@@ -191,6 +198,87 @@ class ReviewService:
 
             self._report_service.revise_for_context(context, review_result=review_result)
             revision_count += 1
+
+    def _run_semantic_review(
+        self,
+        *,
+        project_id: str,
+        workflow_run_id: str,
+        design_id: str,
+        report: Report,
+        brief_objectives: tuple[str, ...],
+        research_questions: tuple[str, ...],
+        structural_issues: tuple,
+    ):
+        section_inputs = build_section_inputs(
+            report,
+            max_chars_per_section=self._max_chars_per_section,
+        )
+        review_input = SemanticReviewInput(
+            project_id=project_id,
+            workflow_run_id=workflow_run_id,
+            research_design_id=design_id,
+            report=report,
+            brief_objectives=brief_objectives,
+            research_questions=research_questions,
+            section_inputs=section_inputs,
+            existing_issues=structural_issues,
+        )
+        try:
+            return self._semantic_review_engine.review_report(review_input)
+        except ReviewConfigurationError as exc:
+            diagnostics = self._build_parse_failure_diagnostics(
+                workflow_run_id=workflow_run_id,
+                section_inputs=section_inputs,
+            )
+            logger.error(
+                "review_structured_output_failed run_id=%s diagnostics=%s",
+                workflow_run_id,
+                diagnostics.to_dict(),
+            )
+            raise ReviewError(
+                format_review_parse_failure_message(diagnostics),
+            ) from exc
+
+    def _build_parse_failure_diagnostics(
+        self,
+        *,
+        workflow_run_id: str,
+        section_inputs,
+    ) -> ReviewFailureDiagnostics:
+        engine = self._semantic_review_engine
+        sections: list[ReviewSectionDiagnostics] = []
+        if isinstance(engine, LlmReviewEngine):
+            for index, section_input in enumerate(section_inputs):
+                stats = (
+                    engine.section_stats[index]
+                    if index < len(engine.section_stats)
+                    else engine.last_section_stats
+                )
+                if stats is None:
+                    continue
+                sections.append(
+                    ReviewSectionDiagnostics(
+                        section_id=section_input.section_title,
+                        section_index=index,
+                        candidate_review_count=stats.candidate_review_count,
+                        parse_failure_category=stats.parse_failure_category,
+                        contract_failure_category=stats.contract_failure_category,
+                        output_tokens=stats.output_tokens,
+                        reasoning_tokens=stats.reasoning_tokens,
+                        visible_output_length=stats.visible_output_length,
+                        finish_reason=stats.finish_reason,
+                        max_output_tokens=stats.max_output_tokens,
+                        reasoning_effort=stats.reasoning_effort,
+                        attempts=stats.attempts,
+                    ),
+                )
+        return ReviewFailureDiagnostics(
+            workflow_run_id=workflow_run_id,
+            section_count=len(section_inputs),
+            section_failures=max(1, len(sections)),
+            sections=sections,
+        )
 
     def _latest_report(self, project_id: str, workflow_run_id: str) -> Report | None:
         reports = self._report_repository.list_for_project(

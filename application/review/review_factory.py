@@ -32,6 +32,9 @@ def build_semantic_review_engine(
             llm_client=llm_client,
             max_chars_per_section=config.review_max_chars_per_section,
             max_issues_per_section=config.review_max_issues_per_section,
+            max_output_tokens=config.review_max_output_tokens,
+            reasoning_effort=config.review_reasoning_effort,
+            structured_output_max_attempts=config.review_structured_output_max_attempts,
         )
     raise ValueError(
         f"Unsupported REVIEW_ENGINE: {provider!r}. Expected one of: llm, deterministic.",

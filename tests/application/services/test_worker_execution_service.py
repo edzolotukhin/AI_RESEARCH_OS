@@ -128,6 +128,7 @@ class WorkerExecutionServiceTests(unittest.TestCase):
 
     def test_execution_failure_does_not_block_next_runnable_claim(self) -> None:
         from application.analysis.exceptions import AnalysisError
+        from application.review.exceptions import ReviewError
 
         self.durable_service.submit_research(
             self.project,
@@ -142,6 +143,30 @@ class WorkerExecutionServiceTests(unittest.TestCase):
         self.workflow_engine.run.side_effect = [
             AnalysisError(
                 "No valid findings produced for workflow run run-fail",
+            ),
+            lambda context, checkpoint=None: context,
+        ]
+
+        self.assertTrue(self.worker_service.process_once("worker-a"))
+        self.assertTrue(self.worker_service.process_once("worker-a"))
+        self.assertEqual(self.workflow_engine.run.call_count, 2)
+
+    def test_review_parse_failure_does_not_block_worker_loop(self) -> None:
+        from application.review.exceptions import ReviewError
+
+        self.durable_service.submit_research(
+            self.project,
+            _template("template-worker-review-fail"),
+            run_id="run-review-fail",
+        )
+        self.durable_service.submit_research(
+            self.project,
+            _template("template-worker-review-success"),
+            run_id="run-review-success",
+        )
+        self.workflow_engine.run.side_effect = [
+            ReviewError(
+                "LLM semantic review failed structured output validation for run run-review-fail",
             ),
             lambda context, checkpoint=None: context,
         ]
