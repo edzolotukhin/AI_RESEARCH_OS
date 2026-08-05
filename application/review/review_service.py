@@ -12,7 +12,7 @@ from domain.reviews.review_verdict import ReviewVerdict
 
 from application.persistence.exceptions import ConcurrentModificationError
 from application.persistence.records import ArtifactRecord
-from application.ports.analysis_ports import FindingRepository
+from application.ports.analysis_ports import FindingRepository, InsightRepository
 from application.ports.artifact_repository import ArtifactRepository
 from application.ports.report_ports import ReportRepository
 from application.ports.review_ports import (
@@ -23,7 +23,8 @@ from application.ports.review_ports import (
 from application.report.exceptions import ReportError
 from application.report.report_service import ReportService
 from application.review.deduplication import compute_review_deduplication_key
-from application.review.issue_deduplication import deduplicate_review_issues
+from application.review.deterministic_pre_review import run_deterministic_pre_review
+from application.review.issue_clustering import deduplicate_and_cluster_review_issues
 from application.review.diagnostics import (
     ReviewFailureDiagnostics,
     ReviewSectionDiagnostics,
@@ -82,6 +83,7 @@ class ReviewService:
         *,
         semantic_review_engine: SemanticReviewEngine,
         finding_repository: FindingRepository,
+        insight_repository: InsightRepository,
         report_repository: ReportRepository,
         artifact_repository: ArtifactRepository,
         review_repository: ReviewRepository,
@@ -91,6 +93,7 @@ class ReviewService:
     ) -> None:
         self._semantic_review_engine = semantic_review_engine
         self._finding_repository = finding_repository
+        self._insight_repository = insight_repository
         self._report_repository = report_repository
         self._artifact_repository = artifact_repository
         self._review_repository = review_repository
@@ -120,6 +123,17 @@ class ReviewService:
                 project_id,
                 workflow_run_id=workflow_run_id,
             )
+            insights = self._insight_repository.list_for_project(
+                project_id,
+                workflow_run_id=workflow_run_id,
+            )
+
+            pre_review_issues = run_deterministic_pre_review(
+                report=report,
+                design=design,
+                findings=findings,
+                insights=insights,
+            )
 
             structural_issues = run_structural_review(
                 report=report,
@@ -140,8 +154,8 @@ class ReviewService:
                 ),
                 structural_issues=structural_issues,
             )
-            all_issues = deduplicate_review_issues(
-                structural_issues + candidates_to_issues(semantic_candidates),
+            all_issues = deduplicate_and_cluster_review_issues(
+                pre_review_issues + structural_issues + candidates_to_issues(semantic_candidates),
             )
             dimensions = compute_quality_dimensions(all_issues)
             verdict = compute_verdict(all_issues)
@@ -361,28 +375,32 @@ class ReviewService:
     def _reject_artifact(self, artifact: ArtifactRecord | None) -> None:
         if artifact is None:
             return
-        updated = ArtifactRecord(
-            id=artifact.id,
-            project_id=artifact.project_id,
-            artifact_type=artifact.artifact_type,
-            title=artifact.title,
-            content=artifact.content,
-            run_id=artifact.run_id,
-            status="rejected",
-            version=artifact.version,
-            media_type=artifact.media_type,
-            filename=artifact.filename,
-            content_checksum=artifact.content_checksum,
-            deduplication_key=artifact.deduplication_key,
-            report_id=artifact.report_id,
-        )
-        try:
-            self._artifact_repository.save(updated, expected_version=artifact.version)
-        except ConcurrentModificationError:
+        for _ in range(3):
             current = self._artifact_repository.get_by_id(artifact.id)
-            if current is not None and current.status == "rejected":
+            if current is None:
                 return
-            raise
+            if current.status == "rejected":
+                return
+            updated = ArtifactRecord(
+                id=current.id,
+                project_id=current.project_id,
+                artifact_type=current.artifact_type,
+                title=current.title,
+                content=current.content,
+                run_id=current.run_id,
+                status="rejected",
+                version=current.version,
+                media_type=current.media_type,
+                filename=current.filename,
+                content_checksum=current.content_checksum,
+                deduplication_key=current.deduplication_key,
+                report_id=current.report_id,
+            )
+            try:
+                self._artifact_repository.save(updated, expected_version=current.version)
+                return
+            except ConcurrentModificationError:
+                continue
 
     @staticmethod
     def _build_summary(verdict: ReviewVerdict, issues: tuple) -> str:

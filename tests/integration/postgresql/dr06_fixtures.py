@@ -206,4 +206,5 @@ def build_report_service(session_factory: DatabaseSessionFactory):
         artifact_repository=PostgreSQLArtifactRepository(session_factory),
         max_findings_per_batch=10,
         max_chars_per_batch=12000,
+        max_sections=12,
     )

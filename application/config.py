@@ -94,6 +94,13 @@ class ApplicationConfig:
     review_reasoning_effort: str = "minimal"
     review_max_output_tokens: int = DEFAULT_REVIEW_MAX_OUTPUT_TOKENS
     review_structured_output_max_attempts: int = DEFAULT_REVIEW_STRUCTURED_OUTPUT_MAX_ATTEMPTS
+    review_max_calls: int = 7
+    report_max_llm_calls: int = 20
+    llm_max_calls_per_run: int = 100
+    evidence_max_items_per_run: int = 500
+    evidence_max_items_per_source: int = 50
+    analysis_max_findings: int = 100
+    analysis_max_insights: int = 30
 
     @classmethod
     def from_env(cls) -> ApplicationConfig:
@@ -261,6 +268,21 @@ class ApplicationConfig:
                     "REVIEW_STRUCTURED_OUTPUT_MAX_ATTEMPTS",
                     str(DEFAULT_REVIEW_STRUCTURED_OUTPUT_MAX_ATTEMPTS),
                 ),
+            ),
+            review_max_calls=int(os.environ.get("REVIEW_MAX_CALLS", "7")),
+            report_max_llm_calls=int(os.environ.get("REPORT_MAX_LLM_CALLS", "20")),
+            llm_max_calls_per_run=int(os.environ.get("LLM_MAX_CALLS_PER_RUN", "100")),
+            evidence_max_items_per_run=int(
+                os.environ.get("EVIDENCE_MAX_ITEMS_PER_RUN", "500"),
+            ),
+            evidence_max_items_per_source=int(
+                os.environ.get("EVIDENCE_MAX_ITEMS_PER_SOURCE", "50"),
+            ),
+            analysis_max_findings=int(
+                os.environ.get("ANALYSIS_MAX_FINDINGS", "100"),
+            ),
+            analysis_max_insights=int(
+                os.environ.get("ANALYSIS_MAX_INSIGHTS", "30"),
             ),
         )
 

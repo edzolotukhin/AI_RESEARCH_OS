@@ -99,3 +99,64 @@ def build_section_inputs(
         )
         for index, section in enumerate(report.sections)
     )
+
+
+@dataclass(frozen=True)
+class ReviewBatchInput:
+    batch_id: str
+    batch_label: str
+    section_indices: tuple[int, ...]
+    section_content: str
+    finding_refs: tuple[str, ...]
+    insight_refs: tuple[str, ...]
+    citation_ids: tuple[str, ...]
+    research_question_refs: tuple[str, ...] = ()
+
+
+def build_rq_batch_inputs(
+    report: Report,
+    *,
+    max_chars_per_batch: int = 12000,
+    max_batches: int = 7,
+) -> tuple[ReviewBatchInput, ...]:
+    """Group sections by primary RQ + one global batch; bounded semantic review calls."""
+    from application.report.substantive_coverage import primary_research_question_for_section
+
+    groups: dict[str, list[int]] = {}
+    for index, section in enumerate(report.sections):
+        primary = primary_research_question_for_section(section)
+        key = primary or "__global__"
+        groups.setdefault(key, []).append(index)
+
+    batches: list[ReviewBatchInput] = []
+    for batch_id, indices in sorted(groups.items()):
+        if len(batches) >= max_batches:
+            break
+        sections = [report.sections[i] for i in indices]
+        content_parts = [
+            f"## {section.title}\n{section.content[: max_chars_per_batch // max(1, len(indices))]}"
+            for section in sections
+        ]
+        finding_refs: set[str] = set()
+        insight_refs: set[str] = set()
+        citation_ids: set[str] = set()
+        rq_refs: set[str] = set()
+        for section in sections:
+            finding_refs.update(section.finding_refs)
+            insight_refs.update(section.insight_refs)
+            citation_ids.update(section.citation_ids)
+            rq_refs.update(section.research_question_refs)
+        label = batch_id if batch_id != "__global__" else "global_report"
+        batches.append(
+            ReviewBatchInput(
+                batch_id=batch_id,
+                batch_label=label,
+                section_indices=tuple(indices),
+                section_content="\n\n".join(content_parts)[:max_chars_per_batch],
+                finding_refs=tuple(sorted(finding_refs)),
+                insight_refs=tuple(sorted(insight_refs)),
+                citation_ids=tuple(sorted(citation_ids)),
+                research_question_refs=tuple(sorted(rq_refs)),
+            ),
+        )
+    return tuple(batches)

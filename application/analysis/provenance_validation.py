@@ -14,6 +14,7 @@ from application.analysis.diagnostics import (
     REJECTION_CATEGORY_MISSING_SUPPORT,
 )
 from application.analysis.exceptions import InvalidAnalysisProvenanceError
+from application.analysis.insight_rq_refs import derive_insight_research_question_refs
 from application.ports.analysis_ports import FindingCandidate, InsightCandidate
 
 
@@ -134,6 +135,12 @@ def validate_insight_candidate(
     question_refs = tuple(
         ref for ref in candidate.research_question_refs if ref in allowed_questions
     )
+    if not question_refs:
+        question_refs = derive_insight_research_question_refs(
+            candidate,
+            findings_by_id=findings_by_id,
+            design=design,
+        )
     confidence = validate_confidence(candidate.confidence)
 
     return InsightCandidate(

@@ -334,7 +334,7 @@ class ReportCoverageValidationTests(unittest.TestCase):
         with self.assertRaises(ReportError) as ctx:
             service.write_for_context(_context())
         self.assertIn("RQ6", str(ctx.exception))
-        self.assertIn("missing required research question coverage", str(ctx.exception))
+        self.assertIn("Report coverage validation failed", str(ctx.exception))
 
     def test_provenance_and_citations_persist(self) -> None:
         service = _deterministic_service()
@@ -343,6 +343,9 @@ class ReportCoverageValidationTests(unittest.TestCase):
         report = service._report_repository.get_by_id(summary.report_id)
         assert report is not None
         for section in report.sections:
+            kind = (section.metadata or {}).get("section_kind")
+            if kind in {"limitations", "contradictions"}:
+                continue
             self.assertTrue(section.finding_refs or section.insight_refs)
             if section.evidence_refs:
                 self.assertTrue(section.citation_ids)

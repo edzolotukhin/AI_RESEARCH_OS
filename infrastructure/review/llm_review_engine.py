@@ -19,6 +19,10 @@ from application.ports.review_ports import (
     ReviewSectionInput,
     SemanticReviewInput,
 )
+from infrastructure.review.deterministic_review_engine import (
+    ReviewBatchInput,
+    build_rq_batch_inputs,
+)
 from infrastructure.llm.llm_client import LLMClient
 
 _VALID_ISSUE_TYPES = {member.value for member in ReviewIssueType}
@@ -57,6 +61,8 @@ class LlmReviewEngine:
         structured_output_max_attempts: int = 3,
         max_message_chars: int = DEFAULT_REVIEW_MAX_MESSAGE_CHARS,
         max_suggested_action_chars: int = DEFAULT_REVIEW_MAX_SUGGESTED_ACTION_CHARS,
+        max_review_calls: int = 7,
+        max_chars_per_batch: int = 12000,
     ) -> None:
         self._structured_output = ReviewStructuredOutputGenerator(
             llm_client=llm_client,
@@ -68,8 +74,11 @@ class LlmReviewEngine:
         self._max_issues_per_section = max_issues_per_section
         self._max_message_chars = max_message_chars
         self._max_suggested_action_chars = max_suggested_action_chars
+        self._max_review_calls = max_review_calls
+        self._max_chars_per_batch = max_chars_per_batch
         self._last_section_stats: ReviewSectionEngineStats | None = None
         self._section_stats: list[ReviewSectionEngineStats] = []
+        self._llm_call_count: int = 0
 
     @property
     def last_section_stats(self) -> ReviewSectionEngineStats | None:
@@ -79,22 +88,33 @@ class LlmReviewEngine:
     def section_stats(self) -> tuple[ReviewSectionEngineStats, ...]:
         return tuple(self._section_stats)
 
+    @property
+    def llm_call_count(self) -> int:
+        return self._llm_call_count
+
     def review_report(
         self,
         review_input: SemanticReviewInput,
     ) -> tuple[ReviewIssueCandidate, ...]:
         candidates: list[ReviewIssueCandidate] = []
         self._section_stats = []
-        for section_input in review_input.section_inputs:
+        self._llm_call_count = 0
+        batches = build_rq_batch_inputs(
+            review_input.report,
+            max_chars_per_batch=self._max_chars_per_batch,
+            max_batches=self._max_review_calls,
+        )
+        for batch in batches:
             prompt = Prompt(
                 system=self._system_prompt(),
-                user=self._build_section_payload(review_input, section_input),
+                user=self._build_batch_payload(review_input, batch),
             )
             try:
                 payload = self._structured_output.generate(
                     prompt,
                     payload_schema=REVIEW_ISSUES_PAYLOAD_SCHEMA,
                 )
+                self._llm_call_count += 1
             except StructuredOutputError as exc:
                 telemetry = self._structured_output.last_telemetry
                 stats = ReviewSectionEngineStats(
@@ -122,10 +142,10 @@ class LlmReviewEngine:
             except Exception as exc:
                 raise ReviewConfigurationError("LLM semantic review failed") from exc
 
-            mapped, stats = self._map_issues(
+            mapped, stats = self._map_batch_issues(
                 payload,
                 review_input=review_input,
-                section_input=section_input,
+                batch=batch,
             )
             telemetry = self._structured_output.last_telemetry
             if telemetry is not None:
@@ -146,11 +166,16 @@ class LlmReviewEngine:
         review_input: SemanticReviewInput,
     ) -> int:
         """Maximum characters passed to a single LLM review request."""
-        if not review_input.section_inputs:
+        batches = build_rq_batch_inputs(
+            review_input.report,
+            max_chars_per_batch=self._max_chars_per_batch,
+            max_batches=self._max_review_calls,
+        )
+        if not batches:
             return 0
         return max(
-            len(self._build_section_payload(review_input, section_input))
-            for section_input in review_input.section_inputs
+            len(self._build_batch_payload(review_input, batch))
+            for batch in batches
         )
 
     def _system_prompt(self) -> str:
@@ -203,6 +228,154 @@ class LlmReviewEngine:
             for issue in review_input.existing_issues[:10]:
                 lines.append(f"- {issue.issue_type.value}: {issue.message[:200]}")
         return "\n".join(lines)
+
+    def _build_batch_payload(
+        self,
+        review_input: SemanticReviewInput,
+        batch: ReviewBatchInput,
+    ) -> str:
+        lines = [
+            f"brief_objectives: {list(review_input.brief_objectives)}",
+            f"research_questions: {list(review_input.research_questions)}",
+            f"batch_id: {batch.batch_id}",
+            f"batch_label: {batch.batch_label}",
+            f"section_indices: {list(batch.section_indices)}",
+            f"section_content: {batch.section_content[: self._max_chars_per_batch]}",
+            f"finding_refs: {list(batch.finding_refs)}",
+            f"insight_refs: {list(batch.insight_refs)}",
+            f"citation_ids: {list(batch.citation_ids)}",
+            f"research_question_refs: {list(batch.research_question_refs)}",
+        ]
+        if review_input.existing_issues:
+            lines.append("existing_structural_issues:")
+            for issue in review_input.existing_issues[:10]:
+                lines.append(f"- {issue.issue_type.value}: {issue.message[:200]}")
+        return "\n".join(lines)
+
+    def _map_batch_issues(
+        self,
+        payload: dict[str, Any],
+        *,
+        review_input: SemanticReviewInput,
+        batch: ReviewBatchInput,
+    ) -> tuple[list[ReviewIssueCandidate], ReviewSectionEngineStats]:
+        primary_index = batch.section_indices[0] if batch.section_indices else 0
+        section = review_input.report.sections[primary_index]
+        allowed_findings = set(batch.finding_refs)
+        allowed_insights = set(batch.insight_refs)
+        allowed_evidence: set[str] = set()
+        for index in batch.section_indices:
+            allowed_evidence.update(review_input.report.sections[index].evidence_refs)
+        allowed_sources = {
+            str(entry.get("source_id", "")).strip()
+            for entry in (review_input.report.citation_registry or {}).values()
+            if isinstance(entry, dict)
+        }
+        allowed_questions = set(batch.research_question_refs)
+
+        mapped: list[ReviewIssueCandidate] = []
+        rejection_counts: dict[str, int] = {}
+        raw_items = 0
+        for item in payload.get("issues", []):
+            raw_items += 1
+            if len(mapped) >= self._max_issues_per_section:
+                rejection_counts["max_issues_per_section"] = (
+                    rejection_counts.get("max_issues_per_section", 0) + 1
+                )
+                break
+            if not isinstance(item, dict):
+                rejection_counts["invalid_item_shape"] = (
+                    rejection_counts.get("invalid_item_shape", 0) + 1
+                )
+                continue
+
+            issue_type = str(item.get("issue_type", "")).strip()
+            severity = str(item.get("severity", "")).strip()
+            message = str(item.get("message", "")).strip()[: self._max_message_chars]
+            if issue_type not in _VALID_ISSUE_TYPES:
+                rejection_counts["invalid_issue_type"] = (
+                    rejection_counts.get("invalid_issue_type", 0) + 1
+                )
+                continue
+            if severity not in _VALID_SEVERITIES:
+                rejection_counts["invalid_severity"] = (
+                    rejection_counts.get("invalid_severity", 0) + 1
+                )
+                continue
+            if not message:
+                rejection_counts["missing_message"] = (
+                    rejection_counts.get("missing_message", 0) + 1
+                )
+                continue
+
+            raw_finding = [
+                str(value).strip() for value in item.get("finding_refs", []) if str(value).strip()
+            ]
+            raw_insight = [
+                str(value).strip() for value in item.get("insight_refs", []) if str(value).strip()
+            ]
+            raw_evidence = [
+                str(value).strip() for value in item.get("evidence_refs", []) if str(value).strip()
+            ]
+            raw_source = [
+                str(value).strip() for value in item.get("source_refs", []) if str(value).strip()
+            ]
+            raw_question = [
+                str(value).strip()
+                for value in item.get("research_question_refs", [])
+                if str(value).strip()
+            ]
+
+            finding_refs = tuple(ref for ref in raw_finding if ref in allowed_findings)
+            insight_refs = tuple(ref for ref in raw_insight if ref in allowed_insights)
+            evidence_refs = tuple(ref for ref in raw_evidence if ref in allowed_evidence)
+            source_refs = tuple(ref for ref in raw_source if ref in allowed_sources)
+            question_refs = tuple(ref for ref in raw_question if ref in allowed_questions)
+
+            had_refs = bool(
+                raw_finding or raw_insight or raw_evidence or raw_source or raw_question,
+            )
+            validated_refs = bool(
+                finding_refs or insight_refs or evidence_refs or source_refs or question_refs,
+            )
+            if had_refs and not validated_refs:
+                rejection_counts["foreign_refs"] = (
+                    rejection_counts.get("foreign_refs", 0) + 1
+                )
+                continue
+
+            suggested_action = str(item.get("suggested_action", "")).strip()[
+                : self._max_suggested_action_chars
+            ]
+            metadata = (
+                dict(item["metadata"])
+                if isinstance(item.get("metadata"), dict)
+                else {}
+            )
+            if len(batch.section_indices) > 1:
+                metadata["affected_section_indices"] = list(batch.section_indices)
+            mapped.append(
+                ReviewIssueCandidate(
+                    issue_type=issue_type,
+                    severity=severity,
+                    message=message,
+                    report_section_id=section.id,
+                    finding_refs=finding_refs,
+                    insight_refs=insight_refs,
+                    evidence_refs=evidence_refs,
+                    source_refs=source_refs,
+                    research_question_refs=question_refs,
+                    suggested_action=suggested_action,
+                    metadata=metadata,
+                ),
+            )
+
+        stats = ReviewSectionEngineStats(
+            candidate_review_count=len(mapped),
+            engine_dropped_count=max(0, raw_items - len(mapped)),
+            rejection_counts=rejection_counts,
+        )
+        return mapped, stats
 
     def _map_issues(
         self,

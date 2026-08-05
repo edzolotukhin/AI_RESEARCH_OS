@@ -21,6 +21,9 @@ from infrastructure.persistence.memory.in_memory_artifact_repository import (
 from infrastructure.persistence.memory.in_memory_finding_repository import (
     InMemoryFindingRepository,
 )
+from infrastructure.persistence.memory.in_memory_insight_repository import (
+    InMemoryInsightRepository,
+)
 from infrastructure.persistence.memory.in_memory_report_repository import (
     InMemoryReportRepository,
 )
@@ -315,6 +318,7 @@ class ReviewLiveShapeTests(unittest.TestCase):
         review_service = ReviewService(
             semantic_review_engine=_engine(mock_llm, max_attempts=1),
             finding_repository=finding_repo,
+            insight_repository=InMemoryInsightRepository(),
             report_repository=report_repo,
             artifact_repository=artifact_repo,
             review_repository=InMemoryReviewRepository(),

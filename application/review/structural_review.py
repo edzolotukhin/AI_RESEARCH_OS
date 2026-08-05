@@ -66,7 +66,10 @@ def run_structural_review(
     registry = report.citation_registry or {}
     covered_questions: set[str] = set()
     for section in report.sections:
-        if not section.finding_refs and not section.insight_refs:
+        kind = (section.metadata or {}).get("section_kind")
+        if kind not in {"limitations", "contradictions"} and (
+            not section.finding_refs and not section.insight_refs
+        ):
             issues.append(
                 _issue(
                     ReviewIssueType.STRUCTURE_ISSUE,

@@ -30,6 +30,12 @@ from application.report.coverage_validation import (
     findings_available_for_question,
     missing_research_question_ids,
 )
+from application.report.report_assembly import (
+    assemble_bounded_report,
+    align_section_provenance,
+    DEFAULT_REPORT_MAX_SECTIONS,
+)
+from application.report.substantive_coverage import validate_two_dimensional_coverage
 from application.report.structure_validation import validate_report_structure
 from application.report.deduplication import (
     DR06_RESEARCH_REPORT_TYPE,
@@ -101,6 +107,7 @@ class ReportService:
         max_findings_per_batch: int,
         max_chars_per_batch: int,
         max_rq_correction_attempts: int = 2,
+        max_sections: int = DEFAULT_REPORT_MAX_SECTIONS,
     ) -> None:
         self._report_engine = report_engine
         self._finding_repository = finding_repository
@@ -112,6 +119,7 @@ class ReportService:
         self._max_findings_per_batch = max_findings_per_batch
         self._max_chars_per_batch = max_chars_per_batch
         self._max_rq_correction_attempts = max_rq_correction_attempts
+        self._max_sections = max_sections
 
     def write_for_context(self, context: WorkflowContext) -> ReportSummary:
         design = self._resolve_design(context)
@@ -157,6 +165,7 @@ class ReportService:
         )
 
         validated_sections: list[ReportSection] = []
+        section_batch_map: dict[str, str | None] = {}
         sections_rejected = 0
         batch_failures = 0
         batch_diagnostics: list[ReportBatchDiagnostics] = []
@@ -239,6 +248,7 @@ class ReportService:
                 added = self._append_validated_section(
                     candidate,
                     validated_sections=validated_sections,
+                    section_batch_map=section_batch_map,
                     batch_question_id=batch_question_id,
                     findings_by_id=findings_by_id,
                     insights_by_id=insights_by_id,
@@ -277,6 +287,7 @@ class ReportService:
 
         self._correct_missing_research_question_coverage(
             validated_sections=validated_sections,
+            section_batch_map=section_batch_map,
             findings=findings,
             insights=insights,
             evidence_by_id=evidence_by_id,
@@ -292,15 +303,43 @@ class ReportService:
             research_design_id=research_design_id,
         )
 
-        missing_questions = missing_research_question_ids(
+        validated_sections = list(
+            assemble_bounded_report(
+                validated_sections,
+                design=design,
+                findings=findings,
+                limitations=tuple(design.limitations),
+                max_sections=self._max_sections,
+                section_batch_map=section_batch_map,
+            ),
+        )
+        registry_dict = citation_registry.to_dict()
+        aligned_sections: list[ReportSection] = []
+        for section in validated_sections:
+            aligned_sections.append(
+                align_section_provenance(
+                    section,
+                    findings_by_id=findings_by_id,
+                    registry=registry_dict,
+                ),
+            )
+        validated_sections = aligned_sections
+        section_batch_map = {
+            section.id: (section.metadata or {}).get("primary_research_question_id")
+            for section in validated_sections
+        }
+
+        coverage_errors = validate_two_dimensional_coverage(
             validated_sections,
             findings=findings,
+            insights=insights,
             design=design,
+            section_batch_map=section_batch_map,
         )
-        if missing_questions:
+        if coverage_errors:
             raise ReportError(
-                f"Report missing required research question coverage for run "
-                f"{workflow_run_id}: {list(missing_questions)}",
+                f"Report coverage validation failed for run {workflow_run_id}: "
+                f"{list(coverage_errors)}",
             )
 
         summary_input = ReportInput(
@@ -369,6 +408,7 @@ class ReportService:
             executive_summary=report_candidate.executive_summary.strip(),
             limitations=limitations,
             design=design,
+            findings=findings,
         )
         if structure_errors:
             raise ReportError(
@@ -648,6 +688,7 @@ class ReportService:
         candidate: ReportSectionCandidate,
         *,
         validated_sections: list[ReportSection],
+        section_batch_map: dict[str, str | None],
         batch_question_id: str,
         findings_by_id: dict,
         insights_by_id: dict,
@@ -689,6 +730,10 @@ class ReportService:
                 evidence_refs=validated.evidence_refs,
                 metadata=dict(validated.metadata or {}),
             )
+            metadata = dict(validated.metadata or {})
+            if batch_question_id and batch_question_id != "__unscoped__":
+                metadata["primary_research_question_id"] = batch_question_id
+                metadata["batch_question_id"] = batch_question_id
             evidence_refs = collect_evidence_refs_for_section(
                 validated,
                 findings_by_id=findings_by_id,
@@ -719,8 +764,11 @@ class ReportService:
                     insight_refs=validated.insight_refs,
                     evidence_refs=evidence_refs,
                     citation_ids=citation_ids,
-                    metadata=dict(validated.metadata or {}),
+                    metadata=metadata,
                 ),
+            )
+            section_batch_map[validated_sections[-1].id] = (
+                None if batch_question_id == "__unscoped__" else batch_question_id
             )
             batch_diag.valid_section_count += 1
             return True
@@ -736,6 +784,7 @@ class ReportService:
         self,
         *,
         validated_sections: list[ReportSection],
+        section_batch_map: dict[str, str | None],
         findings: list,
         insights: list,
         evidence_by_id: dict,
@@ -800,6 +849,7 @@ class ReportService:
                     if self._append_validated_section(
                         candidate,
                         validated_sections=validated_sections,
+                        section_batch_map=section_batch_map,
                         batch_question_id=question_id,
                         findings_by_id=findings_by_id,
                         insights_by_id=insights_by_id,
