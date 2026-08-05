@@ -23,6 +23,7 @@ from application.ports.review_ports import (
 from application.report.exceptions import ReportError
 from application.report.report_service import ReportService
 from application.review.deduplication import compute_review_deduplication_key
+from application.review.issue_deduplication import deduplicate_review_issues
 from application.review.diagnostics import (
     ReviewFailureDiagnostics,
     ReviewSectionDiagnostics,
@@ -139,7 +140,9 @@ class ReviewService:
                 ),
                 structural_issues=structural_issues,
             )
-            all_issues = structural_issues + candidates_to_issues(semantic_candidates)
+            all_issues = deduplicate_review_issues(
+                structural_issues + candidates_to_issues(semantic_candidates),
+            )
             dimensions = compute_quality_dimensions(all_issues)
             verdict = compute_verdict(all_issues)
 

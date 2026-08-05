@@ -227,6 +227,33 @@ def _seed_repositories(service: ReportService, *, run_id: str = RUN_ID) -> None:
         service._insight_repository.create(item)
 
 
+def _batch_question_from_prompt(prompt) -> str | None:
+    for line in prompt.user.splitlines():
+        if line.startswith("batch_research_question_id:"):
+            return line.split(":", 1)[1].strip()
+    return None
+
+
+def _single_section_payload_for_batch(question_id: str) -> str:
+    num = int(question_id.rsplit("-", 1)[-1])
+    finding_id = f"finding-{num:03d}"
+    insight_id = f"insight-{num:03d}"
+    return json.dumps(
+        {
+            "sections": [
+                {
+                    "title": f"Section for {question_id}",
+                    "content": f"Coverage for {question_id}.",
+                    "finding_refs": [finding_id],
+                    "insight_refs": [insight_id],
+                    "research_question_refs": [question_id],
+                    "evidence_refs": [],
+                },
+            ],
+        },
+    )
+
+
 def _valid_sections_payload(*, finding_ids: list[str], insight_ids: list[str]) -> str:
     return json.dumps(
         {
@@ -269,6 +296,9 @@ class ReportLiveShapeTests(unittest.TestCase):
         def _generate(prompt, options=None):
             if "section_summaries:" in prompt.user:
                 return LLMResponse(content=_summary_payload())
+            question_id = _batch_question_from_prompt(prompt)
+            if question_id:
+                return LLMResponse(content=_single_section_payload_for_batch(question_id))
             return LLMResponse(
                 content=_valid_sections_payload(
                     finding_ids=[f"finding-{index:03d}" for index in range(1, 8)],
@@ -299,12 +329,10 @@ class ReportLiveShapeTests(unittest.TestCase):
                 return LLMResponse(content=_summary_payload())
             if calls["count"] == 1:
                 return LLMResponse(content='{"sections": [')
-            return LLMResponse(
-                content=_valid_sections_payload(
-                    finding_ids=["finding-001", "finding-002"],
-                    insight_ids=["insight-001"],
-                ),
-            )
+            question_id = _batch_question_from_prompt(prompt)
+            if question_id:
+                return LLMResponse(content=_single_section_payload_for_batch(question_id))
+            return LLMResponse(content='{"sections":[]}')
 
         llm_client.generate.side_effect = _generate
         service = _build_service(llm_client)
@@ -328,12 +356,10 @@ class ReportLiveShapeTests(unittest.TestCase):
                     content='{"sections":[{"title":"T","content":"Partial',
                     finish_reason="length",
                 )
-            return LLMResponse(
-                content=_valid_sections_payload(
-                    finding_ids=["finding-001"],
-                    insight_ids=["insight-001"],
-                ),
-            )
+            question_id = _batch_question_from_prompt(prompt)
+            if question_id:
+                return LLMResponse(content=_single_section_payload_for_batch(question_id))
+            return LLMResponse(content='{"sections":[]}')
 
         llm_client.generate.side_effect = _generate
         service = _build_service(llm_client)
@@ -350,30 +376,36 @@ class ReportLiveShapeTests(unittest.TestCase):
         def _generate(prompt, options=None):
             if "section_summaries:" in prompt.user:
                 return LLMResponse(content=_summary_payload())
-            return LLMResponse(
-                content=json.dumps(
-                    {
-                        "sections": [
-                            {
-                                "title": "Valid section",
-                                "content": "Valid content",
-                                "finding_refs": ["finding-001"],
-                                "insight_refs": ["insight-001"],
-                                "research_question_refs": ["rq-1"],
-                                "evidence_refs": [],
-                            },
-                            {
-                                "title": "Invalid section",
-                                "content": "Bad refs",
-                                "finding_refs": ["finding-does-not-exist"],
-                                "insight_refs": [],
-                                "research_question_refs": ["rq-1"],
-                                "evidence_refs": [],
-                            },
-                        ],
-                    },
-                ),
-            )
+            question_id = _batch_question_from_prompt(prompt)
+            if question_id:
+                num = int(question_id.rsplit("-", 1)[-1])
+                finding_id = f"finding-{num:03d}"
+                insight_id = f"insight-{num:03d}"
+                return LLMResponse(
+                    content=json.dumps(
+                        {
+                            "sections": [
+                                {
+                                    "title": f"Valid section {question_id}",
+                                    "content": "Valid content",
+                                    "finding_refs": [finding_id],
+                                    "insight_refs": [insight_id],
+                                    "research_question_refs": [question_id],
+                                    "evidence_refs": [],
+                                },
+                                {
+                                    "title": f"Invalid section {question_id}",
+                                    "content": "Bad refs",
+                                    "finding_refs": ["finding-does-not-exist"],
+                                    "insight_refs": [],
+                                    "research_question_refs": [question_id],
+                                    "evidence_refs": [],
+                                },
+                            ],
+                        },
+                    ),
+                )
+            return LLMResponse(content='{"sections":[]}')
 
         llm_client.generate.side_effect = _generate
         service = _build_service(llm_client)
@@ -381,7 +413,7 @@ class ReportLiveShapeTests(unittest.TestCase):
 
         summary = service.write_for_context(_report_context())
 
-        self.assertEqual(summary.section_count, 1)
+        self.assertGreaterEqual(summary.section_count, 5)
         self.assertEqual(summary.sections_rejected, 0)
 
     def test_e_all_invalid_sections_raises_with_diagnostics(self) -> None:

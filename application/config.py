@@ -29,6 +29,7 @@ from application.report.content_batching import (
     DEFAULT_REPORT_MAX_FINDINGS_PER_SECTION,
     DEFAULT_REPORT_MAX_INSIGHTS_PER_SECTION,
     DEFAULT_REPORT_MAX_OUTPUT_TOKENS,
+    DEFAULT_REPORT_MAX_RQ_CORRECTION_ATTEMPTS,
     DEFAULT_REPORT_MAX_SECTIONS,
     DEFAULT_REPORT_STRUCTURED_OUTPUT_MAX_ATTEMPTS,
 )
@@ -85,6 +86,7 @@ class ApplicationConfig:
     report_max_findings_per_section: int = 15
     report_max_insights_per_section: int = 8
     report_structured_output_max_attempts: int = 3
+    report_max_rq_correction_attempts: int = 2
     review_engine: str = "llm"
     review_max_revision_attempts: int = 1
     review_max_chars_per_section: int = 8000
@@ -226,6 +228,12 @@ class ApplicationConfig:
                 os.environ.get(
                     "REPORT_STRUCTURED_OUTPUT_MAX_ATTEMPTS",
                     str(DEFAULT_REPORT_STRUCTURED_OUTPUT_MAX_ATTEMPTS),
+                ),
+            ),
+            report_max_rq_correction_attempts=int(
+                os.environ.get(
+                    "REPORT_MAX_RQ_CORRECTION_ATTEMPTS",
+                    str(DEFAULT_REPORT_MAX_RQ_CORRECTION_ATTEMPTS),
                 ),
             ),
             review_engine=os.environ.get("REVIEW_ENGINE", "llm"),

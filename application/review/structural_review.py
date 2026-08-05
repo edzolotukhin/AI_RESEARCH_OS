@@ -20,6 +20,7 @@ from domain.reviews.review_issue import (
 from domain.reviews.review_verdict import ReviewVerdict
 
 from application.persistence.records import ArtifactRecord
+from application.report.coverage_validation import section_supports_question
 from application.report.deduplication import compute_content_checksum
 from application.review.exceptions import InvalidReviewProvenanceError
 
@@ -89,8 +90,7 @@ def run_structural_review(
     for question in design.research_questions:
         if question.id not in covered_questions:
             section_covers = any(
-                question.id in section.research_question_refs
-                or _section_supports_question(section, question.id, findings)
+                section_supports_question(section, question.id, findings)
                 for section in report.sections
             )
             if not section_covers:
@@ -309,21 +309,6 @@ def _issue(
         finding_refs=finding_refs,
         research_question_refs=research_question_refs,
         suggested_action=suggested_action,
-    )
-
-
-def _section_supports_question(
-    section,
-    question_id: str,
-    findings: list[Finding],
-) -> bool:
-    if question_id in section.research_question_refs:
-        return True
-    finding_ids = set(section.finding_refs)
-    return any(
-        question_id in finding.research_question_refs
-        for finding in findings
-        if finding.id in finding_ids
     )
 
 

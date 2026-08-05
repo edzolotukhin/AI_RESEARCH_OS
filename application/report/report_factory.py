@@ -67,6 +67,7 @@ def build_report_service(
         artifact_repository=artifact_repository,
         max_findings_per_batch=config.report_max_findings_per_batch,
         max_chars_per_batch=config.report_max_chars_per_batch,
+        max_rq_correction_attempts=config.report_max_rq_correction_attempts,
     )
 
 

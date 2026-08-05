@@ -257,6 +257,12 @@ class LlmReportEngine:
                 for ref in item.get("research_question_refs", [])
                 if str(ref).strip() in allowed_questions
             )
+            if (
+                not question_refs
+                and report_input.batch_question_id
+                and report_input.batch_question_id in allowed_questions
+            ):
+                question_refs = (report_input.batch_question_id,)
             sections.append(
                 ReportSectionCandidate(
                     title=title,

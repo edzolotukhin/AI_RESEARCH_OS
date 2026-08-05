@@ -25,6 +25,12 @@ from application.report.content_batching import (
     insights_for_question,
     resolve_section_titles,
 )
+from application.report.coverage_validation import (
+    enrich_research_question_refs,
+    findings_available_for_question,
+    missing_research_question_ids,
+)
+from application.report.structure_validation import validate_report_structure
 from application.report.deduplication import (
     DR06_RESEARCH_REPORT_TYPE,
     compute_artifact_deduplication_key,
@@ -94,6 +100,7 @@ class ReportService:
         artifact_repository: ArtifactRepository,
         max_findings_per_batch: int,
         max_chars_per_batch: int,
+        max_rq_correction_attempts: int = 2,
     ) -> None:
         self._report_engine = report_engine
         self._finding_repository = finding_repository
@@ -104,6 +111,7 @@ class ReportService:
         self._artifact_repository = artifact_repository
         self._max_findings_per_batch = max_findings_per_batch
         self._max_chars_per_batch = max_chars_per_batch
+        self._max_rq_correction_attempts = max_rq_correction_attempts
 
     def write_for_context(self, context: WorkflowContext) -> ReportSummary:
         design = self._resolve_design(context)
@@ -228,48 +236,23 @@ class ReportService:
                 batch_diag.parse_failure_category = engine_stats.parse_failure_category
 
             for candidate in candidates:
-                try:
-                    validated = validate_section_candidate(
-                        candidate,
-                        findings_by_id=findings_by_id,
-                        insights_by_id=insights_by_id,
-                        evidence_by_id=evidence_by_id,
-                        project_id=project_id,
-                        workflow_run_id=workflow_run_id,
-                        research_design_id=research_design_id,
-                        design=design,
-                    )
-                    evidence_refs = collect_evidence_refs_for_section(
-                        validated,
-                        findings_by_id=findings_by_id,
-                        insights_by_id=insights_by_id,
-                    )
-                    citation_ids = citation_registry.citation_ids_for_evidence_refs(
-                        evidence_refs,
-                        evidence_by_id=evidence_by_id,
-                        sources_by_id=sources_by_id,
-                    )
-                    validated_sections.append(
-                        ReportSection(
-                            id=str(uuid4()),
-                            title=validated.title,
-                            content=validated.content,
-                            research_question_refs=validated.research_question_refs,
-                            finding_refs=validated.finding_refs,
-                            insight_refs=validated.insight_refs,
-                            evidence_refs=evidence_refs,
-                            citation_ids=citation_ids,
-                            metadata=dict(validated.metadata or {}),
-                        ),
-                    )
-                    batch_diag.valid_section_count += 1
-                except InvalidReportProvenanceError as exc:
+                added = self._append_validated_section(
+                    candidate,
+                    validated_sections=validated_sections,
+                    batch_question_id=batch_question_id,
+                    findings_by_id=findings_by_id,
+                    insights_by_id=insights_by_id,
+                    evidence_by_id=evidence_by_id,
+                    sources_by_id=sources_by_id,
+                    citation_registry=citation_registry,
+                    project_id=project_id,
+                    workflow_run_id=workflow_run_id,
+                    research_design_id=research_design_id,
+                    design=design,
+                    batch_diag=batch_diag,
+                )
+                if not added:
                     sections_rejected += 1
-                    batch_diag.rejected_section_count += 1
-                    category = classify_provenance_rejection(exc)
-                    batch_diag.rejection_counts[category] = (
-                        batch_diag.rejection_counts.get(category, 0) + 1
-                    )
 
             batch_diagnostics.append(batch_diag)
 
@@ -291,6 +274,34 @@ class ReportService:
                 },
             )
             raise ReportError(format_zero_sections_message(failure_diagnostics))
+
+        self._correct_missing_research_question_coverage(
+            validated_sections=validated_sections,
+            findings=findings,
+            insights=insights,
+            evidence_by_id=evidence_by_id,
+            sources_by_id=sources_by_id,
+            findings_by_id=findings_by_id,
+            insights_by_id=insights_by_id,
+            citation_registry=citation_registry,
+            brief=brief,
+            design=design,
+            section_titles=section_titles,
+            project_id=project_id,
+            workflow_run_id=workflow_run_id,
+            research_design_id=research_design_id,
+        )
+
+        missing_questions = missing_research_question_ids(
+            validated_sections,
+            findings=findings,
+            design=design,
+        )
+        if missing_questions:
+            raise ReportError(
+                f"Report missing required research question coverage for run "
+                f"{workflow_run_id}: {list(missing_questions)}",
+            )
 
         summary_input = ReportInput(
             project_id=project_id,
@@ -352,6 +363,18 @@ class ReportService:
             report_metadata["deterministic_review_flaw"] = "unsupported_claim"
         elif scenario == "reject":
             report_metadata["deterministic_review_flaw"] = "provenance_break"
+
+        structure_errors = validate_report_structure(
+            sections=tuple(validated_sections),
+            executive_summary=report_candidate.executive_summary.strip(),
+            limitations=limitations,
+            design=design,
+        )
+        if structure_errors:
+            raise ReportError(
+                f"Report structure validation failed for run {workflow_run_id}: "
+                f"{list(structure_errors)}",
+            )
 
         finding_refs = tuple(sorted({ref for section in validated_sections for ref in section.finding_refs}))
         insight_refs = tuple(sorted({ref for section in validated_sections for ref in section.insight_refs}))
@@ -619,6 +642,193 @@ class ReportService:
         raise ReportError(
             f"Failed to resolve concurrent artifact persistence for run {workflow_run_id}",
         )
+
+    def _append_validated_section(
+        self,
+        candidate: ReportSectionCandidate,
+        *,
+        validated_sections: list[ReportSection],
+        batch_question_id: str,
+        findings_by_id: dict,
+        insights_by_id: dict,
+        evidence_by_id: dict,
+        sources_by_id: dict,
+        citation_registry: CitationRegistry,
+        project_id: str,
+        workflow_run_id: str,
+        research_design_id: str,
+        design: ResearchDesign,
+        batch_diag: ReportBatchDiagnostics,
+    ) -> bool:
+        try:
+            validated = validate_section_candidate(
+                candidate,
+                findings_by_id=findings_by_id,
+                insights_by_id=insights_by_id,
+                evidence_by_id=evidence_by_id,
+                project_id=project_id,
+                workflow_run_id=workflow_run_id,
+                research_design_id=research_design_id,
+                design=design,
+            )
+            question_refs = enrich_research_question_refs(
+                validated,
+                batch_question_id=(
+                    None if batch_question_id == "__unscoped__" else batch_question_id
+                ),
+                findings_by_id=findings_by_id,
+                insights_by_id=insights_by_id,
+                design=design,
+            )
+            validated = ReportSectionCandidate(
+                title=validated.title,
+                content=validated.content,
+                research_question_refs=question_refs,
+                finding_refs=validated.finding_refs,
+                insight_refs=validated.insight_refs,
+                evidence_refs=validated.evidence_refs,
+                metadata=dict(validated.metadata or {}),
+            )
+            evidence_refs = collect_evidence_refs_for_section(
+                validated,
+                findings_by_id=findings_by_id,
+                insights_by_id=insights_by_id,
+            )
+            citation_ids = citation_registry.citation_ids_for_evidence_refs(
+                evidence_refs,
+                evidence_by_id=evidence_by_id,
+                sources_by_id=sources_by_id,
+            )
+            if _section_requires_citations(
+                evidence_refs,
+                evidence_by_id=evidence_by_id,
+                sources_by_id=sources_by_id,
+            ) and not citation_ids:
+                batch_diag.rejected_section_count += 1
+                batch_diag.rejection_counts["missing_citation"] = (
+                    batch_diag.rejection_counts.get("missing_citation", 0) + 1
+                )
+                return False
+            validated_sections.append(
+                ReportSection(
+                    id=str(uuid4()),
+                    title=validated.title,
+                    content=validated.content,
+                    research_question_refs=validated.research_question_refs,
+                    finding_refs=validated.finding_refs,
+                    insight_refs=validated.insight_refs,
+                    evidence_refs=evidence_refs,
+                    citation_ids=citation_ids,
+                    metadata=dict(validated.metadata or {}),
+                ),
+            )
+            batch_diag.valid_section_count += 1
+            return True
+        except InvalidReportProvenanceError as exc:
+            batch_diag.rejected_section_count += 1
+            category = classify_provenance_rejection(exc)
+            batch_diag.rejection_counts[category] = (
+                batch_diag.rejection_counts.get(category, 0) + 1
+            )
+            return False
+
+    def _correct_missing_research_question_coverage(
+        self,
+        *,
+        validated_sections: list[ReportSection],
+        findings: list,
+        insights: list,
+        evidence_by_id: dict,
+        sources_by_id: dict,
+        findings_by_id: dict,
+        insights_by_id: dict,
+        citation_registry: CitationRegistry,
+        brief: ResearchBrief,
+        design: ResearchDesign,
+        section_titles: tuple[str, ...],
+        project_id: str,
+        workflow_run_id: str,
+        research_design_id: str,
+    ) -> None:
+        for _ in range(self._max_rq_correction_attempts):
+            missing = missing_research_question_ids(
+                validated_sections,
+                findings=findings,
+                design=design,
+            )
+            if not missing:
+                return
+
+            progressed = False
+            for question_id in missing:
+                finding_batch = findings_available_for_question(findings, question_id)
+                if not finding_batch:
+                    continue
+                batch_insights = insights_for_question(list(insights), question_id)
+                report_input = ReportInput(
+                    project_id=project_id,
+                    workflow_run_id=workflow_run_id,
+                    research_design_id=research_design_id,
+                    brief=brief,
+                    design=design,
+                    findings=finding_batch,
+                    insights=batch_insights,
+                    evidence_by_id=evidence_by_id,
+                    sources_by_id=sources_by_id,
+                    section_titles=section_titles,
+                    batch_question_id=question_id,
+                )
+                try:
+                    candidates = self._report_engine.generate_sections(report_input)
+                except (ReportConfigurationError, Exception):
+                    logger.warning(
+                        "report_rq_correction_failed",
+                        extra={
+                            "event": "report_rq_correction_failed",
+                            "workflow_run_id": workflow_run_id,
+                            "research_question_id": question_id,
+                        },
+                    )
+                    continue
+
+                batch_diag = ReportBatchDiagnostics(
+                    batch_question_id=question_id,
+                    input_finding_count=len(finding_batch),
+                    input_insight_count=len(batch_insights),
+                )
+                for candidate in candidates:
+                    if self._append_validated_section(
+                        candidate,
+                        validated_sections=validated_sections,
+                        batch_question_id=question_id,
+                        findings_by_id=findings_by_id,
+                        insights_by_id=insights_by_id,
+                        evidence_by_id=evidence_by_id,
+                        sources_by_id=sources_by_id,
+                        citation_registry=citation_registry,
+                        project_id=project_id,
+                        workflow_run_id=workflow_run_id,
+                        research_design_id=research_design_id,
+                        design=design,
+                        batch_diag=batch_diag,
+                    ):
+                        progressed = True
+
+            if not progressed:
+                return
+
+
+def _section_requires_citations(
+    evidence_refs: tuple[str, ...],
+    *,
+    evidence_by_id: dict,
+    sources_by_id: dict,
+) -> bool:
+    for evidence_id in evidence_refs:
+        evidence = evidence_by_id.get(evidence_id)
+        if evidence is not None and evidence.source_id in sources_by_id:
+            return True
+    return False
 
 
 def _classify_batch_failure(exc: Exception) -> str:
