@@ -11,6 +11,10 @@ from application.evidence.evidence_extraction_service import EvidenceExtractionS
 from application.evidence.exceptions import EvidenceExtractionError
 from application.executors.evidence_executor import EvidenceExecutor
 from application.evidence.run_scoped_provenance import RunScopedSourceContext
+from application.execution.budget_utils import (
+    DOWNSTREAM_RESERVE_REASON,
+    EVIDENCE_STAGE_CAP_REASON,
+)
 from application.execution.exceptions import BudgetExhaustedError
 from application.execution.execution_budget import ExecutionBudget
 from application.execution.execution_budget_context import (
@@ -368,6 +372,7 @@ class EvidenceStageCapGracefulCompletionTests(unittest.TestCase):
         )
         summary = service.extract_for_context(context)
         self.assertTrue(summary.evidence_stage_budget_exhausted)
+        self.assertEqual(summary.budget_stop_reason, EVIDENCE_STAGE_CAP_REASON)
         self.assertEqual(summary.evidence_extracted, 3)
         self.assertEqual(summary.sources_processed, 3)
         self.assertEqual(len(summary.evidence_ids), 3)
@@ -455,6 +460,7 @@ class EvidenceStageCapGracefulCompletionTests(unittest.TestCase):
         executor.run(context)
         payload = context.shared_state["evidence_extraction"]
         self.assertTrue(payload["evidence_stage_budget_exhausted"])
+        self.assertEqual(payload["budget_stop_reason"], EVIDENCE_STAGE_CAP_REASON)
         self.assertEqual(payload["evidence_extracted"], 2)
 
         finalize_run_budget(context)
@@ -463,6 +469,226 @@ class EvidenceStageCapGracefulCompletionTests(unittest.TestCase):
         self.assertIsNone(usage.exhaustion_reason)
         self.assertTrue(usage.stages["evidence"].stage_cap_reached)
         self.assertEqual(usage.stages["evidence"].llm_calls, 2)
+
+
+_DEFAULT_DOWNSTREAM_RESERVE = 20 + 14 + 20 + 7
+_DEFAULT_MAX_EVIDENCE_BEFORE_RESERVE = 100 - _DEFAULT_DOWNSTREAM_RESERVE
+
+
+class _TokenRecordingBudgetedExtractor(_BudgetedCallExtractor):
+    def __init__(self, *, input_tokens: int = 0, output_tokens: int = 0) -> None:
+        self._input_tokens = input_tokens
+        self._output_tokens = output_tokens
+
+    def extract(self, *, source, design, run_context):
+        budget = _current_budget.get()
+        if budget is not None:
+            budget.assert_can_call("evidence")
+            budget.record_llm_call(
+                "evidence",
+                input_tokens=self._input_tokens,
+                output_tokens=self._output_tokens,
+            )
+        excerpt = source.content_text[:40]
+        return [
+            EvidenceCandidate(
+                statement=f"Evidence from {source.id}",
+                source_excerpt=excerpt,
+                evidence_type=EvidenceType.DIRECT_EXCERPT.value,
+                research_question_refs=run_context.research_question_ids or ("rq-1",),
+                information_need_refs=run_context.information_need_ids or ("in-1",),
+            ),
+        ]
+
+
+class DownstreamReserveGracefulCompletionTests(unittest.TestCase):
+    def _context(self) -> WorkflowContext:
+        design = _design()
+        template = _template(design)
+        run = WorkflowRunFactory(task_factory=TaskFactory()).create(template=template)
+        run.id = "run-reserve"
+        context = WorkflowContext(
+            project=Project(id="project-1", name="Project"),
+            workflow_template=template,
+            workflow_run=run,
+        )
+        context.current_task = run.tasks[0]
+        return context
+
+    def _service_with_sources(
+        self,
+        *,
+        source_count: int,
+        extractor: EvidenceExtractor | None = None,
+    ) -> tuple[EvidenceExtractionService, WorkflowContext, InMemoryEvidenceRepository]:
+        context = self._context()
+        source_repo = InMemorySourceRepository()
+        evidence_repo = InMemoryEvidenceRepository()
+        for index in range(source_count):
+            source_repo.create(
+                _source_for_budget_test(
+                    source_id=f"source-{index:02d}",
+                    run_id="run-reserve",
+                    content=f"Acquired market report body text {index}.",
+                ),
+            )
+        service = EvidenceExtractionService(
+            evidence_extractor=extractor or _BudgetedCallExtractor(),
+            evidence_repository=evidence_repo,
+            source_repository=source_repo,
+        )
+        budget = ExecutionBudget(
+            llm_max_calls_per_run=100,
+            evidence_max_llm_calls=100,
+            sufficiency_max_llm_calls=20,
+            analysis_max_llm_calls=14,
+            report_max_llm_calls=20,
+            review_max_llm_calls=7,
+        )
+        ensure_run_budget(context)
+        context.execution_metadata["execution_budget"] = budget
+        token = _current_budget.set(budget)
+        set_execution_stage("evidence")
+        self.addCleanup(_current_budget.reset, token)
+        return service, context, evidence_repo
+
+    def test_stops_at_downstream_reserve_and_retains_accumulated_evidence(self) -> None:
+        service, context, evidence_repo = self._service_with_sources(source_count=45)
+        summary = service.extract_for_context(context)
+        self.assertFalse(summary.evidence_stage_budget_exhausted)
+        self.assertEqual(summary.budget_stop_reason, DOWNSTREAM_RESERVE_REASON)
+        self.assertEqual(summary.evidence_extracted, _DEFAULT_MAX_EVIDENCE_BEFORE_RESERVE)
+        self.assertEqual(summary.sources_processed, _DEFAULT_MAX_EVIDENCE_BEFORE_RESERVE)
+        stored = evidence_repo.list_for_project("project-1", workflow_run_id="run-reserve")
+        self.assertEqual(len(stored), _DEFAULT_MAX_EVIDENCE_BEFORE_RESERVE)
+
+    def test_call_forty_is_blocked_by_downstream_reserve(self) -> None:
+        _, context, _ = self._service_with_sources(source_count=1)
+        budget = context.execution_metadata["execution_budget"]
+        for _ in range(_DEFAULT_MAX_EVIDENCE_BEFORE_RESERVE):
+            budget.assert_can_call("evidence")
+            budget.record_llm_call("evidence")
+        with self.assertRaises(BudgetExhaustedError) as ctx:
+            budget.assert_can_call("evidence")
+        self.assertEqual(ctx.exception.reason, DOWNSTREAM_RESERVE_REASON)
+
+    def test_zero_valid_evidence_fails_on_downstream_reserve(self) -> None:
+        class _UngroundedBudgetedExtractor(_BudgetedCallExtractor):
+            def extract(self, *, source, design, run_context):
+                budget = _current_budget.get()
+                if budget is not None:
+                    budget.assert_can_call("evidence")
+                    budget.record_llm_call("evidence")
+                return [
+                    EvidenceCandidate(
+                        statement="Bad",
+                        source_excerpt="not in source",
+                        evidence_type=EvidenceType.DIRECT_EXCERPT.value,
+                        research_question_refs=run_context.research_question_ids
+                        or ("rq-1",),
+                        information_need_refs=run_context.information_need_ids
+                        or ("in-1",),
+                    ),
+                ]
+
+        service, context, _ = self._service_with_sources(
+            source_count=45,
+            extractor=_UngroundedBudgetedExtractor(),
+        )
+        with self.assertRaises(EvidenceExtractionError):
+            service.extract_for_context(context)
+
+    def test_input_token_exhaustion_still_fails(self) -> None:
+        service, context, _ = self._service_with_sources(source_count=3)
+        budget = context.execution_metadata["execution_budget"]
+        budget.max_input_tokens_per_run = 100
+        extractor = _TokenRecordingBudgetedExtractor(input_tokens=101)
+        service = EvidenceExtractionService(
+            evidence_extractor=extractor,
+            evidence_repository=InMemoryEvidenceRepository(),
+            source_repository=service._source_repository,
+        )
+        with self.assertRaises(BudgetExhaustedError) as ctx:
+            service.extract_for_context(context)
+        self.assertEqual(ctx.exception.reason, "max_input_tokens_per_run")
+
+    def test_output_token_exhaustion_still_fails(self) -> None:
+        service, context, _ = self._service_with_sources(source_count=3)
+        budget = context.execution_metadata["execution_budget"]
+        budget.max_output_tokens_per_run = 100
+        extractor = _TokenRecordingBudgetedExtractor(output_tokens=101)
+        service = EvidenceExtractionService(
+            evidence_extractor=extractor,
+            evidence_repository=InMemoryEvidenceRepository(),
+            source_repository=service._source_repository,
+        )
+        with self.assertRaises(BudgetExhaustedError) as ctx:
+            service.extract_for_context(context)
+        self.assertEqual(ctx.exception.reason, "max_output_tokens_per_run")
+
+    def test_targeted_extract_graceful_on_downstream_reserve_with_partial_evidence(
+        self,
+    ) -> None:
+        service, context, evidence_repo = self._service_with_sources(source_count=3)
+        budget = context.execution_metadata["execution_budget"]
+        for _ in range(_DEFAULT_MAX_EVIDENCE_BEFORE_RESERVE - 1):
+            budget.assert_can_call("evidence")
+            budget.record_llm_call("evidence")
+
+        summary = service.extract_for_source_ids(
+            context,
+            ("source-00", "source-01", "source-02"),
+        )
+        self.assertEqual(summary.evidence_extracted, 1)
+        self.assertEqual(summary.budget_stop_reason, DOWNSTREAM_RESERVE_REASON)
+        self.assertFalse(summary.evidence_stage_budget_exhausted)
+        self.assertEqual(
+            len(evidence_repo.list_for_project("project-1", workflow_run_id="run-reserve")),
+            1,
+        )
+
+    def test_targeted_extract_zero_new_evidence_fails_on_fatal_budget(self) -> None:
+        service, context, _ = self._service_with_sources(source_count=2)
+        budget = context.execution_metadata["execution_budget"]
+        budget._total_llm_calls = 100
+        budget._exhausted = True
+        budget._exhaustion_reason = "llm_max_calls_per_run"
+        budget._exhaustion_stage = "planner"
+
+        with self.assertRaises(BudgetExhaustedError) as ctx:
+            service.extract_for_source_ids(context, ("source-00",))
+        self.assertEqual(ctx.exception.reason, "llm_max_calls_per_run")
+
+    def test_targeted_extract_zero_new_evidence_fails_when_not_allow_empty(self) -> None:
+        class _UngroundedBudgetedExtractor(_BudgetedCallExtractor):
+            def extract(self, *, source, design, run_context):
+                budget = _current_budget.get()
+                if budget is not None:
+                    budget.assert_can_call("evidence")
+                    budget.record_llm_call("evidence")
+                return [
+                    EvidenceCandidate(
+                        statement="Bad",
+                        source_excerpt="not in source",
+                        evidence_type=EvidenceType.DIRECT_EXCERPT.value,
+                        research_question_refs=run_context.research_question_ids
+                        or ("rq-1",),
+                        information_need_refs=run_context.information_need_ids
+                        or ("in-1",),
+                    ),
+                ]
+
+        service, context, _ = self._service_with_sources(
+            source_count=2,
+            extractor=_UngroundedBudgetedExtractor(),
+        )
+        budget = context.execution_metadata["execution_budget"]
+        for _ in range(_DEFAULT_MAX_EVIDENCE_BEFORE_RESERVE):
+            budget.assert_can_call("evidence")
+            budget.record_llm_call("evidence")
+
+        with self.assertRaises(EvidenceExtractionError):
+            service.extract_for_source_ids(context, ("source-00",))
 
 
 if __name__ == "__main__":

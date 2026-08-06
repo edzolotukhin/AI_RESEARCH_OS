@@ -22,7 +22,10 @@ from application.evidence.provenance_validation import (
     validate_candidate_provenance,
 )
 from application.evidence.run_scoped_provenance import resolve_run_scoped_context
-from application.execution.budget_utils import is_evidence_stage_cap_exhaustion
+from application.execution.budget_utils import (
+    EVIDENCE_STAGE_CAP_REASON,
+    is_evidence_graceful_budget_stop,
+)
 from application.execution.exceptions import BudgetExhaustedError
 from application.execution.execution_budget_context import get_execution_budget
 from application.ports.evidence_ports import EvidenceExtractor, EvidenceRepository
@@ -42,9 +45,10 @@ class EvidenceExtractionSummary:
     extraction_failures: int
     sources_without_evidence: int
     evidence_stage_budget_exhausted: bool = False
+    budget_stop_reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "evidence_ids": list(self.evidence_ids),
             "sources_processed": self.sources_processed,
             "evidence_extracted": self.evidence_extracted,
@@ -52,6 +56,9 @@ class EvidenceExtractionSummary:
             "sources_without_evidence": self.sources_without_evidence,
             "evidence_stage_budget_exhausted": self.evidence_stage_budget_exhausted,
         }
+        if self.budget_stop_reason is not None:
+            payload["budget_stop_reason"] = self.budget_stop_reason
+        return payload
 
 
 class EvidenceExtractionService:
@@ -80,8 +87,17 @@ class EvidenceExtractionService:
         sources_without_evidence = 0
         sources_processed = 0
         evidence_stage_budget_exhausted = False
+        budget_stop_reason: str | None = None
 
         for source in sources:
+            stop_reason = self._next_evidence_budget_stop_reason()
+            if stop_reason is not None:
+                budget_stop_reason = stop_reason
+                evidence_stage_budget_exhausted = (
+                    stop_reason == EVIDENCE_STAGE_CAP_REASON
+                )
+                break
+
             try:
                 source_ids, source_extracted, source_failures, had_none = (
                     self._extract_from_source(
@@ -93,18 +109,28 @@ class EvidenceExtractionService:
                     )
                 )
             except BudgetExhaustedError as exc:
-                if is_evidence_stage_cap_exhaustion(exc):
-                    evidence_stage_budget_exhausted = True
-                    break
-                raise
+                stop_reason = self._graceful_budget_stop_reason(exc)
+                if stop_reason is None:
+                    raise
+                budget_stop_reason = stop_reason
+                evidence_stage_budget_exhausted = (
+                    stop_reason == EVIDENCE_STAGE_CAP_REASON
+                )
+                break
+
             sources_processed += 1
             evidence_ids.extend(source_ids)
             extracted += source_extracted
             failures += source_failures
             if had_none:
                 sources_without_evidence += 1
-            if self._evidence_stage_cap_reached():
-                evidence_stage_budget_exhausted = True
+
+            stop_reason = self._post_source_budget_stop_reason()
+            if stop_reason is not None:
+                budget_stop_reason = stop_reason
+                evidence_stage_budget_exhausted = (
+                    stop_reason == EVIDENCE_STAGE_CAP_REASON
+                )
                 break
 
         if extracted == 0:
@@ -119,6 +145,7 @@ class EvidenceExtractionService:
             extraction_failures=failures,
             sources_without_evidence=sources_without_evidence,
             evidence_stage_budget_exhausted=evidence_stage_budget_exhausted,
+            budget_stop_reason=budget_stop_reason,
         )
 
     def extract_for_source_ids(
@@ -152,11 +179,21 @@ class EvidenceExtractionService:
         sources_without_evidence = 0
         sources_processed = 0
         evidence_stage_budget_exhausted = False
+        budget_stop_reason: str | None = None
 
         for source_id in source_ids:
             source = eligible.get(source_id)
             if source is None:
                 continue
+
+            stop_reason = self._next_evidence_budget_stop_reason()
+            if stop_reason is not None:
+                budget_stop_reason = stop_reason
+                evidence_stage_budget_exhausted = (
+                    stop_reason == EVIDENCE_STAGE_CAP_REASON
+                )
+                break
+
             try:
                 source_evidence_ids, source_extracted, source_failures, had_none = (
                     self._extract_from_source(
@@ -168,18 +205,28 @@ class EvidenceExtractionService:
                     )
                 )
             except BudgetExhaustedError as exc:
-                if is_evidence_stage_cap_exhaustion(exc):
-                    evidence_stage_budget_exhausted = True
-                    break
-                raise
+                stop_reason = self._graceful_budget_stop_reason(exc)
+                if stop_reason is None:
+                    raise
+                budget_stop_reason = stop_reason
+                evidence_stage_budget_exhausted = (
+                    stop_reason == EVIDENCE_STAGE_CAP_REASON
+                )
+                break
+
             sources_processed += 1
             evidence_ids.extend(source_evidence_ids)
             extracted += source_extracted
             failures += source_failures
             if had_none:
                 sources_without_evidence += 1
-            if self._evidence_stage_cap_reached():
-                evidence_stage_budget_exhausted = True
+
+            stop_reason = self._post_source_budget_stop_reason()
+            if stop_reason is not None:
+                budget_stop_reason = stop_reason
+                evidence_stage_budget_exhausted = (
+                    stop_reason == EVIDENCE_STAGE_CAP_REASON
+                )
                 break
 
         if extracted == 0 and not allow_empty:
@@ -195,6 +242,7 @@ class EvidenceExtractionService:
             extraction_failures=failures,
             sources_without_evidence=sources_without_evidence,
             evidence_stage_budget_exhausted=evidence_stage_budget_exhausted,
+            budget_stop_reason=budget_stop_reason,
         )
 
     def _resolve_design(self, context: WorkflowContext) -> ResearchDesign:
@@ -246,7 +294,7 @@ class EvidenceExtractionService:
                 run_context=run_context,
             )
         except BudgetExhaustedError as exc:
-            if is_evidence_stage_cap_exhaustion(exc):
+            if is_evidence_graceful_budget_stop(exc):
                 return evidence_ids, extracted, failures, extracted == 0
             raise
         except Exception:
@@ -276,6 +324,32 @@ class EvidenceExtractionService:
             extracted += 1
 
         return evidence_ids, extracted, failures, extracted == 0
+
+    @staticmethod
+    def _graceful_budget_stop_reason(exc: BudgetExhaustedError) -> str | None:
+        if is_evidence_graceful_budget_stop(exc):
+            return exc.reason
+        return None
+
+    @classmethod
+    def _next_evidence_budget_stop_reason(cls) -> str | None:
+        budget = get_execution_budget()
+        if budget is None:
+            return None
+        try:
+            budget.assert_can_call("evidence")
+        except BudgetExhaustedError as exc:
+            reason = cls._graceful_budget_stop_reason(exc)
+            if reason is not None:
+                return reason
+            raise
+        return None
+
+    @classmethod
+    def _post_source_budget_stop_reason(cls) -> str | None:
+        if cls._evidence_stage_cap_reached():
+            return EVIDENCE_STAGE_CAP_REASON
+        return cls._next_evidence_budget_stop_reason()
 
     @staticmethod
     def _evidence_stage_cap_reached() -> bool:

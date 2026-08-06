@@ -345,12 +345,13 @@ class StageReservationTests(unittest.TestCase):
         budget = ExecutionBudget(
             llm_max_calls_per_run=100,
             evidence_max_llm_calls=100,
+            sufficiency_max_llm_calls=20,
             analysis_max_llm_calls=14,
             report_max_llm_calls=20,
             review_max_llm_calls=7,
         )
         set_execution_stage("evidence")
-        downstream_reserve = 14 + 20 + 7
+        downstream_reserve = 20 + 14 + 20 + 7
         max_evidence_global = 100 - downstream_reserve
 
         for _ in range(max_evidence_global):
@@ -360,6 +361,7 @@ class StageReservationTests(unittest.TestCase):
         with self.assertRaises(BudgetExhaustedError) as ctx:
             budget.assert_can_call("evidence")
         self.assertEqual(ctx.exception.reason, "downstream_reserve_exhausted")
+        self.assertEqual(max_evidence_global, 39)
 
     def test_evidence_stage_cap_blocks_at_limit(self) -> None:
         budget = ExecutionBudget(
@@ -713,6 +715,453 @@ class EvidenceStageCapWorkflowTests(unittest.TestCase):
         self.assertIsNone(usage.exhaustion_reason)
         self.assertTrue(usage.stages["evidence"].stage_cap_reached)
         self.assertEqual(usage.stages["evidence"].llm_calls, 2)
+
+
+class DownstreamReserveWorkflowTests(unittest.TestCase):
+    def test_workflow_proceeds_to_readiness_after_downstream_reserve(self) -> None:
+        from datetime import datetime, timezone
+
+        from domain.planning.research_design import InformationNeed
+        from domain.sources.retrieval_status import RetrievalStatus
+        from domain.sources.source import Source
+
+        from application.evidence.run_scoped_provenance import RunScopedSourceContext
+        from application.execution.budget_utils import DOWNSTREAM_RESERVE_REASON
+        from application.execution.execution_budget_context import _current_budget
+        from application.executors.research_readiness_executor import ResearchReadinessExecutor
+        from application.ports.evidence_ports import EvidenceCandidate, EvidenceExtractor
+        from application.research_quality.research_readiness_service import (
+            ResearchReadinessService,
+        )
+        from tests.application.research_quality.test_research_readiness_gate import (
+            StubEvidenceRepository,
+            StubSufficiencyEvaluator,
+            _ready_result,
+        )
+
+        class _BudgetedCallExtractor(EvidenceExtractor):
+            method_name = "budgeted"
+
+            def extract(self, *, source, design, run_context: RunScopedSourceContext):
+                budget = _current_budget.get()
+                if budget is not None:
+                    budget.assert_can_call("evidence")
+                    budget.record_llm_call("evidence")
+                return [
+                    EvidenceCandidate(
+                        statement=f"Evidence from {source.id}",
+                        source_excerpt=source.content_text[:40],
+                        evidence_type=EvidenceType.DIRECT_EXCERPT.value,
+                        research_question_refs=run_context.research_question_ids
+                        or ("RQ1",),
+                        information_need_refs=run_context.information_need_ids
+                        or ("in-1",),
+                    ),
+                ]
+
+        design = ResearchDesign(
+            id="design-reserve-flow",
+            research_questions=(
+                ResearchQuestion(
+                    id="RQ1",
+                    question="Question?",
+                    objective_refs=("obj-1",),
+                    priority=1,
+                    rationale="",
+                ),
+            ),
+            information_needs=(
+                InformationNeed(
+                    id="in-1",
+                    research_question_id="RQ1",
+                    description="Need",
+                ),
+            ),
+            source_strategy=("web",),
+            analysis_plan=("analyze",),
+            deliverable_plan=("report",),
+            assumptions=(),
+            limitations=(),
+            language="en",
+        )
+        template = WorkflowTemplate(id="template-reserve-flow", name="Reserve Flow")
+        template.research_design_snapshot = design
+        template.research_brief_snapshot = ResearchBrief(
+            title="Reserve",
+            business_question="Assessment",
+        )
+        project = ProjectFactory().create("Reserve Flow Project")
+        evidence_task = make_task(
+            "task-extract-evidence",
+            task_id="task-evidence",
+            executor_id="evidence",
+            status=TaskStatus.READY,
+        )
+        readiness_task = make_task(
+            "task-assess-research-readiness",
+            task_id="task-readiness",
+            executor_id="research_quality",
+            depends_on=["task-extract-evidence"],
+            status=TaskStatus.WAITING,
+        )
+        analysis_task = make_task(
+            "task-analyze",
+            task_id="task-analysis",
+            executor_id="analysis",
+            depends_on=["task-assess-research-readiness"],
+            status=TaskStatus.WAITING,
+        )
+        workflow_run = make_workflow_run(
+            evidence_task,
+            readiness_task,
+            analysis_task,
+            run_id="run-reserve-flow",
+            template_id="template-reserve-flow",
+        )
+        workflow_run.project_id = project.id
+        context = WorkflowContext(
+            project=project,
+            workflow_run=workflow_run,
+            workflow_template=template,
+        )
+
+        source_repo = InMemorySourceRepository()
+        evidence_repo = InMemoryEvidenceRepository()
+        now = datetime.now(timezone.utc).isoformat()
+        for index in range(45):
+            source_repo.create(
+                Source(
+                    id=f"source-{index:02d}",
+                    project_id=project.id,
+                    url=f"https://example.com/{index}",
+                    canonical_url=f"https://example.com/{index}",
+                    title=f"Source {index}",
+                    retrieved_at=now,
+                    retrieval_status=RetrievalStatus.ACQUIRED,
+                    content_text=f"Acquired market report body text {index}.",
+                    content_checksum=f"checksum-{index}",
+                    workflow_run_refs=(workflow_run.id,),
+                    research_design_refs=(design.id,),
+                    information_need_refs=("in-1",),
+                    research_question_refs=("RQ1",),
+                    metadata={
+                        "discovery_records": [
+                            {
+                                "provider": "deterministic",
+                                "query_id": "sq-in-1",
+                                "rank": 1,
+                                "workflow_run_id": workflow_run.id,
+                                "research_design_id": design.id,
+                            },
+                        ],
+                    },
+                ),
+            )
+
+        evidence_service = EvidenceExtractionService(
+            evidence_extractor=_BudgetedCallExtractor(),
+            evidence_repository=evidence_repo,
+            source_repository=source_repo,
+        )
+        evaluator = StubSufficiencyEvaluator(_ready_result())
+        readiness_ran = {"value": False}
+
+        class _RecordingReadinessExecutor:
+            def __init__(self) -> None:
+                self._inner = ResearchReadinessExecutor(
+                    research_readiness_service=ResearchReadinessService(
+                        evaluator=evaluator,
+                        evidence_repository=evidence_repo,
+                    ),
+                )
+
+            def run(self, ctx: WorkflowContext) -> WorkflowContext:
+                readiness_ran["value"] = True
+                return self._inner.run(ctx)
+
+        analysis_ran = {"value": False}
+
+        class _RecordingAnalysisExecutor:
+            def run(self, ctx: WorkflowContext) -> WorkflowContext:
+                analysis_ran["value"] = True
+                return ctx
+
+        engine = WorkflowEngine(
+            scheduler=TaskScheduler(),
+            task_executor=TaskExecutor(
+                _ReserveFlowResolver(
+                    evidence_service,
+                    _RecordingReadinessExecutor(),
+                    _RecordingAnalysisExecutor(),
+                ),
+                TaskLifecycleManager(),
+            ),
+            completion_policy=WorkflowCompletionPolicy(),
+        )
+
+        budget = ExecutionBudget(
+            llm_max_calls_per_run=100,
+            evidence_max_llm_calls=100,
+            sufficiency_max_llm_calls=20,
+            analysis_max_llm_calls=14,
+            report_max_llm_calls=20,
+            review_max_llm_calls=7,
+        )
+        ensure_run_budget(context)
+        context.execution_metadata[EXECUTION_BUDGET_KEY] = budget
+        token = _current_budget.set(budget)
+        try:
+            result = engine.run(context)
+        finally:
+            _current_budget.reset(token)
+
+        self.assertTrue(readiness_ran["value"])
+        self.assertTrue(analysis_ran["value"])
+        evidence_summary = result.shared_state["evidence_extraction"]
+        self.assertFalse(evidence_summary["evidence_stage_budget_exhausted"])
+        self.assertEqual(evidence_summary["budget_stop_reason"], DOWNSTREAM_RESERVE_REASON)
+        self.assertEqual(evidence_summary["evidence_extracted"], 39)
+        usage = finalize_run_budget(result)
+        assert usage is not None
+        self.assertFalse(usage.budget_exhausted)
+        self.assertIsNone(usage.exhaustion_reason)
+
+    def test_analysis_skipped_when_readiness_not_ready_after_partial_evidence(self) -> None:
+        from datetime import datetime, timezone
+
+        from domain.planning.research_design import InformationNeed
+        from domain.sources.retrieval_status import RetrievalStatus
+        from domain.sources.source import Source
+
+        from application.evidence.run_scoped_provenance import RunScopedSourceContext
+        from application.execution.execution_budget_context import _current_budget
+        from application.executors.research_readiness_executor import ResearchReadinessExecutor
+        from application.ports.evidence_ports import EvidenceCandidate, EvidenceExtractor
+        from application.research_quality.research_readiness_service import (
+            ResearchReadinessService,
+        )
+        from tests.application.research_quality.test_research_readiness_gate import (
+            _missing_result,
+            _ready_result,
+        )
+
+        class _PartialCoverageEvaluator:
+            """NOT READY when in-2 has no evidence (partial in-1 coverage only)."""
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def evaluate(self, *, design, evidence):
+                self.calls += 1
+                covered = {
+                    need_id
+                    for item in evidence
+                    for need_id in item.information_need_refs
+                }
+                if "in-2" in covered:
+                    return _ready_result()
+                return _missing_result()
+
+        class _BudgetedCallExtractor(EvidenceExtractor):
+            method_name = "budgeted"
+
+            def extract(self, *, source, design, run_context: RunScopedSourceContext):
+                budget = _current_budget.get()
+                if budget is not None:
+                    budget.assert_can_call("evidence")
+                    budget.record_llm_call("evidence")
+                return [
+                    EvidenceCandidate(
+                        statement=f"Evidence from {source.id}",
+                        source_excerpt=source.content_text[:40],
+                        evidence_type=EvidenceType.DIRECT_EXCERPT.value,
+                        research_question_refs=run_context.research_question_ids
+                        or ("RQ1",),
+                        information_need_refs=run_context.information_need_ids
+                        or ("in-1",),
+                    ),
+                ]
+
+        design = ResearchDesign(
+            id="design-partial-flow",
+            research_questions=(
+                ResearchQuestion(
+                    id="RQ1",
+                    question="Question?",
+                    objective_refs=("obj-1",),
+                    priority=1,
+                    rationale="",
+                ),
+                ResearchQuestion(
+                    id="RQ2",
+                    question="Other?",
+                    objective_refs=("obj-2",),
+                    priority=2,
+                    rationale="",
+                ),
+            ),
+            information_needs=(
+                InformationNeed(
+                    id="in-1",
+                    research_question_id="RQ1",
+                    description="Need one",
+                ),
+                InformationNeed(
+                    id="in-2",
+                    research_question_id="RQ2",
+                    description="Need two",
+                ),
+            ),
+            source_strategy=("web",),
+            analysis_plan=("analyze",),
+            deliverable_plan=("report",),
+            assumptions=(),
+            limitations=(),
+            language="en",
+        )
+        template = WorkflowTemplate(id="template-partial-flow", name="Partial Flow")
+        template.research_design_snapshot = design
+        template.research_brief_snapshot = ResearchBrief(
+            title="Partial",
+            business_question="Assessment",
+        )
+        project = ProjectFactory().create("Partial Flow Project")
+        evidence_task = make_task(
+            "task-extract-evidence",
+            task_id="task-evidence",
+            executor_id="evidence",
+            status=TaskStatus.READY,
+        )
+        readiness_task = make_task(
+            "task-assess-research-readiness",
+            task_id="task-readiness",
+            executor_id="research_quality",
+            depends_on=["task-extract-evidence"],
+            status=TaskStatus.WAITING,
+        )
+        analysis_task = make_task(
+            "task-analyze",
+            task_id="task-analysis",
+            executor_id="analysis",
+            depends_on=["task-assess-research-readiness"],
+            status=TaskStatus.WAITING,
+        )
+        workflow_run = make_workflow_run(
+            evidence_task,
+            readiness_task,
+            analysis_task,
+            run_id="run-partial-flow",
+            template_id="template-partial-flow",
+        )
+        workflow_run.project_id = project.id
+        context = WorkflowContext(
+            project=project,
+            workflow_run=workflow_run,
+            workflow_template=template,
+        )
+
+        source_repo = InMemorySourceRepository()
+        evidence_repo = InMemoryEvidenceRepository()
+        now = datetime.now(timezone.utc).isoformat()
+        for index in range(45):
+            source_repo.create(
+                Source(
+                    id=f"source-{index:02d}",
+                    project_id=project.id,
+                    url=f"https://example.com/{index}",
+                    canonical_url=f"https://example.com/{index}",
+                    title=f"Source {index}",
+                    retrieved_at=now,
+                    retrieval_status=RetrievalStatus.ACQUIRED,
+                    content_text=f"Acquired market report body text {index}.",
+                    content_checksum=f"checksum-{index}",
+                    workflow_run_refs=(workflow_run.id,),
+                    research_design_refs=(design.id,),
+                    information_need_refs=("in-1",),
+                    research_question_refs=("RQ1",),
+                    metadata={
+                        "discovery_records": [
+                            {
+                                "provider": "deterministic",
+                                "query_id": "sq-in-1",
+                                "rank": 1,
+                                "workflow_run_id": workflow_run.id,
+                                "research_design_id": design.id,
+                            },
+                        ],
+                    },
+                ),
+            )
+
+        evidence_service = EvidenceExtractionService(
+            evidence_extractor=_BudgetedCallExtractor(),
+            evidence_repository=evidence_repo,
+            source_repository=source_repo,
+        )
+        evaluator = _PartialCoverageEvaluator()
+        readiness = ResearchReadinessExecutor(
+            research_readiness_service=ResearchReadinessService(
+                evaluator=evaluator,
+                evidence_repository=evidence_repo,
+            ),
+        )
+        analysis_ran = {"value": False}
+
+        class _RecordingAnalysisExecutor:
+            def run(self, ctx: WorkflowContext) -> WorkflowContext:
+                analysis_ran["value"] = True
+                return ctx
+
+        engine = WorkflowEngine(
+            scheduler=TaskScheduler(),
+            task_executor=TaskExecutor(
+                _ReserveFlowResolver(
+                    evidence_service,
+                    readiness,
+                    _RecordingAnalysisExecutor(),
+                ),
+                TaskLifecycleManager(),
+            ),
+            completion_policy=WorkflowCompletionPolicy(),
+        )
+
+        budget = ExecutionBudget(
+            llm_max_calls_per_run=100,
+            evidence_max_llm_calls=100,
+            sufficiency_max_llm_calls=20,
+            analysis_max_llm_calls=14,
+            report_max_llm_calls=20,
+            review_max_llm_calls=7,
+        )
+        ensure_run_budget(context)
+        context.execution_metadata[EXECUTION_BUDGET_KEY] = budget
+        token = _current_budget.set(budget)
+        try:
+            result = engine.run(context)
+        finally:
+            _current_budget.reset(token)
+
+        self.assertFalse(analysis_ran["value"])
+        self.assertEqual(evaluator.calls, 1)
+        readiness_payload = result.shared_state.get("research_readiness")
+        self.assertIsNotNone(readiness_payload)
+        self.assertFalse(readiness_payload["ready_for_analysis"])
+
+
+class _ReserveFlowResolver:
+    def __init__(self, evidence_service, readiness_executor, analysis_executor) -> None:
+        self._evidence = EvidenceExecutor(evidence_extraction_service=evidence_service)
+        self._readiness = readiness_executor
+        self._analysis = analysis_executor
+
+    def resolve(self, task: Task):
+        if task.executor_id == "evidence":
+            return self._evidence
+        if task.executor_id == "research_quality":
+            return self._readiness
+        if task.executor_id == "analysis":
+            return self._analysis
+        raise AssertionError(f"unexpected executor {task.executor_id}")
 
 
 class _CapFlowResolver:

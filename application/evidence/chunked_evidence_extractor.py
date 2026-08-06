@@ -11,7 +11,7 @@ from application.evidence.content_chunking import (
     split_normalized_source_content,
 )
 from application.evidence.run_scoped_provenance import RunScopedSourceContext
-from application.execution.budget_utils import is_evidence_stage_cap_exhaustion
+from application.execution.budget_utils import is_evidence_graceful_budget_stop
 from application.execution.exceptions import BudgetExhaustedError
 from application.ports.evidence_ports import EvidenceCandidate, EvidenceExtractor
 
@@ -66,7 +66,7 @@ class ChunkedEvidenceExtractor:
                     run_context=run_context,
                 )
             except BudgetExhaustedError as exc:
-                if is_evidence_stage_cap_exhaustion(exc):
+                if is_evidence_graceful_budget_stop(exc):
                     return candidates
                 raise
             except Exception:
