@@ -119,3 +119,36 @@ Ports:
 - Runtime composition root wiring
 - New execution budget stage
 - DB persistence or API exposure
+
+## RQCL v1 — Research Readiness Gate (P1-04)
+
+**Status:** Accepted (wired into Desk Research workflow)
+
+### Decision
+
+Insert `task-assess-research-readiness` after evidence extraction and before
+analysis in `ResearchDesignWorkflowMapper`.
+
+Runtime path:
+
+`Evidence` → `ResearchReadinessExecutor` → gate → `Analysis` (if ready)
+
+Key invariants:
+
+- **Gate adapter vs evaluator:** `HybridResearchSufficiencyEvaluator` remains
+  domain logic; `ResearchReadinessExecutor` is workflow adapter
+- **Not ready ≠ failure:** readiness task completes; downstream
+  analysis/report/review tasks are `SKIPPED`; workflow `COMPLETED`
+- **Outcome channel:** `shared_state.research_readiness.research_outcome`
+  distinguishes `ready_for_analysis` vs `insufficient_research`
+- **Budget stage:** semantic sufficiency LLM calls use explicit `sufficiency`
+  stage (`sufficiency_max_llm_calls`)
+- **Technical failures:** provider/budget/structured-output errors fail the
+  readiness task normally (`FAILED` workflow)
+
+### Non-goals (P1-04)
+
+- Targeted research loop
+- Analysis/Report/Review contract changes
+- Adaptive budget
+- New WorkflowStatus enum value

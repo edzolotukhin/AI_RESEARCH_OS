@@ -58,6 +58,7 @@ class ApplicationConfig:
     search_provider: str = "tavily"
     search_api_key: str | None = None
     evidence_extractor: str = "llm"
+    research_sufficiency_assessor: str = "llm"
     evidence_extraction_chunk_chars: int = DEFAULT_EVIDENCE_EXTRACTION_CHUNK_CHARS
     evidence_extraction_chunk_overlap_chars: int = (
         DEFAULT_EVIDENCE_EXTRACTION_CHUNK_OVERLAP_CHARS
@@ -97,6 +98,7 @@ class ApplicationConfig:
     review_max_calls: int = 7
     report_max_llm_calls: int = 20
     evidence_max_llm_calls: int = 50
+    sufficiency_max_llm_calls: int = 20
     analysis_max_llm_calls: int = 14
     llm_max_calls_per_run: int = 100
     evidence_max_items_per_run: int = 500
@@ -132,6 +134,10 @@ class ApplicationConfig:
             search_provider=os.environ.get("SEARCH_PROVIDER", "tavily"),
             search_api_key=os.environ.get("SEARCH_API_KEY"),
             evidence_extractor=os.environ.get("EVIDENCE_EXTRACTOR", "llm"),
+            research_sufficiency_assessor=os.environ.get(
+                "RESEARCH_SUFFICIENCY_ASSESSOR",
+                "llm",
+            ),
             evidence_extraction_chunk_chars=int(
                 os.environ.get(
                     "EVIDENCE_EXTRACTION_CHUNK_CHARS",
@@ -274,6 +280,9 @@ class ApplicationConfig:
             review_max_calls=int(os.environ.get("REVIEW_MAX_CALLS", "7")),
             report_max_llm_calls=int(os.environ.get("REPORT_MAX_LLM_CALLS", "20")),
             evidence_max_llm_calls=int(os.environ.get("EVIDENCE_MAX_LLM_CALLS", "50")),
+            sufficiency_max_llm_calls=int(
+                os.environ.get("SUFFICIENCY_MAX_LLM_CALLS", "20"),
+            ),
             analysis_max_llm_calls=int(os.environ.get("ANALYSIS_MAX_LLM_CALLS", "14")),
             llm_max_calls_per_run=int(os.environ.get("LLM_MAX_CALLS_PER_RUN", "100")),
             evidence_max_items_per_run=int(
@@ -317,3 +326,5 @@ class ApplicationOverrides:
     review_engine: SemanticReviewEngine | None = None
     review_repository: Any | None = None
     review_executor: Any | None = None
+    research_sufficiency_evaluator: Any | None = None
+    research_readiness_executor: Any | None = None

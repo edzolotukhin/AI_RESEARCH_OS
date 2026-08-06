@@ -18,6 +18,7 @@ class ExecutorCatalogTests(unittest.TestCase):
                 "planner",
                 "search",
                 "evidence",
+                "research_quality",
                 "analysis",
                 "report",
                 "review",

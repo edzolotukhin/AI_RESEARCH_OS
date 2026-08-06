@@ -31,6 +31,7 @@ class EvidenceApiTests(unittest.TestCase):
                     deterministic_stage_executors=False,
                     search_provider="deterministic",
                     evidence_extractor="deterministic",
+                    research_sufficiency_assessor="deterministic",
                     analysis_engine="deterministic",
                     report_engine="deterministic",
                     review_engine="deterministic",

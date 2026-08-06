@@ -96,7 +96,7 @@ class PlannerAgentTests(unittest.TestCase):
         )
         self.assertEqual(
         len(result.workflow_template.task_definitions),
-        5,
+        6,
         )
         self.assertIsNotNone(result.workflow_template.research_design_snapshot)
         self.llm_client.generate.assert_called_once()

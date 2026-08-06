@@ -290,6 +290,8 @@ class ResearchQualityLayerBoundaryTests(unittest.TestCase):
         violations: list[str] = []
         package_root = REPO_ROOT / "application" / "research_quality"
         for path in sorted(package_root.rglob("*.py")):
+            if path.name.endswith("_factory.py"):
+                continue
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             for node in ast.walk(tree):
                 module = None

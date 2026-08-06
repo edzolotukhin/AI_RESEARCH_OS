@@ -7,6 +7,7 @@ from application.execution.exceptions import BudgetExhaustedError
 
 _STAGE_LLM_CALL_LIMITS: dict[str, str] = {
     "evidence": "evidence_max_llm_calls",
+    "sufficiency": "sufficiency_max_llm_calls",
     "analysis": "analysis_max_llm_calls",
     "report": "report_max_llm_calls",
     "review": "review_max_llm_calls",
@@ -45,6 +46,7 @@ class ExecutionBudget:
     analysis_max_insights: int = 30
     report_max_sections: int = 12
     evidence_max_llm_calls: int = 50
+    sufficiency_max_llm_calls: int = 20
     analysis_max_llm_calls: int = 14
     report_max_llm_calls: int = 20
     review_max_llm_calls: int = 7
@@ -83,6 +85,11 @@ class ExecutionBudget:
         """Reserve capacity for stages that have not run yet."""
         reserve = 0
         if stage in {"planner", "search", "evidence"}:
+            reserve += self.sufficiency_max_llm_calls
+            reserve += self.analysis_max_llm_calls
+            reserve += self.report_max_llm_calls
+            reserve += self.review_max_llm_calls
+        elif stage == "sufficiency":
             reserve += self.analysis_max_llm_calls
             reserve += self.report_max_llm_calls
             reserve += self.review_max_llm_calls
@@ -115,6 +122,8 @@ class ExecutionBudget:
         stage_calls = self.stage_calls(stage)
         if stage == "evidence" and stage_calls >= self.evidence_max_llm_calls:
             raise BudgetExhaustedError("evidence_max_llm_calls", stage=stage)
+        if stage == "sufficiency" and stage_calls >= self.sufficiency_max_llm_calls:
+            raise BudgetExhaustedError("sufficiency_max_llm_calls", stage=stage)
         if stage == "analysis" and stage_calls >= self.analysis_max_llm_calls:
             raise BudgetExhaustedError("analysis_max_llm_calls", stage=stage)
         if stage == "report" and stage_calls >= self.report_max_llm_calls:

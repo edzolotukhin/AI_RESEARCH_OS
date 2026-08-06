@@ -62,8 +62,8 @@ class LlmSemanticSufficiencyAssessor(SemanticSufficiencyAssessor):
         deterministic_signals: DeterministicSufficiencySignals,
     ) -> SemanticSufficiencyAssessment:
         prompt = Prompt(
-            system=self._system_prompt(),
-            user=self._build_user_payload(
+            system=_system_prompt(),
+            user=_build_user_payload(
                 research_question=research_question,
                 information_need=information_need,
                 evidence=evidence,

@@ -24,6 +24,7 @@ _current_stage: ContextVar[str | None] = ContextVar(
 
 EXECUTOR_STAGE_MAP: dict[str, str] = {
     "evidence": "evidence",
+    "research_quality": "sufficiency",
     "analysis": "analysis",
     "report": "report",
     "review": "review",

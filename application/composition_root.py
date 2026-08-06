@@ -58,6 +58,9 @@ from application.evidence.evidence_factory import build_evidence_executor
 from application.analysis.analysis_factory import build_analysis_executor
 from application.report.report_factory import build_report_executor
 from application.review.review_factory import build_review_executor
+from application.research_quality.research_quality_factory import (
+    build_research_readiness_executor,
+)
 from application.sources.search_factory import build_search_executor
 from application.structured_output.correction_prompt import (
     RESEARCH_DESIGN_PAYLOAD_SCHEMA,
@@ -433,11 +436,19 @@ def _build_agent_executors(
         for executor_id, stage_key in (
             ("search", "collect_sources"),
             ("evidence", "extract_evidence"),
+            ("research_quality", "assess_research_readiness"),
             ("analysis", "analyze"),
             ("report", "write_report"),
             ("review", "review_report"),
         ):
-            executors[executor_id] = DeterministicStageExecutor(stage_key=stage_key)
+            if executor_id == "research_quality":
+                from application.executors.deterministic_research_readiness_executor import (
+                    DeterministicResearchReadinessExecutor,
+                )
+
+                executors[executor_id] = DeterministicResearchReadinessExecutor()
+            else:
+                executors[executor_id] = DeterministicStageExecutor(stage_key=stage_key)
         return executors
 
     executors["search"] = build_search_executor(
@@ -450,6 +461,12 @@ def _build_agent_executors(
         overrides=overrides,
         evidence_repository=evidence_repository,
         source_repository=source_repository,
+        llm_client=llm_client,
+    )
+    executors["research_quality"] = build_research_readiness_executor(
+        config=config,
+        overrides=overrides,
+        evidence_repository=evidence_repository,
         llm_client=llm_client,
     )
     executors["analysis"] = build_analysis_executor(

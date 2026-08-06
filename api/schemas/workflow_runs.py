@@ -169,6 +169,7 @@ class WorkflowRunResultsResponse(BaseModel):
     is_terminal: bool
     results_ready: bool
     task_results: list[TaskResultItem]
+    research_readiness: dict[str, Any] | None = None
 
 
 class ExecutionLogResponse(BaseModel):

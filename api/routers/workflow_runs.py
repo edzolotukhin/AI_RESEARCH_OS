@@ -27,6 +27,7 @@ from application.persistence.exceptions import (
 )
 from application.research.brief_normalizer import normalize_research_brief_payload
 from application.research.brief_validator import validate_research_brief
+from application.research_quality.readiness_result_codec import extract_research_readiness
 from application.runtime.background_execution_capability import (
     requires_http_background_submission,
 )
@@ -900,6 +901,7 @@ def get_workflow_run_results(
         is_terminal=workflow_run.is_terminal,
         results_ready=results_ready,
         task_results=task_results_to_response(run_id, task_results),
+        research_readiness=extract_research_readiness(task_results),
     )
 
 

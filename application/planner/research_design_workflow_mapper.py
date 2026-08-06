@@ -22,6 +22,7 @@ class ResearchDesignWorkflowMapper:
 
     _TASK_COLLECT = "task-collect-evidence"
     _TASK_EXTRACT = "task-extract-evidence"
+    _TASK_ASSESS = "task-assess-research-readiness"
     _TASK_ANALYZE = "task-analyze"
     _TASK_REPORT = "task-write-report"
     _TASK_REVIEW = "task-review-report"
@@ -70,11 +71,26 @@ class ResearchDesignWorkflowMapper:
             },
         )
         builder.add_task(
+            id=self._TASK_ASSESS,
+            name="Assess research readiness",
+            executor_id="research_quality",
+            executor_type=ExecutorType.AGENT,
+            depends_on=[self._TASK_EXTRACT],
+            metadata={
+                "stage_id": "stage-desk-research",
+                "stage_name": "Desk Research",
+                "project_id": project.id,
+                "research_design_id": design.id,
+                "purpose": "assess_research_readiness",
+                "implementation_status": "implemented",
+            },
+        )
+        builder.add_task(
             id=self._TASK_ANALYZE,
             name="Analyze findings",
             executor_id="analysis",
             executor_type=ExecutorType.AGENT,
-            depends_on=[self._TASK_EXTRACT],
+            depends_on=[self._TASK_ASSESS],
             metadata={
                 "stage_id": "stage-desk-research",
                 "stage_name": "Desk Research",

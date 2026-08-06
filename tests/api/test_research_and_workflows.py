@@ -76,6 +76,7 @@ class ResearchEndpointTests(ApiTestCase):
                         deterministic_stage_executors=False,
                         search_provider="deterministic",
                         evidence_extractor="deterministic",
+                        research_sufficiency_assessor="deterministic",
                         analysis_engine="deterministic",
                         report_engine="deterministic",
                         review_engine="deterministic",
@@ -111,6 +112,7 @@ class ResearchEndpointTests(ApiTestCase):
                     }
                     self.assertEqual(tasks["task-collect-evidence"], "completed")
                     self.assertEqual(tasks["task-extract-evidence"], "completed")
+                    self.assertEqual(tasks["task-assess-research-readiness"], "completed")
                     self.assertEqual(tasks["task-analyze"], "completed")
                     self.assertEqual(tasks["task-write-report"], "completed")
                     self.assertEqual(tasks["task-review-report"], "completed")

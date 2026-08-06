@@ -186,9 +186,9 @@ class AgencyStartResearchTests(unittest.TestCase):
 
         self.assertIsInstance(context, WorkflowContext)
         self.assertIsNotNone(context.workflow_template)
-        self.assertEqual(len(context.workflow_template.task_definitions), 5)
+        self.assertEqual(len(context.workflow_template.task_definitions), 6)
         self.assertIsNotNone(context.workflow_run)
-        self.assertEqual(len(context.workflow_run.tasks), 5)
+        self.assertEqual(len(context.workflow_run.tasks), 6)
         mock_llm.generate.assert_called()
 
     def test_start_research_retries_after_truncated_planner_response(self):
@@ -233,7 +233,7 @@ class AgencyStartResearchTests(unittest.TestCase):
 
         self.assertIsInstance(context, WorkflowContext)
         self.assertIsNotNone(context.workflow_template)
-        self.assertEqual(len(context.workflow_template.task_definitions), 5)
+        self.assertEqual(len(context.workflow_template.task_definitions), 6)
         self.assertGreaterEqual(mock_llm.generate.call_count, 2)
         self.assertLessEqual(mock_llm.generate.call_count, 4)
 

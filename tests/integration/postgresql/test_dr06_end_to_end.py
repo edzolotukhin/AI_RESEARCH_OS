@@ -58,6 +58,7 @@ class Dr06EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
         tasks = {task["definition_id"]: task["status"] for task in terminal["tasks"]}
         self.assertEqual(tasks["task-collect-evidence"], "completed")
         self.assertEqual(tasks["task-extract-evidence"], "completed")
+        self.assertEqual(tasks["task-assess-research-readiness"], "completed")
         self.assertEqual(tasks["task-analyze"], "completed")
         self.assertEqual(tasks["task-write-report"], "completed")
         self.assertEqual(tasks["task-review-report"], "completed")
