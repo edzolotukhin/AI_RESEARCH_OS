@@ -7,6 +7,7 @@ from application.ports.workflow_runtime_checkpoint import WorkflowRuntimeCheckpo
 from application.runtime.durable_fingerprint import durable_recovery_fingerprint
 from application.runtime.task_result_codec import capture_task_result
 from application.runtime.workflow_execution_audit import WorkflowExecutionAudit
+from application.execution.execution_budget_context import RUN_USAGE_SUMMARY_KEY
 from application.scheduling.scheduling_result import SchedulingResult
 from application.services.workflow_service import WorkflowService
 from domain.value_objects.task_status import TaskStatus
@@ -81,6 +82,13 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
         *,
         error: BaseException | None,
     ) -> None:
+        usage = context.execution_metadata.get(RUN_USAGE_SUMMARY_KEY)
+        if usage is not None and hasattr(usage, "to_dict"):
+            self._task_results["_run_usage_summary"] = usage.to_dict()
+        elif isinstance(context.shared_state.get("run_usage_summary"), dict):
+            self._task_results["_run_usage_summary"] = dict(
+                context.shared_state["run_usage_summary"],
+            )
         self._checkpoint(context, critical=True)
         self._audit.record_workflow_outcome(context)
 

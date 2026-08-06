@@ -22,6 +22,7 @@ from application.evidence.provenance_validation import (
     validate_candidate_provenance,
 )
 from application.evidence.run_scoped_provenance import resolve_run_scoped_context
+from application.execution.exceptions import BudgetExhaustedError
 from application.ports.evidence_ports import EvidenceExtractor, EvidenceRepository
 from application.ports.source_ports import SourceRepository
 from application.sources.provenance_merge import is_successful_acquisition
@@ -151,6 +152,8 @@ class EvidenceExtractionService:
                 design=design,
                 run_context=run_context,
             )
+        except BudgetExhaustedError:
+            raise
         except Exception:
             return evidence_ids, extracted, failures + 1, True
 

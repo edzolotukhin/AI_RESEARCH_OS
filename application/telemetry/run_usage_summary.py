@@ -17,6 +17,7 @@ class RunUsageSummary:
     total_elapsed_ms: int = 0
     budget_exhausted: bool = False
     exhaustion_reason: str | None = None
+    exhaustion_stage: str | None = None
     estimated_cost_usd: float | None = None
 
     def merge_budget(self, budget: ExecutionBudget) -> None:
@@ -26,6 +27,7 @@ class RunUsageSummary:
         self.total_output_tokens = summary["total_output_tokens"]
         self.budget_exhausted = summary["exhausted"]
         self.exhaustion_reason = summary["exhaustion_reason"]
+        self.exhaustion_stage = summary["exhaustion_stage"]
         for name, data in summary["stages"].items():
             self.stages[name] = StageBudgetUsage(
                 stage=name,
@@ -51,6 +53,7 @@ class RunUsageSummary:
             "total_elapsed_ms": self.total_elapsed_ms,
             "budget_exhausted": self.budget_exhausted,
             "exhaustion_reason": self.exhaustion_reason,
+            "exhaustion_stage": self.exhaustion_stage,
             "estimated_cost_usd": self.estimated_cost_usd,
             "stages": {name: s.to_dict() for name, s in self.stages.items()},
         }

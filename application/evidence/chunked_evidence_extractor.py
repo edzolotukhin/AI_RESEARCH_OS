@@ -11,6 +11,7 @@ from application.evidence.content_chunking import (
     split_normalized_source_content,
 )
 from application.evidence.run_scoped_provenance import RunScopedSourceContext
+from application.execution.exceptions import BudgetExhaustedError
 from application.ports.evidence_ports import EvidenceCandidate, EvidenceExtractor
 
 
@@ -63,6 +64,8 @@ class ChunkedEvidenceExtractor:
                     design=design,
                     run_context=run_context,
                 )
+            except BudgetExhaustedError:
+                raise
             except Exception:
                 continue
             for candidate in chunk_candidates:

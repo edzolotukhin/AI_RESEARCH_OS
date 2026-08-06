@@ -98,19 +98,19 @@ class WorkflowEngine:
                     break
 
             self._finalize_workflow_status(workflow_run)
-
-            if runtime_checkpoint is not None:
-                runtime_checkpoint.on_workflow_finalized(
-                    context,
-                    error=first_execution_error,
-                )
-
-            if first_execution_error is not None:
-                raise first_execution_error
-
-            return context
         finally:
             finalize_run_budget(context)
+
+        if runtime_checkpoint is not None:
+            runtime_checkpoint.on_workflow_finalized(
+                context,
+                error=first_execution_error,
+            )
+
+        if first_execution_error is not None:
+            raise first_execution_error
+
+        return context
 
     def execute(
         self,

@@ -123,7 +123,11 @@ class PostgreSQLDurableWorkflowRuntimeTests(PostgreSQLIntegrationTestCase):
         reloaded = service._workflow_service.get_workflow_run("pg-run-success")
         self.assertEqual(reloaded.status, WorkflowStatus.COMPLETED)
         results = service._workflow_service.get_task_results("pg-run-success")
-        self.assertEqual(len(results), 2)
+        self.assertEqual(len(results), 3)
+        self.assertIn("_run_usage_summary", results)
+        usage = results["_run_usage_summary"]
+        self.assertIsInstance(usage, dict)
+        self.assertIn("total_llm_calls", usage)
         self.assertGreater(
             service._workflow_service.get_workflow_run_version("pg-run-success"),
             0,

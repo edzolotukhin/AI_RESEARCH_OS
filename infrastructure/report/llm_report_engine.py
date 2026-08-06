@@ -17,6 +17,7 @@ from application.report.diagnostics import (
     REJECTION_CATEGORY_MISSING_TITLE,
 )
 from application.report.exceptions import ReportConfigurationError
+from application.execution.exceptions import BudgetExhaustedError
 from application.report.report_structured_output import (
     REPORT_SECTIONS_PAYLOAD_SCHEMA,
     REPORT_SUMMARY_PAYLOAD_SCHEMA,
@@ -89,6 +90,8 @@ class LlmReportEngine:
             raise ReportConfigurationError(
                 "LLM report section generation failed structured output validation",
             ) from exc
+        except BudgetExhaustedError:
+            raise
         except Exception as exc:
             raise ReportConfigurationError("LLM report section generation failed") from exc
 
@@ -130,6 +133,8 @@ class LlmReportEngine:
             raise ReportConfigurationError(
                 "LLM executive summary generation failed structured output validation",
             ) from exc
+        except BudgetExhaustedError:
+            raise
         except Exception as exc:
             raise ReportConfigurationError("LLM executive summary generation failed") from exc
 

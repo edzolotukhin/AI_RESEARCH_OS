@@ -35,6 +35,8 @@ class ExecutionBudget:
     analysis_max_findings: int = 100
     analysis_max_insights: int = 30
     report_max_sections: int = 12
+    evidence_max_llm_calls: int = 50
+    analysis_max_llm_calls: int = 14
     report_max_llm_calls: int = 20
     review_max_llm_calls: int = 7
     llm_max_calls_per_run: int = 100
@@ -47,6 +49,25 @@ class ExecutionBudget:
     _total_output_tokens: int = 0
     _exhausted: bool = False
     _exhaustion_reason: str | None = None
+    _exhaustion_stage: str | None = None
+
+    def _stage_calls(self, stage: str) -> int:
+        usage = self._stage_usage.get(stage)
+        return usage.llm_calls if usage is not None else 0
+
+    def _downstream_reserve_required(self, stage: str) -> int:
+        """Reserve capacity for stages that have not run yet."""
+        reserve = 0
+        if stage in {"planner", "search", "evidence"}:
+            reserve += self.analysis_max_llm_calls
+            reserve += self.report_max_llm_calls
+            reserve += self.review_max_llm_calls
+        elif stage == "analysis":
+            reserve += self.report_max_llm_calls
+            reserve += self.review_max_llm_calls
+        elif stage == "report":
+            reserve += self.review_max_llm_calls
+        return reserve
 
     def assert_can_call(self, stage: str) -> None:
         """Fail before issuing another LLM call when a limit is already reached."""
@@ -55,10 +76,23 @@ class ExecutionBudget:
                 self._exhaustion_reason or "budget_exhausted",
                 stage=stage,
             )
+
+        reserve = self._downstream_reserve_required(stage)
+        if reserve > 0:
+            allowed_before_downstream_cap = self.llm_max_calls_per_run - reserve
+            if (
+                allowed_before_downstream_cap >= 0
+                and self._total_llm_calls >= allowed_before_downstream_cap
+            ):
+                raise BudgetExhaustedError("downstream_reserve_exhausted", stage=stage)
         if self._total_llm_calls >= self.llm_max_calls_per_run:
             raise BudgetExhaustedError("llm_max_calls_per_run", stage=stage)
-        stage_usage = self._stage_usage.get(stage)
-        stage_calls = stage_usage.llm_calls if stage_usage is not None else 0
+
+        stage_calls = self._stage_calls(stage)
+        if stage == "evidence" and stage_calls >= self.evidence_max_llm_calls:
+            raise BudgetExhaustedError("evidence_max_llm_calls", stage=stage)
+        if stage == "analysis" and stage_calls >= self.analysis_max_llm_calls:
+            raise BudgetExhaustedError("analysis_max_llm_calls", stage=stage)
         if stage == "report" and stage_calls >= self.report_max_llm_calls:
             raise BudgetExhaustedError("report_max_llm_calls", stage=stage)
         if stage == "review" and stage_calls >= self.review_max_llm_calls:
@@ -91,28 +125,41 @@ class ExecutionBudget:
         if self._total_llm_calls > self.llm_max_calls_per_run:
             self._exhausted = True
             self._exhaustion_reason = "llm_max_calls_per_run"
+            self._exhaustion_stage = stage
             return
         stage_usage = self._stage_usage.get(stage)
         if stage_usage is None:
             return
+        if stage == "evidence" and stage_usage.llm_calls > self.evidence_max_llm_calls:
+            self._exhausted = True
+            self._exhaustion_reason = "evidence_max_llm_calls"
+            self._exhaustion_stage = stage
+        if stage == "analysis" and stage_usage.llm_calls > self.analysis_max_llm_calls:
+            self._exhausted = True
+            self._exhaustion_reason = "analysis_max_llm_calls"
+            self._exhaustion_stage = stage
         if stage == "report" and stage_usage.llm_calls > self.report_max_llm_calls:
             self._exhausted = True
             self._exhaustion_reason = "report_max_llm_calls"
+            self._exhaustion_stage = stage
         if stage == "review" and stage_usage.llm_calls > self.review_max_llm_calls:
             self._exhausted = True
             self._exhaustion_reason = "review_max_llm_calls"
+            self._exhaustion_stage = stage
         if (
             self.max_input_tokens_per_run is not None
             and self._total_input_tokens > self.max_input_tokens_per_run
         ):
             self._exhausted = True
             self._exhaustion_reason = "max_input_tokens_per_run"
+            self._exhaustion_stage = stage
         if (
             self.max_output_tokens_per_run is not None
             and self._total_output_tokens > self.max_output_tokens_per_run
         ):
             self._exhausted = True
             self._exhaustion_reason = "max_output_tokens_per_run"
+            self._exhaustion_stage = stage
 
     @property
     def exhausted(self) -> bool:
@@ -122,6 +169,10 @@ class ExecutionBudget:
     def exhaustion_reason(self) -> str | None:
         return self._exhaustion_reason
 
+    @property
+    def exhaustion_stage(self) -> str | None:
+        return self._exhaustion_stage
+
     def summary(self) -> dict[str, Any]:
         return {
             "total_llm_calls": self._total_llm_calls,
@@ -129,6 +180,7 @@ class ExecutionBudget:
             "total_output_tokens": self._total_output_tokens,
             "exhausted": self._exhausted,
             "exhaustion_reason": self._exhaustion_reason,
+            "exhaustion_stage": self._exhaustion_stage,
             "stages": {
                 name: usage.to_dict() for name, usage in self._stage_usage.items()
             },

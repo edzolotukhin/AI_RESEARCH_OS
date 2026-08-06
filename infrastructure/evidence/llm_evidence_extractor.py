@@ -7,6 +7,7 @@ from domain.planning.research_design import ResearchDesign
 from domain.sources.source import Source
 
 from application.evidence.exceptions import EvidenceConfigurationError
+from application.execution.exceptions import BudgetExhaustedError
 from application.evidence.run_scoped_provenance import RunScopedSourceContext
 from application.ports.evidence_ports import EvidenceCandidate, EvidenceExtractor
 from application.structured_output.json_extractor import JsonExtractor
@@ -59,6 +60,8 @@ class LlmEvidenceExtractor(EvidenceExtractor):
         )
         try:
             response = self._llm_client.generate(prompt)
+        except BudgetExhaustedError:
+            raise
         except Exception as exc:
             raise EvidenceConfigurationError(
                 "LLM evidence extraction failed",

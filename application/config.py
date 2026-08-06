@@ -96,6 +96,8 @@ class ApplicationConfig:
     review_structured_output_max_attempts: int = DEFAULT_REVIEW_STRUCTURED_OUTPUT_MAX_ATTEMPTS
     review_max_calls: int = 7
     report_max_llm_calls: int = 20
+    evidence_max_llm_calls: int = 50
+    analysis_max_llm_calls: int = 14
     llm_max_calls_per_run: int = 100
     evidence_max_items_per_run: int = 500
     evidence_max_items_per_source: int = 50
@@ -271,6 +273,8 @@ class ApplicationConfig:
             ),
             review_max_calls=int(os.environ.get("REVIEW_MAX_CALLS", "7")),
             report_max_llm_calls=int(os.environ.get("REPORT_MAX_LLM_CALLS", "20")),
+            evidence_max_llm_calls=int(os.environ.get("EVIDENCE_MAX_LLM_CALLS", "50")),
+            analysis_max_llm_calls=int(os.environ.get("ANALYSIS_MAX_LLM_CALLS", "14")),
             llm_max_calls_per_run=int(os.environ.get("LLM_MAX_CALLS_PER_RUN", "100")),
             evidence_max_items_per_run=int(
                 os.environ.get("EVIDENCE_MAX_ITEMS_PER_RUN", "500"),

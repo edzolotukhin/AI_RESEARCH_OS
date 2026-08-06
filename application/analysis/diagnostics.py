@@ -18,6 +18,7 @@ REJECTION_CATEGORY_PROVENANCE = "provenance_rejection"
 FAILURE_CATEGORY_LLM_ERROR = "llm_error"
 FAILURE_CATEGORY_PARSE_ERROR = "parse_error"
 FAILURE_CATEGORY_BATCH_ERROR = "batch_error"
+FAILURE_CATEGORY_BUDGET_EXHAUSTED = "budget_exhausted"
 
 
 @dataclass

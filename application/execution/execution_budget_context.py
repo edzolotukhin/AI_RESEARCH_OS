@@ -79,6 +79,7 @@ def finalize_run_budget(context: WorkflowContext) -> RunUsageSummary | None:
         context.execution_metadata[RUN_USAGE_SUMMARY_KEY] = summary
 
     summary.merge_budget(budget)
+    context.shared_state["run_usage_summary"] = summary.to_dict()
     _current_budget.set(None)
     _current_stage.set(None)
     return summary

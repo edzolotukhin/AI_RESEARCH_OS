@@ -46,6 +46,7 @@ from application.ports.analysis_ports import (
 from application.ports.evidence_ports import EvidenceRepository
 
 from application.execution.exceptions import BudgetExhaustedError
+from application.execution.budget_utils import is_budget_exhaustion
 from runtime.workflow_context import WorkflowContext
 
 logger = logging.getLogger("ai_research_os.analysis")
@@ -143,6 +144,8 @@ class AnalysisService:
             except BudgetExhaustedError as exc:
                 raise AnalysisError(str(exc)) from exc
             except AnalysisConfigurationError as exc:
+                if is_budget_exhaustion(exc):
+                    raise AnalysisError(str(exc)) from exc
                 batch_failures += 1
                 batch_diag.failure_category = FAILURE_CATEGORY_LLM_ERROR
                 logger.warning(
@@ -275,6 +278,14 @@ class AnalysisService:
         insight_candidates_rejected = 0
         try:
             insight_candidates = self._analysis_engine.analyze_insights(insight_input)
+        except BudgetExhaustedError as exc:
+            raise AnalysisError(str(exc)) from exc
+        except AnalysisConfigurationError as exc:
+            if is_budget_exhaustion(exc):
+                raise AnalysisError(str(exc)) from exc
+            raise AnalysisError(
+                f"Insight generation failed for workflow run {workflow_run_id}",
+            ) from exc
         except Exception as exc:
             raise AnalysisError(
                 f"Insight generation failed for workflow run {workflow_run_id}",
