@@ -505,4 +505,3 @@ class _Resolver:
 
     def resolve(self, task: Task):
         return self._executor
-
