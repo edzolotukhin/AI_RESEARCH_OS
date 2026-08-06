@@ -37,6 +37,7 @@ class RunUsageSummary:
                 output_tokens=data["output_tokens"],
                 reasoning_tokens=data["reasoning_tokens"],
                 elapsed_ms=data["elapsed_ms"],
+                stage_cap_reached=data.get("stage_cap_reached", False),
             )
         self.total_reasoning_tokens = sum(
             s.reasoning_tokens for s in self.stages.values()

@@ -22,7 +22,9 @@ from application.evidence.provenance_validation import (
     validate_candidate_provenance,
 )
 from application.evidence.run_scoped_provenance import resolve_run_scoped_context
+from application.execution.budget_utils import is_evidence_stage_cap_exhaustion
 from application.execution.exceptions import BudgetExhaustedError
+from application.execution.execution_budget_context import get_execution_budget
 from application.ports.evidence_ports import EvidenceExtractor, EvidenceRepository
 from application.ports.source_ports import SourceRepository
 from application.sources.provenance_merge import is_successful_acquisition
@@ -39,6 +41,7 @@ class EvidenceExtractionSummary:
     evidence_extracted: int
     extraction_failures: int
     sources_without_evidence: int
+    evidence_stage_budget_exhausted: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -47,6 +50,7 @@ class EvidenceExtractionSummary:
             "evidence_extracted": self.evidence_extracted,
             "extraction_failures": self.extraction_failures,
             "sources_without_evidence": self.sources_without_evidence,
+            "evidence_stage_budget_exhausted": self.evidence_stage_budget_exhausted,
         }
 
 
@@ -74,22 +78,34 @@ class EvidenceExtractionService:
         extracted = 0
         failures = 0
         sources_without_evidence = 0
+        sources_processed = 0
+        evidence_stage_budget_exhausted = False
 
         for source in sources:
-            source_ids, source_extracted, source_failures, had_none = (
-                self._extract_from_source(
-                    source=source,
-                    design=design,
-                    project_id=project_id,
-                    workflow_run_id=workflow_run_id,
-                    research_design_id=design.id,
+            try:
+                source_ids, source_extracted, source_failures, had_none = (
+                    self._extract_from_source(
+                        source=source,
+                        design=design,
+                        project_id=project_id,
+                        workflow_run_id=workflow_run_id,
+                        research_design_id=design.id,
+                    )
                 )
-            )
+            except BudgetExhaustedError as exc:
+                if is_evidence_stage_cap_exhaustion(exc):
+                    evidence_stage_budget_exhausted = True
+                    break
+                raise
+            sources_processed += 1
             evidence_ids.extend(source_ids)
             extracted += source_extracted
             failures += source_failures
             if had_none:
                 sources_without_evidence += 1
+            if self._evidence_stage_cap_reached():
+                evidence_stage_budget_exhausted = True
+                break
 
         if extracted == 0:
             raise EvidenceExtractionError(
@@ -98,10 +114,11 @@ class EvidenceExtractionService:
 
         return EvidenceExtractionSummary(
             evidence_ids=tuple(evidence_ids),
-            sources_processed=len(sources),
+            sources_processed=sources_processed,
             evidence_extracted=extracted,
             extraction_failures=failures,
             sources_without_evidence=sources_without_evidence,
+            evidence_stage_budget_exhausted=evidence_stage_budget_exhausted,
         )
 
     def _resolve_design(self, context: WorkflowContext) -> ResearchDesign:
@@ -152,7 +169,9 @@ class EvidenceExtractionService:
                 design=design,
                 run_context=run_context,
             )
-        except BudgetExhaustedError:
+        except BudgetExhaustedError as exc:
+            if is_evidence_stage_cap_exhaustion(exc):
+                return evidence_ids, extracted, failures, extracted == 0
             raise
         except Exception:
             return evidence_ids, extracted, failures + 1, True
@@ -181,6 +200,13 @@ class EvidenceExtractionService:
             extracted += 1
 
         return evidence_ids, extracted, failures, extracted == 0
+
+    @staticmethod
+    def _evidence_stage_cap_reached() -> bool:
+        budget = get_execution_budget()
+        if budget is None:
+            return False
+        return budget.stage_cap_reached("evidence")
 
     def _persist_candidate(
         self,

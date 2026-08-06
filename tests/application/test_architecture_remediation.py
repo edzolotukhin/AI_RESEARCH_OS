@@ -323,17 +323,33 @@ class OfflineReplayTests(unittest.TestCase):
 
 
 class ExecutionBudgetTests(unittest.TestCase):
+    def test_stage_cap_does_not_mark_run_exhausted(self) -> None:
+        budget = ExecutionBudget(llm_max_calls_per_run=100, review_max_llm_calls=1)
+        budget.record_llm_call("review")
+        self.assertFalse(budget.exhausted)
+        self.assertIsNone(budget.exhaustion_reason)
+        self.assertTrue(budget.stage_cap_reached("review"))
+
+    def test_global_cap_marks_run_exhausted(self) -> None:
+        budget = ExecutionBudget(llm_max_calls_per_run=2, review_max_llm_calls=1)
+        budget.record_llm_call("review")
+        budget.record_llm_call("review", retry=True)
+        self.assertTrue(budget.exhausted)
+        self.assertEqual(budget.exhaustion_reason, "llm_max_calls_per_run")
+        self.assertTrue(budget.stage_cap_reached("review"))
+
     def test_budget_exhaustion_persisted(self) -> None:
         budget = ExecutionBudget(llm_max_calls_per_run=2, review_max_llm_calls=1)
         budget.record_llm_call("review")
         budget.record_llm_call("review", retry=True)
         self.assertTrue(budget.exhausted)
-        self.assertEqual(budget.exhaustion_reason, "review_max_llm_calls")
         summary = RunUsageSummary(workflow_run_id=LIVE_RUN_ID)
         summary.merge_budget(budget)
         payload = summary.to_dict()
         self.assertTrue(payload["budget_exhausted"])
+        self.assertEqual(payload["exhaustion_reason"], "llm_max_calls_per_run")
         self.assertIn("review", payload["stages"])
+        self.assertTrue(payload["stages"]["review"]["stage_cap_reached"])
 
 
 class N8nTerminalRoutingTests(unittest.TestCase):

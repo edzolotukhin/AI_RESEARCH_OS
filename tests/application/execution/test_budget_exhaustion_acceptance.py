@@ -20,6 +20,8 @@ from domain.value_objects.task_status import TaskStatus
 from domain.workflow_template import WorkflowTemplate
 
 from application.analysis.analysis_service import AnalysisService
+from application.evidence.evidence_extraction_service import EvidenceExtractionService
+from application.executors.evidence_executor import EvidenceExecutor
 from application.analysis.exceptions import AnalysisConfigurationError, AnalysisError
 from application.execution.exceptions import BudgetExhaustedError
 from application.execution.execution_budget import ExecutionBudget
@@ -50,11 +52,14 @@ from infrastructure.persistence.memory.in_memory_finding_repository import (
 from infrastructure.persistence.memory.in_memory_insight_repository import (
     InMemoryInsightRepository,
 )
+from infrastructure.persistence.memory.in_memory_source_repository import (
+    InMemorySourceRepository,
+)
 from infrastructure.report.llm_report_engine import LlmReportEngine
 from infrastructure.review.llm_review_engine import LlmReviewEngine
 from runtime.workflow_context import WorkflowContext
 
-from tests.infrastructure.review.test_llm_review_engine import _semantic_input
+from tests.helpers.workflow_run_builder import make_task, make_workflow_run
 
 
 def _six_rq_design() -> ResearchDesign:
@@ -397,10 +402,8 @@ class RunUsageSummaryPersistenceTests(unittest.TestCase):
     def test_workflow_persister_stores_usage_on_finalize(self) -> None:
         context = _analysis_context()
         budget = ensure_run_budget(context)
-        budget._exhausted = True
-        budget._exhaustion_reason = "evidence_max_llm_calls"
-        budget._exhaustion_stage = "evidence"
-        budget.record_llm_call("evidence")
+        for _ in range(50):
+            budget.record_llm_call("evidence")
         finalize_run_budget(context)
 
         persister = WorkflowRuntimePersister(
@@ -408,11 +411,13 @@ class RunUsageSummaryPersistenceTests(unittest.TestCase):
             audit=Mock(),
             run_id=context.workflow_run.id,
         )
-        persister.on_workflow_finalized(context, error=RuntimeError("failed"))
+        persister.on_workflow_finalized(context, error=None)
         usage = persister.task_results.get("_run_usage_summary")
         self.assertIsInstance(usage, dict)
-        self.assertTrue(usage["budget_exhausted"])
-        self.assertEqual(usage["exhaustion_stage"], "evidence")
+        self.assertFalse(usage["budget_exhausted"])
+        self.assertIsNone(usage["exhaustion_reason"])
+        self.assertTrue(usage["stages"]["evidence"]["stage_cap_reached"])
+        self.assertEqual(usage["stages"]["evidence"]["llm_calls"], 50)
 
 
 class LiveShapedBudgetFitTests(unittest.TestCase):
@@ -424,7 +429,7 @@ class LiveShapedBudgetFitTests(unittest.TestCase):
             budget.record_llm_call("analysis")
         budget.assert_can_call("analysis")
         budget.record_llm_call("analysis")
-        self.assertEqual(budget._stage_calls("analysis"), 8)
+        self.assertEqual(budget.stage_calls("analysis"), 8)
 
     def test_full_pipeline_stage_caps_sum_within_global(self) -> None:
         budget = ExecutionBudget(
@@ -441,6 +446,286 @@ class LiveShapedBudgetFitTests(unittest.TestCase):
             + budget.review_max_llm_calls
         )
         self.assertLessEqual(total_cap, budget.llm_max_calls_per_run)
+
+
+class StageCapIsolationTests(unittest.TestCase):
+    """Stage caps must not poison run-level budget for downstream stages."""
+
+    def test_evidence_cap_allows_analysis_first_call(self) -> None:
+        budget = ExecutionBudget(
+            llm_max_calls_per_run=100,
+            evidence_max_llm_calls=50,
+            analysis_max_llm_calls=14,
+        )
+        set_execution_stage("evidence")
+        for _ in range(50):
+            budget.assert_can_call("evidence")
+            budget.record_llm_call("evidence")
+
+        self.assertFalse(budget.exhausted)
+        self.assertIsNone(budget.exhaustion_reason)
+        self.assertTrue(budget.stage_cap_reached("evidence"))
+        self.assertEqual(budget.stage_calls("evidence"), 50)
+
+        with self.assertRaises(BudgetExhaustedError) as blocked:
+            budget.assert_can_call("evidence")
+        self.assertEqual(blocked.exception.reason, "evidence_max_llm_calls")
+
+        set_execution_stage("analysis")
+        budget.assert_can_call("analysis")
+        budget.record_llm_call("analysis")
+        self.assertEqual(budget.stage_calls("analysis"), 1)
+        self.assertFalse(budget.exhausted)
+
+    def test_analysis_cap_allows_report_first_call(self) -> None:
+        budget = ExecutionBudget(
+            llm_max_calls_per_run=100,
+            analysis_max_llm_calls=2,
+            report_max_llm_calls=20,
+        )
+        set_execution_stage("analysis")
+        for _ in range(2):
+            budget.assert_can_call("analysis")
+            budget.record_llm_call("analysis")
+
+        self.assertFalse(budget.exhausted)
+        self.assertTrue(budget.stage_cap_reached("analysis"))
+
+        set_execution_stage("report")
+        budget.assert_can_call("report")
+        budget.record_llm_call("report")
+        self.assertEqual(budget.stage_calls("report"), 1)
+
+    def test_report_cap_allows_review_first_call(self) -> None:
+        budget = ExecutionBudget(
+            llm_max_calls_per_run=100,
+            report_max_llm_calls=2,
+            review_max_llm_calls=7,
+        )
+        set_execution_stage("report")
+        for _ in range(2):
+            budget.assert_can_call("report")
+            budget.record_llm_call("report")
+
+        self.assertFalse(budget.exhausted)
+        self.assertTrue(budget.stage_cap_reached("report"))
+
+        set_execution_stage("review")
+        budget.assert_can_call("review")
+        budget.record_llm_call("review")
+        self.assertEqual(budget.stage_calls("review"), 1)
+
+    def test_global_cap_blocks_all_stages(self) -> None:
+        budget = ExecutionBudget(llm_max_calls_per_run=3)
+        set_execution_stage("evidence")
+        for _ in range(3):
+            budget.assert_can_call("evidence")
+            budget.record_llm_call("evidence")
+
+        self.assertTrue(budget.exhausted)
+        self.assertEqual(budget.exhaustion_reason, "llm_max_calls_per_run")
+
+        set_execution_stage("analysis")
+        with self.assertRaises(BudgetExhaustedError) as ctx:
+            budget.assert_can_call("analysis")
+        self.assertEqual(ctx.exception.reason, "llm_max_calls_per_run")
+
+    def test_output_token_cap_is_fatal(self) -> None:
+        budget = ExecutionBudget(
+            llm_max_calls_per_run=100,
+            max_output_tokens_per_run=100,
+        )
+        set_execution_stage("evidence")
+        budget.record_llm_call("evidence", output_tokens=101)
+
+        self.assertTrue(budget.exhausted)
+        self.assertEqual(budget.exhaustion_reason, "max_output_tokens_per_run")
+
+        set_execution_stage("analysis")
+        with self.assertRaises(BudgetExhaustedError):
+            budget.assert_can_call("analysis")
+
+
+class EvidenceStageCapWorkflowTests(unittest.TestCase):
+    def test_workflow_proceeds_to_analysis_after_evidence_stage_cap(self) -> None:
+        from datetime import datetime, timezone
+
+        from domain.planning.research_design import InformationNeed
+        from domain.sources.retrieval_status import RetrievalStatus
+        from domain.sources.source import Source
+
+        from application.evidence.run_scoped_provenance import RunScopedSourceContext
+        from application.execution.execution_budget_context import _current_budget
+        from application.ports.evidence_ports import EvidenceCandidate, EvidenceExtractor
+
+        class _BudgetedCallExtractor(EvidenceExtractor):
+            method_name = "budgeted"
+
+            def extract(self, *, source, design, run_context: RunScopedSourceContext):
+                budget = _current_budget.get()
+                if budget is not None:
+                    budget.assert_can_call("evidence")
+                    budget.record_llm_call("evidence")
+                return [
+                    EvidenceCandidate(
+                        statement=f"Evidence from {source.id}",
+                        source_excerpt=source.content_text[:40],
+                        evidence_type=EvidenceType.DIRECT_EXCERPT.value,
+                        research_question_refs=run_context.research_question_ids
+                        or ("RQ1",),
+                        information_need_refs=run_context.information_need_ids
+                        or ("in-1",),
+                    ),
+                ]
+
+        design = ResearchDesign(
+            id="design-cap-flow",
+            research_questions=(
+                ResearchQuestion(
+                    id="RQ1",
+                    question="Question?",
+                    objective_refs=("obj-1",),
+                    priority=1,
+                    rationale="",
+                ),
+            ),
+            information_needs=(
+                InformationNeed(
+                    id="in-1",
+                    research_question_id="RQ1",
+                    description="Need",
+                ),
+            ),
+            source_strategy=("web",),
+            analysis_plan=("analyze",),
+            deliverable_plan=("report",),
+            assumptions=(),
+            limitations=(),
+            language="en",
+        )
+        template = WorkflowTemplate(id="template-cap-flow", name="Cap Flow")
+        template.research_design_snapshot = design
+        template.research_brief_snapshot = ResearchBrief(
+            title="Cap",
+            business_question="Assessment",
+        )
+        project = ProjectFactory().create("Cap Flow Project")
+        evidence_task = make_task(
+            "extract-evidence",
+            task_id="task-evidence",
+            executor_id="evidence",
+            status=TaskStatus.READY,
+        )
+        analysis_task = make_task(
+            "analyze",
+            task_id="task-analysis",
+            executor_id="analysis",
+            depends_on=["extract-evidence"],
+            status=TaskStatus.WAITING,
+        )
+        workflow_run = make_workflow_run(
+            evidence_task,
+            analysis_task,
+            run_id="run-cap-flow",
+            template_id="template-cap-flow",
+        )
+        workflow_run.project_id = project.id
+        context = WorkflowContext(
+            project=project,
+            workflow_run=workflow_run,
+            workflow_template=template,
+        )
+
+        source_repo = InMemorySourceRepository()
+        now = datetime.now(timezone.utc).isoformat()
+        for index in range(5):
+            source_repo.create(
+                Source(
+                    id=f"source-{index:02d}",
+                    project_id=project.id,
+                    url=f"https://example.com/{index}",
+                    canonical_url=f"https://example.com/{index}",
+                    title=f"Source {index}",
+                    retrieved_at=now,
+                    retrieval_status=RetrievalStatus.ACQUIRED,
+                    content_text=f"Acquired market report body text {index}.",
+                    content_checksum=f"checksum-{index}",
+                    workflow_run_refs=(workflow_run.id,),
+                    research_design_refs=(design.id,),
+                    information_need_refs=("in-1",),
+                    research_question_refs=("RQ1",),
+                    metadata={
+                        "discovery_records": [
+                            {
+                                "provider": "deterministic",
+                                "query_id": "sq-in-1",
+                                "rank": 1,
+                                "workflow_run_id": workflow_run.id,
+                                "research_design_id": design.id,
+                            },
+                        ],
+                    },
+                ),
+            )
+
+        evidence_service = EvidenceExtractionService(
+            evidence_extractor=_BudgetedCallExtractor(),
+            evidence_repository=InMemoryEvidenceRepository(),
+            source_repository=source_repo,
+        )
+        analysis_ran = {"value": False}
+
+        class _RecordingAnalysisExecutor:
+            def run(self, ctx: WorkflowContext) -> WorkflowContext:
+                set_execution_stage("analysis")
+                analysis_ran["value"] = True
+                return ctx
+
+        engine = WorkflowEngine(
+            scheduler=TaskScheduler(),
+            task_executor=TaskExecutor(
+                _CapFlowResolver(evidence_service, _RecordingAnalysisExecutor()),
+                TaskLifecycleManager(),
+            ),
+            completion_policy=WorkflowCompletionPolicy(),
+        )
+
+        budget = ExecutionBudget(
+            llm_max_calls_per_run=100,
+            evidence_max_llm_calls=2,
+            analysis_max_llm_calls=14,
+        )
+        ensure_run_budget(context)
+        context.execution_metadata[EXECUTION_BUDGET_KEY] = budget
+        token = _current_budget.set(budget)
+        try:
+            result = engine.run(context)
+        finally:
+            _current_budget.reset(token)
+
+        self.assertTrue(analysis_ran["value"])
+        evidence_summary = result.shared_state["evidence_extraction"]
+        self.assertTrue(evidence_summary["evidence_stage_budget_exhausted"])
+        self.assertEqual(evidence_summary["evidence_extracted"], 2)
+        usage = finalize_run_budget(result)
+        assert usage is not None
+        self.assertFalse(usage.budget_exhausted)
+        self.assertIsNone(usage.exhaustion_reason)
+        self.assertTrue(usage.stages["evidence"].stage_cap_reached)
+        self.assertEqual(usage.stages["evidence"].llm_calls, 2)
+
+
+class _CapFlowResolver:
+    def __init__(self, evidence_service, analysis_executor) -> None:
+        self._evidence = EvidenceExecutor(evidence_extraction_service=evidence_service)
+        self._analysis = analysis_executor
+
+    def resolve(self, task: Task):
+        if task.executor_id == "evidence":
+            return self._evidence
+        if task.executor_id == "analysis":
+            return self._analysis
+        raise AssertionError(f"unexpected executor {task.executor_id}")
 
 
 class WorkerSurvivalTests(unittest.TestCase):
