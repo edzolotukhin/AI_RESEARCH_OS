@@ -49,3 +49,32 @@ state belongs to a concrete research run, not the design snapshot.
 - Targeted research loop
 - Workflow / worker / persistence changes
 - LLM or deterministic evaluator implementations
+
+## RQCL v1 — Deterministic Sufficiency Signals (P1-02)
+
+**Status:** Accepted (deterministic facts layer only)
+
+### Decision
+
+Add `DeterministicSufficiencyEvaluator` that maps `ResearchDesign` + run-scoped
+`Evidence` to `DeterministicSufficiencySignals` for **every** `InformationNeed`
+in the design universe.
+
+Key invariants:
+
+- **Working unit:** `InformationNeed`
+- **FACT vs POLICY:** evaluator emits objective counts and availability flags;
+  only `GapType.NO_EVIDENCE` is derived when `evidence_count == 0`
+- **No guessing:** freshness, quality, diversity, and quantitative signals remain
+  unavailable unless explicit deterministic metadata exists on `Evidence`
+- **Coverage ≠ sufficiency:** no `InformationNeedAssessment` status is produced
+
+Duplicate semantics use existing stable identifiers: `Evidence.id` and
+`Evidence.deduplication_key` (SHA-256 over source, checksum, statement, excerpt,
+and information-need refs).
+
+### Non-goals (P1-02)
+
+- LLM sufficiency evaluation
+- Final `InformationNeedAssessment` / readiness gate
+- Workflow, persistence, API, or runtime integration
