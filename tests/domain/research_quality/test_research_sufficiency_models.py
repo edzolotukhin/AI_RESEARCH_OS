@@ -259,6 +259,30 @@ class ResearchReadinessResultTests(unittest.TestCase):
                 blocking_information_need_ids=("in-1",),
                 targeted_research_required=False,
             )
+        blocked_only = ResearchReadinessResult(
+            research_question_assessments=(
+                ResearchReadinessAssessment(
+                    research_question_id="rq-1",
+                    information_need_assessments=(
+                        InformationNeedAssessment(
+                            information_need_id="in-1",
+                            research_question_id="rq-1",
+                            status=SufficiencyStatus.BLOCKED,
+                            evidence_count=2,
+                            gap_types=(GapType.UNRESOLVABLE,),
+                            reason="Need cannot be resolved with available sources.",
+                        ),
+                    ),
+                    ready_for_analysis=False,
+                    blocking_information_need_ids=("in-1",),
+                ),
+            ),
+            ready_for_analysis=False,
+            blocking_research_question_ids=("rq-1",),
+            blocking_information_need_ids=("in-1",),
+            targeted_research_required=False,
+        )
+        self.assertFalse(blocked_only.targeted_research_required)
 
     def test_run_level_roundtrip(self) -> None:
         original = ResearchReadinessResult(

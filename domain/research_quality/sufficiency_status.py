@@ -21,3 +21,11 @@ READINESS_BLOCKING_STATUSES = frozenset(
         SufficiencyStatus.BLOCKED,
     },
 )
+
+ACTIONABLE_BLOCKING_STATUSES = frozenset(
+    {
+        SufficiencyStatus.PARTIAL,
+        SufficiencyStatus.INSUFFICIENT,
+        SufficiencyStatus.MISSING,
+    },
+)

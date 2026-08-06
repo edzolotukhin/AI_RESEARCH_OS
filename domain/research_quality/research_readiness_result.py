@@ -6,6 +6,17 @@ from typing import Any
 from domain.common.exceptions import ValidationError
 from domain.research_quality._helpers import tuple_of_str
 from domain.research_quality.research_readiness_assessment import ResearchReadinessAssessment
+from domain.research_quality.sufficiency_status import ACTIONABLE_BLOCKING_STATUSES
+
+
+def _has_actionable_blocking_gap(
+    assessments: tuple[ResearchReadinessAssessment, ...],
+) -> bool:
+    return any(
+        need.status in ACTIONABLE_BLOCKING_STATUSES
+        for assessment in assessments
+        for need in assessment.information_need_assessments
+    )
 
 
 @dataclass(frozen=True)
@@ -84,9 +95,18 @@ class ResearchReadinessResult:
                     "ready_for_analysis=True requires empty blocking id collections",
                 )
         else:
-            if not self.targeted_research_required:
+            has_actionable_gap = _has_actionable_blocking_gap(
+                self.research_question_assessments,
+            )
+            if has_actionable_gap and not self.targeted_research_required:
                 raise ValidationError(
-                    "targeted_research_required must be True when ready_for_analysis=False",
+                    "targeted_research_required must be True when actionable "
+                    "blocking gaps are present",
+                )
+            if not has_actionable_gap and self.targeted_research_required:
+                raise ValidationError(
+                    "targeted_research_required must be False when all blocking "
+                    "gaps are BLOCKED",
                 )
 
     def to_dict(self) -> dict[str, Any]:

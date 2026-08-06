@@ -78,3 +78,44 @@ and information-need refs).
 - LLM sufficiency evaluation
 - Final `InformationNeedAssessment` / readiness gate
 - Workflow, persistence, API, or runtime integration
+
+## RQCL v1 — Hybrid Sufficiency Evaluator (P1-03)
+
+**Status:** Accepted (application-level only; unwired)
+
+### Decision
+
+Add `HybridResearchSufficiencyEvaluator` that combines P1-02 deterministic facts
+with optional semantic assessment via `SemanticSufficiencyAssessor`.
+
+Pipeline:
+
+`ResearchDesign` + `Evidence` → deterministic signals → (optional) semantic
+assessment → `InformationNeedAssessment` → `ResearchReadinessAssessment` →
+`ResearchReadinessResult`
+
+Key invariants:
+
+- **Short-circuit:** `evidence_count == 0` → `MISSING` / `NO_EVIDENCE` with no LLM call
+- **Scope:** semantic assessment is scoped to existing `InformationNeed`; no replanning
+- **Insufficiency is data:** research gaps return valid readiness results, not exceptions
+- **BLOCKED vs actionable:** `targeted_research_required=True` only when blocking gaps
+  are `PARTIAL`, `INSUFFICIENT`, or `MISSING`; all-`BLOCKED` blocking sets
+  `targeted_research_required=False` (P1-01 contract refinement)
+- **Evidence payload:** only need-mapped evidence; bounded deterministic selection
+  by confidence then id (max 10 items)
+- **Structured output:** bounded JSON contract with correction retries; technical
+  failures raise `SemanticSufficiencyAssessmentError`
+
+Ports:
+
+- `SemanticSufficiencyAssessor` — semantic judgment per need
+- `ResearchSufficiencyEvaluator` — run-level hybrid evaluation (implemented, unwired)
+
+### Non-goals (P1-03)
+
+- `ResearchReadinessGate` / workflow integration
+- Targeted search loop
+- Runtime composition root wiring
+- New execution budget stage
+- DB persistence or API exposure
