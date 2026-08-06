@@ -7,13 +7,24 @@ from application.executors.deterministic_research_readiness_executor import (
 from application.executors.research_readiness_executor import ResearchReadinessExecutor
 from application.ports.evidence_ports import EvidenceRepository
 from application.ports.research_quality_ports import ResearchSufficiencyEvaluator
+from application.ports.source_ports import SourceRepository
 from application.research_quality.deterministic_sufficiency_evaluator import (
     DeterministicSufficiencyEvaluator,
 )
 from application.research_quality.hybrid_sufficiency_evaluator import (
     HybridResearchSufficiencyEvaluator,
 )
+from application.research_quality.production_targeted_research_runner import (
+    ProductionTargetedResearchRunner,
+)
+from application.research_quality.research_loop_service import ResearchLoopService
 from application.research_quality.research_readiness_service import ResearchReadinessService
+from application.research_quality.targeted_research_bounds import TargetedResearchBounds
+from application.research_quality.targeted_search_query_builder import (
+    TargetedSearchQueryBuilder,
+)
+from application.sources.search_factory import build_source_acquisition_service
+from application.evidence.evidence_factory import build_evidence_extraction_service
 
 
 def build_research_sufficiency_evaluator(
@@ -56,15 +67,48 @@ def build_research_readiness_service(
     config: ApplicationConfig,
     overrides: ApplicationOverrides,
     evidence_repository: EvidenceRepository,
+    source_repository: SourceRepository,
     llm_client,
 ) -> ResearchReadinessService:
-    return ResearchReadinessService(
-        evaluator=build_research_sufficiency_evaluator(
+    evaluator = build_research_sufficiency_evaluator(
+        config=config,
+        overrides=overrides,
+        llm_client=llm_client,
+    )
+    bounds = TargetedResearchBounds.from_config(config)
+    runner = overrides.targeted_research_runner
+    if runner is None:
+        source_acquisition = build_source_acquisition_service(
             config=config,
             overrides=overrides,
+            source_repository=source_repository,
+        )
+        evidence_extraction = build_evidence_extraction_service(
+            config=config,
+            overrides=overrides,
+            evidence_repository=evidence_repository,
+            source_repository=source_repository,
             llm_client=llm_client,
-        ),
+        )
+        runner = ProductionTargetedResearchRunner(
+            query_builder=TargetedSearchQueryBuilder(),
+            source_acquisition=source_acquisition,
+            evidence_extraction=evidence_extraction,
+            bounds=bounds,
+            config=config,
+        )
+
+    loop_service = ResearchLoopService(
+        runner=runner,
+        bounds=bounds,
+        evaluator=evaluator,
         evidence_repository=evidence_repository,
+        source_repository=source_repository,
+    )
+    return ResearchReadinessService(
+        evaluator=evaluator,
+        evidence_repository=evidence_repository,
+        loop_service=loop_service,
     )
 
 
@@ -73,6 +117,7 @@ def build_research_readiness_executor(
     config: ApplicationConfig,
     overrides: ApplicationOverrides,
     evidence_repository: EvidenceRepository,
+    source_repository: SourceRepository,
     llm_client,
 ) -> ResearchReadinessExecutor | DeterministicResearchReadinessExecutor:
     if overrides.research_readiness_executor is not None:
@@ -91,6 +136,7 @@ def build_research_readiness_executor(
             config=config,
             overrides=overrides,
             evidence_repository=evidence_repository,
+            source_repository=source_repository,
             llm_client=llm_client,
         ),
     )

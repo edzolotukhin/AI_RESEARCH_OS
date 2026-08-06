@@ -107,7 +107,31 @@ class RestoreRuntimeStateTests(unittest.TestCase):
 
         self.assertEqual(context.shared_state["conflict"], "second")
 
-    def test_non_completed_tasks_are_ignored(self) -> None:
+    def test_running_progress_checkpoint_is_restored(self) -> None:
+        task_a = make_task("a", task_id="task-a", status=TaskStatus.COMPLETED)
+        task_b = make_task(
+            "b",
+            task_id="task-b",
+            depends_on=["a"],
+            status=TaskStatus.RUNNING,
+        )
+        workflow_run = make_workflow_run(task_a, task_b)
+        context = _restore(
+            workflow_run,
+            {
+                "task-a": {"shared_state": {"kept": True}},
+                "task-b": {
+                    "progress": True,
+                    "shared_state": {"loop": "partial"},
+                },
+            },
+        )
+
+        self.assertEqual(context.shared_state["kept"], True)
+        self.assertEqual(context.shared_state["loop"], "partial")
+        self.assertIn("task-b", context.intermediate_results)
+
+    def test_non_completed_tasks_without_progress_are_ignored(self) -> None:
         task_a = make_task("a", task_id="task-a", status=TaskStatus.COMPLETED)
         task_b = make_task(
             "b",

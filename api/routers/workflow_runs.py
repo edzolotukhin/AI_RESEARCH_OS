@@ -27,7 +27,10 @@ from application.persistence.exceptions import (
 )
 from application.research.brief_normalizer import normalize_research_brief_payload
 from application.research.brief_validator import validate_research_brief
-from application.research_quality.readiness_result_codec import extract_research_readiness
+from application.research_quality.readiness_result_codec import (
+    extract_research_loop_state,
+    extract_research_readiness,
+)
 from application.runtime.background_execution_capability import (
     requires_http_background_submission,
 )
@@ -895,13 +898,26 @@ def get_workflow_run_results(
     workflow_run, _ = authorization.require_run(principal, run_id)
     task_results = workflow_service.get_task_results(run_id)
     results_ready = workflow_run.is_terminal
+    readiness = extract_research_readiness(task_results)
+    loop_state = extract_research_loop_state(task_results)
+    loop_count = None
+    loop_history = None
+    if readiness is not None:
+        loop_count = readiness.get("research_loop_count")
+        loop_history = readiness.get("research_loop_history")
+    if loop_state is not None:
+        loop_count = loop_state.get("research_loop_count", loop_count)
+        if loop_history is None:
+            loop_history = loop_state.get("history")
     return WorkflowRunResultsResponse(
         run_id=run_id,
         status=workflow_run.status.value,
         is_terminal=workflow_run.is_terminal,
         results_ready=results_ready,
         task_results=task_results_to_response(run_id, task_results),
-        research_readiness=extract_research_readiness(task_results),
+        research_readiness=readiness,
+        research_loop_count=loop_count,
+        research_loop_history=loop_history,
     )
 
 

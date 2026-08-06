@@ -121,6 +121,82 @@ class EvidenceExtractionService:
             evidence_stage_budget_exhausted=evidence_stage_budget_exhausted,
         )
 
+    def extract_for_source_ids(
+        self,
+        context: WorkflowContext,
+        source_ids: tuple[str, ...],
+        *,
+        allow_empty: bool = False,
+    ) -> EvidenceExtractionSummary:
+        """Extract evidence from specific run-scoped sources (targeted append)."""
+        if not source_ids:
+            return EvidenceExtractionSummary(
+                evidence_ids=(),
+                sources_processed=0,
+                evidence_extracted=0,
+                extraction_failures=0,
+                sources_without_evidence=0,
+            )
+
+        design = self._resolve_design(context)
+        project_id = context.project.id
+        workflow_run_id = context.workflow_run.id
+        eligible = {
+            source.id: source
+            for source in self._eligible_sources(project_id, workflow_run_id)
+        }
+
+        evidence_ids: list[str] = []
+        extracted = 0
+        failures = 0
+        sources_without_evidence = 0
+        sources_processed = 0
+        evidence_stage_budget_exhausted = False
+
+        for source_id in source_ids:
+            source = eligible.get(source_id)
+            if source is None:
+                continue
+            try:
+                source_evidence_ids, source_extracted, source_failures, had_none = (
+                    self._extract_from_source(
+                        source=source,
+                        design=design,
+                        project_id=project_id,
+                        workflow_run_id=workflow_run_id,
+                        research_design_id=design.id,
+                    )
+                )
+            except BudgetExhaustedError as exc:
+                if is_evidence_stage_cap_exhaustion(exc):
+                    evidence_stage_budget_exhausted = True
+                    break
+                raise
+            sources_processed += 1
+            evidence_ids.extend(source_evidence_ids)
+            extracted += source_extracted
+            failures += source_failures
+            if had_none:
+                sources_without_evidence += 1
+            if self._evidence_stage_cap_reached():
+                evidence_stage_budget_exhausted = True
+                break
+
+        if extracted == 0 and not allow_empty:
+            raise EvidenceExtractionError(
+                f"No grounded evidence extracted for targeted sources on run "
+                f"{workflow_run_id}",
+            )
+
+        return EvidenceExtractionSummary(
+            evidence_ids=tuple(evidence_ids),
+            sources_processed=sources_processed,
+            evidence_extracted=extracted,
+            extraction_failures=failures,
+            sources_without_evidence=sources_without_evidence,
+            evidence_stage_budget_exhausted=evidence_stage_budget_exhausted,
+        )
+
     def _resolve_design(self, context: WorkflowContext) -> ResearchDesign:
         template = context.workflow_template
         if template is None or template.research_design_snapshot is None:

@@ -146,9 +146,52 @@ Key invariants:
 - **Technical failures:** provider/budget/structured-output errors fail the
   readiness task normally (`FAILED` workflow)
 
-### Non-goals (P1-04)
+## RQCL v1 — Bounded Targeted Research Loop (P1-05)
 
-- Targeted research loop
-- Analysis/Report/Review contract changes
-- Adaptive budget
-- New WorkflowStatus enum value
+**Status:** Accepted (wired into readiness assessment stage)
+
+### Decision
+
+When `ResearchReadinessResult.targeted_research_required=True`, run a bounded
+targeted research loop inside `ResearchReadinessService` before applying the
+readiness gate. Each iteration researches one actionable blocking
+`InformationNeed` via existing search/evidence services.
+
+Runtime path:
+
+`Evidence` → readiness assess → (optional) targeted loop → re-assess → gate →
+`Analysis` (if ready)
+
+Key invariants:
+
+- **Scope immutable:** no new RQ/InformationNeed; no ResearchDesign changes
+- **Actionable only:** `MISSING` / `PARTIAL` / `INSUFFICIENT`; never `BLOCKED`
+- **One gap per iteration:** deterministic gap selection, bounded queries/sources
+- **Reuse search/evidence:** `TargetedSearchQueryBuilder`,
+  `SourceAcquisitionService.acquire_targeted_queries`,
+  `EvidenceExtractionService.extract_for_source_ids`
+- **Durable loop state:** `shared_state.research_loop_state` + observability in
+  `research_readiness.research_loop_history`
+- **Termination:** ready, no actionable gaps, max loops, no material improvement,
+  or blocked-only (no loop)
+- **Analysis protection:** downstream tasks skipped unless `ready_for_analysis=True`
+- **Technical vs research:** loop iterations are not LLM budget retries
+
+Bounds (defaults): `RESEARCH_MAX_GAP_ROUNDS_PER_RUN=2`,
+`TARGETED_MAX_ATTEMPTS_PER_GAP=2`, `TARGETED_MAX_QUERIES_PER_GAP=2`,
+`TARGETED_MAX_SOURCES_PER_GAP=3`
+
+Round scheduler: within each round, actionable gaps are visited deterministically;
+a gap that does not improve is deferred until the next round. Termination
+`no_material_improvement` applies only after a complete round with zero improvement.
+
+Mid-task durability: `WorkflowRuntimeCheckpoint.on_task_progress()` persists
+loop `shared_state` before each paid targeted iteration; interrupted RUNNING
+tasks with a progress checkpoint are requeued instead of failed.
+
+### Non-goals (P1-05)
+
+- New RQ/InformationNeed generation or broad replanning
+- Analysis sufficiency loop or Report/Review changes
+- Adaptive budget or WorkflowEngine redesign
+- Production deterministic fallback for targeted research

@@ -31,14 +31,36 @@ def capture_task_result(
     task_id: str,
 ) -> dict[str, Any]:
     """Build a JSON-serializable durable snapshot for one completed task."""
+    return _capture_snapshot(context, task_id, progress=False)
+
+
+def capture_task_progress(
+    context: WorkflowContext,
+    task_id: str,
+) -> dict[str, Any]:
+    """Build a mid-task progress snapshot for durable recovery."""
+    return _capture_snapshot(context, task_id, progress=True)
+
+
+def is_progress_checkpoint(snapshot: dict[str, Any] | None) -> bool:
+    return isinstance(snapshot, dict) and snapshot.get("progress") is True
+
+
+def _capture_snapshot(
+    context: WorkflowContext,
+    task_id: str,
+    progress: bool,
+) -> dict[str, Any]:
     task = context.current_task
     definition_id = task.definition_id if task is not None else None
 
-    snapshot = {
+    snapshot: dict[str, Any] = {
         "task_id": task_id,
         "definition_id": definition_id,
         "shared_state": _json_safe(dict(context.shared_state)),
     }
+    if progress:
+        snapshot["progress"] = True
     json.dumps(snapshot, sort_keys=True, ensure_ascii=False)
     return snapshot
 
@@ -50,11 +72,9 @@ def restore_runtime_state(
     """
     Rehydrate transient runtime state from durable task result snapshots.
 
-    Snapshots are applied in dependency-graph topological order. Only COMPLETED
-    tasks with persisted task_results participate. When snapshots contain the
+    Snapshots are applied in dependency-graph topological order. COMPLETED tasks
+    and in-progress progress checkpoints participate. When snapshots contain the
     same shared_state key, the later snapshot in topological order wins.
-    Independent-task ordering follows TaskDependencyGraph deterministic
-    tie-break (insertion order within each ready frontier).
     """
     workflow_run = context.workflow_run
     task_by_id = {task.id: task for task in workflow_run.tasks}
@@ -63,11 +83,14 @@ def restore_runtime_state(
 
     for task_id in workflow_run.dependency_graph.topological_order():
         task = task_by_id.get(task_id)
-        if task is None or task.status != TaskStatus.COMPLETED:
+        snapshot = task_results.get(task_id)
+        if task is None or not isinstance(snapshot, dict):
             continue
 
-        snapshot = task_results.get(task_id)
-        if not isinstance(snapshot, dict):
+        include_snapshot = task.status == TaskStatus.COMPLETED or is_progress_checkpoint(
+            snapshot,
+        )
+        if not include_snapshot:
             continue
 
         intermediate_results[task_id] = snapshot

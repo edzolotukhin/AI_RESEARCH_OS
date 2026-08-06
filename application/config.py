@@ -105,6 +105,10 @@ class ApplicationConfig:
     evidence_max_items_per_source: int = 50
     analysis_max_findings: int = 100
     analysis_max_insights: int = 30
+    research_max_gap_rounds_per_run: int = 2
+    targeted_max_attempts_per_gap: int = 2
+    targeted_max_queries_per_gap: int = 2
+    targeted_max_sources_per_gap: int = 3
 
     @classmethod
     def from_env(cls) -> ApplicationConfig:
@@ -297,6 +301,18 @@ class ApplicationConfig:
             analysis_max_insights=int(
                 os.environ.get("ANALYSIS_MAX_INSIGHTS", "30"),
             ),
+            research_max_gap_rounds_per_run=int(
+                os.environ.get("RESEARCH_MAX_GAP_ROUNDS_PER_RUN", "2"),
+            ),
+            targeted_max_attempts_per_gap=int(
+                os.environ.get("TARGETED_MAX_ATTEMPTS_PER_GAP", "2"),
+            ),
+            targeted_max_queries_per_gap=int(
+                os.environ.get("TARGETED_MAX_QUERIES_PER_GAP", "2"),
+            ),
+            targeted_max_sources_per_gap=int(
+                os.environ.get("TARGETED_MAX_SOURCES_PER_GAP", "3"),
+            ),
         )
 
 
@@ -328,3 +344,4 @@ class ApplicationOverrides:
     review_executor: Any | None = None
     research_sufficiency_evaluator: Any | None = None
     research_readiness_executor: Any | None = None
+    targeted_research_runner: Any | None = None

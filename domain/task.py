@@ -63,6 +63,13 @@ class Task:
         self._transition_to(TaskStatus.WAITING)
 
     def ready(self) -> None:
+        if self.status not in {TaskStatus.CREATED, TaskStatus.WAITING}:
+            raise RuntimeStateTransitionError(
+                "Task",
+                self.status,
+                TaskStatus.READY,
+            )
+
         self._transition_to(TaskStatus.READY)
 
     def start(self) -> None:
@@ -114,6 +121,17 @@ class Task:
             )
 
         self._transition_to(TaskStatus.FAILED)
+
+    def requeue_after_interrupt(self) -> None:
+        """Return an interrupted RUNNING task to READY when progress was checkpointed."""
+        if self.status != TaskStatus.RUNNING:
+            raise RuntimeStateTransitionError(
+                "Task",
+                self.status,
+                TaskStatus.READY,
+            )
+
+        self._transition_to(TaskStatus.READY)
 
     def cancel(self) -> None:
         self._transition_to(TaskStatus.CANCELLED)

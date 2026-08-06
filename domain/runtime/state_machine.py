@@ -137,6 +137,7 @@ TASK_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
     TaskStatus.RUNNING: frozenset(
         {
             TaskStatus.PAUSED,
+            TaskStatus.READY,
             TaskStatus.COMPLETED,
             TaskStatus.FAILED,
             TaskStatus.CANCELLED,

@@ -239,6 +239,83 @@ class SourceAcquisitionService:
 
         return summary
 
+    def acquire_targeted_queries(
+        self,
+        context: WorkflowContext,
+        queries: list[SearchQuery],
+        *,
+        max_sources: int,
+    ) -> SourceAcquisitionSummary:
+        """Bounded targeted acquisition for one gap; zero sources is not a failure."""
+        if not queries:
+            return SourceAcquisitionSummary(
+                source_ids=(),
+                queries_executed=0,
+                candidates_found=0,
+                sources_acquired=0,
+                retrieval_failures=0,
+            )
+        if max_sources < 1:
+            raise ValueError("max_sources must be at least 1.")
+
+        started = time.monotonic()
+        design = self._resolve_design(context)
+        project_id = context.project.id
+        workflow_run_id = context.workflow_run.id
+
+        raw_count, grouped = self._collect_candidates(queries)
+        prioritized = self._prioritize_groups(grouped)[:max_sources]
+        unique_count = len(prioritized)
+
+        (
+            source_ids,
+            acquired,
+            failures,
+            truncated,
+            attempted,
+            skipped_duplicate,
+            skipped_budget,
+            failure_categories,
+            budget_exhausted,
+            coverage_target_satisfied,
+            coverage_complete_early_stop,
+            covered_needs,
+        ) = self._acquire_candidates(
+            project_id=project_id,
+            workflow_run_id=workflow_run_id,
+            research_design_id=design.id,
+            design=design,
+            groups=prioritized,
+            started_at=started,
+            max_source_groups=max_sources,
+        )
+
+        elapsed = time.monotonic() - started
+        return SourceAcquisitionSummary(
+            source_ids=tuple(source_ids),
+            queries_executed=len(queries),
+            candidates_found=raw_count,
+            sources_acquired=acquired,
+            retrieval_failures=failures,
+            tavily_query_count=len(queries),
+            candidate_count_raw=raw_count,
+            candidate_count_unique=unique_count,
+            candidates_attempted=attempted,
+            acquired_count=acquired,
+            truncated_count=truncated,
+            failed_count=failures,
+            skipped_duplicate_count=skipped_duplicate,
+            skipped_budget_count=skipped_budget,
+            elapsed_seconds=elapsed,
+            budget_exhausted=budget_exhausted,
+            coverage_target_satisfied=coverage_target_satisfied,
+            coverage_complete_early_stop=coverage_complete_early_stop,
+            information_needs_covered_count=len(covered_needs),
+            information_needs_total=len(design.information_needs),
+            failure_category_counts=dict(failure_categories),
+            limitations=(),
+        )
+
     def _resolve_design(self, context: WorkflowContext) -> ResearchDesign:
         template = context.workflow_template
         if template is None or template.research_design_snapshot is None:
@@ -299,6 +376,7 @@ class SourceAcquisitionService:
         design: ResearchDesign,
         groups: list[_CandidateGroup],
         started_at: float,
+        max_source_groups: int | None = None,
     ) -> tuple[
         list[str],
         int,
@@ -325,9 +403,10 @@ class SourceAcquisitionService:
         coverage_complete_early_stop = False
         covered_needs: set[str] = set()
         covered_questions: set[str] = set()
+        source_group_limit = max_source_groups or self._budget.max_sources_per_run
 
         for index, group in enumerate(groups):
-            if index >= self._budget.max_sources_per_run:
+            if index >= source_group_limit:
                 skipped_budget += 1
                 continue
 

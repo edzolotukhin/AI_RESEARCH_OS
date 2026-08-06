@@ -6,6 +6,7 @@ from application.execution.execution_budget_context import (
     stage_for_executor,
 )
 from application.ports.workflow_runtime_checkpoint import WorkflowRuntimeCheckpoint
+from application.runtime.checkpoint_context import CHECKPOINT_SERVICE_KEY
 from application.task_lifecycle_manager import TaskLifecycleManager
 
 
@@ -35,6 +36,7 @@ class TaskExecutor:
 
         self._lifecycle.start(task)
         if runtime_checkpoint is not None:
+            context.services[CHECKPOINT_SERVICE_KEY] = runtime_checkpoint
             runtime_checkpoint.on_task_running(context)
 
         executor = self._resolver.resolve(task)

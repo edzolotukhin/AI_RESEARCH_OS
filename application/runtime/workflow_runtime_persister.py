@@ -5,7 +5,10 @@ from typing import Any
 from application.persistence.exceptions import CheckpointPersistenceError
 from application.ports.workflow_runtime_checkpoint import WorkflowRuntimeCheckpoint
 from application.runtime.durable_fingerprint import durable_recovery_fingerprint
-from application.runtime.task_result_codec import capture_task_result
+from application.runtime.task_result_codec import (
+    capture_task_progress,
+    capture_task_result,
+)
 from application.runtime.workflow_execution_audit import WorkflowExecutionAudit
 from application.execution.execution_budget_context import RUN_USAGE_SUMMARY_KEY
 from application.scheduling.scheduling_result import SchedulingResult
@@ -62,6 +65,13 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
         task = context.current_task
         if task is not None:
             self._audit.task_started(context.workflow_run.id, task.id)
+
+    def on_task_progress(self, context: WorkflowContext) -> None:
+        task = context.current_task
+        if task is None:
+            return
+        self._task_results[task.id] = capture_task_progress(context, task.id)
+        self._checkpoint(context, critical=True)
 
     def on_task_finished(
         self,

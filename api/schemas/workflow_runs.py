@@ -170,6 +170,8 @@ class WorkflowRunResultsResponse(BaseModel):
     results_ready: bool
     task_results: list[TaskResultItem]
     research_readiness: dict[str, Any] | None = None
+    research_loop_count: int | None = None
+    research_loop_history: list[dict[str, Any]] | None = None
 
 
 class ExecutionLogResponse(BaseModel):

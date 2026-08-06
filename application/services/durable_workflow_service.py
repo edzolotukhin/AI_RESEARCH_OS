@@ -18,6 +18,7 @@ from application.services.project_service import ProjectService
 from application.services.workflow_service import WorkflowService
 from application.workflow_engine import WorkflowEngine
 from domain.project import Project
+from domain.value_objects.task_status import TaskStatus
 from domain.workflow_status import WorkflowStatus
 from domain.workflow_template import WorkflowTemplate
 from runtime.workflow_context import WorkflowContext
@@ -125,9 +126,12 @@ class DurableWorkflowService:
                 "PAUSED WorkflowRun resume is outside PF-04 durable execution scope."
             )
 
-        recovered_tasks = recover_interrupted_running_tasks(workflow_run)
         resume_version = self._workflow_service.get_workflow_run_version(run_id)
         task_results = self._workflow_service.get_task_results(run_id)
+        recovered_tasks = recover_interrupted_running_tasks(
+            workflow_run,
+            task_results,
+        )
 
         persister = WorkflowRuntimePersister(
             workflow_service=self._workflow_service,
@@ -140,10 +144,11 @@ class DurableWorkflowService:
 
         for task in recovered_tasks:
             context.current_task = task
-            persister.on_task_finished(
-                context,
-                error=RuntimeError(INTERRUPTED_RUNNING_TASK_REASON),
-            )
+            if task.status == TaskStatus.FAILED:
+                persister.on_task_finished(
+                    context,
+                    error=RuntimeError(INTERRUPTED_RUNNING_TASK_REASON),
+                )
 
         return self._execute(context, persister, lease_guard=lease_guard)
 

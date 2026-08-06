@@ -22,6 +22,10 @@ class WorkflowRuntimeCheckpoint(Protocol):
     def on_task_running(self, context: WorkflowContext) -> None:
         ...
 
+    def on_task_progress(self, context: WorkflowContext) -> None:
+        """Optional mid-task checkpoint for long-running executors."""
+        ...
+
     def on_task_finished(
         self,
         context: WorkflowContext,

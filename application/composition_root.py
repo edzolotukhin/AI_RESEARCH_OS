@@ -467,6 +467,7 @@ def _build_agent_executors(
         config=config,
         overrides=overrides,
         evidence_repository=evidence_repository,
+        source_repository=source_repository,
         llm_client=llm_client,
     )
     executors["analysis"] = build_analysis_executor(
