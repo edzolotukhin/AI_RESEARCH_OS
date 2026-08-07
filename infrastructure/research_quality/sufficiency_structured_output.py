@@ -8,7 +8,9 @@ from application.exceptions.structured_output_error import StructuredOutputError
 from application.execution.execution_budget_retry import mark_llm_call_as_retry
 from application.research_quality.raw_semantic_decision_contract import (
     RAW_SEMANTIC_DECISION_PAYLOAD_SCHEMA,
+    RawSemanticDecisionContractGate,
     raw_semantic_decision_payload_contract,
+    raw_semantic_decision_payload_schema_text,
 )
 from application.research_quality.semantic_sufficiency_contract import (
     SEMANTIC_SUFFICIENCY_PAYLOAD_SCHEMA,
@@ -44,7 +46,9 @@ class StructuredOutputAttemptTelemetry:
     is_truncated: bool | None = None
     reasoning_budget_exhausted: bool | None = None
     parse_failure_category: str | None = None
+    structured_output_failure_category: str | None = None
     contract_failure_category: str | None = None
+    contract_rejection_code: str | None = None
     output_tokens: int | None = None
     reasoning_tokens: int | None = None
     max_output_tokens: int | None = None
@@ -62,7 +66,9 @@ class StructuredOutputAttemptTelemetry:
             "is_truncated": self.is_truncated,
             "reasoning_budget_exhausted": self.reasoning_budget_exhausted,
             "parse_failure_category": self.parse_failure_category,
+            "structured_output_failure_category": self.structured_output_failure_category,
             "contract_failure_category": self.contract_failure_category,
+            "contract_rejection_code": self.contract_rejection_code,
             "output_tokens": self.output_tokens,
             "reasoning_tokens": self.reasoning_tokens,
             "max_output_tokens": self.max_output_tokens,
@@ -127,6 +133,12 @@ class SufficiencyStructuredOutputGenerator:
         last_error: StructuredOutputError | None = None
         attempt_history: list[StructuredOutputAttemptTelemetry] = []
         self._attempt_history = ()
+        contract_gate: RawSemanticDecisionContractGate | None = None
+        if candidate_validator is raw_semantic_decision_payload_contract:
+            contract_gate = RawSemanticDecisionContractGate()
+            validator = contract_gate.accepts
+        else:
+            validator = candidate_validator
         options = LLMGenerationOptions(
             max_output_tokens=self._max_output_tokens,
             reasoning_effort=self._reasoning_effort,
@@ -139,7 +151,7 @@ class SufficiencyStructuredOutputGenerator:
             try:
                 payload = self._parser.parse(
                     response.content,
-                    candidate_validator=candidate_validator,
+                    candidate_validator=validator,
                     llm_truncated=response.was_truncated,
                     finish_reason=response.finish_reason,
                     output_tokens=response.output_tokens,
@@ -184,6 +196,10 @@ class SufficiencyStructuredOutputGenerator:
                     attempt=attempt,
                     error=last_error,
                     response=response,
+                    contract_rejection_code=_contract_rejection_code(
+                        error=last_error,
+                        contract_gate=contract_gate,
+                    ),
                 )
                 attempt_history.append(failure_record)
                 self._attempt_history = tuple(attempt_history)
@@ -236,6 +252,7 @@ def _failure_attempt_record(
     attempt: int,
     error: StructuredOutputError,
     response: LLMResponse,
+    contract_rejection_code: str | None = None,
 ) -> StructuredOutputAttemptTelemetry:
     base_message = _bounded_text(_structured_output_base_message(error))
     json_error = _bounded_text(error.json_decode_message) if error.json_decode_message else None
@@ -248,7 +265,9 @@ def _failure_attempt_record(
         is_truncated=error.is_truncated,
         reasoning_budget_exhausted=error.reasoning_budget_exhausted,
         parse_failure_category=_parse_failure_category(error),
+        structured_output_failure_category=_structured_output_failure_category(error),
         contract_failure_category=_contract_failure_category(error),
+        contract_rejection_code=contract_rejection_code,
         output_tokens=response.output_tokens,
         reasoning_tokens=response.reasoning_tokens,
         max_output_tokens=response.max_output_tokens,
@@ -261,12 +280,15 @@ def _failure_attempt_record(
 def _log_intermediate_retry(record: StructuredOutputAttemptTelemetry) -> None:
     logger.warning(
         "sufficiency_structured_output_retry attempt=%s stage=%s is_truncated=%s "
-        "parse_failure_category=%s contract_failure_category=%s",
+        "parse_failure_category=%s structured_output_failure_category=%s "
+        "contract_failure_category=%s contract_rejection_code=%s",
         record.attempt,
         record.stage,
         record.is_truncated,
         record.parse_failure_category,
+        record.structured_output_failure_category,
         record.contract_failure_category,
+        record.contract_rejection_code,
     )
 
 
@@ -290,6 +312,26 @@ def _parse_failure_category(error: StructuredOutputError) -> str:
     if error.is_truncated:
         return "truncated_output"
     return "parse_error"
+
+
+def _structured_output_failure_category(error: StructuredOutputError) -> str:
+    if error.is_truncated:
+        return "truncated_output"
+    if (error.stage or "").lower() == "contract":
+        return "contract_validation"
+    return "syntax_or_extraction"
+
+
+def _contract_rejection_code(
+    *,
+    error: StructuredOutputError,
+    contract_gate: RawSemanticDecisionContractGate | None,
+) -> str | None:
+    if (error.stage or "").lower() != "contract":
+        return None
+    if contract_gate is None:
+        return None
+    return contract_gate.last_rejection_code
 
 
 def _contract_failure_category(error: StructuredOutputError) -> str | None:
@@ -318,7 +360,7 @@ def _build_correction_prompt(
             "CORRECTION REQUEST",
             compact_note,
             "REQUIRED JSON SCHEMA",
-            payload_schema,
+            payload_schema or raw_semantic_decision_payload_schema_text(),
             "VALIDATION ERROR",
             str(error),
             "INVALID RESPONSE PREVIEW",

@@ -12,6 +12,7 @@ from application.research_quality.raw_semantic_decision_contract import (
     RAW_SEMANTIC_DECISION_PAYLOAD_SCHEMA,
     raw_semantic_decision_from_payload,
     raw_semantic_decision_payload_contract,
+    render_raw_semantic_decision_output_contract,
 )
 from application.research_quality.semantic_sufficiency_adapter import (
     semantic_assessment_from_raw_decision,
@@ -119,16 +120,12 @@ def _system_prompt() -> str:
         "Return semantic facts only. "
         "Classify which required aspects are supported, which are missing, and any "
         "semantic conflicts between evidence items. "
-        "When EvidenceExpectation.required_aspects are provided, use those exact "
-        "canonical aspect identifiers in supported_aspects and missing_aspects. "
-        "When no EvidenceExpectation is provided, classify only the single legacy "
-        "aspect identifier '__legacy_need__' as supported or missing; do not invent "
-        "additional aspect identifiers. "
         "Use semantic_conflicts with the identifier 'unresolvable' when the need "
         "cannot be answered with available sources. "
         "Do not choose system readiness, final status, gap types, search strategy, "
         "or remediation instructions. "
-        "Return compact JSON only."
+        "Return compact JSON only.\n\n"
+        + render_raw_semantic_decision_output_contract()
     )
 
 

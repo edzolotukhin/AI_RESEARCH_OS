@@ -73,11 +73,14 @@ class SufficiencyAttemptHistoryTests(unittest.TestCase):
         self.assertFalse(first.success)
         self.assertEqual(first.stage, "contract")
         self.assertEqual(first.parse_failure_category, "parse_error")
+        self.assertEqual(first.structured_output_failure_category, "contract_validation")
         self.assertEqual(first.contract_failure_category, "invalid_sufficiency_contract")
+        self.assertEqual(first.contract_rejection_code, "supported_missing_overlap")
         self.assertTrue(second.success)
         self.assertIsNone(second.stage)
         self.assertIsNone(second.parse_failure_category)
         self.assertIsNone(second.contract_failure_category)
+        self.assertIsNone(second.contract_rejection_code)
         self.assertEqual(second.output_tokens, 87)
 
     def test_parse_failure_then_success_preserves_extract_stage(self) -> None:
@@ -338,6 +341,58 @@ class SufficiencyAttemptHistoryTests(unittest.TestCase):
         self.assertIn("stage=contract", log_text)
         self.assertNotIn(inconsistent, log_text)
 
+    def test_contract_rejection_code_retained_after_later_success(self) -> None:
+        mock_llm = Mock()
+        mock_llm.generate.side_effect = [
+            LLMResponse(
+                content=json.dumps({**_valid_raw_payload(), "status": "sufficient"}),
+                finish_reason="stop",
+            ),
+            LLMResponse(content=json.dumps(_valid_raw_payload()), finish_reason="stop"),
+        ]
+        generator = self._generator(mock_llm, max_attempts=2)
+        generator.generate(Prompt(system="System", user="User"))
+        self.assertEqual(
+            generator.attempt_history[0].contract_rejection_code,
+            "forbidden_field:status",
+        )
+        self.assertIsNone(generator.attempt_history[1].contract_rejection_code)
+
+    def test_success_attempt_has_no_contract_rejection_code(self) -> None:
+        mock_llm = Mock()
+        mock_llm.generate.return_value = LLMResponse(
+            content=json.dumps(_valid_raw_payload()),
+            finish_reason="stop",
+        )
+        generator = self._generator(mock_llm)
+        generator.generate(Prompt(system="System", user="User"))
+        self.assertIsNone(generator.attempt_history[0].contract_rejection_code)
+
+    def test_contract_rejection_code_not_in_serialized_history(self) -> None:
+        mock_llm = Mock()
+        secret = "GreenSprout Belgrade supplies fresh microgreens"
+        mock_llm.generate.side_effect = [
+            LLMResponse(content=f'{{"status":"sufficient","reason":"{secret}"}}', finish_reason="stop"),
+            LLMResponse(content=json.dumps(_valid_raw_payload()), finish_reason="stop"),
+        ]
+        generator = self._generator(mock_llm, max_attempts=2)
+        generator.generate(Prompt(system="System", user="User"))
+        serialized = json.dumps([item.to_dict() for item in generator.attempt_history])
+        self.assertIn("forbidden_field:status", serialized)
+        self.assertNotIn(secret, serialized)
+
+    def test_parse_failure_extract_uses_syntax_or_extraction_category(self) -> None:
+        mock_llm = Mock()
+        mock_llm.generate.return_value = LLMResponse(content="plain prose", finish_reason="stop")
+        generator = self._generator(mock_llm, max_attempts=1)
+        with self.assertRaises(StructuredOutputError):
+            generator.generate(Prompt(system="System", user="User"))
+        record = generator.attempt_history[0]
+        self.assertEqual(record.stage, "extract")
+        self.assertEqual(record.parse_failure_category, "parse_error")
+        self.assertEqual(record.structured_output_failure_category, "syntax_or_extraction")
+        self.assertIsNone(record.contract_rejection_code)
+
     def test_attempt_history_is_immutable_records(self) -> None:
         mock_llm = Mock()
         mock_llm.generate.return_value = LLMResponse(
@@ -383,7 +438,9 @@ class MiniLiveHarnessAttemptHistoryTests(unittest.TestCase):
                 success=False,
                 stage="contract",
                 parse_failure_category="parse_error",
+                structured_output_failure_category="contract_validation",
                 contract_failure_category="invalid_sufficiency_contract",
+                contract_rejection_code="forbidden_field:status",
             ),
             StructuredOutputAttemptTelemetry(
                 attempt=2,
@@ -398,6 +455,10 @@ class MiniLiveHarnessAttemptHistoryTests(unittest.TestCase):
         self.assertEqual(len(payload["attempt_history"]), 2)
         self.assertFalse(payload["attempt_history"][0]["success"])
         self.assertEqual(payload["attempt_history"][0]["stage"], "contract")
+        self.assertEqual(
+            payload["attempt_history"][0]["contract_rejection_code"],
+            "forbidden_field:status",
+        )
         self.assertTrue(payload["attempt_history"][1]["success"])
 
 
