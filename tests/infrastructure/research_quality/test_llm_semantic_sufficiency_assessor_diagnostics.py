@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import Mock
 
 from application.exceptions.structured_output_error import StructuredOutputError
+from application.execution.execution_budget_retry import consume_llm_call_retry_flag
 from application.research_quality.exceptions import SemanticSufficiencyAssessmentError
 from domain.ai.llm_response import LLMResponse
 from domain.evidence.evidence import Evidence
@@ -82,6 +83,9 @@ def _assessor(
 
 
 class LlmSemanticSufficiencyAssessorDiagnosticsTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        consume_llm_call_retry_flag()
+
     def _assert_diagnostics_shape(
         self,
         exc: SemanticSufficiencyAssessmentError,

@@ -63,6 +63,9 @@ from tests.application.research_quality.test_targeted_research_loop import (
 class P1AcceptanceReplayTests(unittest.TestCase):
     """Full RQCL acceptance replay with deterministic offline providers."""
 
+    def setUp(self) -> None:
+        consume_llm_call_retry_flag()
+
     def test_ready_scenario_end_to_end(self) -> None:
         design = ready_scenario_design()
         initial_statuses = {

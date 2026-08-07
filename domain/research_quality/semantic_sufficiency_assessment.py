@@ -9,7 +9,7 @@ from domain.research_quality._helpers import (
     tuple_of_str,
     validate_unit_score,
 )
-from domain.research_quality.gap_type import GapType
+from domain.research_quality.gap_type import BLOCKING_GAP_TYPES, GapType
 from domain.research_quality.sufficiency_status import SufficiencyStatus
 
 
@@ -43,11 +43,20 @@ class SemanticSufficiencyAssessment:
             blocking = [
                 gap_type.value
                 for gap_type in self.gap_types
-                if gap_type == GapType.NO_EVIDENCE
+                if gap_type in BLOCKING_GAP_TYPES
             ]
             if blocking:
                 raise ValidationError(
-                    "SUFFICIENT semantic assessment must not include NO_EVIDENCE",
+                    "SUFFICIENT semantic assessment must not include blocking gap types: "
+                    + ", ".join(blocking),
+                )
+            if self.missing_aspects:
+                raise ValidationError(
+                    "SUFFICIENT semantic assessment must not include missing_aspects",
+                )
+            if self.search_directives:
+                raise ValidationError(
+                    "SUFFICIENT semantic assessment must not include search_directives",
                 )
 
     def to_dict(self) -> dict[str, Any]:

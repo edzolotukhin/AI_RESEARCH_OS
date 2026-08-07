@@ -141,6 +141,12 @@ def _system_prompt() -> str:
         "report writing, or broad market research. "
         "Do not suggest external source discovery beyond short targeted search "
         "directives scoped to the current InformationNeed. "
+        "Status semantics: "
+        "SUFFICIENT means the InformationNeed is substantively answered, no blocking "
+        "research gaps remain, gap_types must be empty, and missing_aspects and "
+        "search_directives must be empty. "
+        "Use PARTIAL or INSUFFICIENT when actionable blocking gaps, missing aspects, "
+        "or targeted search directives remain. "
         "Return compact JSON only."
     )
 

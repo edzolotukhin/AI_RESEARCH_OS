@@ -7,7 +7,7 @@ from domain.planning.research_design import ResearchDesign
 from domain.research_quality.deterministic_sufficiency_signals import (
     DeterministicSufficiencySignals,
 )
-from domain.research_quality.gap_type import GapType
+from domain.research_quality.gap_type import BLOCKING_GAP_TYPES, GapType
 from domain.research_quality.information_need_assessment import InformationNeedAssessment
 from domain.research_quality.research_readiness_assessment import ResearchReadinessAssessment
 from domain.research_quality.research_readiness_result import ResearchReadinessResult
@@ -19,6 +19,8 @@ from domain.research_quality.sufficiency_status import (
     READINESS_BLOCKING_STATUSES,
     SufficiencyStatus,
 )
+
+from application.research_quality.exceptions import SemanticSufficiencyAssessmentError
 
 
 def build_information_need_assessment(
@@ -50,6 +52,13 @@ def build_information_need_assessment(
     gap_types = _merge_gap_types(
         signals.deterministic_gap_types,
         semantic.gap_types,
+    )
+    _assert_consistent_need_assessment(
+        status=status,
+        evidence_count=signals.evidence_count,
+        gap_types=gap_types,
+        missing_aspects=semantic.missing_aspects,
+        search_directives=semantic.search_directives,
     )
     return InformationNeedAssessment(
         information_need_id=signals.information_need_id,
@@ -169,3 +178,28 @@ def _merge_gap_types(
             seen.add(gap_type)
             merged.append(gap_type)
     return tuple(sorted(merged, key=lambda item: item.value))
+
+
+def _assert_consistent_need_assessment(
+    *,
+    status: SufficiencyStatus,
+    evidence_count: int,
+    gap_types: tuple[GapType, ...],
+    missing_aspects: tuple[str, ...],
+    search_directives: tuple[str, ...],
+) -> None:
+    """Fail fast before constructing an invalid InformationNeedAssessment."""
+    if status != SufficiencyStatus.SUFFICIENT:
+        return
+
+    blocking = [
+        gap_type.value
+        for gap_type in gap_types
+        if gap_type in BLOCKING_GAP_TYPES
+    ]
+    if evidence_count == 0 or blocking or missing_aspects or search_directives:
+        raise SemanticSufficiencyAssessmentError(
+            "Inconsistent semantic sufficiency assessment: SUFFICIENT status requires "
+            "evidence_count > 0 and no blocking gap_types, missing_aspects, or "
+            "search_directives.",
+        )

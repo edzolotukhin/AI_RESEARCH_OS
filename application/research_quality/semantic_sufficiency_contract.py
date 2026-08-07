@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from domain.research_quality.gap_type import GapType
+from domain.research_quality.gap_type import BLOCKING_GAP_TYPES, GapType
 from domain.research_quality.sufficiency_status import SufficiencyStatus
 
 DEFAULT_SUFFICIENCY_MAX_MISSING_ASPECTS = 8
@@ -13,13 +13,14 @@ DEFAULT_SUFFICIENCY_MAX_REASON_CHARS = 500
 
 _VALID_STATUSES = {member.value for member in SufficiencyStatus}
 _VALID_GAP_TYPES = {member.value for member in GapType}
+_BLOCKING_GAP_VALUES = frozenset(gap_type.value for gap_type in BLOCKING_GAP_TYPES)
 
 SEMANTIC_SUFFICIENCY_PAYLOAD_SCHEMA = """
 {
   "status": "sufficient",
-  "missing_aspects": ["string"],
-  "gap_types": ["insufficient_depth"],
-  "search_directives": ["string"],
+  "missing_aspects": [],
+  "gap_types": [],
+  "search_directives": [],
   "confidence": 0.85,
   "reason": "string"
 }
@@ -76,4 +77,28 @@ def semantic_sufficiency_payload_contract(payload: Mapping[str, Any]) -> bool:
     if not reason.strip() or len(reason) > DEFAULT_SUFFICIENCY_MAX_REASON_CHARS:
         return False
 
+    return _is_status_gap_consistent(
+        str(status),
+        gap_types,
+        missing_aspects,
+        search_directives,
+    )
+
+
+def _is_status_gap_consistent(
+    status: str,
+    gap_types: list[Any],
+    missing_aspects: list[Any],
+    search_directives: list[Any],
+) -> bool:
+    """Reject cross-field contradictions before domain construction."""
+    if status != SufficiencyStatus.SUFFICIENT.value:
+        return True
+
+    if any(str(item) in _BLOCKING_GAP_VALUES for item in gap_types):
+        return False
+    if missing_aspects:
+        return False
+    if search_directives:
+        return False
     return True
