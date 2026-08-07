@@ -18,6 +18,9 @@ from infrastructure.llm.llm_client import LLMClient
 DEFAULT_SUFFICIENCY_MAX_OUTPUT_TOKENS = 2048
 DEFAULT_SUFFICIENCY_STRUCTURED_OUTPUT_MAX_ATTEMPTS = 3
 
+# Legacy constructor/test default only. Production composition must pass
+# ApplicationConfig.sufficiency_max_output_tokens explicitly.
+
 _RESPONSE_PREVIEW_LIMIT = 800
 
 

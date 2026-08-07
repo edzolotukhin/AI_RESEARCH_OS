@@ -18,7 +18,6 @@ from infrastructure.research_quality.sufficiency_failure_diagnostics import (
     build_sufficiency_failure_diagnostics,
 )
 from infrastructure.research_quality.sufficiency_structured_output import (
-    DEFAULT_SUFFICIENCY_MAX_OUTPUT_TOKENS,
     DEFAULT_SUFFICIENCY_STRUCTURED_OUTPUT_MAX_ATTEMPTS,
     SufficiencyStructuredOutputGenerator,
 )
@@ -49,7 +48,7 @@ class LlmSemanticSufficiencyAssessor(SemanticSufficiencyAssessor):
         self,
         *,
         llm_client: LLMClient,
-        max_output_tokens: int | None = DEFAULT_SUFFICIENCY_MAX_OUTPUT_TOKENS,
+        max_output_tokens: int | None = None,
         reasoning_effort: str | None = None,
         structured_output_max_attempts: int = (
             DEFAULT_SUFFICIENCY_STRUCTURED_OUTPUT_MAX_ATTEMPTS

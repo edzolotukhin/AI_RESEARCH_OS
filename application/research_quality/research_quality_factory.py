@@ -54,7 +54,11 @@ def build_research_sufficiency_evaluator(
 
         return HybridResearchSufficiencyEvaluator(
             deterministic_evaluator=DeterministicSufficiencyEvaluator(),
-            semantic_assessor=LlmSemanticSufficiencyAssessor(llm_client=llm_client),
+            semantic_assessor=LlmSemanticSufficiencyAssessor(
+                llm_client=llm_client,
+                max_output_tokens=config.sufficiency_max_output_tokens,
+                reasoning_effort=config.sufficiency_reasoning_effort,
+            ),
         )
     raise ValueError(
         f"Unsupported RESEARCH_SUFFICIENCY_ASSESSOR: {provider!r}. "

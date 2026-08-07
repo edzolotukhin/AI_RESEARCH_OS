@@ -96,6 +96,8 @@ class ApplicationConfig:
     review_max_output_tokens: int = DEFAULT_REVIEW_MAX_OUTPUT_TOKENS
     review_structured_output_max_attempts: int = DEFAULT_REVIEW_STRUCTURED_OUTPUT_MAX_ATTEMPTS
     review_max_calls: int = 7
+    sufficiency_reasoning_effort: str = "minimal"
+    sufficiency_max_output_tokens: int = 8192
     report_max_llm_calls: int = 20
     evidence_max_llm_calls: int = 50
     sufficiency_max_llm_calls: int = 20
@@ -282,6 +284,13 @@ class ApplicationConfig:
                 ),
             ),
             review_max_calls=int(os.environ.get("REVIEW_MAX_CALLS", "7")),
+            sufficiency_reasoning_effort=os.environ.get(
+                "SUFFICIENCY_REASONING_EFFORT",
+                "minimal",
+            ).strip().lower(),
+            sufficiency_max_output_tokens=int(
+                os.environ.get("SUFFICIENCY_MAX_OUTPUT_TOKENS", "8192"),
+            ),
             report_max_llm_calls=int(os.environ.get("REPORT_MAX_LLM_CALLS", "20")),
             evidence_max_llm_calls=int(os.environ.get("EVIDENCE_MAX_LLM_CALLS", "50")),
             sufficiency_max_llm_calls=int(
