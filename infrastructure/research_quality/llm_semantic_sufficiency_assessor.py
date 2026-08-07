@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Sequence
 
 from application.exceptions.structured_output_error import StructuredOutputError
@@ -10,6 +11,12 @@ from application.research_quality.semantic_sufficiency_contract import (
 )
 from application.research_quality.exceptions import SemanticSufficiencyAssessmentError
 from application.research_quality.evidence_payload import build_evidence_payload
+from application.research_quality.sufficiency_diagnostics import (
+    format_sufficiency_failure_message,
+)
+from infrastructure.research_quality.sufficiency_failure_diagnostics import (
+    build_sufficiency_failure_diagnostics,
+)
 from infrastructure.research_quality.sufficiency_structured_output import (
     DEFAULT_SUFFICIENCY_MAX_OUTPUT_TOKENS,
     DEFAULT_SUFFICIENCY_STRUCTURED_OUTPUT_MAX_ATTEMPTS,
@@ -29,6 +36,8 @@ from domain.research_quality.sufficiency_status import SufficiencyStatus
 from infrastructure.llm.llm_client import LLMClient
 
 from application.ports.research_quality_ports import SemanticSufficiencyAssessor
+
+logger = logging.getLogger(__name__)
 
 
 class LlmSemanticSufficiencyAssessor(SemanticSufficiencyAssessor):
@@ -78,9 +87,19 @@ class LlmSemanticSufficiencyAssessor(SemanticSufficiencyAssessor):
         except BudgetExhaustedError:
             raise
         except StructuredOutputError as exc:
+            telemetry = self._structured_output.last_telemetry
+            diagnostics = build_sufficiency_failure_diagnostics(
+                structured_error=exc,
+                telemetry=telemetry,
+            )
+            logger.error(
+                "sufficiency_structured_output_failed diagnostics=%s",
+                diagnostics.to_dict(),
+            )
             raise SemanticSufficiencyAssessmentError(
-                "Semantic sufficiency structured output failed.",
+                format_sufficiency_failure_message(diagnostics),
                 cause=exc,
+                diagnostics=diagnostics,
             ) from exc
         return _payload_to_assessment(payload)
 
