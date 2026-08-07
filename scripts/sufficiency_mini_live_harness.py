@@ -23,7 +23,7 @@ from domain.planning.research_design import InformationNeed, ResearchDesign, Res
 from domain.research_quality.deterministic_sufficiency_signals import (
     DeterministicSufficiencySignals,
 )
-from domain.research_quality.gap_type import BLOCKING_GAP_TYPES
+from domain.research_quality.gap_type import BLOCKING_GAP_TYPES, GapType
 from domain.research_quality.raw_semantic_decision import RawSemanticDecision
 from domain.research_quality.semantic_decision_normalizer import (
     LEGACY_NEED_ASPECT_ID,
@@ -43,7 +43,13 @@ from infrastructure.research_quality.sufficiency_structured_output import (
 )
 
 MINI_LIVE_ENV_FLAG = "SUFFICIENCY_MINI_LIVE"
+REPEATABILITY_LIVE_ENV_FLAG = "SUFFICIENCY_REPEATABILITY_LIVE"
 MAX_STRUCTURED_OUTPUT_ATTEMPTS = DEFAULT_SUFFICIENCY_STRUCTURED_OUTPUT_MAX_ATTEMPTS
+REPEATABILITY_PLANNED_EXECUTIONS = 6
+REPEATABILITY_EXECUTION_ORDER = ("A1", "B1", "A2", "B2", "A3", "B3")
+DEFAULT_REPEATABILITY_ARTIFACT_PATH = (
+    "artifacts/acceptance/p1_06_semantic_repeatability.json"
+)
 
 SCENARIO_A_ID = "scenario_a_obviously_sufficient"
 SCENARIO_B_ID = "scenario_b_obviously_insufficient"
@@ -613,4 +619,395 @@ def format_report(results: Sequence[ScenarioRunResult]) -> str:
         "scenarios": [item.to_report_dict() for item in results],
         "total_usage": aggregate_usage(results),
     }
+    return json.dumps(payload, indent=2, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# P1-06 repeatability gate (A×3 + B×3)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RepeatabilityExecutionSpec:
+    execution_id: str
+    scenario: MiniLiveScenario
+
+
+@dataclass
+class RepeatabilityExecutionResult:
+    execution_id: str
+    result: ScenarioRunResult
+    acceptance: ScenarioAcceptance
+    failure_classification: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = self.result.to_report_dict()
+        payload["execution_id"] = self.execution_id
+        payload["acceptance"] = {
+            "passed": self.acceptance.passed,
+            "failures": list(self.acceptance.failures),
+        }
+        if self.failure_classification is not None:
+            payload["failure_classification"] = self.failure_classification
+        return payload
+
+
+def repeatability_execution_matrix() -> tuple[RepeatabilityExecutionSpec, ...]:
+    scenario_a = scenario_a_fixtures()
+    scenario_b = scenario_b_fixtures()
+    by_letter = {"A": scenario_a, "B": scenario_b}
+    specs: list[RepeatabilityExecutionSpec] = []
+    for execution_id in REPEATABILITY_EXECUTION_ORDER:
+        letter = execution_id[0]
+        specs.append(
+            RepeatabilityExecutionSpec(
+                execution_id=execution_id,
+                scenario=by_letter[letter],
+            ),
+        )
+    return tuple(specs)
+
+
+def validate_repeatability_acceptance(
+    result: ScenarioRunResult,
+) -> ScenarioAcceptance:
+    """Stricter repeatability acceptance beyond the initial mini-live gate."""
+    acceptance = validate_live_acceptance(result)
+    failures = list(acceptance.failures)
+
+    status = result.final_assessment.status
+    if result.scenario_id == SCENARIO_A_ID:
+        if status != SufficiencyStatus.SUFFICIENT:
+            failures.append(
+                f"scenario A repeatability requires SUFFICIENT, got {status.value}"
+            )
+    elif result.scenario_id == SCENARIO_B_ID:
+        if status != SufficiencyStatus.INSUFFICIENT:
+            failures.append(
+                f"scenario B repeatability requires INSUFFICIENT, got {status.value}"
+            )
+        if status == SufficiencyStatus.BLOCKED:
+            failures.append("scenario B must not become BLOCKED (resolvability regression)")
+        if GapType.UNRESOLVABLE in result.policy.gap_types:
+            failures.append("scenario B must not produce UNRESOLVABLE gap type")
+        if status == SufficiencyStatus.PARTIAL:
+            failures.append("scenario B must not become PARTIAL for obvious fixture")
+        if GapType.INSUFFICIENT_DEPTH not in result.policy.gap_types:
+            failures.append("scenario B must include INSUFFICIENT_DEPTH gap type")
+
+    if result.telemetry.retries > 0:
+        failures.append(
+            f"repeatability requires first-pass only (retries={result.telemetry.retries})"
+        )
+    if result.telemetry.attempts != 1:
+        failures.append(
+            f"repeatability requires attempts=1, got {result.telemetry.attempts}"
+        )
+
+    deduped = tuple(dict.fromkeys(failures))
+    return ScenarioAcceptance(
+        scenario_id=result.scenario_id,
+        passed=not deduped,
+        failures=deduped,
+    )
+
+
+def classify_repeatability_failure(
+    *,
+    result: ScenarioRunResult,
+    acceptance: ScenarioAcceptance,
+) -> str:
+    failures = acceptance.failures
+    joined = " | ".join(failures).lower()
+    telemetry = result.telemetry
+
+    if telemetry.retries > 0 or telemetry.attempts > 1:
+        if telemetry.parse_failure_category:
+            return "STRUCTURED_OUTPUT_FAILURE"
+        if telemetry.contract_failure_category or "contract" in joined:
+            return "CONTRACT_FAILURE"
+        return "STRUCTURED_OUTPUT_FAILURE"
+
+    if "blocked" in joined or "unresolvable" in joined:
+        return "RESOLVABILITY_REGRESSION"
+    if "unexpected aspect" in joined:
+        return "LEGACY_ASPECT_INSTABILITY"
+    if "status expected" in joined or "repeatability requires" in joined:
+        return "SEMANTIC_CLASSIFICATION_INSTABILITY"
+    if "missing" in joined and result.evidence_count > 0:
+        return "POLICY_INVARIANT_FAILURE"
+    if result.final_assessment.status == SufficiencyStatus.MISSING:
+        return "POLICY_INVARIANT_FAILURE"
+    if any(
+        token in joined
+        for token in ("coverage", "search_directives", "insufficient_depth")
+    ):
+        return "POLICY_INVARIANT_FAILURE"
+    if "semantic_conflicts" in joined:
+        return "SEMANTIC_CLASSIFICATION_INSTABILITY"
+    return "UNKNOWN"
+
+
+def _confidence_stats(values: Sequence[float]) -> dict[str, float | None]:
+    if not values:
+        return {"min": None, "max": None, "mean": None}
+    return {
+        "min": round(min(values), 4),
+        "max": round(max(values), 4),
+        "mean": round(sum(values) / len(values), 4),
+    }
+
+
+def compute_repeatability_metrics(
+    executions: Sequence[RepeatabilityExecutionResult],
+) -> dict[str, Any]:
+    a_results = [item for item in executions if item.execution_id.startswith("A")]
+    b_results = [item for item in executions if item.execution_id.startswith("B")]
+
+    def _status_count(
+        items: Sequence[RepeatabilityExecutionResult],
+        status: SufficiencyStatus,
+    ) -> int:
+        return sum(
+            1
+            for item in items
+            if item.result.final_assessment.status == status
+        )
+
+    unexpected_aspects = 0
+    unexpected_conflicts_a = 0
+    unexpected_conflicts_b = 0
+    unexpected_missing = 0
+    unexpected_blocked = 0
+    domain_validation_errors = 0
+    first_pass_successes = 0
+    retries = 0
+    contract_failures = 0
+    parse_failures = 0
+    truncations = 0
+
+    for item in executions:
+        raw = item.result.raw_semantic
+        allowed = {LEGACY_NEED_ASPECT_ID}
+        observed = set(raw.supported_aspects) | set(raw.missing_aspects)
+        if observed - allowed:
+            unexpected_aspects += 1
+        if raw.semantic_conflicts:
+            if item.result.scenario_id == SCENARIO_A_ID:
+                unexpected_conflicts_a += 1
+            else:
+                unexpected_conflicts_b += 1
+        if item.result.final_assessment.status == SufficiencyStatus.MISSING:
+            unexpected_missing += 1
+        if item.result.final_assessment.status == SufficiencyStatus.BLOCKED:
+            unexpected_blocked += 1
+        telemetry = item.result.telemetry
+        if telemetry.retries == 0 and telemetry.attempts == 1:
+            first_pass_successes += 1
+        retries += telemetry.retries
+        if telemetry.contract_failure_category:
+            contract_failures += 1
+        if telemetry.parse_failure_category:
+            parse_failures += 1
+        if telemetry.finish_reason == "length":
+            truncations += 1
+
+    total_output_tokens = sum(
+        item.result.telemetry.output_tokens or 0 for item in executions
+    )
+    total_reasoning_tokens = sum(
+        item.result.telemetry.reasoning_tokens or 0 for item in executions
+    )
+    output_tokens_available = all(
+        item.result.telemetry.output_tokens is not None for item in executions
+    )
+    reasoning_tokens_available = all(
+        item.result.telemetry.reasoning_tokens is not None for item in executions
+    )
+
+    return {
+        "status_stability": {
+            "scenario_a_sufficient": f"{_status_count(a_results, SufficiencyStatus.SUFFICIENT)}/{len(a_results)}",
+            "scenario_b_insufficient": f"{_status_count(b_results, SufficiencyStatus.INSUFFICIENT)}/{len(b_results)}",
+        },
+        "aspect_stability": {
+            "unexpected_aspect_ids": unexpected_aspects,
+        },
+        "conflict_stability": {
+            "scenario_a_unexpected_semantic_conflicts": unexpected_conflicts_a,
+            "scenario_b_unexpected_semantic_conflicts": unexpected_conflicts_b,
+        },
+        "policy_invariant_stability": {
+            "unexpected_missing": unexpected_missing,
+            "unexpected_blocked": unexpected_blocked,
+            "domain_validation_errors": domain_validation_errors,
+        },
+        "structured_output_stability": {
+            "first_pass_successes": first_pass_successes,
+            "retries": retries,
+            "contract_failures": contract_failures,
+            "parse_failures": parse_failures,
+            "truncations": truncations,
+        },
+        "confidence": {
+            "scenario_a": _confidence_stats(
+                [item.result.raw_semantic.confidence for item in a_results],
+            ),
+            "scenario_b": _confidence_stats(
+                [item.result.raw_semantic.confidence for item in b_results],
+            ),
+        },
+        "usage": {
+            "scenario_executions": len(executions),
+            "llm_calls": sum(item.result.telemetry.llm_calls for item in executions),
+            "retries": retries,
+            "elapsed_seconds": round(
+                sum(item.result.telemetry.elapsed_seconds for item in executions),
+                3,
+            ),
+            "total_output_tokens": total_output_tokens if output_tokens_available else None,
+            "total_reasoning_tokens": (
+                total_reasoning_tokens if reasoning_tokens_available else None
+            ),
+        },
+    }
+
+
+def repeatability_verdict(
+    executions: Sequence[RepeatabilityExecutionResult],
+    *,
+    planned_executions: int = REPEATABILITY_PLANNED_EXECUTIONS,
+) -> tuple[str, bool]:
+    if len(executions) != planned_executions:
+        return (
+            "P1-06 SEMANTIC SUFFICIENCY REPEATABILITY — FAIL",
+            False,
+        )
+    if any(not item.acceptance.passed for item in executions):
+        return (
+            "P1-06 SEMANTIC SUFFICIENCY REPEATABILITY — FAIL",
+            False,
+        )
+    metrics = compute_repeatability_metrics(executions)
+    structured = metrics["structured_output_stability"]
+    if structured["retries"] != 0 or structured["first_pass_successes"] != planned_executions:
+        return (
+            "P1-06 SEMANTIC SUFFICIENCY REPEATABILITY — FAIL",
+            False,
+        )
+    return (
+        "P1-06 SEMANTIC SUFFICIENCY REPEATABILITY — PASS",
+        True,
+    )
+
+
+def build_repeatability_artifact(
+    *,
+    configuration: dict[str, Any],
+    executions: Sequence[RepeatabilityExecutionResult],
+    mode: str,
+    execution_order: Sequence[str],
+    planned_executions: int = REPEATABILITY_PLANNED_EXECUTIONS,
+) -> dict[str, Any]:
+    verdict, passed = repeatability_verdict(
+        executions,
+        planned_executions=planned_executions,
+    )
+    first_failure = next(
+        (item for item in executions if not item.acceptance.passed),
+        None,
+    )
+    return {
+        "gate": "P1-06 Semantic Sufficiency Repeatability",
+        "mode": mode,
+        "configuration": configuration,
+        "execution_order": list(execution_order),
+        "planned_executions": planned_executions,
+        "completed_executions": len(executions),
+        "executions": [item.to_dict() for item in executions],
+        "aggregate_metrics": compute_repeatability_metrics(executions),
+        "acceptance_verdict": verdict,
+        "passed": passed,
+        "failure_classification": (
+            first_failure.failure_classification if first_failure else None
+        ),
+    }
+
+
+def write_repeatability_artifact(
+    payload: dict[str, Any],
+    *,
+    path: str = DEFAULT_REPEATABILITY_ARTIFACT_PATH,
+) -> str:
+    from pathlib import Path
+
+    artifact_path = Path(path)
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return str(artifact_path)
+
+
+def _offline_raw_for_scenario(scenario: MiniLiveScenario) -> RawSemanticDecision:
+    return RawSemanticDecision(
+        supported_aspects=scenario.expected_supported_aspects,
+        missing_aspects=scenario.expected_missing_aspects,
+        semantic_conflicts=(),
+        confidence=0.9 if scenario.expected_status == SufficiencyStatus.SUFFICIENT else 0.4,
+        reason=f"Offline repeatability fixture for {scenario.scenario_id}.",
+    )
+
+
+def run_repeatability_offline_harness() -> tuple[RepeatabilityExecutionResult, ...]:
+    executions: list[RepeatabilityExecutionResult] = []
+    for spec in repeatability_execution_matrix():
+        raw = _offline_raw_for_scenario(spec.scenario)
+        result = evaluate_from_raw_semantic(
+            scenario=spec.scenario,
+            raw_semantic=raw,
+            mode="offline",
+            telemetry=ScenarioTelemetry(attempts=1, llm_calls=0, retries=0),
+        )
+        acceptance = validate_repeatability_acceptance(result)
+        executions.append(
+            RepeatabilityExecutionResult(
+                execution_id=spec.execution_id,
+                result=result,
+                acceptance=acceptance,
+            ),
+        )
+    return tuple(executions)
+
+
+def run_repeatability_live_harness(
+    assessor: Any,
+) -> tuple[RepeatabilityExecutionResult, ...]:
+    """Run the 6-execution repeatability matrix with fail-fast on any deviation."""
+    if len(repeatability_execution_matrix()) != REPEATABILITY_PLANNED_EXECUTIONS:
+        raise RuntimeError("repeatability matrix must contain exactly 6 executions")
+    executions: list[RepeatabilityExecutionResult] = []
+    for spec in repeatability_execution_matrix():
+        result = evaluate_scenario_live(scenario=spec.scenario, assessor=assessor)
+        acceptance = validate_repeatability_acceptance(result)
+        failure_classification = (
+            classify_repeatability_failure(result=result, acceptance=acceptance)
+            if not acceptance.passed
+            else None
+        )
+        executions.append(
+            RepeatabilityExecutionResult(
+                execution_id=spec.execution_id,
+                result=result,
+                acceptance=acceptance,
+                failure_classification=failure_classification,
+            ),
+        )
+        if not acceptance.passed or result.telemetry.retries > 0:
+            break
+    return tuple(executions)
+
+
+def format_repeatability_report(payload: dict[str, Any]) -> str:
     return json.dumps(payload, indent=2, ensure_ascii=False)
