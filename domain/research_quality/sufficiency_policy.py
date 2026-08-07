@@ -58,6 +58,7 @@ def apply_sufficiency_policy(
     gap_types = _derive_policy_gap_types(
         signals=signals,
         normalized=normalized,
+        raw_semantic=raw_semantic,
         evidence_expectation=expectation,
         coverage=coverage,
     )
@@ -103,6 +104,7 @@ def _derive_policy_gap_types(
     *,
     signals: DeterministicSufficiencySignals,
     normalized,
+    raw_semantic: RawSemanticDecision,
     evidence_expectation: EvidenceExpectation | None,
     coverage: float,
 ) -> tuple[GapType, ...]:
@@ -120,10 +122,21 @@ def _derive_policy_gap_types(
         add(gap_type)
 
     if normalized.semantic_conflicts:
-        if UNRESOLVABLE_CONFLICT_ID in normalized.semantic_conflicts:
-            add(GapType.UNRESOLVABLE)
-        else:
-            add(GapType.CONFLICTING_EVIDENCE)
+        effective_conflicts = normalized.semantic_conflicts
+        if (
+            UNRESOLVABLE_CONFLICT_ID in effective_conflicts
+            and raw_semantic.missing_aspects
+        ):
+            effective_conflicts = tuple(
+                conflict
+                for conflict in effective_conflicts
+                if conflict != UNRESOLVABLE_CONFLICT_ID
+            )
+        if effective_conflicts:
+            if UNRESOLVABLE_CONFLICT_ID in effective_conflicts:
+                add(GapType.UNRESOLVABLE)
+            else:
+                add(GapType.CONFLICTING_EVIDENCE)
 
     if evidence_expectation is not None:
         if evidence_expectation.requires_quantitative_evidence:

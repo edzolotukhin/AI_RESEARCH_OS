@@ -85,6 +85,22 @@ class M34InitialPromptAlignmentTests(unittest.TestCase):
             instructions,
         )
 
+    def test_semantic_conflicts_are_evidence_contradictions_only(self) -> None:
+        instructions = raw_semantic_decision_output_instructions()
+        self.assertIn("between evidence items only", instructions)
+        self.assertIn("Lack of supporting evidence is NOT a semantic conflict", instructions)
+
+    def test_unresolvable_not_for_insufficient_evidence(self) -> None:
+        instructions = raw_semantic_decision_output_instructions()
+        self.assertIn(
+            'Do NOT output "unresolvable" merely because current evidence is insufficient.',
+            instructions,
+        )
+
+    def test_system_prompt_does_not_misdefine_unresolvable(self) -> None:
+        prompt = _system_prompt()
+        self.assertNotIn("cannot be answered with available sources", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

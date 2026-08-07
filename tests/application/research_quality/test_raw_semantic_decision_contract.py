@@ -92,6 +92,18 @@ class RawSemanticDecisionContractTests(unittest.TestCase):
             "supported_missing_overlap",
         )
 
+    def test_unresolvable_with_explicit_missing_rejected(self) -> None:
+        payload = {
+            **_valid_payload(),
+            "supported_aspects": [],
+            "missing_aspects": [LEGACY_NEED_ASPECT_ID],
+            "semantic_conflicts": ["unresolvable"],
+        }
+        self.assertEqual(
+            evaluate_raw_semantic_decision_payload(payload),
+            "misclassified_unresolvable",
+        )
+
     def test_blank_reason_rejected(self) -> None:
         payload = {**_valid_payload(), "reason": "   "}
         self.assertEqual(

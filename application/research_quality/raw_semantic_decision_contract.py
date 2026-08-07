@@ -5,7 +5,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from domain.research_quality.raw_semantic_decision import RawSemanticDecision
-from domain.research_quality.semantic_decision_normalizer import LEGACY_NEED_ASPECT_ID
+from domain.research_quality.semantic_decision_normalizer import (
+    LEGACY_NEED_ASPECT_ID,
+    UNRESOLVABLE_CONFLICT_ID,
+)
 
 DEFAULT_RAW_SEMANTIC_MAX_ASPECTS = 8
 DEFAULT_RAW_SEMANTIC_MAX_CONFLICTS = 8
@@ -59,7 +62,18 @@ def raw_semantic_decision_output_instructions() -> str:
             "Field semantics:",
             "- supported_aspects: array of canonical aspect identifiers supported by evidence.",
             "- missing_aspects: array of canonical required aspect identifiers not supported.",
-            "- semantic_conflicts: array of semantic conflict identifiers only.",
+            "- semantic_conflicts: array of identifiers for substantive contradictions "
+            "between evidence items only (conflicting claims supported by different evidence).",
+            "- Use semantic_conflicts=[] when evidence is absent, shallow, incomplete, or "
+            "does not yet answer the InformationNeed.",
+            "- Lack of supporting evidence is NOT a semantic conflict; express it via "
+            "missing_aspects.",
+            "- Do NOT output \"unresolvable\" merely because current evidence is insufficient.",
+            "- Absence from the current Evidence set does not establish that future research "
+            "cannot resolve the need.",
+            "- Output \"unresolvable\" in semantic_conflicts ONLY when available evidence "
+            "substantively shows the InformationNeed cannot be answered by further research "
+            "(rare); never together with missing_aspects for the same insufficiency.",
             "- confidence: numeric value in [0, 1].",
             "- reason: concise non-empty explanation.",
             "",
@@ -159,6 +173,12 @@ def evaluate_raw_semantic_decision_payload(payload: Mapping[str, Any]) -> str | 
     }
     if overlap:
         return "supported_missing_overlap"
+
+    if (
+        UNRESOLVABLE_CONFLICT_ID in semantic_conflicts
+        and missing_aspects
+    ):
+        return "misclassified_unresolvable"
 
     return None
 
