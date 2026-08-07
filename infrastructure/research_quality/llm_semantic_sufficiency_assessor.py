@@ -6,11 +6,16 @@ from typing import Any, Sequence
 
 from application.exceptions.structured_output_error import StructuredOutputError
 from application.execution.exceptions import BudgetExhaustedError
-from application.research_quality.semantic_sufficiency_contract import (
-    SEMANTIC_SUFFICIENCY_PAYLOAD_SCHEMA,
-)
 from application.research_quality.exceptions import SemanticSufficiencyAssessmentError
 from application.research_quality.evidence_payload import build_evidence_payload
+from application.research_quality.raw_semantic_decision_contract import (
+    RAW_SEMANTIC_DECISION_PAYLOAD_SCHEMA,
+    raw_semantic_decision_from_payload,
+    raw_semantic_decision_payload_contract,
+)
+from application.research_quality.semantic_sufficiency_adapter import (
+    semantic_assessment_from_raw_decision,
+)
 from application.research_quality.sufficiency_diagnostics import (
     format_sufficiency_failure_message,
 )
@@ -27,11 +32,9 @@ from domain.planning.research_design import InformationNeed, ResearchQuestion
 from domain.research_quality.deterministic_sufficiency_signals import (
     DeterministicSufficiencySignals,
 )
-from domain.research_quality.gap_type import GapType
 from domain.research_quality.semantic_sufficiency_assessment import (
     SemanticSufficiencyAssessment,
 )
-from domain.research_quality.sufficiency_status import SufficiencyStatus
 from infrastructure.llm.llm_client import LLMClient
 
 from application.ports.research_quality_ports import SemanticSufficiencyAssessor
@@ -81,7 +84,8 @@ class LlmSemanticSufficiencyAssessor(SemanticSufficiencyAssessor):
         try:
             payload = self._structured_output.generate(
                 prompt,
-                payload_schema=SEMANTIC_SUFFICIENCY_PAYLOAD_SCHEMA,
+                payload_schema=RAW_SEMANTIC_DECISION_PAYLOAD_SCHEMA,
+                candidate_validator=raw_semantic_decision_payload_contract,
             )
         except BudgetExhaustedError:
             raise
@@ -100,52 +104,30 @@ class LlmSemanticSufficiencyAssessor(SemanticSufficiencyAssessor):
                 cause=exc,
                 diagnostics=diagnostics,
             ) from exc
-        return _payload_to_assessment(payload)
-
-
-def _payload_to_assessment(payload: dict[str, Any]) -> SemanticSufficiencyAssessment:
-    gap_types = tuple(
-        GapType(str(value)) for value in payload.get("gap_types", [])
-    )
-    missing_aspects = tuple(
-        str(value).strip()
-        for value in payload.get("missing_aspects", [])
-        if str(value).strip()
-    )
-    search_directives = tuple(
-        sorted(
-            {
-                str(value).strip()
-                for value in payload.get("search_directives", [])
-                if str(value).strip()
-            },
-        ),
-    )
-    confidence = payload.get("confidence")
-    return SemanticSufficiencyAssessment(
-        status=SufficiencyStatus(str(payload["status"])),
-        missing_aspects=missing_aspects,
-        gap_types=gap_types,
-        search_directives=search_directives,
-        confidence=float(confidence) if confidence is not None else None,
-        reason=str(payload.get("reason", "")).strip(),
-    )
+        raw_semantic = raw_semantic_decision_from_payload(payload)
+        return semantic_assessment_from_raw_decision(
+            information_need=information_need,
+            signals=deterministic_signals,
+            raw_semantic=raw_semantic,
+        )
 
 
 def _system_prompt() -> str:
     return (
-        "You assess whether existing research evidence substantively answers one "
+        "You evaluate whether existing research evidence semantically supports one "
         "InformationNeed within an existing ResearchQuestion. "
-        "Do not propose new research questions, information needs, replanning, "
-        "report writing, or broad market research. "
-        "Do not suggest external source discovery beyond short targeted search "
-        "directives scoped to the current InformationNeed. "
-        "Status semantics: "
-        "SUFFICIENT means the InformationNeed is substantively answered, no blocking "
-        "research gaps remain, gap_types must be empty, and missing_aspects and "
-        "search_directives must be empty. "
-        "Use PARTIAL or INSUFFICIENT when actionable blocking gaps, missing aspects, "
-        "or targeted search directives remain. "
+        "Return semantic facts only. "
+        "Classify which required aspects are supported, which are missing, and any "
+        "semantic conflicts between evidence items. "
+        "When EvidenceExpectation.required_aspects are provided, use those exact "
+        "canonical aspect identifiers in supported_aspects and missing_aspects. "
+        "When no EvidenceExpectation is provided, classify only the single legacy "
+        "aspect identifier '__legacy_need__' as supported or missing; do not invent "
+        "additional aspect identifiers. "
+        "Use semantic_conflicts with the identifier 'unresolvable' when the need "
+        "cannot be answered with available sources. "
+        "Do not choose system readiness, final status, gap types, search strategy, "
+        "or remediation instructions. "
         "Return compact JSON only."
     )
 
@@ -157,6 +139,15 @@ def _build_user_payload(
     evidence: Sequence[Evidence],
     deterministic_signals: DeterministicSufficiencySignals,
 ) -> str:
+    need_payload: dict[str, Any] = {
+        "id": information_need.id,
+        "description": information_need.description,
+    }
+    if information_need.evidence_expectation is not None:
+        need_payload["evidence_expectation"] = (
+            information_need.evidence_expectation.to_dict()
+        )
+
     deterministic_facts = {
         "evidence_count": deterministic_signals.evidence_count,
         "independent_source_count": deterministic_signals.independent_source_count,
@@ -180,10 +171,7 @@ def _build_user_payload(
             "id": research_question.id,
             "question": research_question.question,
         },
-        "information_need": {
-            "id": information_need.id,
-            "description": information_need.description,
-        },
+        "information_need": need_payload,
         "deterministic_facts": deterministic_facts,
         "evidence": build_evidence_payload(evidence),
     }

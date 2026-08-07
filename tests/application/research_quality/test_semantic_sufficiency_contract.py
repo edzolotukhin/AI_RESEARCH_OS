@@ -12,6 +12,9 @@ from application.research_quality.exceptions import SemanticSufficiencyAssessmen
 from application.research_quality.readiness_aggregation import (
     build_information_need_assessment,
 )
+from application.research_quality.raw_semantic_decision_contract import (
+    raw_semantic_decision_payload_contract,
+)
 from application.research_quality.semantic_sufficiency_contract import (
     semantic_sufficiency_payload_contract,
 )
@@ -31,6 +34,16 @@ from domain.research_quality.sufficiency_status import SufficiencyStatus
 from infrastructure.research_quality.llm_semantic_sufficiency_assessor import (
     LlmSemanticSufficiencyAssessor,
 )
+
+
+def _valid_raw_sufficient_payload() -> dict[str, object]:
+    return {
+        "supported_aspects": ["__legacy_need__"],
+        "missing_aspects": [],
+        "semantic_conflicts": [],
+        "confidence": 0.9,
+        "reason": "Evidence substantively answers the information need.",
+    }
 
 
 def _valid_sufficient_payload() -> dict[str, object]:
@@ -170,18 +183,15 @@ class SemanticSufficiencyAssessorRetryTests(unittest.TestCase):
             LLMResponse(
                 content=json.dumps(
                     {
-                        "status": "sufficient",
-                        "missing_aspects": [],
-                        "gap_types": ["insufficient_depth"],
-                        "search_directives": [],
-                        "confidence": 0.9,
-                        "reason": "Looks sufficient.",
+                        **_valid_raw_sufficient_payload(),
+                        "supported_aspects": ["__legacy_need__"],
+                        "missing_aspects": ["__legacy_need__"],
                     },
                 ),
                 finish_reason="stop",
             ),
             LLMResponse(
-                content=json.dumps(_valid_sufficient_payload()),
+                content=json.dumps(_valid_raw_sufficient_payload()),
                 finish_reason="stop",
             ),
         ]
@@ -201,12 +211,9 @@ class SemanticSufficiencyAssessorRetryTests(unittest.TestCase):
         mock_llm = Mock()
         inconsistent = json.dumps(
             {
-                "status": "sufficient",
-                "missing_aspects": [],
-                "gap_types": ["insufficient_depth"],
-                "search_directives": [],
-                "confidence": 0.9,
-                "reason": "Looks sufficient.",
+                **_valid_raw_sufficient_payload(),
+                "supported_aspects": ["__legacy_need__"],
+                "missing_aspects": ["__legacy_need__"],
             },
         )
         mock_llm.generate.side_effect = [

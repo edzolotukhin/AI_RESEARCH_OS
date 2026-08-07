@@ -151,12 +151,11 @@ class LlmSemanticSufficiencyAssessorDiagnosticsTests(unittest.TestCase):
         mock_llm.generate.return_value = LLMResponse(
             content=json.dumps(
                 {
-                    "status": "not-a-valid-status",
-                    "missing_aspects": [],
-                    "gap_types": [],
-                    "search_directives": [],
+                    "supported_aspects": ["__legacy_need__"],
+                    "missing_aspects": ["__legacy_need__"],
+                    "semantic_conflicts": [],
                     "confidence": 0.5,
-                    "reason": "Invalid status value.",
+                    "reason": "Overlapping aspects.",
                 },
             ),
             finish_reason="stop",
@@ -185,7 +184,7 @@ class LlmSemanticSufficiencyAssessorDiagnosticsTests(unittest.TestCase):
     def test_truncated_output_exposes_diagnostics(self) -> None:
         mock_llm = Mock()
         mock_llm.generate.return_value = LLMResponse(
-            content='{"status": "sufficient", "missing_aspects": ["',
+            content='{"supported_aspects": ["__legacy_need__"], "missing_aspects": ["',
             finish_reason="length",
             output_tokens=2048,
             max_output_tokens=2048,

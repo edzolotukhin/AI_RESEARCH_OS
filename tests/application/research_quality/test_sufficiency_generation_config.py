@@ -13,8 +13,8 @@ from application.execution.execution_budget_retry import consume_llm_call_retry_
 from application.research_quality.research_quality_factory import (
     build_research_sufficiency_evaluator,
 )
-from application.research_quality.semantic_sufficiency_contract import (
-    semantic_sufficiency_payload_contract,
+from application.research_quality.raw_semantic_decision_contract import (
+    raw_semantic_decision_payload_contract,
 )
 from domain.ai.llm_response import LLMResponse
 from domain.ai.prompt import Prompt
@@ -40,12 +40,11 @@ from application.research_quality.hybrid_sufficiency_evaluator import (
 )
 
 
-def _valid_sufficient_payload() -> dict[str, object]:
+def _valid_raw_sufficient_payload() -> dict[str, object]:
     return {
-        "status": "sufficient",
+        "supported_aspects": ["__legacy_need__"],
         "missing_aspects": [],
-        "gap_types": [],
-        "search_directives": [],
+        "semantic_conflicts": [],
         "confidence": 0.9,
         "reason": "Evidence substantively answers the information need.",
     }
@@ -174,7 +173,7 @@ class SufficiencyProductionCompositionTests(unittest.TestCase):
         def _capture(_prompt, *, options=None):
             captured.append(options)
             return LLMResponse(
-                content=json.dumps(_valid_sufficient_payload()),
+                content=json.dumps(_valid_raw_sufficient_payload()),
                 finish_reason="stop",
                 output_tokens=120,
                 max_output_tokens=options.max_output_tokens if options else None,
@@ -211,7 +210,7 @@ class SufficiencyProductionCompositionTests(unittest.TestCase):
             if len(captured) == 1:
                 return LLMResponse(content="plain prose", finish_reason="stop")
             return LLMResponse(
-                content=json.dumps(_valid_sufficient_payload()),
+                content=json.dumps(_valid_raw_sufficient_payload()),
                 finish_reason="stop",
             )
 
@@ -238,18 +237,15 @@ class SufficiencyProductionCompositionTests(unittest.TestCase):
         mock_llm = Mock()
         inconsistent = json.dumps(
             {
-                "status": "sufficient",
-                "missing_aspects": [],
-                "gap_types": ["insufficient_depth"],
-                "search_directives": [],
-                "confidence": 0.9,
-                "reason": "Invalid.",
+                **_valid_raw_sufficient_payload(),
+                "supported_aspects": ["__legacy_need__"],
+                "missing_aspects": ["__legacy_need__"],
             },
         )
         mock_llm.generate.side_effect = [
             LLMResponse(content=inconsistent, finish_reason="stop"),
             LLMResponse(
-                content=json.dumps(_valid_sufficient_payload()),
+                content=json.dumps(_valid_raw_sufficient_payload()),
                 finish_reason="stop",
             ),
         ]
@@ -268,7 +264,7 @@ class SufficiencyProductionCompositionTests(unittest.TestCase):
         )
         self.assertEqual(result.status, SufficiencyStatus.SUFFICIENT)
         self.assertEqual(mock_llm.generate.call_count, 2)
-        self.assertFalse(semantic_sufficiency_payload_contract(json.loads(inconsistent)))
+        self.assertFalse(raw_semantic_decision_payload_contract(json.loads(inconsistent)))
 
 
 class OpenAISufficiencyGenerationTests(unittest.TestCase):
@@ -281,7 +277,7 @@ class OpenAISufficiencyGenerationTests(unittest.TestCase):
         openai_cls.return_value = api_client
         api_client.responses.create.return_value = SimpleNamespace(
             status="completed",
-            output_text=json.dumps(_valid_sufficient_payload()),
+            output_text=json.dumps(_valid_raw_sufficient_payload()),
             usage=SimpleNamespace(
                 output_tokens=120,
                 output_tokens_details=SimpleNamespace(reasoning_tokens=20),

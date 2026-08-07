@@ -5,6 +5,10 @@ from typing import Any
 
 from application.exceptions.structured_output_error import StructuredOutputError
 from application.execution.execution_budget_retry import mark_llm_call_as_retry
+from application.research_quality.raw_semantic_decision_contract import (
+    RAW_SEMANTIC_DECISION_PAYLOAD_SCHEMA,
+    raw_semantic_decision_payload_contract,
+)
 from application.research_quality.semantic_sufficiency_contract import (
     SEMANTIC_SUFFICIENCY_PAYLOAD_SCHEMA,
     semantic_sufficiency_payload_contract,
@@ -67,7 +71,8 @@ class SufficiencyStructuredOutputGenerator:
         self,
         prompt: Prompt,
         *,
-        payload_schema: str = SEMANTIC_SUFFICIENCY_PAYLOAD_SCHEMA,
+        payload_schema: str = RAW_SEMANTIC_DECISION_PAYLOAD_SCHEMA,
+        candidate_validator=raw_semantic_decision_payload_contract,
     ) -> dict[str, Any]:
         current_prompt = prompt
         last_error: StructuredOutputError | None = None
@@ -83,7 +88,7 @@ class SufficiencyStructuredOutputGenerator:
             try:
                 payload = self._parser.parse(
                     response.content,
-                    candidate_validator=semantic_sufficiency_payload_contract,
+                    candidate_validator=candidate_validator,
                     llm_truncated=response.was_truncated,
                     finish_reason=response.finish_reason,
                     output_tokens=response.output_tokens,
@@ -163,8 +168,8 @@ def _build_correction_prompt(
 ) -> Prompt:
     preview = (invalid_response.content or "")[:_RESPONSE_PREVIEW_LIMIT]
     compact_note = (
-        "Regenerate compact valid JSON only. Keep missing_aspects and "
-        "search_directives short and within scope of the InformationNeed."
+        "Regenerate compact valid JSON only. Keep aspect identifiers and reason "
+        "short and within scope of the InformationNeed."
         if error.is_truncated
         else "Regenerate valid JSON only. Keep output compact."
     )

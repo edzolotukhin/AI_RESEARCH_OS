@@ -4,6 +4,8 @@ from dataclasses import dataclass, fields
 from typing import Any
 from uuid import uuid4
 
+from domain.planning.evidence_expectation import EvidenceExpectation
+
 
 @dataclass(frozen=True)
 class ResearchQuestion:
@@ -47,9 +49,10 @@ class InformationNeed:
     preferred_source_types: tuple[str, ...] = ()
     timeframe: str = ""
     geography: str = ""
+    evidence_expectation: EvidenceExpectation | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "id": self.id,
             "research_question_id": self.research_question_id,
             "description": self.description,
@@ -58,9 +61,18 @@ class InformationNeed:
             "timeframe": self.timeframe,
             "geography": self.geography,
         }
+        if self.evidence_expectation is not None:
+            payload["evidence_expectation"] = self.evidence_expectation.to_dict()
+        return payload
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> InformationNeed:
+        raw_expectation = payload.get("evidence_expectation")
+        evidence_expectation = (
+            EvidenceExpectation.from_dict(raw_expectation)
+            if isinstance(raw_expectation, dict)
+            else None
+        )
         return cls(
             id=str(payload["id"]),
             research_question_id=str(payload["research_question_id"]),
@@ -71,6 +83,7 @@ class InformationNeed:
             ),
             timeframe=str(payload.get("timeframe", "")),
             geography=str(payload.get("geography", "")),
+            evidence_expectation=evidence_expectation,
         )
 
 
