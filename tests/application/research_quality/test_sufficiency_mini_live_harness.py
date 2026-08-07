@@ -80,6 +80,7 @@ class TestReportFormatting(unittest.TestCase):
         self.assertIn("policy", first)
         self.assertIn("final_assessment", first)
         self.assertIn("telemetry", first)
+        self.assertIn("attempt_history", first["telemetry"])
         self.assertIn("total_usage", payload)
 
 
@@ -231,11 +232,13 @@ class TestEvaluateScenarioLiveNoProvider(unittest.TestCase):
             "output_tokens": 120,
             "max_output_tokens": 8192,
         }
+        assessor._structured_output.attempt_history = ()
 
         result = harness.evaluate_scenario_live(scenario=scenario, assessor=assessor)
         assessor._structured_output.generate.assert_called_once()
         self.assertEqual(result.mode, "live")
         self.assertEqual(result.telemetry.llm_calls, 1)
+        self.assertEqual(result.telemetry.attempt_history, ())
         self.assertEqual(result.final_assessment.status, SufficiencyStatus.SUFFICIENT)
 
 

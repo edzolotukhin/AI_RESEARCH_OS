@@ -82,6 +82,7 @@ class ScenarioTelemetry:
     retries: int = 0
     elapsed_seconds: float = 0.0
     estimated_cost_usd: float | None = None
+    attempt_history: tuple[dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -97,6 +98,7 @@ class ScenarioTelemetry:
             "retries": self.retries,
             "elapsed_seconds": round(self.elapsed_seconds, 3),
             "estimated_cost_usd": self.estimated_cost_usd,
+            "attempt_history": list(self.attempt_history),
         }
 
 
@@ -356,10 +358,25 @@ def evaluate_scenario_offline(scenario: MiniLiveScenario) -> ScenarioRunResult:
     )
 
 
+def _attempt_history_from_generator(generator: Any) -> tuple[dict[str, Any], ...]:
+    history = getattr(generator, "attempt_history", None)
+    if history is None:
+        return ()
+    if isinstance(history, tuple):
+        return tuple(
+            item.to_dict() if hasattr(item, "to_dict") else dict(item) for item in history
+        )
+    return ()
+
+
 def _telemetry_from_generator(generator: Any, *, elapsed_seconds: float) -> ScenarioTelemetry:
     last = getattr(generator, "last_telemetry", None)
+    attempt_history = _attempt_history_from_generator(generator)
     if last is None:
-        return ScenarioTelemetry(elapsed_seconds=elapsed_seconds)
+        return ScenarioTelemetry(
+            elapsed_seconds=elapsed_seconds,
+            attempt_history=attempt_history,
+        )
     if hasattr(last, "attempts"):
         attempts = int(getattr(last, "attempts", 1) or 1)
         return ScenarioTelemetry(
@@ -375,6 +392,7 @@ def _telemetry_from_generator(generator: Any, *, elapsed_seconds: float) -> Scen
             retries=max(0, attempts - 1),
             elapsed_seconds=elapsed_seconds,
             estimated_cost_usd=getattr(last, "estimated_cost_usd", None),
+            attempt_history=attempt_history,
         )
     attempts = int(last.get("attempts") or 1)
     return ScenarioTelemetry(
@@ -390,6 +408,7 @@ def _telemetry_from_generator(generator: Any, *, elapsed_seconds: float) -> Scen
         retries=max(0, attempts - 1),
         elapsed_seconds=elapsed_seconds,
         estimated_cost_usd=last.get("estimated_cost_usd"),
+        attempt_history=attempt_history,
     )
 
 
