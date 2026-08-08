@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from application.execution.budget_utils import is_sufficiency_graceful_budget_stop
+from application.execution.exceptions import BudgetExhaustedError
 from application.ports.evidence_ports import EvidenceRepository
 from application.ports.research_quality_ports import ResearchSufficiencyEvaluator
 from application.ports.source_ports import SourceRepository
@@ -15,6 +17,13 @@ from application.research_quality.research_loop_state import (
     serialize_readiness,
 )
 from application.research_quality.research_readiness_gate import ResearchReadinessGate
+from application.research_quality.budget_aware_readiness import (
+    apply_sufficiency_budget_termination,
+    sufficiency_budget_available,
+)
+from domain.research_quality.research_termination_reason import (
+    BUDGET_CONTROLLED_TERMINATION_REASONS,
+)
 from application.research_quality.status_rank import (
     blocking_need_ids,
     need_readiness_improved,
@@ -97,7 +106,20 @@ class ResearchLoopService:
                     max_attempts_per_gap=self._bounds.max_attempts_per_gap,
                 )
                 if request is None:
+                    if not sufficiency_budget_available():
+                        result, loop_state = apply_sufficiency_budget_termination(
+                            result,
+                            loop_state=loop_state,
+                        )
+                        return self._finalize(context, result, loop_state)
                     break
+
+                if not sufficiency_budget_available():
+                    result, loop_state = apply_sufficiency_budget_termination(
+                        result,
+                        loop_state=loop_state,
+                    )
+                    return self._finalize(context, result, loop_state)
 
                 need_id = request.information_need_id
                 request = replace(
@@ -112,7 +134,16 @@ class ResearchLoopService:
                 self._persist_loop_state(context, loop_state)
                 checkpoint_loop_progress(context)
                 iteration = self._runner.run(context, request)
-                result = self._evaluate_for_context(context, design)
+                try:
+                    result = self._evaluate_for_context(context, design)
+                except BudgetExhaustedError as exc:
+                    if not is_sufficiency_graceful_budget_stop(exc):
+                        raise
+                    result, loop_state = apply_sufficiency_budget_termination(
+                        previous,
+                        loop_state=loop_state,
+                    )
+                    return self._finalize(context, result, loop_state)
 
                 gap_improved = need_readiness_improved(previous, result, need_id)
                 if gap_improved:
@@ -155,6 +186,12 @@ class ResearchLoopService:
             if loop_state.termination_reason == "no_actionable_gaps":
                 break
             if not round_had_improvement:
+                if not sufficiency_budget_available():
+                    result, loop_state = apply_sufficiency_budget_termination(
+                        result,
+                        loop_state=loop_state,
+                    )
+                    return self._finalize(context, result, loop_state)
                 loop_state.termination_reason = "no_material_improvement"
                 break
         else:
@@ -169,7 +206,11 @@ class ResearchLoopService:
         result: ResearchReadinessResult,
         loop_state: ResearchLoopState,
     ) -> tuple[ResearchReadinessResult, ResearchLoopState]:
-        if loop_state.termination_reason and not result.ready_for_analysis:
+        if (
+            result.termination_reason not in BUDGET_CONTROLLED_TERMINATION_REASONS
+            and loop_state.termination_reason
+            and not result.ready_for_analysis
+        ):
             result = replace(
                 result,
                 termination_reason=loop_state.termination_reason,

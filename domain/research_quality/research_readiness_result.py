@@ -6,6 +6,9 @@ from typing import Any
 from domain.common.exceptions import ValidationError
 from domain.research_quality._helpers import tuple_of_str
 from domain.research_quality.research_readiness_assessment import ResearchReadinessAssessment
+from domain.research_quality.research_termination_reason import (
+    BUDGET_CONTROLLED_TERMINATION_REASONS,
+)
 from domain.research_quality.sufficiency_status import ACTIONABLE_BLOCKING_STATUSES
 
 
@@ -98,11 +101,15 @@ class ResearchReadinessResult:
             has_actionable_gap = _has_actionable_blocking_gap(
                 self.research_question_assessments,
             )
+            budget_controlled = (
+                self.termination_reason in BUDGET_CONTROLLED_TERMINATION_REASONS
+            )
             if has_actionable_gap and not self.targeted_research_required:
-                raise ValidationError(
-                    "targeted_research_required must be True when actionable "
-                    "blocking gaps are present",
-                )
+                if not budget_controlled:
+                    raise ValidationError(
+                        "targeted_research_required must be True when actionable "
+                        "blocking gaps are present",
+                    )
             if not has_actionable_gap and self.targeted_research_required:
                 raise ValidationError(
                     "targeted_research_required must be False when all blocking "

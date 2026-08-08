@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -10,6 +10,11 @@ from domain.evidence.evidence_type import EvidenceType
 from domain.planning.research_design import ResearchDesign
 from domain.sources.source import Source
 
+from application.evidence.chunked_evidence_extractor import ChunkedEvidenceExtractor
+from application.evidence.content_chunking import (
+    DEFAULT_EVIDENCE_EXTRACTION_CHUNK_CHARS,
+    DEFAULT_EVIDENCE_EXTRACTION_CHUNK_OVERLAP_CHARS,
+)
 from application.evidence.deduplication import compute_deduplication_key
 from application.evidence.exceptions import (
     DuplicateEvidenceError,
@@ -22,6 +27,10 @@ from application.evidence.provenance_validation import (
     validate_candidate_provenance,
 )
 from application.evidence.run_scoped_provenance import resolve_run_scoped_context
+from application.evidence.evidence_extraction_scheduler import (
+    EvidenceExtractionWorkItem,
+    build_need_fair_extraction_queue,
+)
 from application.execution.budget_utils import (
     EVIDENCE_STAGE_CAP_REASON,
     is_evidence_graceful_budget_stop,
@@ -80,72 +89,24 @@ class EvidenceExtractionService:
         project_id = context.project.id
         workflow_run_id = context.workflow_run.id
         sources = self._eligible_sources(project_id, workflow_run_id)
+        chunk_chars, overlap_chars = self._chunk_settings()
 
-        evidence_ids: list[str] = []
-        extracted = 0
-        failures = 0
-        sources_without_evidence = 0
-        sources_processed = 0
-        evidence_stage_budget_exhausted = False
-        budget_stop_reason: str | None = None
+        queue = build_need_fair_extraction_queue(
+            sources,
+            design=design,
+            workflow_run_id=workflow_run_id,
+            research_design_id=design.id,
+            chunk_chars=chunk_chars,
+            overlap_chars=overlap_chars,
+        )
 
-        for source in sources:
-            stop_reason = self._next_evidence_budget_stop_reason()
-            if stop_reason is not None:
-                budget_stop_reason = stop_reason
-                evidence_stage_budget_exhausted = (
-                    stop_reason == EVIDENCE_STAGE_CAP_REASON
-                )
-                break
-
-            try:
-                source_ids, source_extracted, source_failures, had_none = (
-                    self._extract_from_source(
-                        source=source,
-                        design=design,
-                        project_id=project_id,
-                        workflow_run_id=workflow_run_id,
-                        research_design_id=design.id,
-                    )
-                )
-            except BudgetExhaustedError as exc:
-                stop_reason = self._graceful_budget_stop_reason(exc)
-                if stop_reason is None:
-                    raise
-                budget_stop_reason = stop_reason
-                evidence_stage_budget_exhausted = (
-                    stop_reason == EVIDENCE_STAGE_CAP_REASON
-                )
-                break
-
-            sources_processed += 1
-            evidence_ids.extend(source_ids)
-            extracted += source_extracted
-            failures += source_failures
-            if had_none:
-                sources_without_evidence += 1
-
-            stop_reason = self._post_source_budget_stop_reason()
-            if stop_reason is not None:
-                budget_stop_reason = stop_reason
-                evidence_stage_budget_exhausted = (
-                    stop_reason == EVIDENCE_STAGE_CAP_REASON
-                )
-                break
-
-        if extracted == 0:
-            raise EvidenceExtractionError(
-                f"No grounded evidence extracted for workflow run {workflow_run_id}",
-            )
-
-        return EvidenceExtractionSummary(
-            evidence_ids=tuple(evidence_ids),
-            sources_processed=sources_processed,
-            evidence_extracted=extracted,
-            extraction_failures=failures,
-            sources_without_evidence=sources_without_evidence,
-            evidence_stage_budget_exhausted=evidence_stage_budget_exhausted,
-            budget_stop_reason=budget_stop_reason,
+        return self._extract_work_queue(
+            queue,
+            design=design,
+            project_id=project_id,
+            workflow_run_id=workflow_run_id,
+            research_design_id=design.id,
+            allow_empty_failure=True,
         )
 
     def extract_for_source_ids(
@@ -172,77 +133,28 @@ class EvidenceExtractionService:
             source.id: source
             for source in self._eligible_sources(project_id, workflow_run_id)
         }
+        selected_sources = [
+            eligible[source_id]
+            for source_id in source_ids
+            if source_id in eligible
+        ]
+        chunk_chars, overlap_chars = self._chunk_settings()
+        queue = build_need_fair_extraction_queue(
+            selected_sources,
+            design=design,
+            workflow_run_id=workflow_run_id,
+            research_design_id=design.id,
+            chunk_chars=chunk_chars,
+            overlap_chars=overlap_chars,
+        )
 
-        evidence_ids: list[str] = []
-        extracted = 0
-        failures = 0
-        sources_without_evidence = 0
-        sources_processed = 0
-        evidence_stage_budget_exhausted = False
-        budget_stop_reason: str | None = None
-
-        for source_id in source_ids:
-            source = eligible.get(source_id)
-            if source is None:
-                continue
-
-            stop_reason = self._next_evidence_budget_stop_reason()
-            if stop_reason is not None:
-                budget_stop_reason = stop_reason
-                evidence_stage_budget_exhausted = (
-                    stop_reason == EVIDENCE_STAGE_CAP_REASON
-                )
-                break
-
-            try:
-                source_evidence_ids, source_extracted, source_failures, had_none = (
-                    self._extract_from_source(
-                        source=source,
-                        design=design,
-                        project_id=project_id,
-                        workflow_run_id=workflow_run_id,
-                        research_design_id=design.id,
-                    )
-                )
-            except BudgetExhaustedError as exc:
-                stop_reason = self._graceful_budget_stop_reason(exc)
-                if stop_reason is None:
-                    raise
-                budget_stop_reason = stop_reason
-                evidence_stage_budget_exhausted = (
-                    stop_reason == EVIDENCE_STAGE_CAP_REASON
-                )
-                break
-
-            sources_processed += 1
-            evidence_ids.extend(source_evidence_ids)
-            extracted += source_extracted
-            failures += source_failures
-            if had_none:
-                sources_without_evidence += 1
-
-            stop_reason = self._post_source_budget_stop_reason()
-            if stop_reason is not None:
-                budget_stop_reason = stop_reason
-                evidence_stage_budget_exhausted = (
-                    stop_reason == EVIDENCE_STAGE_CAP_REASON
-                )
-                break
-
-        if extracted == 0 and not allow_empty:
-            raise EvidenceExtractionError(
-                f"No grounded evidence extracted for targeted sources on run "
-                f"{workflow_run_id}",
-            )
-
-        return EvidenceExtractionSummary(
-            evidence_ids=tuple(evidence_ids),
-            sources_processed=sources_processed,
-            evidence_extracted=extracted,
-            extraction_failures=failures,
-            sources_without_evidence=sources_without_evidence,
-            evidence_stage_budget_exhausted=evidence_stage_budget_exhausted,
-            budget_stop_reason=budget_stop_reason,
+        return self._extract_work_queue(
+            queue,
+            design=design,
+            project_id=project_id,
+            workflow_run_id=workflow_run_id,
+            research_design_id=design.id,
+            allow_empty_failure=not allow_empty,
         )
 
     def _resolve_design(self, context: WorkflowContext) -> ResearchDesign:
@@ -265,6 +177,125 @@ class EvidenceExtractionService:
             and source.content_text.strip()
         ]
 
+    def _chunk_settings(self) -> tuple[int, int]:
+        extractor = self._evidence_extractor
+        if isinstance(extractor, ChunkedEvidenceExtractor):
+            return extractor.chunk_chars, extractor.overlap_chars
+        return (
+            DEFAULT_EVIDENCE_EXTRACTION_CHUNK_CHARS,
+            DEFAULT_EVIDENCE_EXTRACTION_CHUNK_OVERLAP_CHARS,
+        )
+
+    def _extract_work_queue(
+        self,
+        queue: list[EvidenceExtractionWorkItem],
+        *,
+        design: ResearchDesign,
+        project_id: str,
+        workflow_run_id: str,
+        research_design_id: str,
+        allow_empty_failure: bool,
+    ) -> EvidenceExtractionSummary:
+        evidence_ids: list[str] = []
+        extracted = 0
+        failures = 0
+        sources_without_evidence: set[str] = set()
+        sources_with_evidence: set[str] = set()
+        sources_touched: set[str] = set()
+        evidence_stage_budget_exhausted = False
+        budget_stop_reason: str | None = None
+
+        for work_item in queue:
+            stop_reason = self._next_evidence_budget_stop_reason()
+            if stop_reason is not None:
+                budget_stop_reason = stop_reason
+                evidence_stage_budget_exhausted = (
+                    stop_reason == EVIDENCE_STAGE_CAP_REASON
+                )
+                break
+
+            source_id = work_item.source.id
+            sources_touched.add(source_id)
+
+            try:
+                source_ids, source_extracted, source_failures, had_none = (
+                    self._extract_work_item(
+                        work_item=work_item,
+                        design=design,
+                        project_id=project_id,
+                        workflow_run_id=workflow_run_id,
+                        research_design_id=research_design_id,
+                    )
+                )
+            except BudgetExhaustedError as exc:
+                stop_reason = self._graceful_budget_stop_reason(exc)
+                if stop_reason is None:
+                    raise
+                budget_stop_reason = stop_reason
+                evidence_stage_budget_exhausted = (
+                    stop_reason == EVIDENCE_STAGE_CAP_REASON
+                )
+                break
+
+            evidence_ids.extend(source_ids)
+            extracted += source_extracted
+            failures += source_failures
+            if source_extracted > 0:
+                sources_with_evidence.add(source_id)
+            elif had_none:
+                sources_without_evidence.add(source_id)
+
+            stop_reason = self._post_source_budget_stop_reason()
+            if stop_reason is not None:
+                budget_stop_reason = stop_reason
+                evidence_stage_budget_exhausted = (
+                    stop_reason == EVIDENCE_STAGE_CAP_REASON
+                )
+                break
+
+        sources_without_evidence -= sources_with_evidence
+
+        if extracted == 0 and allow_empty_failure:
+            raise EvidenceExtractionError(
+                f"No grounded evidence extracted for workflow run {workflow_run_id}",
+            )
+
+        return EvidenceExtractionSummary(
+            evidence_ids=tuple(evidence_ids),
+            sources_processed=len(sources_touched),
+            evidence_extracted=extracted,
+            extraction_failures=failures,
+            sources_without_evidence=len(sources_without_evidence),
+            evidence_stage_budget_exhausted=evidence_stage_budget_exhausted,
+            budget_stop_reason=budget_stop_reason,
+        )
+
+    def _extract_work_item(
+        self,
+        *,
+        work_item: EvidenceExtractionWorkItem,
+        design: ResearchDesign,
+        project_id: str,
+        workflow_run_id: str,
+        research_design_id: str,
+    ) -> tuple[list[str], int, int, bool]:
+        chunk_source = replace(
+            work_item.source,
+            content_text=work_item.chunk.text,
+        )
+        return self._extract_from_source(
+            source=chunk_source,
+            design=design,
+            project_id=project_id,
+            workflow_run_id=workflow_run_id,
+            research_design_id=research_design_id,
+            run_context=work_item.run_context,
+            chunk_metadata={
+                "chunk_normalized_start": work_item.chunk.original_normalized_start,
+                "chunk_normalized_end": work_item.chunk.original_normalized_end,
+            },
+        )
+
     def _extract_from_source(
         self,
         *,
@@ -273,12 +304,14 @@ class EvidenceExtractionService:
         project_id: str,
         workflow_run_id: str,
         research_design_id: str,
+        run_context=None,
+        chunk_metadata: dict | None = None,
     ) -> tuple[list[str], int, int, bool]:
         evidence_ids: list[str] = []
         extracted = 0
         failures = 0
 
-        run_context = resolve_run_scoped_context(
+        run_context = run_context or resolve_run_scoped_context(
             source=source,
             design=design,
             workflow_run_id=workflow_run_id,
@@ -310,6 +343,10 @@ class EvidenceExtractionService:
                     run_context=run_context,
                     design=design,
                 )
+                merged_metadata = dict(validated.metadata or {})
+                if chunk_metadata:
+                    merged_metadata.update(chunk_metadata)
+                validated = replace(validated, metadata=merged_metadata)
                 evidence_id = self._persist_candidate(
                     candidate=validated,
                     source=source,

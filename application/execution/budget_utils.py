@@ -3,6 +3,7 @@ from __future__ import annotations
 from application.execution.exceptions import BudgetExhaustedError
 
 EVIDENCE_STAGE_CAP_REASON = "evidence_max_llm_calls"
+SUFFICIENCY_STAGE_CAP_REASON = "sufficiency_max_llm_calls"
 DOWNSTREAM_RESERVE_REASON = "downstream_reserve_exhausted"
 GLOBAL_RUN_BUDGET_REASON = "llm_max_calls_per_run"
 
@@ -52,3 +53,18 @@ def is_evidence_graceful_budget_stop(error: BaseException | None) -> bool:
     return is_evidence_stage_cap_exhaustion(
         error,
     ) or is_downstream_reserve_exhaustion(error)
+
+
+def is_sufficiency_stage_cap_exhaustion(error: BaseException | None) -> bool:
+    """Return True when error is the sufficiency-stage LLM call cap."""
+    current: BaseException | None = error
+    while current is not None:
+        if isinstance(current, BudgetExhaustedError):
+            return current.reason == SUFFICIENCY_STAGE_CAP_REASON
+        current = current.__cause__
+    return False
+
+
+def is_sufficiency_graceful_budget_stop(error: BaseException | None) -> bool:
+    """Return True when sufficiency evaluation may terminate research gracefully."""
+    return is_sufficiency_stage_cap_exhaustion(error)

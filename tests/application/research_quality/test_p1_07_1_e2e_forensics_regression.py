@@ -7,8 +7,8 @@ from dataclasses import replace
 from typing import Sequence
 from unittest.mock import Mock
 
-from application.execution.exceptions import BudgetExhaustedError
 from application.execution.execution_budget import ExecutionBudget
+from application.execution.execution_budget_context import ensure_run_budget
 from application.research_quality.research_loop_service import ResearchLoopService
 from application.research_quality.research_readiness_service import ResearchReadinessService
 from application.research_quality.targeted_research_bounds import TargetedResearchBounds
@@ -24,6 +24,9 @@ from domain.research_quality.information_need_assessment import InformationNeedA
 from domain.research_quality.research_readiness_assessment import ResearchReadinessAssessment
 from domain.research_quality.research_readiness_result import ResearchReadinessResult
 from domain.research_quality.sufficiency_status import SufficiencyStatus
+from domain.research_quality.research_termination_reason import (
+    SUFFICIENCY_BUDGET_EXHAUSTED,
+)
 from domain.value_objects.task_status import TaskStatus
 from domain.workflow_template import WorkflowTemplate
 
@@ -117,8 +120,10 @@ class BudgetCountingEvaluator:
 
 
 class P1071ForensicsRegressionTests(unittest.TestCase):
-    def test_sufficiency_budget_exhaustion_during_targeted_loop_raises(self) -> None:
-        """Reproduces worker failure: sufficiency_max_llm_calls hit mid-loop re-eval."""
+    def test_sufficiency_budget_exhaustion_during_targeted_loop_terminates_gracefully(
+        self,
+    ) -> None:
+        """P1-07.1 failure path now terminates research without task failure."""
         design = _design("IN1", "IN2", "IN3", "IN4", "IN5")
         template = WorkflowTemplate(
             id="tpl-1",
@@ -139,8 +144,9 @@ class P1071ForensicsRegressionTests(unittest.TestCase):
             workflow_template=template,
             current_task=run.tasks[0],
         )
-        budget = ExecutionBudget(sufficiency_max_llm_calls=2)
+        budget = ExecutionBudget(sufficiency_max_llm_calls=1)
         context.execution_metadata["execution_budget"] = budget
+        ensure_run_budget(context)
 
         runner = Mock()
         runner.run.return_value = TargetedResearchIterationResult(
@@ -150,23 +156,28 @@ class P1071ForensicsRegressionTests(unittest.TestCase):
             sources_acquired=0,
             evidence_extracted=0,
         )
+        evaluator = BudgetCountingEvaluator(budget)
         loop_service = ResearchLoopService(
             runner=runner,
             bounds=TargetedResearchBounds(max_gap_rounds_per_run=1, max_attempts_per_gap=1),
-            evaluator=BudgetCountingEvaluator(budget),
+            evaluator=evaluator,
             evidence_repository=InMemoryEvidenceRepository(),
             source_repository=InMemorySourceRepository(),
         )
         service = ResearchReadinessService(
-            evaluator=BudgetCountingEvaluator(budget),
+            evaluator=evaluator,
             evidence_repository=InMemoryEvidenceRepository(),
             loop_service=loop_service,
         )
 
-        with self.assertRaises(BudgetExhaustedError) as ctx:
-            service.assess_and_apply(context)
-        self.assertEqual(ctx.exception.reason, "sufficiency_max_llm_calls")
-        self.assertGreaterEqual(runner.run.call_count, 1)
+        result = service.assess_and_apply(context)
+
+        self.assertFalse(result.ready_for_analysis)
+        self.assertFalse(result.targeted_research_required)
+        self.assertEqual(result.termination_reason, SUFFICIENCY_BUDGET_EXHAUSTED)
+        readiness = context.read_shared("research_readiness")
+        loop_state = context.read_shared("research_loop_state")
+        self.assertEqual(readiness["research_loop_count"], loop_state["research_loop_count"])
 
     def test_evidence_attribution_maps_by_information_need_refs(self) -> None:
         """Proves readiness uses information_need_refs, not accidental collapse."""
