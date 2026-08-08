@@ -183,6 +183,53 @@ def evaluate_raw_semantic_decision_payload(payload: Mapping[str, Any]) -> str | 
     return None
 
 
+def evaluate_aspect_id_membership(
+    payload: Mapping[str, Any],
+    *,
+    allowed_aspect_ids: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Return unknown aspect identifiers outside the allowed set."""
+    if not allowed_aspect_ids:
+        return ()
+    allowed = set(allowed_aspect_ids)
+    observed: list[str] = []
+    for field_name in ("supported_aspects", "missing_aspects"):
+        values = payload.get(field_name)
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            text = str(item).strip()
+            if text and text not in allowed:
+                observed.append(text)
+    return _dedupe_preserve_order(observed)
+
+
+def render_allowed_aspect_contract(*, allowed_aspect_ids: tuple[str, ...]) -> str:
+    """Call-scoped allowed-aspect instructions for first-pass and correction prompts."""
+    allowed_list = ", ".join(repr(aspect_id) for aspect_id in allowed_aspect_ids)
+    lines = [
+        "ALLOWED ASPECT IDENTIFIERS (INPUT CONTEXT ONLY — do not copy into output):",
+        f"- allowed_aspect_ids = [{allowed_list}]",
+        "- supported_aspects and missing_aspects may contain ONLY values from allowed_aspect_ids.",
+        "- Never invent aspect names or return descriptive labels.",
+        "- Never decompose an InformationNeed into new aspect identifiers.",
+        "- Labels and descriptions in information_need or evidence are semantic context only.",
+        "- Classify each required aspect using canonical IDs from allowed_aspect_ids only.",
+    ]
+    if allowed_aspect_ids == (LEGACY_NEED_ASPECT_ID,):
+        lines.extend(
+            [
+                "",
+                "Legacy mode:",
+                f"- The only valid aspect identifier is {LEGACY_NEED_ASPECT_ID!r}.",
+                f"- Return {LEGACY_NEED_ASPECT_ID!r} in supported_aspects OR missing_aspects, never both.",
+                "- Do not replace it with semantic labels such as payment terms, certifications, "
+                "lead times, or vendor onboarding requirements.",
+            ],
+        )
+    return "\n".join(lines)
+
+
 def raw_semantic_decision_payload_contract(payload: Mapping[str, Any]) -> bool:
     return evaluate_raw_semantic_decision_payload(payload) is None
 
@@ -193,13 +240,54 @@ def raw_semantic_decision_from_payload(payload: Mapping[str, Any]) -> RawSemanti
 
 @dataclass
 class RawSemanticDecisionContractGate:
-    """Tracks the last bounded contract rejection while validating candidates."""
+    """Tracks bounded contract rejection while validating call-scoped candidates."""
 
+    allowed_aspect_ids: tuple[str, ...] = ()
     last_rejection_code: str | None = None
+    last_unknown_aspect_ids: tuple[str, ...] = ()
+    last_returned_supported_aspects: tuple[str, ...] = ()
+    last_returned_missing_aspects: tuple[str, ...] = ()
 
     def accepts(self, payload: Mapping[str, Any]) -> bool:
-        self.last_rejection_code = evaluate_raw_semantic_decision_payload(payload)
-        return self.last_rejection_code is None
+        self.last_returned_supported_aspects = _normalized_aspect_tuple(
+            payload.get("supported_aspects"),
+        )
+        self.last_returned_missing_aspects = _normalized_aspect_tuple(
+            payload.get("missing_aspects"),
+        )
+        shape_rejection = evaluate_raw_semantic_decision_payload(payload)
+        if shape_rejection is not None:
+            self.last_rejection_code = shape_rejection
+            self.last_unknown_aspect_ids = ()
+            return False
+        unknown = evaluate_aspect_id_membership(
+            payload,
+            allowed_aspect_ids=self.allowed_aspect_ids,
+        )
+        if unknown:
+            self.last_rejection_code = "unknown_aspect_id"
+            self.last_unknown_aspect_ids = unknown
+            return False
+        self.last_rejection_code = None
+        self.last_unknown_aspect_ids = ()
+        return True
+
+
+def _normalized_aspect_tuple(values: Any) -> tuple[str, ...]:
+    if not isinstance(values, list):
+        return ()
+    return tuple(str(item).strip() for item in values if str(item).strip())
+
+
+def _dedupe_preserve_order(values: list[str]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return tuple(normalized)
 
 
 def _required_list_field(payload: Mapping[str, Any], field_name: str) -> list[Any] | str:

@@ -424,25 +424,29 @@ def evaluate_scenario_live(
     assessor: Any,
 ) -> ScenarioRunResult:
     """Run the production semantic boundary with harness-only observability."""
+    from application.research_quality.allowed_aspect_ids import resolve_allowed_aspect_ids
     from infrastructure.research_quality.llm_semantic_sufficiency_assessor import (
         _build_user_payload,
         _system_prompt,
     )
 
     signals = deterministic_signals_for_scenario(scenario)
+    allowed_aspect_ids = resolve_allowed_aspect_ids(scenario.information_need)
     prompt = Prompt(
-        system=_system_prompt(),
+        system=_system_prompt(allowed_aspect_ids=allowed_aspect_ids),
         user=_build_user_payload(
             research_question=scenario.research_question,
             information_need=scenario.information_need,
             evidence=scenario.evidence,
             deterministic_signals=signals,
+            allowed_aspect_ids=allowed_aspect_ids,
         ),
     )
     started = time.perf_counter()
     payload = assessor._structured_output.generate(
         prompt,
         payload_schema=RAW_SEMANTIC_DECISION_PAYLOAD_SCHEMA,
+        allowed_aspect_ids=allowed_aspect_ids,
     )
     elapsed = time.perf_counter() - started
     telemetry = _telemetry_from_generator(

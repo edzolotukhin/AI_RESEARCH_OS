@@ -5,6 +5,7 @@ from application.research_quality.sufficiency_diagnostics import (
     SufficiencyFailureDiagnostics,
 )
 from infrastructure.research_quality.sufficiency_structured_output import (
+    StructuredOutputAttemptTelemetry,
     SufficiencyGenerationTelemetry,
 )
 
@@ -13,6 +14,9 @@ def build_sufficiency_failure_diagnostics(
     *,
     structured_error: StructuredOutputError,
     telemetry: SufficiencyGenerationTelemetry | None,
+    information_need_id: str | None = None,
+    allowed_aspect_ids: tuple[str, ...] = (),
+    attempt_record: StructuredOutputAttemptTelemetry | None = None,
 ) -> SufficiencyFailureDiagnostics:
     return SufficiencyFailureDiagnostics(
         structured_output_message=_structured_output_base_message(structured_error),
@@ -48,6 +52,24 @@ def build_sufficiency_failure_diagnostics(
         ),
         contract_failure_category=(
             telemetry.contract_failure_category if telemetry is not None else None
+        ),
+        contract_rejection_code=(
+            attempt_record.contract_rejection_code if attempt_record is not None else None
+        ),
+        information_need_id=information_need_id,
+        allowed_aspect_ids=(
+            attempt_record.allowed_aspect_ids
+            if attempt_record is not None and attempt_record.allowed_aspect_ids
+            else allowed_aspect_ids
+        ),
+        returned_supported_aspects=(
+            attempt_record.returned_supported_aspects if attempt_record is not None else ()
+        ),
+        returned_missing_aspects=(
+            attempt_record.returned_missing_aspects if attempt_record is not None else ()
+        ),
+        unknown_aspect_ids=(
+            attempt_record.unknown_aspect_ids if attempt_record is not None else ()
         ),
     )
 

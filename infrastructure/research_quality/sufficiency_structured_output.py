@@ -11,6 +11,7 @@ from application.research_quality.raw_semantic_decision_contract import (
     RawSemanticDecisionContractGate,
     raw_semantic_decision_payload_contract,
     raw_semantic_decision_payload_schema_text,
+    render_allowed_aspect_contract,
 )
 from application.research_quality.semantic_sufficiency_contract import (
     SEMANTIC_SUFFICIENCY_PAYLOAD_SCHEMA,
@@ -49,6 +50,10 @@ class StructuredOutputAttemptTelemetry:
     structured_output_failure_category: str | None = None
     contract_failure_category: str | None = None
     contract_rejection_code: str | None = None
+    allowed_aspect_ids: tuple[str, ...] = ()
+    returned_supported_aspects: tuple[str, ...] = ()
+    returned_missing_aspects: tuple[str, ...] = ()
+    unknown_aspect_ids: tuple[str, ...] = ()
     output_tokens: int | None = None
     reasoning_tokens: int | None = None
     max_output_tokens: int | None = None
@@ -69,6 +74,10 @@ class StructuredOutputAttemptTelemetry:
             "structured_output_failure_category": self.structured_output_failure_category,
             "contract_failure_category": self.contract_failure_category,
             "contract_rejection_code": self.contract_rejection_code,
+            "allowed_aspect_ids": list(self.allowed_aspect_ids),
+            "returned_supported_aspects": list(self.returned_supported_aspects),
+            "returned_missing_aspects": list(self.returned_missing_aspects),
+            "unknown_aspect_ids": list(self.unknown_aspect_ids),
             "output_tokens": self.output_tokens,
             "reasoning_tokens": self.reasoning_tokens,
             "max_output_tokens": self.max_output_tokens,
@@ -128,6 +137,7 @@ class SufficiencyStructuredOutputGenerator:
         *,
         payload_schema: str = RAW_SEMANTIC_DECISION_PAYLOAD_SCHEMA,
         candidate_validator=raw_semantic_decision_payload_contract,
+        allowed_aspect_ids: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         current_prompt = prompt
         last_error: StructuredOutputError | None = None
@@ -135,7 +145,9 @@ class SufficiencyStructuredOutputGenerator:
         self._attempt_history = ()
         contract_gate: RawSemanticDecisionContractGate | None = None
         if candidate_validator is raw_semantic_decision_payload_contract:
-            contract_gate = RawSemanticDecisionContractGate()
+            contract_gate = RawSemanticDecisionContractGate(
+                allowed_aspect_ids=allowed_aspect_ids,
+            )
             validator = contract_gate.accepts
         else:
             validator = candidate_validator
@@ -200,6 +212,8 @@ class SufficiencyStructuredOutputGenerator:
                         error=last_error,
                         contract_gate=contract_gate,
                     ),
+                    contract_gate=contract_gate,
+                    allowed_aspect_ids=allowed_aspect_ids,
                 )
                 attempt_history.append(failure_record)
                 self._attempt_history = tuple(attempt_history)
@@ -222,6 +236,7 @@ class SufficiencyStructuredOutputGenerator:
                     invalid_response=response,
                     error=last_error,
                     payload_schema=payload_schema,
+                    allowed_aspect_ids=allowed_aspect_ids,
                 )
 
         if last_error is not None:
@@ -253,9 +268,12 @@ def _failure_attempt_record(
     error: StructuredOutputError,
     response: LLMResponse,
     contract_rejection_code: str | None = None,
+    contract_gate: RawSemanticDecisionContractGate | None = None,
+    allowed_aspect_ids: tuple[str, ...] = (),
 ) -> StructuredOutputAttemptTelemetry:
     base_message = _bounded_text(_structured_output_base_message(error))
     json_error = _bounded_text(error.json_decode_message) if error.json_decode_message else None
+    gate = contract_gate
     return StructuredOutputAttemptTelemetry(
         attempt=attempt,
         success=False,
@@ -268,6 +286,10 @@ def _failure_attempt_record(
         structured_output_failure_category=_structured_output_failure_category(error),
         contract_failure_category=_contract_failure_category(error),
         contract_rejection_code=contract_rejection_code,
+        allowed_aspect_ids=allowed_aspect_ids,
+        returned_supported_aspects=gate.last_returned_supported_aspects if gate else (),
+        returned_missing_aspects=gate.last_returned_missing_aspects if gate else (),
+        unknown_aspect_ids=gate.last_unknown_aspect_ids if gate else (),
         output_tokens=response.output_tokens,
         reasoning_tokens=response.reasoning_tokens,
         max_output_tokens=response.max_output_tokens,
@@ -346,6 +368,7 @@ def _build_correction_prompt(
     invalid_response: LLMResponse,
     error: StructuredOutputError,
     payload_schema: str,
+    allowed_aspect_ids: tuple[str, ...] = (),
 ) -> Prompt:
     preview = (invalid_response.content or "")[:_RESPONSE_PREVIEW_LIMIT]
     compact_note = (
@@ -354,11 +377,19 @@ def _build_correction_prompt(
         if error.is_truncated
         else "Regenerate valid JSON only. Keep output compact."
     )
-    user = "\n".join(
+    sections = [
+        original_prompt.user,
+        "CORRECTION REQUEST",
+        compact_note,
+    ]
+    if allowed_aspect_ids:
+        sections.extend(
+            [
+                render_allowed_aspect_contract(allowed_aspect_ids=allowed_aspect_ids),
+            ],
+        )
+    sections.extend(
         [
-            original_prompt.user,
-            "CORRECTION REQUEST",
-            compact_note,
             "REQUIRED JSON SCHEMA",
             payload_schema or raw_semantic_decision_payload_schema_text(),
             "VALIDATION ERROR",
@@ -367,4 +398,5 @@ def _build_correction_prompt(
             preview,
         ],
     )
+    user = "\n".join(sections)
     return Prompt(system=original_prompt.system, user=user)

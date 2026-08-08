@@ -253,7 +253,7 @@ class PromptContractHardeningTests(unittest.TestCase):
     def test_system_prompt_does_not_conflate_available_sources_with_unresolvable(
         self,
     ) -> None:
-        prompt = _system_prompt()
+        prompt = _system_prompt(allowed_aspect_ids=(LEGACY_NEED_ASPECT_ID,))
         self.assertNotIn("cannot be answered with available sources", prompt)
 
 

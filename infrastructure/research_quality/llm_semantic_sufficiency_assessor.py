@@ -6,12 +6,14 @@ from typing import Any, Sequence
 
 from application.exceptions.structured_output_error import StructuredOutputError
 from application.execution.exceptions import BudgetExhaustedError
+from application.research_quality.allowed_aspect_ids import resolve_allowed_aspect_ids
 from application.research_quality.exceptions import SemanticSufficiencyAssessmentError
 from application.research_quality.evidence_payload import build_evidence_payload
 from application.research_quality.raw_semantic_decision_contract import (
     RAW_SEMANTIC_DECISION_PAYLOAD_SCHEMA,
     raw_semantic_decision_from_payload,
     raw_semantic_decision_payload_contract,
+    render_allowed_aspect_contract,
     render_raw_semantic_decision_output_contract,
 )
 from application.research_quality.semantic_sufficiency_adapter import (
@@ -73,13 +75,15 @@ class LlmSemanticSufficiencyAssessor(SemanticSufficiencyAssessor):
         evidence: Sequence[Evidence],
         deterministic_signals: DeterministicSufficiencySignals,
     ) -> SemanticSufficiencyAssessment:
+        allowed_aspect_ids = resolve_allowed_aspect_ids(information_need)
         prompt = Prompt(
-            system=_system_prompt(),
+            system=_system_prompt(allowed_aspect_ids=allowed_aspect_ids),
             user=_build_user_payload(
                 research_question=research_question,
                 information_need=information_need,
                 evidence=evidence,
                 deterministic_signals=deterministic_signals,
+                allowed_aspect_ids=allowed_aspect_ids,
             ),
         )
         try:
@@ -87,14 +91,23 @@ class LlmSemanticSufficiencyAssessor(SemanticSufficiencyAssessor):
                 prompt,
                 payload_schema=RAW_SEMANTIC_DECISION_PAYLOAD_SCHEMA,
                 candidate_validator=raw_semantic_decision_payload_contract,
+                allowed_aspect_ids=allowed_aspect_ids,
             )
         except BudgetExhaustedError:
             raise
         except StructuredOutputError as exc:
             telemetry = self._structured_output.last_telemetry
+            last_attempt = (
+                self._structured_output.attempt_history[-1]
+                if self._structured_output.attempt_history
+                else None
+            )
             diagnostics = build_sufficiency_failure_diagnostics(
                 structured_error=exc,
                 telemetry=telemetry,
+                information_need_id=information_need.id,
+                allowed_aspect_ids=allowed_aspect_ids,
+                attempt_record=last_attempt,
             )
             logger.error(
                 "sufficiency_structured_output_failed diagnostics=%s",
@@ -113,7 +126,7 @@ class LlmSemanticSufficiencyAssessor(SemanticSufficiencyAssessor):
         )
 
 
-def _system_prompt() -> str:
+def _system_prompt(*, allowed_aspect_ids: tuple[str, ...]) -> str:
     return (
         "You evaluate whether existing research evidence semantically supports one "
         "InformationNeed within an existing ResearchQuestion. "
@@ -124,6 +137,8 @@ def _system_prompt() -> str:
         "or remediation instructions. "
         "Return compact JSON only.\n\n"
         + render_raw_semantic_decision_output_contract()
+        + "\n\n"
+        + render_allowed_aspect_contract(allowed_aspect_ids=allowed_aspect_ids)
     )
 
 
@@ -133,6 +148,7 @@ def _build_user_payload(
     information_need: InformationNeed,
     evidence: Sequence[Evidence],
     deterministic_signals: DeterministicSufficiencySignals,
+    allowed_aspect_ids: tuple[str, ...],
 ) -> str:
     need_payload: dict[str, Any] = {
         "id": information_need.id,
@@ -162,6 +178,7 @@ def _build_user_payload(
         "warnings": list(deterministic_signals.warnings),
     }
     body = {
+        "allowed_aspect_ids": list(allowed_aspect_ids),
         "research_question": {
             "id": research_question.id,
             "question": research_question.question,

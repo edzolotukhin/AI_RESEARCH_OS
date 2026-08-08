@@ -25,7 +25,7 @@ from domain.ai.prompt import Prompt
 
 class M34InitialPromptAlignmentTests(unittest.TestCase):
     def test_first_pass_prompt_includes_output_shape(self) -> None:
-        prompt = _system_prompt()
+        prompt = _system_prompt(allowed_aspect_ids=(LEGACY_NEED_ASPECT_ID,))
         self.assertIn("OUTPUT CONTRACT (RawSemanticDecision JSON only)", prompt)
         self.assertIn(raw_semantic_decision_payload_schema_text(), prompt)
 
@@ -69,7 +69,10 @@ class M34InitialPromptAlignmentTests(unittest.TestCase):
     def test_initial_and_correction_reference_same_schema(self) -> None:
         initial = render_raw_semantic_decision_output_contract()
         correction = _build_correction_prompt(
-            original_prompt=Prompt(system=_system_prompt(), user="{}"),
+            original_prompt=Prompt(
+                system=_system_prompt(allowed_aspect_ids=(LEGACY_NEED_ASPECT_ID,)),
+                user="{}",
+            ),
             invalid_response=LLMResponse(content="{}", finish_reason="stop"),
             error=StructuredOutputError("contract failure", stage="contract"),
             payload_schema=RAW_SEMANTIC_DECISION_PAYLOAD_SCHEMA,
@@ -98,7 +101,7 @@ class M34InitialPromptAlignmentTests(unittest.TestCase):
         )
 
     def test_system_prompt_does_not_misdefine_unresolvable(self) -> None:
-        prompt = _system_prompt()
+        prompt = _system_prompt(allowed_aspect_ids=(LEGACY_NEED_ASPECT_ID,))
         self.assertNotIn("cannot be answered with available sources", prompt)
 
 
