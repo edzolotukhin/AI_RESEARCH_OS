@@ -9,6 +9,9 @@ from application.runtime.task_result_codec import (
     capture_task_progress,
     capture_task_result,
 )
+from application.evidence.evidence_failure_diagnostics_persistence import (
+    has_evidence_failure_diagnostics,
+)
 from application.runtime.workflow_execution_audit import WorkflowExecutionAudit
 from application.execution.execution_budget_context import RUN_USAGE_SUMMARY_KEY
 from application.scheduling.scheduling_result import SchedulingResult
@@ -80,8 +83,14 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
         error: BaseException | None,
     ) -> None:
         task = context.current_task
-        if task is not None and task.status == TaskStatus.COMPLETED:
-            self._task_results[task.id] = capture_task_result(context, task.id)
+        if task is not None:
+            if task.status == TaskStatus.COMPLETED:
+                self._task_results[task.id] = capture_task_result(context, task.id)
+            elif (
+                task.status == TaskStatus.FAILED
+                and has_evidence_failure_diagnostics(context)
+            ):
+                self._task_results[task.id] = capture_task_result(context, task.id)
 
         self._checkpoint(context, critical=True)
         self._audit.record_task_outcome(context, error=error)

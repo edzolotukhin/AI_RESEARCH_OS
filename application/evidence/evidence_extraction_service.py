@@ -402,8 +402,19 @@ class EvidenceExtractionService:
         )
 
         if extracted == 0 and allow_empty_failure:
+            summary = EvidenceExtractionSummary(
+                evidence_ids=tuple(evidence_ids),
+                sources_processed=len(sources_touched),
+                evidence_extracted=extracted,
+                extraction_failures=failures,
+                sources_without_evidence=len(sources_without_evidence),
+                evidence_stage_budget_exhausted=evidence_stage_budget_exhausted,
+                budget_stop_reason=budget_stop_reason,
+                diagnostics=diagnostics,
+            )
             raise EvidenceExtractionError(
                 f"No grounded evidence extracted for workflow run {workflow_run_id}",
+                summary=summary,
             )
 
         return EvidenceExtractionSummary(

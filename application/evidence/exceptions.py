@@ -1,8 +1,22 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from application.evidence.evidence_extraction_service import EvidenceExtractionSummary
+
 
 class EvidenceExtractionError(RuntimeError):
     """Raised when evidence extraction cannot satisfy the minimum contract."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        summary: EvidenceExtractionSummary | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.summary = summary
 
 
 class DuplicateEvidenceError(Exception):

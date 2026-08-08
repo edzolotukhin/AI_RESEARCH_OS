@@ -256,7 +256,8 @@ class EvidenceExtractionServiceTests(unittest.TestCase):
         )
         with self.assertRaises(EvidenceExtractionError):
             executor.run(context)
-        self.assertNotIn("evidence_extraction", context.shared_state)
+        self.assertIn("evidence_extraction", context.shared_state)
+        self.assertIn("diagnostics", context.shared_state["evidence_extraction"])
 
 
 class _BudgetedCallExtractor(EvidenceExtractor):
