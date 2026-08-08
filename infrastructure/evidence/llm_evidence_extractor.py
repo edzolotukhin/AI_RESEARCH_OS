@@ -11,7 +11,15 @@ from application.evidence.evidence_extractor_response_shape import (
     reset_response_shape,
     ResponseShapeDiagnostics,
 )
-from application.evidence.exceptions import EvidenceConfigurationError
+from application.evidence.evidence_response_classification import (
+    EvidenceResponseClassification,
+    FAILURE_RESPONSE_CLASSIFICATIONS,
+    classify_evidence_llm_response,
+)
+from application.evidence.exceptions import (
+    EvidenceConfigurationError,
+    EvidenceResponseOutcomeError,
+)
 from application.execution.exceptions import BudgetExhaustedError
 from application.evidence.run_scoped_provenance import RunScopedSourceContext
 from application.ports.evidence_ports import EvidenceCandidate, EvidenceExtractor
@@ -19,6 +27,8 @@ from application.structured_output.json_extractor import JsonExtractor
 from application.structured_output.json_validator import JsonValidator
 from domain.ai.prompt import Prompt
 from infrastructure.llm.llm_client import LLMClient
+
+_PAYLOAD_OBJECT_ERROR = "LLM evidence payload must be a JSON object"
 
 
 class LlmEvidenceExtractor(EvidenceExtractor):
@@ -76,13 +86,25 @@ class LlmEvidenceExtractor(EvidenceExtractor):
                 "LLM evidence extraction failed",
             ) from exc
 
-        response_shape = ResponseShapeDiagnostics.from_response_content(
-            response.content,
+        response_shape = ResponseShapeDiagnostics.from_llm_response(
+            response,
             json_extractor=self._json_extractor,
             json_validator=self._json_validator,
         )
         try:
-            payload = self._parse_payload(response.content)
+            classification, payload = classify_evidence_llm_response(
+                response,
+                json_extractor=self._json_extractor,
+                json_validator=self._json_validator,
+            )
+            response_shape.record_response_classification(classification.value)
+
+            if classification in FAILURE_RESPONSE_CLASSIFICATIONS:
+                if payload is not None:
+                    response_shape.record_object_root(payload)
+                raise self._outcome_error(classification)
+
+            assert payload is not None
             response_shape.record_object_root(payload)
             candidates = self._build_candidates_from_payload(
                 payload,
@@ -94,8 +116,26 @@ class LlmEvidenceExtractor(EvidenceExtractor):
             publish_response_shape(response_shape)
             return candidates
         except Exception:
-            publish_response_shape(response_shape)
+            if response_shape is not None:
+                publish_response_shape(response_shape)
             raise
+
+    @staticmethod
+    def _outcome_error(
+        classification: EvidenceResponseClassification,
+    ) -> EvidenceResponseOutcomeError:
+        if classification is EvidenceResponseClassification.EMPTY_PROVIDER_OUTPUT:
+            message = "LLM evidence response contained no visible provider output"
+        elif classification is EvidenceResponseClassification.INCOMPLETE_PROVIDER_OUTPUT:
+            message = "LLM evidence response was incomplete"
+        elif classification is EvidenceResponseClassification.SCHEMA_CONTRACT_MISMATCH:
+            message = "LLM evidence payload does not satisfy the items schema contract"
+        else:
+            message = _PAYLOAD_OBJECT_ERROR
+        return EvidenceResponseOutcomeError(
+            message,
+            classification=classification.value,
+        )
 
     def _build_candidates_from_payload(
         self,
@@ -198,4 +238,4 @@ class LlmEvidenceExtractor(EvidenceExtractor):
             validation = self._json_validator.validate(candidate)
             if validation.is_valid and isinstance(validation.data, dict):
                 return validation.data
-        raise ValueError("LLM evidence payload must be a JSON object")
+        raise ValueError(_PAYLOAD_OBJECT_ERROR)

@@ -29,3 +29,16 @@ class UngroundedEvidenceError(ValueError):
 
 class EvidenceConfigurationError(RuntimeError):
     """Raised when evidence extraction is invoked without required configuration."""
+
+
+class EvidenceResponseOutcomeError(ValueError):
+    """Raised when an Evidence LLM response outcome is fail-closed."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        classification: str,
+    ) -> None:
+        super().__init__(message)
+        self.classification = classification

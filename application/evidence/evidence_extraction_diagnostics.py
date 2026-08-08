@@ -168,6 +168,14 @@ class EvidenceExtractionDiagnostics:
     budget_stop_reason: str | None = None
     work_items: list[WorkItemTrace] = field(default_factory=list)
     failure_classification: str = EvidenceStageFailureClassification.SUCCESS.value
+    response_classification_counts: dict[str, int] = field(default_factory=dict)
+
+    def record_response_classification(self, classification: str | None) -> None:
+        if not classification:
+            return
+        self.response_classification_counts[classification] = (
+            self.response_classification_counts.get(classification, 0) + 1
+        )
 
     def record_exception(self, exc: BaseException) -> None:
         name = type(exc).__name__
@@ -260,7 +268,7 @@ class EvidenceExtractionDiagnostics:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "workflow_run_id": self.workflow_run_id,
             "sources_discovered": self.sources_discovered,
             "sources_eligible": self.sources_eligible,
@@ -290,6 +298,11 @@ class EvidenceExtractionDiagnostics:
             "failure_classification": self.failure_classification,
             "work_items": [item.to_dict() for item in self.work_items],
         }
+        if self.response_classification_counts:
+            payload["response_classification_counts"] = dict(
+                self.response_classification_counts,
+            )
+        return payload
 
 
 _current_diagnostics: ContextVar[EvidenceExtractionDiagnostics | None] = ContextVar(
@@ -331,6 +344,10 @@ def record_inner_chunk_observation(observation: InnerChunkObservation) -> None:
     work_item = get_active_work_item()
     if diagnostics is not None:
         diagnostics.inner_chunks_observed += 1
+        if observation.response_shape is not None:
+            diagnostics.record_response_classification(
+                observation.response_shape.response_classification,
+            )
         if observation.extractor_status == "exception":
             diagnostics.inner_calls_exception += 1
         elif observation.extractor_status == "success":

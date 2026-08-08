@@ -4,6 +4,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
+from domain.ai.llm_response import LLMResponse
+
 from application.structured_output.json_extractor import JsonExtractor
 from application.structured_output.json_validator import JsonValidator
 
@@ -78,6 +80,14 @@ class ResponseShapeDiagnostics:
     rejected_candidate_construction_error: int = 0
     item_outcomes: list[ItemFilterOutcome] = field(default_factory=list)
     parser_succeeded: bool = False
+    completion_finish_reason: str | None = None
+    completion_incomplete_reason: str | None = None
+    completion_was_truncated: bool = False
+    completion_output_tokens: int | None = None
+    completion_reasoning_tokens: int | None = None
+    completion_max_output_tokens: int | None = None
+    completion_configured_reasoning_effort: str | None = None
+    response_classification: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -108,7 +118,49 @@ class ResponseShapeDiagnostics:
             payload["items_count_pre_filter"] = self.items_count_pre_filter
         if self.item_outcomes:
             payload["item_outcomes"] = [item.to_dict() for item in self.item_outcomes]
+        if self.provider_response_received:
+            payload["completion_finish_reason"] = self.completion_finish_reason
+            payload["completion_incomplete_reason"] = self.completion_incomplete_reason
+            payload["completion_was_truncated"] = self.completion_was_truncated
+            payload["completion_output_tokens"] = self.completion_output_tokens
+            payload["completion_reasoning_tokens"] = self.completion_reasoning_tokens
+            payload["completion_max_output_tokens"] = self.completion_max_output_tokens
+            payload[
+                "completion_configured_reasoning_effort"
+            ] = self.completion_configured_reasoning_effort
+            if self.response_classification is not None:
+                payload["response_classification"] = self.response_classification
         return payload
+
+    def record_response_classification(self, classification: str) -> None:
+        self.response_classification = classification
+
+    def record_completion_metadata(self, response: LLMResponse) -> None:
+        self.completion_finish_reason = response.finish_reason
+        self.completion_incomplete_reason = response.incomplete_reason
+        self.completion_was_truncated = response.was_truncated
+        self.completion_output_tokens = response.output_tokens
+        self.completion_reasoning_tokens = response.reasoning_tokens
+        self.completion_max_output_tokens = response.max_output_tokens
+        self.completion_configured_reasoning_effort = response.configured_reasoning_effort
+
+    @classmethod
+    def from_llm_response(
+        cls,
+        response: LLMResponse,
+        *,
+        json_extractor: JsonExtractor,
+        json_validator: JsonValidator,
+        preview_max_length: int = DEFAULT_RESPONSE_PREVIEW_MAX_LENGTH,
+    ) -> ResponseShapeDiagnostics:
+        diagnostics = cls.from_response_content(
+            response.content,
+            json_extractor=json_extractor,
+            json_validator=json_validator,
+            preview_max_length=preview_max_length,
+        )
+        diagnostics.record_completion_metadata(response)
+        return diagnostics
 
     @classmethod
     def from_response_content(

@@ -12,6 +12,7 @@ from domain.planning.research_design import InformationNeed, ResearchDesign, Res
 from domain.sources.retrieval_status import RetrievalStatus
 from domain.sources.source import Source
 
+from application.evidence.exceptions import EvidenceResponseOutcomeError
 from application.evidence.run_scoped_provenance import RunScopedSourceContext
 from infrastructure.evidence.llm_evidence_extractor import LlmEvidenceExtractor
 
@@ -113,11 +114,12 @@ class LlmEvidenceExtractorContractForensicsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._extract("null")
 
-    def test_missing_items_field_returns_zero_candidates(self) -> None:
-        candidates = self._extract(json.dumps({"evidence": []}))
-        self.assertEqual(candidates, [])
+    def test_missing_items_field_is_schema_contract_mismatch(self) -> None:
+        with self.assertRaises(EvidenceResponseOutcomeError) as ctx:
+            self._extract(json.dumps({"evidence": []}))
+        self.assertEqual(ctx.exception.classification, "schema_contract_mismatch")
 
-    def test_alternative_evidence_field_with_items_is_ignored(self) -> None:
+    def test_alternative_evidence_field_with_items_is_schema_contract_mismatch(self) -> None:
         payload = {
             "evidence": [
                 {
@@ -127,10 +129,11 @@ class LlmEvidenceExtractorContractForensicsTests(unittest.TestCase):
                 },
             ],
         }
-        candidates = self._extract(json.dumps(payload))
-        self.assertEqual(candidates, [])
+        with self.assertRaises(EvidenceResponseOutcomeError) as ctx:
+            self._extract(json.dumps(payload))
+        self.assertEqual(ctx.exception.classification, "schema_contract_mismatch")
 
-    def test_wrapped_object_without_top_level_items_returns_zero_candidates(self) -> None:
+    def test_wrapped_object_without_top_level_items_is_schema_contract_mismatch(self) -> None:
         payload = {
             "result": {
                 "items": [
@@ -142,8 +145,9 @@ class LlmEvidenceExtractorContractForensicsTests(unittest.TestCase):
                 ],
             },
         }
-        candidates = self._extract(json.dumps(payload))
-        self.assertEqual(candidates, [])
+        with self.assertRaises(EvidenceResponseOutcomeError) as ctx:
+            self._extract(json.dumps(payload))
+        self.assertEqual(ctx.exception.classification, "schema_contract_mismatch")
 
     def test_malformed_items_are_silently_skipped(self) -> None:
         payload = {
@@ -164,9 +168,10 @@ class LlmEvidenceExtractorContractForensicsTests(unittest.TestCase):
         candidates = self._extract(json.dumps(payload))
         self.assertEqual(candidates, [])
 
-    def test_items_null_raises_type_error(self) -> None:
-        with self.assertRaises(TypeError):
+    def test_items_null_is_schema_contract_mismatch(self) -> None:
+        with self.assertRaises(EvidenceResponseOutcomeError) as ctx:
             self._extract(json.dumps({"items": None}))
+        self.assertEqual(ctx.exception.classification, "schema_contract_mismatch")
 
     def test_truncated_json_raises_value_error(self) -> None:
         truncated = '{"items":[{"statement":"partial'

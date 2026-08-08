@@ -23,7 +23,10 @@ from application.evidence.evidence_extractor_response_shape import (
     DEFAULT_RESPONSE_PREVIEW_MAX_LENGTH,
     build_bounded_response_preview,
 )
-from application.evidence.exceptions import EvidenceExtractionError
+from application.evidence.exceptions import (
+    EvidenceExtractionError,
+    EvidenceResponseOutcomeError,
+)
 from application.evidence.run_scoped_provenance import RunScopedSourceContext
 from application.executors.evidence_executor import EvidenceExecutor
 from application.runtime.workflow_runtime_persister import WorkflowRuntimePersister
@@ -198,12 +201,15 @@ class LlmEvidenceExtractorResponseShapeTests(unittest.TestCase):
                 },
             ],
         }
-        self.assertEqual(self._extract(json.dumps(payload)), [])
+        with self.assertRaises(EvidenceResponseOutcomeError) as ctx:
+            self._extract(json.dumps(payload))
+        self.assertEqual(ctx.exception.classification, "schema_contract_mismatch")
         shape = _extract_with_chunked(json.dumps(payload))
         self.assertIn("evidence", shape["parsed_root_keys"])
         self.assertFalse(shape["expected_items_key_present"])
         self.assertEqual(shape["items_value_type"], "missing")
         self.assertEqual(shape["items_count_post_filter"], 0)
+        self.assertEqual(shape["response_classification"], "schema_contract_mismatch")
 
     def test_d_nested_wrapper_missing_items(self) -> None:
         payload = {
@@ -217,10 +223,13 @@ class LlmEvidenceExtractorResponseShapeTests(unittest.TestCase):
                 ],
             },
         }
-        self.assertEqual(self._extract(json.dumps(payload)), [])
+        with self.assertRaises(EvidenceResponseOutcomeError) as ctx:
+            self._extract(json.dumps(payload))
+        self.assertEqual(ctx.exception.classification, "schema_contract_mismatch")
         shape = _extract_with_chunked(json.dumps(payload))
         self.assertIn("result", shape["parsed_root_keys"])
         self.assertFalse(shape["expected_items_key_present"])
+        self.assertEqual(shape["response_classification"], "schema_contract_mismatch")
 
     def test_e_root_array_value_error_with_preview(self) -> None:
         payload = [{"statement": "x", "source_excerpt": "y", "information_need_id": "IN1"}]
@@ -361,7 +370,10 @@ class FailurePathResponseShapePersistenceTests(unittest.TestCase):
         shape = inner["response_shape"]
         self.assertIn("evidence", shape["parsed_root_keys"])
         self.assertFalse(shape["expected_items_key_present"])
-        self.assertGreater(diagnostics["inner_calls_zero_candidates"], 0)
+        self.assertEqual(shape["response_classification"], "schema_contract_mismatch")
+        self.assertEqual(inner["extractor_status"], "exception")
+        self.assertEqual(inner["exception_class"], "EvidenceResponseOutcomeError")
+        self.assertGreater(diagnostics["inner_calls_exception"], 0)
 
         task = context.current_task
         assert task is not None
