@@ -11,6 +11,7 @@ from application.evidence.content_chunking import (
     split_normalized_source_content,
 )
 from application.evidence.run_scoped_provenance import RunScopedSourceContext
+from application.evidence.evidence_extractor_response_shape import consume_response_shape
 from application.evidence.evidence_extraction_diagnostics import (
     InnerChunkObservation,
     record_inner_chunk_observation,
@@ -67,13 +68,16 @@ class ChunkedEvidenceExtractor:
             inner_exception_class: str | None = None
             inner_exception_message: str | None = None
             inner_candidate_count = 0
+            response_shape = None
             try:
                 chunk_candidates = self._inner.extract(
                     source=chunk_source,
                     design=design,
                     run_context=run_context,
                 )
+                response_shape = consume_response_shape()
             except BudgetExhaustedError as exc:
+                consume_response_shape()
                 if is_evidence_graceful_budget_stop(exc):
                     inner_status = "budget_stop"
                     record_inner_chunk_observation(
@@ -93,6 +97,7 @@ class ChunkedEvidenceExtractor:
                 inner_status = "exception"
                 inner_exception_class = type(exc).__name__
                 inner_exception_message = str(exc)
+                response_shape = consume_response_shape()
                 record_inner_chunk_observation(
                     InnerChunkObservation(
                         inner_chunk_index=inner_index,
@@ -102,6 +107,7 @@ class ChunkedEvidenceExtractor:
                         extractor_status=inner_status,
                         exception_class=inner_exception_class,
                         exception_message=inner_exception_message,
+                        response_shape=response_shape,
                     ),
                 )
                 continue
@@ -114,6 +120,7 @@ class ChunkedEvidenceExtractor:
                     inner_chunk_length=len(chunk.text),
                     extractor_status=inner_status,
                     raw_candidate_count=inner_candidate_count,
+                    response_shape=response_shape,
                 ),
             )
             for candidate in chunk_candidates:

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from application.evidence.evidence_extractor_response_shape import ResponseShapeDiagnostics
 from application.evidence.grounding import locate_excerpt, normalize_source_text
 
 
@@ -43,6 +44,7 @@ class InnerChunkObservation:
     exception_class: str | None = None
     exception_message: str | None = None
     raw_candidate_count: int = 0
+    response_shape: ResponseShapeDiagnostics | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -57,6 +59,8 @@ class InnerChunkObservation:
             payload["exception_class"] = self.exception_class
         if self.exception_message is not None:
             payload["exception_message"] = self.exception_message
+        if self.response_shape is not None:
+            payload["response_shape"] = self.response_shape.to_dict()
         return payload
 
 
@@ -143,6 +147,10 @@ class EvidenceExtractionDiagnostics:
     information_needs_represented: tuple[str, ...] = ()
     outer_chunks: int = 0
     inner_chunks_observed: int = 0
+    inner_calls_completed: int = 0
+    inner_calls_with_candidates: int = 0
+    inner_calls_zero_candidates: int = 0
+    inner_calls_exception: int = 0
     queue_items: int = 0
     extractor_attempts: int = 0
     extractor_successes: int = 0
@@ -260,6 +268,10 @@ class EvidenceExtractionDiagnostics:
             "information_needs_represented": list(self.information_needs_represented),
             "outer_chunks": self.outer_chunks,
             "inner_chunks_observed": self.inner_chunks_observed,
+            "inner_calls_completed": self.inner_calls_completed,
+            "inner_calls_with_candidates": self.inner_calls_with_candidates,
+            "inner_calls_zero_candidates": self.inner_calls_zero_candidates,
+            "inner_calls_exception": self.inner_calls_exception,
             "queue_items": self.queue_items,
             "extractor_attempts": self.extractor_attempts,
             "extractor_successes": self.extractor_successes,
@@ -319,6 +331,14 @@ def record_inner_chunk_observation(observation: InnerChunkObservation) -> None:
     work_item = get_active_work_item()
     if diagnostics is not None:
         diagnostics.inner_chunks_observed += 1
+        if observation.extractor_status == "exception":
+            diagnostics.inner_calls_exception += 1
+        elif observation.extractor_status == "success":
+            diagnostics.inner_calls_completed += 1
+            if observation.raw_candidate_count > 0:
+                diagnostics.inner_calls_with_candidates += 1
+            else:
+                diagnostics.inner_calls_zero_candidates += 1
     if work_item is not None:
         work_item.inner_chunks.append(observation)
 

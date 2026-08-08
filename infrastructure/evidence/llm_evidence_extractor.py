@@ -6,6 +6,11 @@ from domain.evidence.evidence_type import EvidenceType
 from domain.planning.research_design import ResearchDesign
 from domain.sources.source import Source
 
+from application.evidence.evidence_extractor_response_shape import (
+    publish_response_shape,
+    reset_response_shape,
+    ResponseShapeDiagnostics,
+)
 from application.evidence.exceptions import EvidenceConfigurationError
 from application.execution.exceptions import BudgetExhaustedError
 from application.evidence.run_scoped_provenance import RunScopedSourceContext
@@ -43,6 +48,7 @@ class LlmEvidenceExtractor(EvidenceExtractor):
             if need.id in run_context.information_need_ids
         ]
         if not needs_payload:
+            reset_response_shape()
             return []
 
         prompt = Prompt(
@@ -58,16 +64,47 @@ class LlmEvidenceExtractor(EvidenceExtractor):
             ),
             user=self._build_user_payload(source=source, needs_payload=needs_payload),
         )
+        response_shape: ResponseShapeDiagnostics | None = None
         try:
             response = self._llm_client.generate(prompt)
         except BudgetExhaustedError:
+            reset_response_shape()
             raise
         except Exception as exc:
+            reset_response_shape()
             raise EvidenceConfigurationError(
                 "LLM evidence extraction failed",
             ) from exc
 
-        payload = self._parse_payload(response.content)
+        response_shape = ResponseShapeDiagnostics.from_response_content(
+            response.content,
+            json_extractor=self._json_extractor,
+            json_validator=self._json_validator,
+        )
+        try:
+            payload = self._parse_payload(response.content)
+            response_shape.record_object_root(payload)
+            candidates = self._build_candidates_from_payload(
+                payload,
+                design=design,
+                run_context=run_context,
+                response_shape=response_shape,
+            )
+            response_shape.items_count_post_filter = len(candidates)
+            publish_response_shape(response_shape)
+            return candidates
+        except Exception:
+            publish_response_shape(response_shape)
+            raise
+
+    def _build_candidates_from_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        design: ResearchDesign,
+        run_context: RunScopedSourceContext,
+        response_shape: ResponseShapeDiagnostics,
+    ) -> list[EvidenceCandidate]:
         allowed_need_ids = set(run_context.information_need_ids)
         question_for_need = {
             need.id: need.research_question_id
@@ -75,15 +112,39 @@ class LlmEvidenceExtractor(EvidenceExtractor):
             if need.id in allowed_need_ids
         }
         candidates: list[EvidenceCandidate] = []
-        for item in payload.get("items", []):
+        for item_index, item in enumerate(payload.get("items", [])):
             if not isinstance(item, dict):
+                response_shape.record_item_rejection(
+                    item_index=item_index,
+                    outcome="rejected_non_object_item",
+                )
                 continue
             need_id = str(item.get("information_need_id", "")).strip()
+            if not need_id:
+                response_shape.record_item_rejection(
+                    item_index=item_index,
+                    outcome="rejected_missing_information_need_id",
+                )
+                continue
             if need_id not in allowed_need_ids:
+                response_shape.record_item_rejection(
+                    item_index=item_index,
+                    outcome="rejected_unknown_information_need_id",
+                )
                 continue
             excerpt = str(item.get("source_excerpt", "")).strip()
             statement = str(item.get("statement", "")).strip()
-            if not excerpt or not statement:
+            if not statement:
+                response_shape.record_item_rejection(
+                    item_index=item_index,
+                    outcome="rejected_empty_statement",
+                )
+                continue
+            if not excerpt:
+                response_shape.record_item_rejection(
+                    item_index=item_index,
+                    outcome="rejected_empty_source_excerpt",
+                )
                 continue
             evidence_type = str(
                 item.get("evidence_type", EvidenceType.DIRECT_EXCERPT.value),
@@ -91,17 +152,30 @@ class LlmEvidenceExtractor(EvidenceExtractor):
             if evidence_type not in {member.value for member in EvidenceType}:
                 evidence_type = EvidenceType.DIRECT_EXCERPT.value
             confidence = item.get("confidence")
-            candidates.append(
-                EvidenceCandidate(
-                    statement=statement,
-                    source_excerpt=excerpt,
-                    evidence_type=evidence_type,
-                    research_question_refs=(question_for_need[need_id],),
-                    information_need_refs=(need_id,),
-                    confidence=float(confidence) if confidence is not None else None,
-                    direct=bool(item.get("direct", True)),
-                ),
-            )
+            try:
+                candidates.append(
+                    EvidenceCandidate(
+                        statement=statement,
+                        source_excerpt=excerpt,
+                        evidence_type=evidence_type,
+                        research_question_refs=(question_for_need[need_id],),
+                        information_need_refs=(need_id,),
+                        confidence=float(confidence) if confidence is not None else None,
+                        direct=bool(item.get("direct", True)),
+                    ),
+                )
+            except (TypeError, ValueError):
+                response_shape.record_item_rejection(
+                    item_index=item_index,
+                    outcome="rejected_invalid_confidence",
+                )
+                raise
+            except Exception:
+                response_shape.record_item_rejection(
+                    item_index=item_index,
+                    outcome="rejected_candidate_construction_error",
+                )
+                raise
         return candidates
 
     @staticmethod
