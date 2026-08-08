@@ -26,11 +26,23 @@ from application.evidence.provenance_validation import (
     InvalidProvenanceError,
     validate_candidate_provenance,
 )
-from application.evidence.run_scoped_provenance import resolve_run_scoped_context
 from application.evidence.evidence_extraction_scheduler import (
     EvidenceExtractionWorkItem,
     build_need_fair_extraction_queue,
 )
+from application.evidence.evidence_extraction_diagnostics import (
+    CandidateOutcome,
+    CandidateRejectionReason,
+    EvidenceExtractionDiagnostics,
+    WorkItemTrace,
+    activate_diagnostics,
+    classify_grounding_failure,
+    classify_provenance_rejection,
+    deactivate_diagnostics,
+    reset_active_work_item,
+    set_active_work_item,
+)
+from application.evidence.run_scoped_provenance import resolve_run_scoped_context
 from application.execution.budget_utils import (
     EVIDENCE_STAGE_CAP_REASON,
     is_evidence_graceful_budget_stop,
@@ -55,6 +67,7 @@ class EvidenceExtractionSummary:
     sources_without_evidence: int
     evidence_stage_budget_exhausted: bool = False
     budget_stop_reason: str | None = None
+    diagnostics: EvidenceExtractionDiagnostics | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -67,6 +80,8 @@ class EvidenceExtractionSummary:
         }
         if self.budget_stop_reason is not None:
             payload["budget_stop_reason"] = self.budget_stop_reason
+        if self.diagnostics is not None:
+            payload["diagnostics"] = self.diagnostics.to_dict()
         return payload
 
 
@@ -88,8 +103,28 @@ class EvidenceExtractionService:
         design = self._resolve_design(context)
         project_id = context.project.id
         workflow_run_id = context.workflow_run.id
+        all_sources = self._source_repository.list_for_project(
+            project_id,
+            workflow_run_id=workflow_run_id,
+        )
         sources = self._eligible_sources(project_id, workflow_run_id)
         chunk_chars, overlap_chars = self._chunk_settings()
+
+        diagnostics = EvidenceExtractionDiagnostics(workflow_run_id=workflow_run_id)
+        diagnostics.sources_discovered = len(all_sources)
+        diagnostics.sources_eligible = len(sources)
+        diagnostics.sources_with_run_context = self._count_sources_with_run_context(
+            sources,
+            design=design,
+            workflow_run_id=workflow_run_id,
+            research_design_id=design.id,
+        )
+        diagnostics.information_needs_represented = self._represented_need_ids(
+            sources,
+            design=design,
+            workflow_run_id=workflow_run_id,
+            research_design_id=design.id,
+        )
 
         queue = build_need_fair_extraction_queue(
             sources,
@@ -99,15 +134,22 @@ class EvidenceExtractionService:
             chunk_chars=chunk_chars,
             overlap_chars=overlap_chars,
         )
+        diagnostics.queue_items = len(queue)
+        diagnostics.outer_chunks = len(queue)
 
-        return self._extract_work_queue(
-            queue,
-            design=design,
-            project_id=project_id,
-            workflow_run_id=workflow_run_id,
-            research_design_id=design.id,
-            allow_empty_failure=True,
-        )
+        token = activate_diagnostics(diagnostics)
+        try:
+            return self._extract_work_queue(
+                queue,
+                design=design,
+                project_id=project_id,
+                workflow_run_id=workflow_run_id,
+                research_design_id=design.id,
+                allow_empty_failure=True,
+                diagnostics=diagnostics,
+            )
+        finally:
+            deactivate_diagnostics(token)
 
     def extract_for_source_ids(
         self,
@@ -117,6 +159,9 @@ class EvidenceExtractionService:
         allow_empty: bool = False,
     ) -> EvidenceExtractionSummary:
         """Extract evidence from specific run-scoped sources (targeted append)."""
+        design = self._resolve_design(context)
+        project_id = context.project.id
+        workflow_run_id = context.workflow_run.id
         if not source_ids:
             return EvidenceExtractionSummary(
                 evidence_ids=(),
@@ -124,11 +169,11 @@ class EvidenceExtractionService:
                 evidence_extracted=0,
                 extraction_failures=0,
                 sources_without_evidence=0,
+                diagnostics=EvidenceExtractionDiagnostics(
+                    workflow_run_id=workflow_run_id,
+                ),
             )
 
-        design = self._resolve_design(context)
-        project_id = context.project.id
-        workflow_run_id = context.workflow_run.id
         eligible = {
             source.id: source
             for source in self._eligible_sources(project_id, workflow_run_id)
@@ -139,6 +184,23 @@ class EvidenceExtractionService:
             if source_id in eligible
         ]
         chunk_chars, overlap_chars = self._chunk_settings()
+        diagnostics = EvidenceExtractionDiagnostics(workflow_run_id=workflow_run_id)
+        diagnostics.sources_discovered = len(
+            self._source_repository.list_for_project(project_id, workflow_run_id=workflow_run_id),
+        )
+        diagnostics.sources_eligible = len(eligible)
+        diagnostics.sources_with_run_context = self._count_sources_with_run_context(
+            selected_sources,
+            design=design,
+            workflow_run_id=workflow_run_id,
+            research_design_id=design.id,
+        )
+        diagnostics.information_needs_represented = self._represented_need_ids(
+            selected_sources,
+            design=design,
+            workflow_run_id=workflow_run_id,
+            research_design_id=design.id,
+        )
         queue = build_need_fair_extraction_queue(
             selected_sources,
             design=design,
@@ -147,15 +209,22 @@ class EvidenceExtractionService:
             chunk_chars=chunk_chars,
             overlap_chars=overlap_chars,
         )
+        diagnostics.queue_items = len(queue)
+        diagnostics.outer_chunks = len(queue)
 
-        return self._extract_work_queue(
-            queue,
-            design=design,
-            project_id=project_id,
-            workflow_run_id=workflow_run_id,
-            research_design_id=design.id,
-            allow_empty_failure=not allow_empty,
-        )
+        token = activate_diagnostics(diagnostics)
+        try:
+            return self._extract_work_queue(
+                queue,
+                design=design,
+                project_id=project_id,
+                workflow_run_id=workflow_run_id,
+                research_design_id=design.id,
+                allow_empty_failure=not allow_empty,
+                diagnostics=diagnostics,
+            )
+        finally:
+            deactivate_diagnostics(token)
 
     def _resolve_design(self, context: WorkflowContext) -> ResearchDesign:
         template = context.workflow_template
@@ -186,6 +255,45 @@ class EvidenceExtractionService:
             DEFAULT_EVIDENCE_EXTRACTION_CHUNK_OVERLAP_CHARS,
         )
 
+    def _count_sources_with_run_context(
+        self,
+        sources: list[Source],
+        *,
+        design: ResearchDesign,
+        workflow_run_id: str,
+        research_design_id: str,
+    ) -> int:
+        count = 0
+        for source in sources:
+            context = resolve_run_scoped_context(
+                source=source,
+                design=design,
+                workflow_run_id=workflow_run_id,
+                research_design_id=research_design_id,
+            )
+            if context.information_need_ids:
+                count += 1
+        return count
+
+    @staticmethod
+    def _represented_need_ids(
+        sources: list[Source],
+        *,
+        design: ResearchDesign,
+        workflow_run_id: str,
+        research_design_id: str,
+    ) -> tuple[str, ...]:
+        need_ids: set[str] = set()
+        for source in sources:
+            context = resolve_run_scoped_context(
+                source=source,
+                design=design,
+                workflow_run_id=workflow_run_id,
+                research_design_id=research_design_id,
+            )
+            need_ids.update(context.information_need_ids)
+        return tuple(sorted(need_ids))
+
     def _extract_work_queue(
         self,
         queue: list[EvidenceExtractionWorkItem],
@@ -195,6 +303,7 @@ class EvidenceExtractionService:
         workflow_run_id: str,
         research_design_id: str,
         allow_empty_failure: bool,
+        diagnostics: EvidenceExtractionDiagnostics,
     ) -> EvidenceExtractionSummary:
         evidence_ids: list[str] = []
         extracted = 0
@@ -204,19 +313,37 @@ class EvidenceExtractionService:
         sources_touched: set[str] = set()
         evidence_stage_budget_exhausted = False
         budget_stop_reason: str | None = None
+        budget_stop_before_any_attempt = False
 
-        for work_item in queue:
+        for queue_index, work_item in enumerate(queue):
             stop_reason = self._next_evidence_budget_stop_reason()
             if stop_reason is not None:
                 budget_stop_reason = stop_reason
                 evidence_stage_budget_exhausted = (
                     stop_reason == EVIDENCE_STAGE_CAP_REASON
                 )
+                budget_stop_before_any_attempt = diagnostics.extractor_attempts == 0
+                diagnostics.budget_stop = True
+                diagnostics.evidence_stage_cap_reached = evidence_stage_budget_exhausted
+                diagnostics.budget_stop_reason = budget_stop_reason
                 break
 
             source_id = work_item.source.id
             sources_touched.add(source_id)
 
+            trace = WorkItemTrace(
+                queue_index=queue_index,
+                source_id=source_id,
+                source_content_checksum=work_item.source.content_checksum or "",
+                information_need_ids=work_item.run_context.information_need_ids,
+                outer_chunk_index=queue_index,
+                outer_chunk_normalized_start=work_item.chunk.original_normalized_start,
+                outer_chunk_normalized_end=work_item.chunk.original_normalized_end,
+                outer_chunk_length=len(work_item.chunk.text),
+                text_passed_to_extractor_length=len(work_item.chunk.text),
+            )
+            diagnostics.work_items.append(trace)
+            work_item_token = set_active_work_item(trace)
             try:
                 source_ids, source_extracted, source_failures, had_none = (
                     self._extract_work_item(
@@ -225,6 +352,8 @@ class EvidenceExtractionService:
                         project_id=project_id,
                         workflow_run_id=workflow_run_id,
                         research_design_id=research_design_id,
+                        diagnostics=diagnostics,
+                        trace=trace,
                     )
                 )
             except BudgetExhaustedError as exc:
@@ -235,7 +364,16 @@ class EvidenceExtractionService:
                 evidence_stage_budget_exhausted = (
                     stop_reason == EVIDENCE_STAGE_CAP_REASON
                 )
+                diagnostics.budget_stop = True
+                diagnostics.evidence_stage_cap_reached = evidence_stage_budget_exhausted
+                diagnostics.budget_stop_reason = budget_stop_reason
+                trace.extractor_status = "budget_stop"
+                trace.exception_class = type(exc).__name__
+                trace.exception_message = str(exc)
+                diagnostics.record_exception(exc)
                 break
+            finally:
+                reset_active_work_item(work_item_token)
 
             evidence_ids.extend(source_ids)
             extracted += source_extracted
@@ -251,9 +389,17 @@ class EvidenceExtractionService:
                 evidence_stage_budget_exhausted = (
                     stop_reason == EVIDENCE_STAGE_CAP_REASON
                 )
+                diagnostics.budget_stop = True
+                diagnostics.evidence_stage_cap_reached = evidence_stage_budget_exhausted
+                diagnostics.budget_stop_reason = budget_stop_reason
                 break
 
         sources_without_evidence -= sources_with_evidence
+        diagnostics.persisted_evidence = extracted
+        diagnostics.classify(
+            persisted_evidence=extracted,
+            budget_stop_before_any_attempt=budget_stop_before_any_attempt,
+        )
 
         if extracted == 0 and allow_empty_failure:
             raise EvidenceExtractionError(
@@ -268,6 +414,7 @@ class EvidenceExtractionService:
             sources_without_evidence=len(sources_without_evidence),
             evidence_stage_budget_exhausted=evidence_stage_budget_exhausted,
             budget_stop_reason=budget_stop_reason,
+            diagnostics=diagnostics,
         )
 
     def _extract_work_item(
@@ -278,6 +425,8 @@ class EvidenceExtractionService:
         project_id: str,
         workflow_run_id: str,
         research_design_id: str,
+        diagnostics: EvidenceExtractionDiagnostics,
+        trace: WorkItemTrace,
     ) -> tuple[list[str], int, int, bool]:
         chunk_source = replace(
             work_item.source,
@@ -294,6 +443,8 @@ class EvidenceExtractionService:
                 "chunk_normalized_start": work_item.chunk.original_normalized_start,
                 "chunk_normalized_end": work_item.chunk.original_normalized_end,
             },
+            diagnostics=diagnostics,
+            trace=trace,
         )
 
     def _extract_from_source(
@@ -306,6 +457,8 @@ class EvidenceExtractionService:
         research_design_id: str,
         run_context=None,
         chunk_metadata: dict | None = None,
+        diagnostics: EvidenceExtractionDiagnostics | None = None,
+        trace: WorkItemTrace | None = None,
     ) -> tuple[list[str], int, int, bool]:
         evidence_ids: list[str] = []
         extracted = 0
@@ -317,8 +470,23 @@ class EvidenceExtractionService:
             workflow_run_id=workflow_run_id,
             research_design_id=research_design_id,
         )
+        if trace is not None:
+            trace.text_passed_to_extractor_length = len(source.content_text)
+            if chunk_metadata:
+                trace.grounding_search_start = chunk_metadata.get("chunk_normalized_start")
+                trace.grounding_search_end = chunk_metadata.get("chunk_normalized_end")
+
         if not run_context.information_need_ids:
+            if trace is not None:
+                trace.extractor_status = "no_run_context"
+            if diagnostics is not None:
+                diagnostics.extractor_attempts += 1
             return evidence_ids, extracted, failures, True
+
+        if diagnostics is not None:
+            diagnostics.extractor_attempts += 1
+        if trace is not None:
+            trace.extractor_attempts += 1
 
         try:
             candidates = self._evidence_extractor.extract(
@@ -328,15 +496,57 @@ class EvidenceExtractionService:
             )
         except BudgetExhaustedError as exc:
             if is_evidence_graceful_budget_stop(exc):
+                if trace is not None:
+                    trace.extractor_status = "budget_stop"
+                    trace.exception_class = type(exc).__name__
+                    trace.exception_message = str(exc)
+                if diagnostics is not None:
+                    diagnostics.record_exception(exc)
                 return evidence_ids, extracted, failures, extracted == 0
             raise
-        except Exception:
+        except Exception as exc:
+            if trace is not None:
+                trace.extractor_status = "exception"
+                trace.exception_class = type(exc).__name__
+                trace.exception_message = str(exc)
+            if diagnostics is not None:
+                diagnostics.extractor_failures += 1
+                diagnostics.record_exception(exc)
             return evidence_ids, extracted, failures + 1, True
 
+        if trace is not None:
+            trace.raw_candidate_count = len(candidates)
+        if diagnostics is not None:
+            diagnostics.raw_candidates += len(candidates)
+
         if not candidates:
+            if trace is not None:
+                trace.extractor_status = "no_candidates"
             return evidence_ids, extracted, failures, True
 
-        for candidate in candidates:
+        if trace is not None:
+            trace.extractor_status = "success"
+        if diagnostics is not None:
+            diagnostics.extractor_successes += 1
+
+        for candidate_index, candidate in enumerate(candidates):
+            if not candidate.statement.strip() or not candidate.source_excerpt.strip():
+                failures += 1
+                if diagnostics is not None:
+                    diagnostics.rejected_empty_or_invalid_candidate += 1
+                if trace is not None:
+                    trace.candidate_outcomes.append(
+                        CandidateOutcome(
+                            candidate_index=candidate_index,
+                            outcome="rejected",
+                            rejection_reason=CandidateRejectionReason.EMPTY_OR_INVALID.value,
+                            information_need_refs=candidate.information_need_refs,
+                            excerpt_length=len(candidate.source_excerpt),
+                            statement_length=len(candidate.statement),
+                        ),
+                    )
+                continue
+
             try:
                 validated = validate_candidate_provenance(
                     candidate,
@@ -347,16 +557,94 @@ class EvidenceExtractionService:
                 if chunk_metadata:
                     merged_metadata.update(chunk_metadata)
                 validated = replace(validated, metadata=merged_metadata)
-                evidence_id = self._persist_candidate(
+                evidence_id, dedup_hit = self._persist_candidate(
                     candidate=validated,
                     source=source,
                     project_id=project_id,
                     workflow_run_id=workflow_run_id,
                     research_design_id=research_design_id,
                 )
-            except (UngroundedEvidenceError, InvalidProvenanceError):
+            except InvalidProvenanceError as exc:
                 failures += 1
+                reason = classify_provenance_rejection(str(exc))
+                if reason == CandidateRejectionReason.INVALID_NEED_REF.value:
+                    if diagnostics is not None:
+                        diagnostics.rejected_invalid_or_missing_need_ref += 1
+                else:
+                    if diagnostics is not None:
+                        diagnostics.rejected_provenance += 1
+                if trace is not None:
+                    trace.candidate_outcomes.append(
+                        CandidateOutcome(
+                            candidate_index=candidate_index,
+                            outcome="rejected",
+                            rejection_reason=reason,
+                            information_need_refs=candidate.information_need_refs,
+                            excerpt_length=len(candidate.source_excerpt),
+                            statement_length=len(candidate.statement),
+                        ),
+                    )
                 continue
+            except UngroundedEvidenceError:
+                failures += 1
+                chunk_start = (
+                    int(chunk_metadata["chunk_normalized_start"])
+                    if chunk_metadata and chunk_metadata.get("chunk_normalized_start") is not None
+                    else None
+                )
+                chunk_end = (
+                    int(chunk_metadata["chunk_normalized_end"])
+                    if chunk_metadata and chunk_metadata.get("chunk_normalized_end") is not None
+                    else None
+                )
+                grounding_detail = classify_grounding_failure(
+                    source_text=source.content_text,
+                    excerpt=candidate.source_excerpt,
+                    chunk_normalized_start=chunk_start,
+                    chunk_normalized_end=chunk_end,
+                )
+                if diagnostics is not None:
+                    diagnostics.rejected_grounding += 1
+                if trace is not None:
+                    trace.candidate_outcomes.append(
+                        CandidateOutcome(
+                            candidate_index=candidate_index,
+                            outcome="rejected",
+                            rejection_reason=CandidateRejectionReason.GROUNDING.value,
+                            grounding_detail=grounding_detail,
+                            information_need_refs=candidate.information_need_refs,
+                            excerpt_length=len(candidate.source_excerpt),
+                            statement_length=len(candidate.statement),
+                        ),
+                    )
+                continue
+
+            if dedup_hit:
+                if diagnostics is not None:
+                    diagnostics.dedup_hits += 1
+                if trace is not None:
+                    trace.candidate_outcomes.append(
+                        CandidateOutcome(
+                            candidate_index=candidate_index,
+                            outcome="dedup",
+                            rejection_reason=CandidateRejectionReason.DEDUP.value,
+                            information_need_refs=candidate.information_need_refs,
+                            excerpt_length=len(candidate.source_excerpt),
+                            statement_length=len(candidate.statement),
+                        ),
+                    )
+            else:
+                if trace is not None:
+                    trace.candidate_outcomes.append(
+                        CandidateOutcome(
+                            candidate_index=candidate_index,
+                            outcome="persisted",
+                            rejection_reason=CandidateRejectionReason.PERSISTED.value,
+                            information_need_refs=candidate.information_need_refs,
+                            excerpt_length=len(candidate.source_excerpt),
+                            statement_length=len(candidate.statement),
+                        ),
+                    )
             evidence_ids.append(evidence_id)
             extracted += 1
 
@@ -403,7 +691,7 @@ class EvidenceExtractionService:
         project_id: str,
         workflow_run_id: str,
         research_design_id: str,
-    ) -> str:
+    ) -> tuple[str, bool]:
         metadata = dict(candidate.metadata or {})
         chunk_start = metadata.get("chunk_normalized_start")
         chunk_end = metadata.get("chunk_normalized_end")
@@ -428,7 +716,7 @@ class EvidenceExtractionService:
             deduplication_key,
         )
         if existing is not None:
-            return existing.id
+            return existing.id, True
 
         evidence = Evidence(
             id=str(uuid4()),
@@ -458,14 +746,14 @@ class EvidenceExtractionService:
         for _ in range(_MAX_DEDUP_RETRIES):
             try:
                 self._evidence_repository.create(evidence)
-                return evidence.id
+                return evidence.id, False
             except DuplicateEvidenceError:
                 existing = self._evidence_repository.get_by_deduplication_key(
                     workflow_run_id,
                     deduplication_key,
                 )
                 if existing is not None:
-                    return existing.id
+                    return existing.id, True
 
         raise EvidenceExtractionError(
             f"Failed to resolve concurrent evidence persistence for run "

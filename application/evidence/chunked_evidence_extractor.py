@@ -11,6 +11,10 @@ from application.evidence.content_chunking import (
     split_normalized_source_content,
 )
 from application.evidence.run_scoped_provenance import RunScopedSourceContext
+from application.evidence.evidence_extraction_diagnostics import (
+    InnerChunkObservation,
+    record_inner_chunk_observation,
+)
 from application.execution.budget_utils import is_evidence_graceful_budget_stop
 from application.execution.exceptions import BudgetExhaustedError
 from application.ports.evidence_ports import EvidenceCandidate, EvidenceExtractor
@@ -57,8 +61,12 @@ class ChunkedEvidenceExtractor:
             return []
 
         candidates: list[EvidenceCandidate] = []
-        for chunk in chunks:
+        for inner_index, chunk in enumerate(chunks):
             chunk_source = replace(source, content_text=chunk.text)
+            inner_status = "success"
+            inner_exception_class: str | None = None
+            inner_exception_message: str | None = None
+            inner_candidate_count = 0
             try:
                 chunk_candidates = self._inner.extract(
                     source=chunk_source,
@@ -67,10 +75,47 @@ class ChunkedEvidenceExtractor:
                 )
             except BudgetExhaustedError as exc:
                 if is_evidence_graceful_budget_stop(exc):
+                    inner_status = "budget_stop"
+                    record_inner_chunk_observation(
+                        InnerChunkObservation(
+                            inner_chunk_index=inner_index,
+                            inner_chunk_normalized_start=chunk.original_normalized_start,
+                            inner_chunk_normalized_end=chunk.original_normalized_end,
+                            inner_chunk_length=len(chunk.text),
+                            extractor_status=inner_status,
+                            exception_class=type(exc).__name__,
+                            exception_message=str(exc),
+                        ),
+                    )
                     return candidates
                 raise
-            except Exception:
+            except Exception as exc:
+                inner_status = "exception"
+                inner_exception_class = type(exc).__name__
+                inner_exception_message = str(exc)
+                record_inner_chunk_observation(
+                    InnerChunkObservation(
+                        inner_chunk_index=inner_index,
+                        inner_chunk_normalized_start=chunk.original_normalized_start,
+                        inner_chunk_normalized_end=chunk.original_normalized_end,
+                        inner_chunk_length=len(chunk.text),
+                        extractor_status=inner_status,
+                        exception_class=inner_exception_class,
+                        exception_message=inner_exception_message,
+                    ),
+                )
                 continue
+            inner_candidate_count = len(chunk_candidates)
+            record_inner_chunk_observation(
+                InnerChunkObservation(
+                    inner_chunk_index=inner_index,
+                    inner_chunk_normalized_start=chunk.original_normalized_start,
+                    inner_chunk_normalized_end=chunk.original_normalized_end,
+                    inner_chunk_length=len(chunk.text),
+                    extractor_status=inner_status,
+                    raw_candidate_count=inner_candidate_count,
+                ),
+            )
             for candidate in chunk_candidates:
                 metadata = dict(candidate.metadata or {})
                 metadata["chunk_normalized_start"] = chunk.original_normalized_start
