@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from domain.planning.evidence_expectation import EvidenceExpectation
 from domain.planning.research_design import (
     InformationNeed,
     ResearchDesign,
@@ -7,6 +8,7 @@ from domain.planning.research_design import (
 )
 
 from api.schemas.workflow_runs import (
+    EvidenceExpectationResponse,
     InformationNeedResponse,
     ResearchDesignResponse,
     ResearchQuestionResponse,
@@ -55,4 +57,20 @@ def _need_to_response(need: InformationNeed) -> InformationNeedResponse:
         preferred_source_types=list(need.preferred_source_types),
         timeframe=need.timeframe,
         geography=need.geography,
+        evidence_expectation=_expectation_to_response(need.evidence_expectation),
+    )
+
+
+def _expectation_to_response(
+    expectation: EvidenceExpectation | None,
+) -> EvidenceExpectationResponse | None:
+    if expectation is None:
+        return None
+    return EvidenceExpectationResponse(
+        nature=expectation.nature.value,
+        required_aspects=list(expectation.required_aspects),
+        geography=expectation.geography,
+        timeframe=expectation.timeframe,
+        minimum_independent_sources=expectation.minimum_independent_sources,
+        requires_quantitative_evidence=expectation.requires_quantitative_evidence,
     )

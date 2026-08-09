@@ -25,7 +25,15 @@ RESEARCH_DESIGN_PAYLOAD_SCHEMA = """
       "priority": 1,
       "preferred_source_types": ["string"],
       "timeframe": "string",
-      "geography": "string"
+      "geography": "string",
+      "evidence_expectation": {
+        "nature": "quantitative|qualitative|mixed",
+        "required_aspects": ["string"],
+        "geography": "string",
+        "timeframe": "string",
+        "minimum_independent_sources": 1,
+        "requires_quantitative_evidence": false
+      }
     }
   ],
   "source_strategy": ["string"],

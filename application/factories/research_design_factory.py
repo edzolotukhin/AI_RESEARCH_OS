@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from application.dto.research_design_dto import ResearchDesignDTO
+from application.dto.research_design_dto import (
+    EvidenceExpectationDTO,
+    InformationNeedDTO,
+    ResearchDesignDTO,
+    ResearchQuestionDTO,
+)
+from domain.planning.evidence_expectation import EvidenceExpectation
+from domain.planning.evidence_nature import EvidenceNature
 from domain.planning.research_design import (
     InformationNeed,
     ResearchDesign,
@@ -31,7 +38,7 @@ class ResearchDesignFactory:
         )
 
     @staticmethod
-    def _create_question(dto) -> ResearchQuestion:
+    def _create_question(dto: ResearchQuestionDTO) -> ResearchQuestion:
         return ResearchQuestion(
             id=dto.id,
             question=dto.question,
@@ -41,7 +48,7 @@ class ResearchDesignFactory:
         )
 
     @staticmethod
-    def _create_need(dto) -> InformationNeed:
+    def _create_need(dto: InformationNeedDTO) -> InformationNeed:
         return InformationNeed(
             id=dto.id,
             research_question_id=dto.research_question_id,
@@ -50,4 +57,16 @@ class ResearchDesignFactory:
             preferred_source_types=dto.preferred_source_types,
             timeframe=dto.timeframe,
             geography=dto.geography,
+            evidence_expectation=_create_expectation(dto.evidence_expectation),
         )
+
+
+def _create_expectation(dto: EvidenceExpectationDTO) -> EvidenceExpectation:
+    return EvidenceExpectation(
+        nature=EvidenceNature(dto.nature),
+        required_aspects=dto.required_aspects,
+        geography=dto.geography or None,
+        timeframe=dto.timeframe or None,
+        minimum_independent_sources=dto.minimum_independent_sources,
+        requires_quantitative_evidence=dto.requires_quantitative_evidence,
+    )

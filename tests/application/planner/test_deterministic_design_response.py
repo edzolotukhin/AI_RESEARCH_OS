@@ -49,6 +49,10 @@ class DeterministicDesignResponseTests(unittest.TestCase):
         )
         self.assertEqual(payload["information_needs"][0]["geography"], "France")
         self.assertEqual(payload["information_needs"][0]["timeframe"], "2024-2025")
+        for need in payload["information_needs"]:
+            expectation = need["evidence_expectation"]
+            self.assertTrue(expectation["required_aspects"])
+            self.assertIn(expectation["nature"], {"quantitative", "qualitative", "mixed"})
 
 
 if __name__ == "__main__":

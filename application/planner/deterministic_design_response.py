@@ -78,6 +78,15 @@ def build_deterministic_design_response(prompt: Prompt) -> str:
                 )[:2],
                 "timeframe": time_label,
                 "geography": geo_label,
+                "evidence_expectation": {
+                    "nature": "mixed",
+                    "required_aspects": [
+                        f"objective_coverage_{question['id'].replace('-', '_')}",
+                    ],
+                    "geography": geo_label,
+                    "timeframe": time_label,
+                    "requires_quantitative_evidence": False,
+                },
             }
         )
 

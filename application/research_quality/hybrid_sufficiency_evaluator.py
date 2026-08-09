@@ -102,7 +102,11 @@ class HybridResearchSufficiencyEvaluator:
         if signals.evidence_count == 0:
             if cache is not None:
                 cache.record_missing(need.id)
-            return build_information_need_assessment(signals=signals, semantic=None)
+            return build_information_need_assessment(
+                signals=signals,
+                semantic=None,
+                information_need=need,
+            )
 
         mapped_evidence = tuple(
             evidence_by_id[item_id]
@@ -135,6 +139,7 @@ class HybridResearchSufficiencyEvaluator:
         assessment = build_information_need_assessment(
             signals=signals,
             semantic=semantic,
+            information_need=need,
         )
         if cache is not None:
             cache.store(

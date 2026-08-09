@@ -157,6 +157,7 @@ class ResearchReadinessService:
             design=design,
             evidence=evidence,
         )
+        needs_by_id = {need.id: need for need in design.information_needs}
         need_assessments_by_rq: dict[str, list] = {
             rq.id: [] for rq in design.research_questions
         }
@@ -168,6 +169,7 @@ class ResearchReadinessService:
             assessment = build_information_need_assessment(
                 signals=item,
                 semantic=None,
+                information_need=needs_by_id.get(item.information_need_id),
             )
             need_assessments_by_rq[item.research_question_id].append(assessment)
         rq_assessments = [
@@ -227,6 +229,33 @@ class ResearchReadinessService:
                 "missing_need_ids": list(cache_payload.get("missing_need_ids", [])),
             }
 
+    @staticmethod
+    def _attach_quality_contract_diagnostics(
+        design: ResearchDesign,
+        result: ResearchReadinessResult,
+        payload: dict[str, Any],
+    ) -> None:
+        explicit = sum(
+            1
+            for need in design.information_needs
+            if need.evidence_expectation is not None
+        )
+        payload["quality_contract_diagnostics"] = {
+            "information_need_count": len(design.information_needs),
+            "explicit_expectation_count": explicit,
+            "legacy_fallback_count": len(design.information_needs) - explicit,
+            "assessment_quality_contract_modes": {
+                assessment.information_need_id: assessment.quality_contract_mode
+                for rq in result.research_question_assessments
+                for assessment in rq.information_need_assessments
+            },
+            "assessment_required_aspect_ids": {
+                assessment.information_need_id: list(assessment.required_aspect_ids)
+                for rq in result.research_question_assessments
+                for assessment in rq.information_need_assessments
+            },
+        }
+
     def _persist(
         self,
         context: WorkflowContext,
@@ -235,6 +264,11 @@ class ResearchReadinessService:
     ) -> None:
         payload = self.build_shared_payload(result, loop_state=loop_state)
         self._attach_sufficiency_diagnostics(context, payload)
+        self._attach_quality_contract_diagnostics(
+            self._require_design(context),
+            result,
+            payload,
+        )
         context.write_shared(
             SHARED_STATE_KEY,
             payload,

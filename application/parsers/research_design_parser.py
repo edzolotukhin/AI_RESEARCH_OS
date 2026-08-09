@@ -4,11 +4,15 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from application.dto.research_design_dto import (
+    EvidenceExpectationDTO,
     InformationNeedDTO,
     ResearchDesignDTO,
     ResearchQuestionDTO,
 )
 from application.exceptions.planner_parser_error import PlannerParserError
+from domain.common.exceptions import ValidationError
+from domain.planning.aspect_identifiers import canonical_aspect_ids
+from domain.planning.evidence_nature import EvidenceNature
 
 
 class ResearchDesignParser:
@@ -74,8 +78,9 @@ class ResearchDesignParser:
 
     def _parse_need(self, data: Mapping[str, Any]) -> InformationNeedDTO:
         self._require_mapping(data, "information_need")
+        need_id = self._require_string(data, "id")
         return InformationNeedDTO(
-            id=self._require_string(data, "id"),
+            id=need_id,
             research_question_id=self._require_string(
                 data,
                 "research_question_id",
@@ -88,7 +93,160 @@ class ResearchDesignParser:
             ),
             timeframe=self._optional_string(data, "timeframe"),
             geography=self._optional_string(data, "geography"),
+            evidence_expectation=self._parse_evidence_expectation(
+                data,
+                need_id=need_id,
+            ),
         )
+
+    def _parse_evidence_expectation(
+        self,
+        data: Mapping[str, Any],
+        *,
+        need_id: str,
+    ) -> EvidenceExpectationDTO:
+        if "evidence_expectation" not in data:
+            raise PlannerParserError(
+                f"InformationNeed '{need_id}' is missing required field "
+                "'evidence_expectation'."
+            )
+        raw = data["evidence_expectation"]
+        if raw is None:
+            raise PlannerParserError(
+                f"InformationNeed '{need_id}' field 'evidence_expectation' "
+                "must be an object, not null."
+            )
+        if not isinstance(raw, Mapping):
+            raise PlannerParserError(
+                f"InformationNeed '{need_id}' field 'evidence_expectation' "
+                "must be an object."
+            )
+        if not raw:
+            raise PlannerParserError(
+                f"InformationNeed '{need_id}' field 'evidence_expectation' "
+                "must not be an empty object."
+            )
+        nature = self._require_evidence_nature(raw, need_id=need_id)
+        required_aspects = self._require_required_aspects(raw, need_id=need_id)
+        return EvidenceExpectationDTO(
+            nature=nature,
+            required_aspects=required_aspects,
+            geography=self._optional_string(raw, "geography"),
+            timeframe=self._optional_string(raw, "timeframe"),
+            minimum_independent_sources=self._optional_minimum_independent_sources(
+                raw,
+                need_id=need_id,
+            ),
+            requires_quantitative_evidence=self._optional_bool(
+                raw,
+                "requires_quantitative_evidence",
+                need_id=need_id,
+            ),
+        )
+
+    @staticmethod
+    def _require_evidence_nature(
+        mapping: Mapping[str, Any],
+        *,
+        need_id: str,
+    ) -> str:
+        if "nature" not in mapping:
+            raise PlannerParserError(
+                f"InformationNeed '{need_id}' evidence_expectation.nature "
+                "is required."
+            )
+        value = mapping["nature"]
+        if not isinstance(value, str) or not value.strip():
+            raise PlannerParserError(
+                f"InformationNeed '{need_id}' evidence_expectation.nature "
+                "must be a non-empty string."
+            )
+        normalized = value.strip().lower()
+        try:
+            return EvidenceNature(normalized).value
+        except ValueError as exc:
+            raise PlannerParserError(
+                f"InformationNeed '{need_id}' evidence_expectation.nature "
+                "must be quantitative, qualitative, or mixed."
+            ) from exc
+
+    @staticmethod
+    def _require_required_aspects(
+        mapping: Mapping[str, Any],
+        *,
+        need_id: str,
+    ) -> tuple[str, ...]:
+        if "required_aspects" not in mapping:
+            raise PlannerParserError(
+                f"InformationNeed '{need_id}' "
+                "evidence_expectation.required_aspects is required."
+            )
+        value = mapping["required_aspects"]
+        if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+            raise PlannerParserError(
+                f"InformationNeed '{need_id}' "
+                "evidence_expectation.required_aspects must be a list."
+            )
+        if not value:
+            raise PlannerParserError(
+                f"InformationNeed '{need_id}' "
+                "evidence_expectation.required_aspects must not be empty."
+            )
+        try:
+            aspects = canonical_aspect_ids(value)
+        except ValidationError as exc:
+            raise PlannerParserError(
+                f"InformationNeed '{need_id}' "
+                f"evidence_expectation.required_aspects is invalid: {exc}"
+            ) from exc
+        if not aspects:
+            raise PlannerParserError(
+                f"InformationNeed '{need_id}' "
+                "evidence_expectation.required_aspects must not be empty."
+            )
+        return aspects
+
+    @staticmethod
+    def _optional_minimum_independent_sources(
+        mapping: Mapping[str, Any],
+        *,
+        need_id: str,
+    ) -> int | None:
+        if "minimum_independent_sources" not in mapping:
+            return None
+        value = mapping["minimum_independent_sources"]
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise PlannerParserError(
+                f"InformationNeed '{need_id}' "
+                "evidence_expectation.minimum_independent_sources must be "
+                "an integer."
+            )
+        if value < 1:
+            raise PlannerParserError(
+                f"InformationNeed '{need_id}' "
+                "evidence_expectation.minimum_independent_sources must be "
+                ">= 1 when present."
+            )
+        return value
+
+    @staticmethod
+    def _optional_bool(
+        mapping: Mapping[str, Any],
+        field: str,
+        *,
+        need_id: str,
+    ) -> bool:
+        if field not in mapping or mapping[field] is None:
+            return False
+        value = mapping[field]
+        if not isinstance(value, bool):
+            raise PlannerParserError(
+                f"InformationNeed '{need_id}' evidence_expectation.{field} "
+                "must be a boolean."
+            )
+        return value
 
     @staticmethod
     def _require_mapping(value: Any, name: str) -> Mapping[str, Any]:

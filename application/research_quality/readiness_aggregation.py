@@ -3,12 +3,17 @@ from __future__ import annotations
 from typing import Sequence
 
 from domain.evidence.evidence import Evidence
-from domain.planning.research_design import ResearchDesign
+from domain.planning.research_design import InformationNeed, ResearchDesign
 from domain.research_quality.deterministic_sufficiency_signals import (
     DeterministicSufficiencySignals,
 )
 from domain.research_quality.gap_type import BLOCKING_GAP_TYPES, GapType
-from domain.research_quality.information_need_assessment import InformationNeedAssessment
+from domain.research_quality.information_need_assessment import (
+    QUALITY_CONTRACT_EXPLICIT,
+    QUALITY_CONTRACT_LEGACY,
+    InformationNeedAssessment,
+)
+from application.research_quality.allowed_aspect_ids import resolve_allowed_aspect_ids
 from domain.research_quality.research_readiness_assessment import ResearchReadinessAssessment
 from domain.research_quality.research_readiness_result import ResearchReadinessResult
 from domain.research_quality.semantic_sufficiency_assessment import (
@@ -23,12 +28,29 @@ from domain.research_quality.sufficiency_status import (
 from application.research_quality.exceptions import SemanticSufficiencyAssessmentError
 
 
+def quality_contract_fields(
+    information_need: InformationNeed | None,
+) -> tuple[str, tuple[str, ...]]:
+    if information_need is None:
+        return "", ()
+    mode = (
+        QUALITY_CONTRACT_EXPLICIT
+        if information_need.evidence_expectation is not None
+        else QUALITY_CONTRACT_LEGACY
+    )
+    return mode, resolve_allowed_aspect_ids(information_need)
+
+
 def build_information_need_assessment(
     *,
     signals: DeterministicSufficiencySignals,
     semantic: SemanticSufficiencyAssessment | None,
+    information_need: InformationNeed | None = None,
 ) -> InformationNeedAssessment:
     """Merge deterministic facts with optional semantic judgment."""
+    quality_contract_mode, required_aspect_ids = quality_contract_fields(
+        information_need,
+    )
     if signals.evidence_count == 0:
         return InformationNeedAssessment(
             information_need_id=signals.information_need_id,
@@ -38,6 +60,8 @@ def build_information_need_assessment(
             independent_source_count=0,
             gap_types=(GapType.NO_EVIDENCE,),
             reason=_missing_reason(signals),
+            quality_contract_mode=quality_contract_mode,
+            required_aspect_ids=required_aspect_ids,
         )
 
     if semantic is None:
@@ -78,6 +102,8 @@ def build_information_need_assessment(
         missing_aspects=semantic.missing_aspects,
         gap_types=gap_types,
         search_directives=semantic.search_directives,
+        quality_contract_mode=quality_contract_mode,
+        required_aspect_ids=required_aspect_ids,
         confidence=semantic.confidence,
         reason=semantic.reason,
     )

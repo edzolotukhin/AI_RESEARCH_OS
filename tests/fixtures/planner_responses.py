@@ -1,4 +1,26 @@
-VALID_RESEARCH_DESIGN_RESPONSE = {
+def planner_evidence_expectation(
+    *required_aspects: str,
+    nature: str = "mixed",
+    geography: str = "",
+    timeframe: str = "",
+    requires_quantitative_evidence: bool = False,
+    minimum_independent_sources: int | None = None,
+) -> dict:
+    payload: dict = {
+        "nature": nature,
+        "required_aspects": list(required_aspects),
+        "requires_quantitative_evidence": requires_quantitative_evidence,
+    }
+    if geography:
+        payload["geography"] = geography
+    if timeframe:
+        payload["timeframe"] = timeframe
+    if minimum_independent_sources is not None:
+        payload["minimum_independent_sources"] = minimum_independent_sources
+    return payload
+
+
+LEGACY_RESEARCH_DESIGN_WITHOUT_EXPECTATION = {
     "research_questions": [
         {
             "id": "rq-awareness",
@@ -57,6 +79,80 @@ VALID_RESEARCH_DESIGN_RESPONSE = {
     "language": "en",
 }
 
+VALID_RESEARCH_DESIGN_RESPONSE = {
+    "research_questions": [
+        {
+            "id": "rq-awareness",
+            "question": "What is the current brand awareness level among target buyers?",
+            "objective_refs": ["Evaluate brand awareness."],
+            "priority": 1,
+            "rationale": "Core metric for assessing market position.",
+        },
+        {
+            "id": "rq-position",
+            "question": "How does brand perception compare to key competitors?",
+            "objective_refs": ["Evaluate brand awareness."],
+            "priority": 2,
+            "rationale": "Competitive context for positioning assessment.",
+        },
+    ],
+    "information_needs": [
+        {
+            "id": "in-awareness-data",
+            "research_question_id": "rq-awareness",
+            "description": "Published brand tracking or awareness statistics for the category.",
+            "priority": 1,
+            "preferred_source_types": ["official statistics", "reputable media"],
+            "timeframe": "2024-2026",
+            "geography": "Germany",
+            "evidence_expectation": planner_evidence_expectation(
+                "brand_awareness_level",
+                "awareness_source_quality",
+                nature="quantitative",
+                geography="Germany",
+                timeframe="2024-2026",
+                requires_quantitative_evidence=True,
+            ),
+        },
+        {
+            "id": "in-competitor-position",
+            "research_question_id": "rq-position",
+            "description": "Competitor brand share and positioning reports.",
+            "priority": 2,
+            "preferred_source_types": ["company reports", "industry associations"],
+            "timeframe": "2024-2026",
+            "geography": "Germany",
+            "evidence_expectation": planner_evidence_expectation(
+                "competitor_brand_share",
+                "positioning_comparison",
+                nature="mixed",
+                geography="Germany",
+                timeframe="2024-2026",
+            ),
+        },
+    ],
+    "source_strategy": [
+        "official statistics",
+        "company reports",
+        "industry associations",
+        "reputable media",
+    ],
+    "analysis_plan": [
+        "brand awareness benchmarking",
+        "competitor comparison",
+        "trend synthesis",
+    ],
+    "deliverable_plan": [
+        "executive summary",
+        "market overview",
+        "competitor landscape",
+        "key insights",
+    ],
+    "assumptions": ["Publicly available data is sufficient for desk research scope."],
+    "limitations": ["No primary survey fieldwork in this phase."],
+    "language": "en",
+}
+
 VALID_RESEARCH_DESIGN_JSON = """
 {
   "research_questions": [
@@ -83,7 +179,14 @@ VALID_RESEARCH_DESIGN_JSON = """
       "priority": 1,
       "preferred_source_types": ["official statistics", "reputable media"],
       "timeframe": "2024-2026",
-      "geography": "Germany"
+      "geography": "Germany",
+      "evidence_expectation": {
+        "nature": "quantitative",
+        "required_aspects": ["brand_awareness_level", "awareness_source_quality"],
+        "geography": "Germany",
+        "timeframe": "2024-2026",
+        "requires_quantitative_evidence": true
+      }
     },
     {
       "id": "in-competitor-position",
@@ -92,7 +195,14 @@ VALID_RESEARCH_DESIGN_JSON = """
       "priority": 2,
       "preferred_source_types": ["company reports", "industry associations"],
       "timeframe": "2024-2026",
-      "geography": "Germany"
+      "geography": "Germany",
+      "evidence_expectation": {
+        "nature": "mixed",
+        "required_aspects": ["competitor_brand_share", "positioning_comparison"],
+        "geography": "Germany",
+        "timeframe": "2024-2026",
+        "requires_quantitative_evidence": false
+      }
     }
   ],
   "source_strategy": [

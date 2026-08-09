@@ -13,6 +13,12 @@ from domain.research_quality._helpers import (
 from domain.research_quality.gap_type import BLOCKING_GAP_TYPES, GapType
 from domain.research_quality.sufficiency_status import SufficiencyStatus
 
+QUALITY_CONTRACT_EXPLICIT = "explicit_expectation"
+QUALITY_CONTRACT_LEGACY = "legacy_need"
+_ALLOWED_QUALITY_CONTRACT_MODES = frozenset(
+    ("", QUALITY_CONTRACT_EXPLICIT, QUALITY_CONTRACT_LEGACY),
+)
+
 
 @dataclass(frozen=True)
 class InformationNeedAssessment:
@@ -33,6 +39,8 @@ class InformationNeedAssessment:
     search_directives: tuple[str, ...] = ()
     confidence: float | None = None
     reason: str = ""
+    quality_contract_mode: str = ""
+    required_aspect_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -58,6 +66,16 @@ class InformationNeedAssessment:
             tuple_of_str(self.search_directives),
         )
         object.__setattr__(self, "reason", str(self.reason))
+        object.__setattr__(
+            self,
+            "quality_contract_mode",
+            str(self.quality_contract_mode).strip(),
+        )
+        object.__setattr__(
+            self,
+            "required_aspect_ids",
+            tuple_of_str(self.required_aspect_ids),
+        )
 
         if not self.information_need_id:
             raise ValidationError("information_need_id must not be empty")
@@ -73,6 +91,11 @@ class InformationNeedAssessment:
         validate_unit_score("freshness", self.freshness)
         validate_unit_score("source_diversity", self.source_diversity)
         validate_unit_score("confidence", self.confidence)
+        if self.quality_contract_mode not in _ALLOWED_QUALITY_CONTRACT_MODES:
+            raise ValidationError(
+                "quality_contract_mode must be empty, "
+                f"{QUALITY_CONTRACT_EXPLICIT!r}, or {QUALITY_CONTRACT_LEGACY!r}"
+            )
 
         if self.status == SufficiencyStatus.MISSING and self.evidence_count > 0:
             raise ValidationError(
@@ -111,6 +134,8 @@ class InformationNeedAssessment:
             "search_directives": list(self.search_directives),
             "confidence": self.confidence,
             "reason": self.reason,
+            "quality_contract_mode": self.quality_contract_mode,
+            "required_aspect_ids": list(self.required_aspect_ids),
         }
 
     @classmethod
@@ -147,4 +172,6 @@ class InformationNeedAssessment:
                 else None
             ),
             reason=str(payload.get("reason", "")),
+            quality_contract_mode=str(payload.get("quality_contract_mode", "")),
+            required_aspect_ids=tuple_of_str(payload.get("required_aspect_ids")),
         )

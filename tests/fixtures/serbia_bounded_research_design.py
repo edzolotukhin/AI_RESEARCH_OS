@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from tests.fixtures.planner_responses import planner_evidence_expectation
 from tests.fixtures.serbia_microgreens_brief import SERBIA_MICROGREENS_BRIEF
 
 _OBJECTIVES = SERBIA_MICROGREENS_BRIEF["objectives"]
@@ -62,6 +63,11 @@ SERBIA_BOUNDED_RESEARCH_DESIGN: dict = {
             "preferred_source_types": ["industry reports", "reputable media"],
             "timeframe": "2025-2026",
             "geography": "Serbia",
+            "evidence_expectation": planner_evidence_expectation(
+                "market_size_signals",
+                "market_growth_signals",
+                nature="mixed",
+            ),
         },
         {
             "id": "in-horeca-demand",
@@ -71,6 +77,11 @@ SERBIA_BOUNDED_RESEARCH_DESIGN: dict = {
             "preferred_source_types": ["reputable media", "industry associations"],
             "timeframe": "2025-2026",
             "geography": "Serbia",
+            "evidence_expectation": planner_evidence_expectation(
+                "horeca_demand_trends",
+                "chef_usage_examples",
+                nature="qualitative",
+            ),
         },
         {
             "id": "in-competitors",
@@ -80,6 +91,11 @@ SERBIA_BOUNDED_RESEARCH_DESIGN: dict = {
             "preferred_source_types": ["company reports", "reputable media"],
             "timeframe": "2025-2026",
             "geography": "Serbia",
+            "evidence_expectation": planner_evidence_expectation(
+                "competitor_profiles",
+                "assortment_and_pricing",
+                nature="mixed",
+            ),
         },
         {
             "id": "in-distribution",
@@ -89,6 +105,10 @@ SERBIA_BOUNDED_RESEARCH_DESIGN: dict = {
             "preferred_source_types": ["industry reports", "reputable media"],
             "timeframe": "2025-2026",
             "geography": "Serbia",
+            "evidence_expectation": planner_evidence_expectation(
+                "distribution_channels",
+                nature="qualitative",
+            ),
         },
         {
             "id": "in-buyers",
@@ -98,6 +118,10 @@ SERBIA_BOUNDED_RESEARCH_DESIGN: dict = {
             "preferred_source_types": ["regulator/government", "industry associations"],
             "timeframe": "2025-2026",
             "geography": "Serbia",
+            "evidence_expectation": planner_evidence_expectation(
+                "buyer_procurement_requirements",
+                nature="qualitative",
+            ),
         },
         {
             "id": "in-regulation",
@@ -107,6 +131,10 @@ SERBIA_BOUNDED_RESEARCH_DESIGN: dict = {
             "preferred_source_types": ["regulator/government"],
             "timeframe": "2025-2026",
             "geography": "Serbia",
+            "evidence_expectation": planner_evidence_expectation(
+                "food_safety_labeling_rules",
+                nature="qualitative",
+            ),
         },
     ],
     "source_strategy": [

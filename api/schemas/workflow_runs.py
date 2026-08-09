@@ -56,6 +56,15 @@ class ResearchQuestionResponse(BaseModel):
     rationale: str
 
 
+class EvidenceExpectationResponse(BaseModel):
+    nature: str
+    required_aspects: list[str]
+    geography: str | None = None
+    timeframe: str | None = None
+    minimum_independent_sources: int | None = None
+    requires_quantitative_evidence: bool = False
+
+
 class InformationNeedResponse(BaseModel):
     id: str
     research_question_id: str
@@ -64,6 +73,7 @@ class InformationNeedResponse(BaseModel):
     preferred_source_types: list[str]
     timeframe: str
     geography: str
+    evidence_expectation: EvidenceExpectationResponse | None = None
 
 
 class ResearchDesignResponse(BaseModel):

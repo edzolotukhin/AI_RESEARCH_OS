@@ -22,7 +22,9 @@ from domain.research_quality.semantic_aspect_validation import aspect_sets_for_p
 from domain.research_quality.sufficiency_policy_result import SufficiencyPolicyResult
 from domain.research_quality.sufficiency_status import SufficiencyStatus
 
-from tests.fixtures.planner_responses import VALID_RESEARCH_DESIGN_RESPONSE
+from tests.fixtures.planner_responses import (
+    LEGACY_RESEARCH_DESIGN_WITHOUT_EXPECTATION,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -386,19 +388,19 @@ class BackwardCompatibilityTests(unittest.TestCase):
         self,
     ) -> None:
         need = InformationNeed.from_dict(
-            VALID_RESEARCH_DESIGN_RESPONSE["information_needs"][0],
+            LEGACY_RESEARCH_DESIGN_WITHOUT_EXPECTATION["information_needs"][0],
         )
         self.assertIsNotNone(need)
 
     def test_legacy_information_need_gets_evidence_expectation_none(self) -> None:
         need = InformationNeed.from_dict(
-            VALID_RESEARCH_DESIGN_RESPONSE["information_needs"][0],
+            LEGACY_RESEARCH_DESIGN_WITHOUT_EXPECTATION["information_needs"][0],
         )
         self.assertIsNone(need.evidence_expectation)
 
     def test_legacy_information_need_roundtrip_remains_readable(self) -> None:
         original = InformationNeed.from_dict(
-            VALID_RESEARCH_DESIGN_RESPONSE["information_needs"][0],
+            LEGACY_RESEARCH_DESIGN_WITHOUT_EXPECTATION["information_needs"][0],
         )
         restored = InformationNeed.from_dict(original.to_dict())
         self.assertEqual(restored, original)
@@ -406,7 +408,7 @@ class BackwardCompatibilityTests(unittest.TestCase):
 
     def test_legacy_research_design_without_evidence_expectation_loads(self) -> None:
         design = ResearchDesign.from_dict(
-            {"id": "design-legacy", **VALID_RESEARCH_DESIGN_RESPONSE},
+            {"id": "design-legacy", **LEGACY_RESEARCH_DESIGN_WITHOUT_EXPECTATION},
         )
         self.assertIsNotNone(design)
         assert design is not None
@@ -419,7 +421,7 @@ class BackwardCompatibilityTests(unittest.TestCase):
 
     def test_legacy_research_design_roundtrip_remains_readable(self) -> None:
         design = ResearchDesign.from_dict(
-            {"id": "design-legacy", **VALID_RESEARCH_DESIGN_RESPONSE},
+            {"id": "design-legacy", **LEGACY_RESEARCH_DESIGN_WITHOUT_EXPECTATION},
         )
         assert design is not None
         restored = ResearchDesign.from_dict(design.to_dict())
@@ -520,7 +522,7 @@ class BackwardCompatibilityTests(unittest.TestCase):
             research_questions=(),
             information_needs=(
                 InformationNeed.from_dict(
-                    VALID_RESEARCH_DESIGN_RESPONSE["information_needs"][0],
+                    LEGACY_RESEARCH_DESIGN_WITHOUT_EXPECTATION["information_needs"][0],
                 ),
                 InformationNeed(
                     id="in-new",
@@ -539,7 +541,7 @@ class BackwardCompatibilityTests(unittest.TestCase):
             research_questions=(),
             information_needs=(
                 InformationNeed.from_dict(
-                    VALID_RESEARCH_DESIGN_RESPONSE["information_needs"][0],
+                    LEGACY_RESEARCH_DESIGN_WITHOUT_EXPECTATION["information_needs"][0],
                 ),
                 InformationNeed(
                     id="in-new",
@@ -564,7 +566,7 @@ class BackwardCompatibilityTests(unittest.TestCase):
             research_questions=(),
             information_needs=(
                 InformationNeed.from_dict(
-                    VALID_RESEARCH_DESIGN_RESPONSE["information_needs"][0],
+                    LEGACY_RESEARCH_DESIGN_WITHOUT_EXPECTATION["information_needs"][0],
                 ),
                 InformationNeed(
                     id="in-new",
@@ -586,13 +588,13 @@ class BackwardCompatibilityTests(unittest.TestCase):
     def test_existing_planner_produced_information_needs_continue_to_construct(
         self,
     ) -> None:
-        for payload in VALID_RESEARCH_DESIGN_RESPONSE["information_needs"]:
+        for payload in LEGACY_RESEARCH_DESIGN_WITHOUT_EXPECTATION["information_needs"]:
             need = InformationNeed.from_dict(payload)
             self.assertIsNone(need.evidence_expectation)
 
     def test_existing_fixtures_without_evidence_expectation_remain_valid(self) -> None:
         design = ResearchDesign.from_dict(
-            {"id": "design-fixture", **VALID_RESEARCH_DESIGN_RESPONSE},
+            {"id": "design-fixture", **LEGACY_RESEARCH_DESIGN_WITHOUT_EXPECTATION},
         )
         assert design is not None
         self.assertEqual(len(design.information_needs), 2)

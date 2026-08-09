@@ -104,7 +104,15 @@ The JSON must match this schema:
       "priority": 1,
       "preferred_source_types": ["string"],
       "timeframe": "string",
-      "geography": "string"
+      "geography": "string",
+      "evidence_expectation": {{
+        "nature": "quantitative|qualitative|mixed",
+        "required_aspects": ["string"],
+        "geography": "string",
+        "timeframe": "string",
+        "minimum_independent_sources": 1,
+        "requires_quantitative_evidence": false
+      }}
     }}
   ],
   "source_strategy": ["string"],
@@ -127,6 +135,11 @@ Requirements:
 - {planner_compact_instruction}
 - `source_strategy`, `analysis_plan`, and `deliverable_plan` must be non-empty lists within the limits above.
 - `priority` must be an integer from 1 (highest) to 5 (lowest).
+- Every information need must include a valid `evidence_expectation` quality contract.
+- `evidence_expectation.nature` must be exactly `quantitative`, `qualitative`, or `mixed`.
+- `evidence_expectation.required_aspects` must be a non-empty list of stable snake_case identifiers naming answer dimensions the evidence must establish. Do not use numeric evidence-count thresholds as a substitute.
+- `requires_quantitative_evidence` must be a boolean. Omit `minimum_independent_sources` unless a specific integer >= 1 is justified.
+- An empty, null, or missing `evidence_expectation` is invalid.
 - Use high-level source types only (e.g. official statistics, company reports, industry associations, regulator/government, reputable media, academic research).
 - Do not include search queries, URLs, or executor IDs.
 

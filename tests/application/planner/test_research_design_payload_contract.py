@@ -13,6 +13,7 @@ from tests.fixtures.planner_responses import (
     INVALID_DUPLICATE_QUESTION_JSON,
     UNKNOWN_EXECUTOR_PLANNER_JSON,
     VALID_RESEARCH_DESIGN_JSON,
+    planner_evidence_expectation,
 )
 
 
@@ -47,6 +48,9 @@ class ResearchDesignPayloadContractTests(unittest.TestCase):
                 "preferred_source_types": ["reputable media"],
                 "timeframe": "2025-2026",
                 "geography": "Serbia",
+                "evidence_expectation": planner_evidence_expectation(
+                    f"need_{index}_coverage",
+                ),
             }
             for index in range(13)
         ]

@@ -38,6 +38,7 @@ class DeterministicResearchSufficiencyEvaluator:
         signals_list = self._deterministic.evaluate(design=design, evidence=evidence)
         rq_assessments = []
         needs_by_rq: dict[str, list] = {}
+        needs_by_id = {need.id: need for need in design.information_needs}
         for signals in signals_list:
             assessment = build_information_need_assessment(
                 signals=signals,
@@ -49,6 +50,7 @@ class DeterministicResearchSufficiencyEvaluator:
                         reason="Deterministic readiness pass.",
                     )
                 ),
+                information_need=needs_by_id.get(signals.information_need_id),
             )
             needs_by_rq.setdefault(signals.research_question_id, []).append(assessment)
 
