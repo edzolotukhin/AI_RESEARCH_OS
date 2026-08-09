@@ -7,6 +7,8 @@ from domain.common.exceptions import ValidationError
 from domain.research_quality._helpers import tuple_of_enum, tuple_of_str
 from domain.research_quality.gap_type import GapType
 
+MAX_TARGETED_SEARCH_DIRECTIVES = 5
+
 
 @dataclass(frozen=True)
 class TargetedResearchRequest:
@@ -72,7 +74,7 @@ class TargetedResearchRequest:
             raise ValidationError("information_need_id must not be empty")
         if self.attempt < 1:
             raise ValidationError("attempt must be >= 1")
-        if len(self.search_directives) > 5:
+        if len(self.search_directives) > MAX_TARGETED_SEARCH_DIRECTIVES:
             raise ValidationError("search_directives must contain at most 5 items")
 
     def to_dict(self) -> dict[str, Any]:

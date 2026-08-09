@@ -7,6 +7,10 @@ from domain.research_quality.research_readiness_result import ResearchReadinessR
 from domain.research_quality.sufficiency_status import ACTIONABLE_BLOCKING_STATUSES
 from domain.research_quality.targeted_research_request import TargetedResearchRequest
 
+from application.research_quality.bounded_search_directives import (
+    bound_targeted_search_directives,
+)
+
 
 def select_actionable_gaps(
     *,
@@ -50,7 +54,9 @@ def select_actionable_gaps(
                 information_need_id=assessment.information_need_id,
                 gap_types=assessment.gap_types or (GapType.NO_EVIDENCE,),
                 missing_aspects=assessment.missing_aspects,
-                search_directives=assessment.search_directives,
+                search_directives=bound_targeted_search_directives(
+                    assessment.search_directives,
+                ),
                 attempt=attempt,
                 existing_source_ids=existing_source_ids,
                 existing_evidence_ids=existing_evidence_ids,
