@@ -31,7 +31,10 @@ def build_evidence_extractor(
         elif provider_name == "llm":
             if llm_client is None:
                 raise ValueError("LLM client is required for EVIDENCE_EXTRACTOR=llm")
-            inner = LlmEvidenceExtractor(llm_client=llm_client)
+            inner = LlmEvidenceExtractor(
+                llm_client=llm_client,
+                reasoning_effort=config.evidence_reasoning_effort,
+            )
         else:
             raise ValueError(
                 f"Unsupported EVIDENCE_EXTRACTOR: {provider_name!r}. "

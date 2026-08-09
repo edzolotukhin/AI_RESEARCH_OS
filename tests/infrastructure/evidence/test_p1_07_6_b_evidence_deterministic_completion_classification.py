@@ -462,7 +462,7 @@ class ClassificationPersistenceTests(unittest.TestCase):
         source_repo = InMemorySourceRepository()
         calls = {"n": 0}
 
-        def _generate(_prompt):
+        def _generate(_prompt, *, options=None):
             calls["n"] += 1
             if calls["n"] == 1:
                 return LLMResponse(content='{"items":[]}', finish_reason="stop")

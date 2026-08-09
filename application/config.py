@@ -58,6 +58,7 @@ class ApplicationConfig:
     search_provider: str = "tavily"
     search_api_key: str | None = None
     evidence_extractor: str = "llm"
+    evidence_reasoning_effort: str = "minimal"
     research_sufficiency_assessor: str = "llm"
     evidence_extraction_chunk_chars: int = DEFAULT_EVIDENCE_EXTRACTION_CHUNK_CHARS
     evidence_extraction_chunk_overlap_chars: int = (
@@ -140,6 +141,10 @@ class ApplicationConfig:
             search_provider=os.environ.get("SEARCH_PROVIDER", "tavily"),
             search_api_key=os.environ.get("SEARCH_API_KEY"),
             evidence_extractor=os.environ.get("EVIDENCE_EXTRACTOR", "llm"),
+            evidence_reasoning_effort=os.environ.get(
+                "EVIDENCE_REASONING_EFFORT",
+                "minimal",
+            ).strip().lower(),
             research_sufficiency_assessor=os.environ.get(
                 "RESEARCH_SUFFICIENCY_ASSESSOR",
                 "llm",

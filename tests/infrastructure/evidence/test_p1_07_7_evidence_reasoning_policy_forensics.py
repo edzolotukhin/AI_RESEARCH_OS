@@ -75,18 +75,19 @@ class ReasoningEffortContractForensicsTests(unittest.TestCase):
         typed = LLMGenerationOptions(reasoning_effort="minimal", max_output_tokens=4096)
         self.assertEqual(typed.reasoning_effort, "minimal")
 
-    def test_application_config_has_no_evidence_reasoning_effort(self) -> None:
+    def test_application_config_includes_evidence_reasoning_effort(self) -> None:
         names = {item.name for item in fields(ApplicationConfig)}
-        self.assertNotIn("evidence_reasoning_effort", names)
+        self.assertIn("evidence_reasoning_effort", names)
         self.assertIn("planner_reasoning_effort", names)
         self.assertIn("sufficiency_reasoning_effort", names)
         self.assertIn("analysis_reasoning_effort", names)
         self.assertIn("report_reasoning_effort", names)
         self.assertIn("review_reasoning_effort", names)
 
-    def test_stage_reasoning_defaults_are_minimal_except_evidence(self) -> None:
+    def test_stage_reasoning_defaults_are_minimal(self) -> None:
         config = ApplicationConfig()
         self.assertEqual(config.planner_reasoning_effort, "minimal")
+        self.assertEqual(config.evidence_reasoning_effort, "minimal")
         self.assertEqual(config.sufficiency_reasoning_effort, "minimal")
         self.assertEqual(config.analysis_reasoning_effort, "minimal")
         self.assertEqual(config.report_reasoning_effort, "minimal")
@@ -95,23 +96,25 @@ class ReasoningEffortContractForensicsTests(unittest.TestCase):
 
 
 class EvidenceCallPathForensicsTests(unittest.TestCase):
-    def test_extractor_generate_called_without_options(self) -> None:
+    def test_extractor_generate_sends_explicit_reasoning_effort(self) -> None:
         client = Mock()
         client.generate.return_value = LLMResponse(content='{"items":[]}', finish_reason="stop")
         extractor = LlmEvidenceExtractor(llm_client=client)
         extractor.extract(source=_source(), design=_design(), run_context=_run_context())
         client.generate.assert_called_once()
-        self.assertNotIn("options", client.generate.call_args.kwargs)
+        options = client.generate.call_args.kwargs["options"]
+        self.assertEqual(options.reasoning_effort, "minimal")
+        self.assertIsNone(options.max_output_tokens)
         signature = inspect.signature(extractor.extract)
         self.assertNotIn("reasoning_effort", signature.parameters)
 
-    def test_extractor_constructor_accepts_only_llm_client(self) -> None:
+    def test_extractor_constructor_accepts_injected_reasoning_effort(self) -> None:
         params = inspect.signature(LlmEvidenceExtractor.__init__).parameters
         self.assertIn("llm_client", params)
-        self.assertNotIn("reasoning_effort", params)
+        self.assertIn("reasoning_effort", params)
         self.assertNotIn("max_output_tokens", params)
 
-    def test_factory_constructs_extractor_without_reasoning_kwargs(self) -> None:
+    def test_factory_injects_configured_reasoning_effort(self) -> None:
         client = Mock()
         extractor = build_evidence_extractor(
             ApplicationConfig(),
@@ -121,6 +124,7 @@ class EvidenceCallPathForensicsTests(unittest.TestCase):
         inner = extractor._inner
         self.assertIsInstance(inner, LlmEvidenceExtractor)
         self.assertIs(inner._llm_client, client)
+        self.assertEqual(inner._reasoning_effort, "minimal")
 
 
 class OpenAIAdapterReasoningMappingForensicsTests(unittest.TestCase):

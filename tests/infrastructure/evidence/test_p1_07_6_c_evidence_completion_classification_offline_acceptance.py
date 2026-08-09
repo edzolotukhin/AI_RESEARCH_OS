@@ -220,7 +220,9 @@ class CanonicalAcceptanceMatrixTests(unittest.TestCase):
         self.assertEqual(shape.response_classification, "valid_candidates")
         self.assertTrue(shape.parser_succeeded)
         self.assertEqual(client.generate.call_count, 1)
-        self.assertNotIn("options", client.generate.call_args.kwargs)
+        options = client.generate.call_args.kwargs["options"]
+        self.assertEqual(options.reasoning_effort, "minimal")
+        self.assertIsNone(options.max_output_tokens)
 
     def test_case_b_valid_empty_result(self) -> None:
         candidates, shape, exc, _ = _extract(
@@ -653,7 +655,7 @@ class BudgetCostInvariantTests(unittest.TestCase):
         self.assertIn('EVIDENCE_MAX_LLM_CALLS: "8"', compose)
         defaults = {item.name: item.default for item in fields(ApplicationConfig)}
         self.assertEqual(defaults["llm_max_tokens"], 4096)
-        self.assertNotIn("evidence_reasoning_effort", defaults)
+        self.assertEqual(defaults["evidence_reasoning_effort"], "minimal")
 
 
 class ProviderNeutralityAndPrivacyTests(unittest.TestCase):

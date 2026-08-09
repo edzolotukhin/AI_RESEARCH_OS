@@ -26,6 +26,7 @@ from application.ports.evidence_ports import EvidenceCandidate, EvidenceExtracto
 from application.structured_output.json_extractor import JsonExtractor
 from application.structured_output.json_validator import JsonValidator
 from domain.ai.prompt import Prompt
+from infrastructure.llm.generation_options import LLMGenerationOptions
 from infrastructure.llm.llm_client import LLMClient
 
 _PAYLOAD_OBJECT_ERROR = "LLM evidence payload must be a JSON object"
@@ -36,8 +37,14 @@ class LlmEvidenceExtractor(EvidenceExtractor):
 
     method_name = "llm"
 
-    def __init__(self, *, llm_client: LLMClient) -> None:
+    def __init__(
+        self,
+        *,
+        llm_client: LLMClient,
+        reasoning_effort: str = "minimal",
+    ) -> None:
         self._llm_client = llm_client
+        self._reasoning_effort = reasoning_effort
         self._json_extractor = JsonExtractor()
         self._json_validator = JsonValidator()
 
@@ -76,7 +83,12 @@ class LlmEvidenceExtractor(EvidenceExtractor):
         )
         response_shape: ResponseShapeDiagnostics | None = None
         try:
-            response = self._llm_client.generate(prompt)
+            response = self._llm_client.generate(
+                prompt,
+                options=LLMGenerationOptions(
+                    reasoning_effort=self._reasoning_effort,
+                ),
+            )
         except BudgetExhaustedError:
             reset_response_shape()
             raise

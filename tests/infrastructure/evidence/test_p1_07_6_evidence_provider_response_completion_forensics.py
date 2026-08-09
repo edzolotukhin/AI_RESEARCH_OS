@@ -264,7 +264,7 @@ class LlmEvidenceExtractorProviderPathForensicsTests(unittest.TestCase):
             "incomplete_provider_output",
         )
 
-    def test_evidence_generate_called_without_options(self) -> None:
+    def test_evidence_generate_called_once_with_reasoning_options(self) -> None:
         mock_client = Mock()
         mock_client.generate.return_value = LLMResponse(content='{"items":[]}')
         extractor = LlmEvidenceExtractor(llm_client=mock_client)
@@ -274,7 +274,9 @@ class LlmEvidenceExtractorProviderPathForensicsTests(unittest.TestCase):
             run_context=_run_context(),
         )
         mock_client.generate.assert_called_once()
-        self.assertNotIn("options", mock_client.generate.call_args.kwargs)
+        options = mock_client.generate.call_args.kwargs["options"]
+        self.assertEqual(options.reasoning_effort, "minimal")
+        self.assertIsNone(options.max_output_tokens)
 
 
 def _extractor_with_response(response: LLMResponse) -> LlmEvidenceExtractor:
