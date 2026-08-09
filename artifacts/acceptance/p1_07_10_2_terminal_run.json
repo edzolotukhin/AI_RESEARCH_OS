@@ -1,0 +1,404 @@
+﻿{
+    "id":  "22678610-f5cd-4956-a96f-fd758c510716",
+    "project_id":  "7bad1c7e-4e36-4125-ad49-f708079b8f78",
+    "workflow_template_id":  "2be1c3d4-4a48-40d8-bca7-e88f9523f971",
+    "status":  "completed",
+    "version":  17,
+    "is_terminal":  true,
+    "tasks":  [
+                  {
+                      "id":  "6bb742e6-5a86-4269-b9e9-3a738a44596c",
+                      "definition_id":  "task-collect-evidence",
+                      "name":  "Collect sources",
+                      "status":  "completed",
+                      "executor_id":  "search",
+                      "executor_type":  "agent",
+                      "depends_on":  [
+
+                                     ]
+                  },
+                  {
+                      "id":  "ad2c0c25-c814-4f28-b74b-3aa6d56f1ba1",
+                      "definition_id":  "task-extract-evidence",
+                      "name":  "Extract evidence",
+                      "status":  "completed",
+                      "executor_id":  "evidence",
+                      "executor_type":  "agent",
+                      "depends_on":  [
+                                         "task-collect-evidence"
+                                     ]
+                  },
+                  {
+                      "id":  "15fe051f-5308-48e9-b3ad-0443d89e0d59",
+                      "definition_id":  "task-assess-research-readiness",
+                      "name":  "Assess research readiness",
+                      "status":  "completed",
+                      "executor_id":  "research_quality",
+                      "executor_type":  "agent",
+                      "depends_on":  [
+                                         "task-extract-evidence"
+                                     ]
+                  },
+                  {
+                      "id":  "65359614-2f4c-4440-9734-ee5d4194a13d",
+                      "definition_id":  "task-analyze",
+                      "name":  "Analyze findings",
+                      "status":  "skipped",
+                      "executor_id":  "analysis",
+                      "executor_type":  "agent",
+                      "depends_on":  [
+                                         "task-assess-research-readiness"
+                                     ]
+                  },
+                  {
+                      "id":  "65ec703e-7f16-48aa-9a99-538eaa0a3ec2",
+                      "definition_id":  "task-write-report",
+                      "name":  "Write research report",
+                      "status":  "skipped",
+                      "executor_id":  "report",
+                      "executor_type":  "agent",
+                      "depends_on":  [
+                                         "task-analyze"
+                                     ]
+                  },
+                  {
+                      "id":  "bbe58f25-f230-4ea9-b371-31e42bc57699",
+                      "definition_id":  "task-review-report",
+                      "name":  "Review research report",
+                      "status":  "skipped",
+                      "executor_id":  "review",
+                      "executor_type":  "agent",
+                      "depends_on":  [
+                                         "task-write-report"
+                                     ]
+                  }
+              ],
+    "results_available":  true,
+    "artifacts_available":  false,
+    "artifact_count":  0,
+    "reports_available":  false,
+    "report_count":  0,
+    "sources_available":  true,
+    "source_count":  13,
+    "evidence_available":  true,
+    "evidence_count":  66,
+    "findings_available":  false,
+    "finding_count":  0,
+    "insights_available":  false,
+    "insight_count":  0,
+    "reviews_available":  false,
+    "review_count":  0,
+    "final_review_verdict":  null,
+    "final_artifact_available":  false,
+    "final_artifact_id":  null,
+    "external":  {
+                     "correlation_id":  "p1-07-10-2-profile-b-20260809-134839",
+                     "external_request_id":  "0e1826a0-dfbe-431b-b30d-34f628a08cd3",
+                     "source":  "serbia-e2e-acceptance",
+                     "submitted_at":  "2026-08-09T11:48:40.143010+00:00"
+                 },
+    "research_brief":  {
+                           "title":  "Serbia Microgreens Market - HoReCa Entry Assessment",
+                           "business_question":  "Is there a commercially attractive opportunity to supply premium locally grown microgreens to HoReCa customers in Serbia, and what should the initial market-entry strategy be?",
+                           "objectives":  [
+                                              "Assess the Serbian microgreens market size and maturity.",
+                                              "Estimate HoReCa demand and adoption potential.",
+                                              "Understand restaurant and chef usage patterns.",
+                                              "Map competitors and suppliers.",
+                                              "Review typical product assortment.",
+                                              "Gather indicative pricing benchmarks.",
+                                              "Define relevant geography and distribution channels.",
+                                              "Identify buyer requirements and procurement criteria.",
+                                              "Summarize relevant regulatory considerations.",
+                                              "Recommend an initial market-entry strategy."
+                                          ],
+                           "geography":  [
+                                             "Serbia"
+                                         ],
+                           "market":  "Premium microgreens for HoReCa",
+                           "target_entities":  [
+                                                   "HoReCa restaurants",
+                                                   "chefs",
+                                                   "food service buyers"
+                                               ],
+                           "timeframe":  "2025-2026",
+                           "constraints":  [
+
+                                           ],
+                           "deliverables":  [
+                                                "Market-entry strategy recommendations"
+                                            ],
+                           "language":  "en",
+                           "context":  "Commercial desk research for local premium microgreens supply.",
+                           "known_information":  [
+
+                                                 ],
+                           "exclusions":  [
+
+                                          ]
+                       },
+    "research_design":  {
+                            "id":  "60c36df7-417d-4ffb-a835-f306905605f6",
+                            "research_questions":  [
+                                                       {
+                                                           "id":  "RQ1",
+                                                           "question":  "What is the current size, growth outlook, and maturity of Serbiaâs premium microgreens market for HoReCa in 2025â2026?",
+                                                           "objective_refs":  [
+                                                                                  "Assess the Serbian microgreens market size and maturity."
+                                                                              ],
+                                                           "priority":  1,
+                                                           "rationale":  "Establishes market attractiveness baseline and readiness for entry."
+                                                       },
+                                                       {
+                                                           "id":  "RQ2",
+                                                           "question":  "What is current and potential HoReCa demand, and how widely will microgreens be adopted by 2026?",
+                                                           "objective_refs":  [
+                                                                                  "Estimate HoReCa demand and adoption potential."
+                                                                              ],
+                                                           "priority":  1,
+                                                           "rationale":  "Forecasts revenue potential and informs capacity planning."
+                                                       },
+                                                       {
+                                                           "id":  "RQ3",
+                                                           "question":  "How do restaurants and chefs in Serbia use microgreens and what are their buyer requirements and procurement criteria?",
+                                                           "objective_refs":  [
+                                                                                  "Understand restaurant and chef usage patterns.",
+                                                                                  "Identify buyer requirements and procurement criteria."
+                                                                              ],
+                                                           "priority":  2,
+                                                           "rationale":  "Guides product, service standards, and sales messaging."
+                                                       },
+                                                       {
+                                                           "id":  "RQ4",
+                                                           "question":  "Who are the key competitors and suppliers, what product assortments do they offer, and at what price points?",
+                                                           "objective_refs":  [
+                                                                                  "Map competitors and suppliers.",
+                                                                                  "Review typical product assortment.",
+                                                                                  "Gather indicative pricing benchmarks."
+                                                                              ],
+                                                           "priority":  2,
+                                                           "rationale":  "Positions the entrant versus existing offerings and pricing."
+                                                       },
+                                                       {
+                                                           "id":  "RQ5",
+                                                           "question":  "Which Serbian geographies and distribution channels are most relevant for initial HoReCa coverage?",
+                                                           "objective_refs":  [
+                                                                                  "Define relevant geography and distribution channels."
+                                                                              ],
+                                                           "priority":  3,
+                                                           "rationale":  "Focuses sales effort and logistics setup where ROI is highest."
+                                                       },
+                                                       {
+                                                           "id":  "RQ6",
+                                                           "question":  "What regulations apply to producing and supplying microgreens to HoReCa in Serbia, and what initial market-entry strategy is recommended?",
+                                                           "objective_refs":  [
+                                                                                  "Summarize relevant regulatory considerations.",
+                                                                                  "Recommend an initial market-entry strategy."
+                                                                              ],
+                                                           "priority":  1,
+                                                           "rationale":  "Ensures compliance and translates insights into an actionable entry plan."
+                                                       }
+                                                   ],
+                            "information_needs":  [
+                                                      {
+                                                          "id":  "IN1",
+                                                          "research_question_id":  "RQ1",
+                                                          "description":  "Define market scope, segmentation (premium vs. standard), and historical growth proxies.",
+                                                          "priority":  1,
+                                                          "preferred_source_types":  [
+                                                                                         "industry associations",
+                                                                                         "official statistics",
+                                                                                         "reputable media",
+                                                                                         "company reports"
+                                                                                     ],
+                                                          "timeframe":  "2019â2026",
+                                                          "geography":  "Serbia"
+                                                      },
+                                                      {
+                                                          "id":  "IN2",
+                                                          "research_question_id":  "RQ1",
+                                                          "description":  "Estimate market size via top-down (foodservice spend) and bottom-up (supplier volumes) triangulation.",
+                                                          "priority":  1,
+                                                          "preferred_source_types":  [
+                                                                                         "official statistics",
+                                                                                         "industry associations",
+                                                                                         "company reports",
+                                                                                         "reputable media"
+                                                                                     ],
+                                                          "timeframe":  "2022â2026",
+                                                          "geography":  "Serbia"
+                                                      },
+                                                      {
+                                                          "id":  "IN3",
+                                                          "research_question_id":  "RQ2",
+                                                          "description":  "Quantify HoReCa outlets by tier/cuisine and microgreens adoption rates; project penetration.",
+                                                          "priority":  1,
+                                                          "preferred_source_types":  [
+                                                                                         "official statistics",
+                                                                                         "industry associations",
+                                                                                         "reputable media",
+                                                                                         "academic research"
+                                                                                     ],
+                                                          "timeframe":  "2023â2026",
+                                                          "geography":  "Serbia"
+                                                      },
+                                                      {
+                                                          "id":  "IN4",
+                                                          "research_question_id":  "RQ2",
+                                                          "description":  "Estimate average weekly microgreens usage per outlet type and seasonality.",
+                                                          "priority":  2,
+                                                          "preferred_source_types":  [
+                                                                                         "industry associations",
+                                                                                         "reputable media",
+                                                                                         "company reports",
+                                                                                         "academic research"
+                                                                                     ],
+                                                          "timeframe":  "2023â2026",
+                                                          "geography":  "Serbia"
+                                                      },
+                                                      {
+                                                          "id":  "IN5",
+                                                          "research_question_id":  "RQ3",
+                                                          "description":  "Document chef use-cases, dish categories, preferred formats, and quality attributes.",
+                                                          "priority":  2,
+                                                          "preferred_source_types":  [
+                                                                                         "reputable media",
+                                                                                         "industry associations",
+                                                                                         "academic research",
+                                                                                         "company reports"
+                                                                                     ],
+                                                          "timeframe":  "2022â2026",
+                                                          "geography":  "Serbia and comparable CEE markets"
+                                                      },
+                                                      {
+                                                          "id":  "IN6",
+                                                          "research_question_id":  "RQ3",
+                                                          "description":  "List procurement criteria: delivery frequency, shelf life, certifications, ordering process, credit terms.",
+                                                          "priority":  2,
+                                                          "preferred_source_types":  [
+                                                                                         "reputable media",
+                                                                                         "industry associations",
+                                                                                         "company reports"
+                                                                                     ],
+                                                          "timeframe":  "2022â2026",
+                                                          "geography":  "Serbia"
+                                                      },
+                                                      {
+                                                          "id":  "IN7",
+                                                          "research_question_id":  "RQ4",
+                                                          "description":  "Identify local producers, importers, and distributors; estimate capacities and coverage.",
+                                                          "priority":  2,
+                                                          "preferred_source_types":  [
+                                                                                         "company reports",
+                                                                                         "reputable media",
+                                                                                         "industry associations"
+                                                                                     ],
+                                                          "timeframe":  "2023â2026",
+                                                          "geography":  "Serbia"
+                                                      },
+                                                      {
+                                                          "id":  "IN8",
+                                                          "research_question_id":  "RQ4",
+                                                          "description":  "Benchmark product assortments (varieties, mixes, formats) and service levels.",
+                                                          "priority":  3,
+                                                          "preferred_source_types":  [
+                                                                                         "company reports",
+                                                                                         "reputable media",
+                                                                                         "industry associations"
+                                                                                     ],
+                                                          "timeframe":  "2023â2026",
+                                                          "geography":  "Serbia"
+                                                      },
+                                                      {
+                                                          "id":  "IN9",
+                                                          "research_question_id":  "RQ4",
+                                                          "description":  "Compile indicative wholesale price ranges and minimum order quantities.",
+                                                          "priority":  2,
+                                                          "preferred_source_types":  [
+                                                                                         "company reports",
+                                                                                         "reputable media",
+                                                                                         "industry associations"
+                                                                                     ],
+                                                          "timeframe":  "2024â2026",
+                                                          "geography":  "Serbia"
+                                                      },
+                                                      {
+                                                          "id":  "IN10",
+                                                          "research_question_id":  "RQ5",
+                                                          "description":  "Map HoReCa density by city/region and key distribution channel options.",
+                                                          "priority":  3,
+                                                          "preferred_source_types":  [
+                                                                                         "official statistics",
+                                                                                         "industry associations",
+                                                                                         "reputable media"
+                                                                                     ],
+                                                          "timeframe":  "2023â2026",
+                                                          "geography":  "Serbia"
+                                                      },
+                                                      {
+                                                          "id":  "IN11",
+                                                          "research_question_id":  "RQ6",
+                                                          "description":  "Summarize applicable food safety, primary production, labeling, and transport regulations.",
+                                                          "priority":  1,
+                                                          "preferred_source_types":  [
+                                                                                         "regulator/government",
+                                                                                         "industry associations",
+                                                                                         "reputable media",
+                                                                                         "academic research"
+                                                                                     ],
+                                                          "timeframe":  "Current to 2026",
+                                                          "geography":  "Serbia"
+                                                      },
+                                                      {
+                                                          "id":  "IN12",
+                                                          "research_question_id":  "RQ6",
+                                                          "description":  "Synthesize entry options (direct, distributor, hybrid) with risk, cost, and speed trade-offs.",
+                                                          "priority":  1,
+                                                          "preferred_source_types":  [
+                                                                                         "reputable media",
+                                                                                         "company reports",
+                                                                                         "industry associations",
+                                                                                         "academic research"
+                                                                                     ],
+                                                          "timeframe":  "2024â2026",
+                                                          "geography":  "Serbia"
+                                                      }
+                                                  ],
+                            "source_strategy":  [
+                                                    "Official statistics (e.g., national statistics, HoReCa registries) for outlet counts and spend baselines",
+                                                    "Industry associations for foodservice trends, procurement practices, and standards",
+                                                    "Company reports and supplier websites for assortments, prices, and coverage",
+                                                    "Regulator/government portals for food safety and transport compliance",
+                                                    "Reputable media and academic research for market context and adoption benchmarks"
+                                                ],
+                            "analysis_plan":  [
+                                                  "Size the market using top-down (foodservice spend x microgreens share) and bottom-up (supplier volume x price) triangulation.",
+                                                  "Model HoReCa adoption using outlet segmentation and usage per outlet with sensitivity scenarios.",
+                                                  "Benchmark competitors on price, assortment, service, and channel coverage to derive positioning gaps.",
+                                                  "Map geographic opportunity via HoReCa density and logistics feasibility to prioritize launch cities.",
+                                                  "Translate buyer requirements into product/operations specs and service-level targets.",
+                                                  "Integrate regulatory constraints and economics to recommend a phased market-entry strategy."
+                                              ],
+                            "deliverable_plan":  [
+                                                     "Executive summary with go/no-go and entry thesis",
+                                                     "Market size, growth, and maturity assessment (2025â2026)",
+                                                     "Demand and adoption forecast by HoReCa segment and city",
+                                                     "Competitive landscape with price and assortment benchmarks",
+                                                     "Regulatory overview and buyer requirements checklist",
+                                                     "Initial market-entry strategy with phased roadmap and KPIs"
+                                                 ],
+                            "assumptions":  [
+                                                "Premium microgreens are a distinct segment with price premium and quality attributes.",
+                                                "Comparable CEE markets can inform Serbian adoption where local data is sparse.",
+                                                "Prices collected reflect list or common wholesale ranges, not negotiated contracts.",
+                                                "Distribution capacity can be scaled to match prioritized city rollout."
+                                            ],
+                            "limitations":  [
+                                                "Limited transparency on exact supplier volumes may require estimates.",
+                                                "Secondary chef usage insights may not fully capture Serbia-specific nuances.",
+                                                "Price benchmarks may vary by season and relationship depth.",
+                                                "Regulatory updates through 2026 may alter compliance requirements."
+                                            ],
+                            "language":  "en"
+                        }
+}

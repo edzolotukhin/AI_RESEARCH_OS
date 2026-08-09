@@ -1,0 +1,2098 @@
+{
+  "run_id": "22678610-f5cd-4956-a96f-fd758c510716",
+  "workflow_run": {
+    "id": "22678610-f5cd-4956-a96f-fd758c510716",
+    "project_id": "7bad1c7e-4e36-4125-ad49-f708079b8f78",
+    "status": "completed",
+    "workflow_template_id": "2be1c3d4-4a48-40d8-bca7-e88f9523f971",
+    "correlation_id": "p1-07-10-2-profile-b-20260809-134839",
+    "source": "serbia-e2e-acceptance"
+  },
+  "tasks": [
+    {
+      "task_id": "6bb742e6-5a86-4269-b9e9-3a738a44596c",
+      "definition_id": "task-collect-evidence",
+      "name": "Collect sources",
+      "status": "completed",
+      "executor_id": "search"
+    },
+    {
+      "task_id": "ad2c0c25-c814-4f28-b74b-3aa6d56f1ba1",
+      "definition_id": "task-extract-evidence",
+      "name": "Extract evidence",
+      "status": "completed",
+      "executor_id": "evidence"
+    },
+    {
+      "task_id": "15fe051f-5308-48e9-b3ad-0443d89e0d59",
+      "definition_id": "task-assess-research-readiness",
+      "name": "Assess research readiness",
+      "status": "completed",
+      "executor_id": "research_quality"
+    },
+    {
+      "task_id": "65359614-2f4c-4440-9734-ee5d4194a13d",
+      "definition_id": "task-analyze",
+      "name": "Analyze findings",
+      "status": "skipped",
+      "executor_id": "analysis"
+    },
+    {
+      "task_id": "65ec703e-7f16-48aa-9a99-538eaa0a3ec2",
+      "definition_id": "task-write-report",
+      "name": "Write research report",
+      "status": "skipped",
+      "executor_id": "report"
+    },
+    {
+      "task_id": "bbe58f25-f230-4ea9-b371-31e42bc57699",
+      "definition_id": "task-review-report",
+      "name": "Review research report",
+      "status": "skipped",
+      "executor_id": "review"
+    }
+  ],
+  "design": {
+    "id": "60c36df7-417d-4ffb-a835-f306905605f6",
+    "rq_count": 6,
+    "in_count": 12,
+    "needs": [
+      {
+        "id": "IN1",
+        "priority": 1,
+        "research_question_id": "RQ1",
+        "has_evidence_expectation": false
+      },
+      {
+        "id": "IN2",
+        "priority": 1,
+        "research_question_id": "RQ1",
+        "has_evidence_expectation": false
+      },
+      {
+        "id": "IN3",
+        "priority": 1,
+        "research_question_id": "RQ2",
+        "has_evidence_expectation": false
+      },
+      {
+        "id": "IN4",
+        "priority": 2,
+        "research_question_id": "RQ2",
+        "has_evidence_expectation": false
+      },
+      {
+        "id": "IN5",
+        "priority": 2,
+        "research_question_id": "RQ3",
+        "has_evidence_expectation": false
+      },
+      {
+        "id": "IN6",
+        "priority": 2,
+        "research_question_id": "RQ3",
+        "has_evidence_expectation": false
+      },
+      {
+        "id": "IN7",
+        "priority": 2,
+        "research_question_id": "RQ4",
+        "has_evidence_expectation": false
+      },
+      {
+        "id": "IN8",
+        "priority": 3,
+        "research_question_id": "RQ4",
+        "has_evidence_expectation": false
+      },
+      {
+        "id": "IN9",
+        "priority": 2,
+        "research_question_id": "RQ4",
+        "has_evidence_expectation": false
+      },
+      {
+        "id": "IN10",
+        "priority": 3,
+        "research_question_id": "RQ5",
+        "has_evidence_expectation": false
+      },
+      {
+        "id": "IN11",
+        "priority": 1,
+        "research_question_id": "RQ6",
+        "has_evidence_expectation": false
+      },
+      {
+        "id": "IN12",
+        "priority": 1,
+        "research_question_id": "RQ6",
+        "has_evidence_expectation": false
+      }
+    ]
+  },
+  "evidence_persist_count": 66,
+  "evidence_per_information_need": {
+    "IN1": 4,
+    "IN11": 1,
+    "IN12": 3,
+    "IN2": 20,
+    "IN3": 6,
+    "IN4": 1,
+    "IN5": 9,
+    "IN6": 5,
+    "IN7": 8,
+    "IN8": 3,
+    "IN9": 6
+  },
+  "unique_ins_with_evidence": [
+    "IN1",
+    "IN11",
+    "IN12",
+    "IN2",
+    "IN3",
+    "IN4",
+    "IN5",
+    "IN6",
+    "IN7",
+    "IN8",
+    "IN9"
+  ],
+  "source_acquisition": {
+    "source_ids": [
+      "193d69a7-83ac-4658-90be-c5da3c7bbdb6",
+      "0f5b64c3-cad6-4db5-91c0-d2b091398726",
+      "2d5e993d-27b9-4ca4-b7a0-68dee75cbc6f",
+      "604fd380-8170-45ca-815f-ca889643604d",
+      "027ebd68-ab30-4ee9-b352-09b520032c7a",
+      "0dd3dc54-62fb-46d4-8dd5-b81ac7c765e3",
+      "f58e1d91-be86-48e1-812d-6a18dbd486c5",
+      "e9b3dbce-1bf1-4480-8bc3-c2011a20658e",
+      "7f82bcba-5bb2-48eb-a0f5-58a21c0d6080",
+      "5701f333-5f43-40e0-9cc4-cd1519a505f2",
+      "b8cc3a33-8b26-44f1-8465-4157c385db5c",
+      "fa8c220b-3aaf-4000-85b3-b825a48c7780",
+      "1e4b36a7-8e40-4413-99a7-ecc09b1cbe18",
+      "e41906d3-b3c3-404b-9b95-b4bcf6435fb5",
+      "fab03e6d-65e5-4a89-bb98-944440d5ddd1",
+      "4708efad-f032-49f1-8b44-afe04b3970f3",
+      "9c7b492c-d71e-40a1-ad58-50fd472bfd29",
+      "8a228ca8-660a-4f88-bf17-ad55e3395fe6"
+    ],
+    "limitations": [
+      "Source acquisition stopped early because the coverage target was satisfied",
+      "14 candidate URL(s) were not attempted after coverage target satisfaction",
+      "Unique candidate URLs (32) exceeded the per-run cap (18)"
+    ],
+    "failed_count": 5,
+    "acquired_count": 13,
+    "elapsed_seconds": 51.98,
+    "truncated_count": 2,
+    "budget_exhausted": false,
+    "candidates_found": 36,
+    "queries_executed": 12,
+    "sources_acquired": 13,
+    "retrieval_failures": 5,
+    "tavily_query_count": 12,
+    "candidate_count_raw": 36,
+    "candidates_attempted": 18,
+    "skipped_budget_count": 14,
+    "candidate_count_unique": 32,
+    "failure_category_counts": {
+      "http_error": 4,
+      "other_retrieval_error": 1
+    },
+    "information_needs_total": 12,
+    "skipped_duplicate_count": 0,
+    "coverage_target_satisfied": true,
+    "coverage_complete_early_stop": true,
+    "information_needs_covered_count": 12
+  },
+  "evidence_extraction_summary": {
+    "sources_processed": 12,
+    "evidence_extracted": 66,
+    "sources_without_evidence": 1,
+    "budget_stop_reason": "evidence_max_llm_calls",
+    "failure_classification": "mixed_failure",
+    "extractor_attempts": 36,
+    "raw_candidates": 81,
+    "persisted_evidence": 66,
+    "response_classification_counts": {
+      "invalid_json": 3,
+      "valid_candidates": 25,
+      "valid_empty_result": 8
+    },
+    "work_item_count": 36
+  },
+  "evidence_provider_calls": [
+    {
+      "queue": 0,
+      "source_id": "4708efad-f032-49f1-8b44-afe04b3970f3",
+      "information_need_ids": [
+        "IN1"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 4,
+      "items_post": 4,
+      "raw_candidates": 4,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 1,
+      "source_id": "0f5b64c3-cad6-4db5-91c0-d2b091398726",
+      "information_need_ids": [
+        "IN8",
+        "IN10"
+      ],
+      "response_classification": "valid_empty_result",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 0,
+      "items_post": 0,
+      "raw_candidates": 0,
+      "exception": null,
+      "extractor_status": "no_candidates"
+    },
+    {
+      "queue": 2,
+      "source_id": "fa8c220b-3aaf-4000-85b3-b825a48c7780",
+      "information_need_ids": [
+        "IN11"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 1,
+      "items_post": 1,
+      "raw_candidates": 1,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 3,
+      "source_id": "b8cc3a33-8b26-44f1-8465-4157c385db5c",
+      "information_need_ids": [
+        "IN12"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 2,
+      "items_post": 2,
+      "raw_candidates": 2,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 4,
+      "source_id": "7f82bcba-5bb2-48eb-a0f5-58a21c0d6080",
+      "information_need_ids": [
+        "IN2"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 5,
+      "items_post": 5,
+      "raw_candidates": 5,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 5,
+      "source_id": "2d5e993d-27b9-4ca4-b7a0-68dee75cbc6f",
+      "information_need_ids": [
+        "IN3",
+        "IN4"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 1,
+      "items_post": 1,
+      "raw_candidates": 1,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 6,
+      "source_id": "1e4b36a7-8e40-4413-99a7-ecc09b1cbe18",
+      "information_need_ids": [
+        "IN5"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 4,
+      "items_post": 4,
+      "raw_candidates": 4,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 7,
+      "source_id": "027ebd68-ab30-4ee9-b352-09b520032c7a",
+      "information_need_ids": [
+        "IN6"
+      ],
+      "response_classification": "valid_empty_result",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 0,
+      "items_post": 0,
+      "raw_candidates": 0,
+      "exception": null,
+      "extractor_status": "no_candidates"
+    },
+    {
+      "queue": 8,
+      "source_id": "8a228ca8-660a-4f88-bf17-ad55e3395fe6",
+      "information_need_ids": [
+        "IN7"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 5,
+      "items_post": 5,
+      "raw_candidates": 5,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 9,
+      "source_id": "5701f333-5f43-40e0-9cc4-cd1519a505f2",
+      "information_need_ids": [
+        "IN9"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 4,
+      "items_post": 4,
+      "raw_candidates": 4,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 10,
+      "source_id": "4708efad-f032-49f1-8b44-afe04b3970f3",
+      "information_need_ids": [
+        "IN1"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 2,
+      "items_post": 2,
+      "raw_candidates": 2,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 11,
+      "source_id": "0f5b64c3-cad6-4db5-91c0-d2b091398726",
+      "information_need_ids": [
+        "IN8",
+        "IN10"
+      ],
+      "response_classification": "valid_empty_result",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 0,
+      "items_post": 0,
+      "raw_candidates": 0,
+      "exception": null,
+      "extractor_status": "no_candidates"
+    },
+    {
+      "queue": 12,
+      "source_id": "b8cc3a33-8b26-44f1-8465-4157c385db5c",
+      "information_need_ids": [
+        "IN12"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 1,
+      "items_post": 1,
+      "raw_candidates": 1,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 13,
+      "source_id": "7f82bcba-5bb2-48eb-a0f5-58a21c0d6080",
+      "information_need_ids": [
+        "IN2"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 5,
+      "items_post": 5,
+      "raw_candidates": 5,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 14,
+      "source_id": "2d5e993d-27b9-4ca4-b7a0-68dee75cbc6f",
+      "information_need_ids": [
+        "IN3",
+        "IN4"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 1,
+      "items_post": 1,
+      "raw_candidates": 1,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 15,
+      "source_id": "1e4b36a7-8e40-4413-99a7-ecc09b1cbe18",
+      "information_need_ids": [
+        "IN5"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 5,
+      "items_post": 5,
+      "raw_candidates": 5,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 16,
+      "source_id": "027ebd68-ab30-4ee9-b352-09b520032c7a",
+      "information_need_ids": [
+        "IN6"
+      ],
+      "response_classification": "valid_empty_result",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 0,
+      "items_post": 0,
+      "raw_candidates": 0,
+      "exception": null,
+      "extractor_status": "no_candidates"
+    },
+    {
+      "queue": 17,
+      "source_id": "8a228ca8-660a-4f88-bf17-ad55e3395fe6",
+      "information_need_ids": [
+        "IN7"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 4,
+      "items_post": 4,
+      "raw_candidates": 4,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 18,
+      "source_id": "5701f333-5f43-40e0-9cc4-cd1519a505f2",
+      "information_need_ids": [
+        "IN9"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 2,
+      "items_post": 2,
+      "raw_candidates": 2,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 19,
+      "source_id": "0f5b64c3-cad6-4db5-91c0-d2b091398726",
+      "information_need_ids": [
+        "IN8",
+        "IN10"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 3,
+      "items_post": 3,
+      "raw_candidates": 3,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 20,
+      "source_id": "7f82bcba-5bb2-48eb-a0f5-58a21c0d6080",
+      "information_need_ids": [
+        "IN2"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 8,
+      "items_post": 8,
+      "raw_candidates": 8,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 21,
+      "source_id": "2d5e993d-27b9-4ca4-b7a0-68dee75cbc6f",
+      "information_need_ids": [
+        "IN3",
+        "IN4"
+      ],
+      "response_classification": "invalid_json",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "no_valid_json",
+      "items_pre": null,
+      "items_post": 0,
+      "raw_candidates": 0,
+      "exception": null,
+      "extractor_status": "no_candidates"
+    },
+    {
+      "queue": 22,
+      "source_id": "1e4b36a7-8e40-4413-99a7-ecc09b1cbe18",
+      "information_need_ids": [
+        "IN5"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 1,
+      "items_post": 1,
+      "raw_candidates": 1,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 23,
+      "source_id": "027ebd68-ab30-4ee9-b352-09b520032c7a",
+      "information_need_ids": [
+        "IN6"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 2,
+      "items_post": 2,
+      "raw_candidates": 2,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 24,
+      "source_id": "0f5b64c3-cad6-4db5-91c0-d2b091398726",
+      "information_need_ids": [
+        "IN8",
+        "IN10"
+      ],
+      "response_classification": "valid_empty_result",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 0,
+      "items_post": 0,
+      "raw_candidates": 0,
+      "exception": null,
+      "extractor_status": "no_candidates"
+    },
+    {
+      "queue": 25,
+      "source_id": "7f82bcba-5bb2-48eb-a0f5-58a21c0d6080",
+      "information_need_ids": [
+        "IN2"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 3,
+      "items_post": 3,
+      "raw_candidates": 3,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 26,
+      "source_id": "2d5e993d-27b9-4ca4-b7a0-68dee75cbc6f",
+      "information_need_ids": [
+        "IN3",
+        "IN4"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 2,
+      "items_post": 2,
+      "raw_candidates": 2,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 27,
+      "source_id": "604fd380-8170-45ca-815f-ca889643604d",
+      "information_need_ids": [
+        "IN5"
+      ],
+      "response_classification": "invalid_json",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "no_valid_json",
+      "items_pre": null,
+      "items_post": 0,
+      "raw_candidates": 0,
+      "exception": null,
+      "extractor_status": "no_candidates"
+    },
+    {
+      "queue": 28,
+      "source_id": "027ebd68-ab30-4ee9-b352-09b520032c7a",
+      "information_need_ids": [
+        "IN6"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 3,
+      "items_post": 3,
+      "raw_candidates": 3,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 29,
+      "source_id": "0f5b64c3-cad6-4db5-91c0-d2b091398726",
+      "information_need_ids": [
+        "IN8",
+        "IN10"
+      ],
+      "response_classification": "valid_empty_result",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 0,
+      "items_post": 0,
+      "raw_candidates": 0,
+      "exception": null,
+      "extractor_status": "no_candidates"
+    },
+    {
+      "queue": 30,
+      "source_id": "7f82bcba-5bb2-48eb-a0f5-58a21c0d6080",
+      "information_need_ids": [
+        "IN2"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 5,
+      "items_post": 5,
+      "raw_candidates": 5,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 31,
+      "source_id": "2d5e993d-27b9-4ca4-b7a0-68dee75cbc6f",
+      "information_need_ids": [
+        "IN3",
+        "IN4"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 4,
+      "items_post": 4,
+      "raw_candidates": 4,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 32,
+      "source_id": "604fd380-8170-45ca-815f-ca889643604d",
+      "information_need_ids": [
+        "IN5"
+      ],
+      "response_classification": "valid_candidates",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 4,
+      "items_post": 4,
+      "raw_candidates": 4,
+      "exception": null,
+      "extractor_status": "success"
+    },
+    {
+      "queue": 33,
+      "source_id": "193d69a7-83ac-4658-90be-c5da3c7bbdb6",
+      "information_need_ids": [
+        "IN6",
+        "IN8",
+        "IN9"
+      ],
+      "response_classification": "valid_empty_result",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 0,
+      "items_post": 0,
+      "raw_candidates": 0,
+      "exception": null,
+      "extractor_status": "no_candidates"
+    },
+    {
+      "queue": 34,
+      "source_id": "0f5b64c3-cad6-4db5-91c0-d2b091398726",
+      "information_need_ids": [
+        "IN8",
+        "IN10"
+      ],
+      "response_classification": "valid_empty_result",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "object",
+      "items_pre": 0,
+      "items_post": 0,
+      "raw_candidates": 0,
+      "exception": null,
+      "extractor_status": "no_candidates"
+    },
+    {
+      "queue": 35,
+      "source_id": "7f82bcba-5bb2-48eb-a0f5-58a21c0d6080",
+      "information_need_ids": [
+        "IN2"
+      ],
+      "response_classification": "invalid_json",
+      "finish_reason": null,
+      "incomplete_reason": null,
+      "was_truncated": null,
+      "output_tokens": null,
+      "reasoning_tokens": null,
+      "max_output_tokens": null,
+      "configured_reasoning_effort": "minimal",
+      "response_length": null,
+      "parsed_root": "no_valid_json",
+      "items_pre": null,
+      "items_post": 0,
+      "raw_candidates": 0,
+      "exception": null,
+      "extractor_status": "no_candidates"
+    }
+  ],
+  "readiness": {
+    "ready_for_analysis": false,
+    "research_outcome": "insufficient_research",
+    "targeted_research_required": false,
+    "termination_reason": "sufficiency_budget_exhausted",
+    "research_loop_count": 2,
+    "research_loop_termination_reason": "sufficiency_budget_exhausted",
+    "blocking_information_need_ids": [
+      "IN1",
+      "IN2",
+      "IN3",
+      "IN4",
+      "IN5",
+      "IN6",
+      "IN7",
+      "IN8",
+      "IN10",
+      "IN11",
+      "IN12"
+    ],
+    "blocking_research_question_ids": [
+      "RQ1",
+      "RQ2",
+      "RQ3",
+      "RQ4",
+      "RQ5",
+      "RQ6"
+    ]
+  },
+  "need_assessments": [
+    {
+      "information_need_id": "IN1",
+      "research_question_id": "RQ1",
+      "status": "insufficient",
+      "evidence_count": 4,
+      "confidence": 0.2,
+      "missing_aspects": [
+        "__legacy_need__"
+      ],
+      "gap_types": [
+        "insufficient_depth"
+      ],
+      "reason": "All evidence pertains to Serbia\u2019s BELEX15 stock index levels and forecasts, not to the premium microgreens HoReCa market. No part of the legacy information need (market scope, segmentation, or growth proxies for microgreens) is addressed."
+    },
+    {
+      "information_need_id": "IN2",
+      "research_question_id": "RQ1",
+      "status": "insufficient",
+      "evidence_count": 20,
+      "confidence": 0.5,
+      "missing_aspects": [
+        "__legacy_need__"
+      ],
+      "gap_types": [
+        "insufficient_depth"
+      ],
+      "reason": "All evidence pertains to the global food service market and generic forecasting methods, not to Serbia\u2019s premium microgreens HoReCa market. No top-down foodservice spend or bottom-up supplier volume data specific to Serbia/microgreens is provided; thus the legacy need is not supported. No contradictory evidence items are present."
+    },
+    {
+      "information_need_id": "IN3",
+      "research_question_id": "RQ2",
+      "status": "insufficient",
+      "evidence_count": 6,
+      "confidence": 0.39,
+      "missing_aspects": [
+        "__legacy_need__"
+      ],
+      "gap_types": [
+        "insufficient_depth"
+      ],
+      "reason": "Evidence describes qualitative usage trends in HoReCa and distribution channels but provides no quantification of HoReCa outlets by tier/cuisine, no adoption rates, and no penetration projections. Therefore the legacy need is not supported; there are no conflicting evidence items."
+    },
+    {
+      "information_need_id": "IN4",
+      "research_question_id": "RQ2",
+      "status": "insufficient",
+      "evidence_count": 1,
+      "confidence": 0.2,
+      "missing_aspects": [
+        "__legacy_need__"
+      ],
+      "gap_types": [
+        "insufficient_depth"
+      ],
+      "reason": "The single evidence item addresses shelf life and cold chain logistics constraints, not average weekly microgreens usage per outlet type or seasonality. No evidence supports the legacy information need, and there are no conflicting evidence items."
+    },
+    {
+      "information_need_id": "IN5",
+      "research_question_id": "RQ3",
+      "status": "insufficient",
+      "evidence_count": 9,
+      "confidence": 0.19,
+      "missing_aspects": [
+        "__legacy_need__"
+      ],
+      "gap_types": [
+        "insufficient_depth"
+      ],
+      "reason": "Evidence is mostly about convenience foods, clean-label trends, and a software deployment guide for Chef Automate\u2014none address how restaurants/chefs in Serbia use microgreens or their buyer requirements/procurement criteria. No excerpts discuss chef use-cases, dish categories, preferred formats, or quality attributes for microgreens, so the legacy need is unsupported and there are no conflicting evidence items."
+    },
+    {
+      "information_need_id": "IN6",
+      "research_question_id": "RQ3",
+      "status": "insufficient",
+      "evidence_count": 5,
+      "confidence": 0.61,
+      "missing_aspects": [
+        "__legacy_need__"
+      ],
+      "gap_types": [
+        "insufficient_depth"
+      ],
+      "reason": "Evidence only details bid submission mechanics and platform use; it explicitly notes that delivery frequency, shelf life, certifications, ordering steps beyond sealed bid submission, and credit terms are not in the public notice and are instead in tender dossiers. No provided evidence supplies the requested procurement criteria list."
+    },
+    {
+      "information_need_id": "IN7",
+      "research_question_id": "RQ4",
+      "status": "insufficient",
+      "evidence_count": 8,
+      "confidence": 0.36,
+      "missing_aspects": [
+        "__legacy_need__"
+      ],
+      "gap_types": [
+        "insufficient_depth"
+      ],
+      "reason": "Evidence provides high-level market patterns (consumer retail behavior, farm fragmentation, export destinations) but does not identify specific local producers, importers, or distributors, nor estimate their individual capacities or coverage. No contradictory evidence items on these specifics are present."
+    },
+    {
+      "information_need_id": "IN8",
+      "research_question_id": "RQ4",
+      "status": "insufficient",
+      "evidence_count": 3,
+      "confidence": 0.2,
+      "missing_aspects": [
+        "__legacy_need__"
+      ],
+      "gap_types": [
+        "insufficient_depth"
+      ],
+      "reason": "Provided evidence discusses Serbia\u2019s public administration, health, water/sanitation, and education; none address competitors, suppliers, product assortments, or price points needed to benchmark assortments and service levels."
+    },
+    {
+      "information_need_id": "IN9",
+      "research_question_id": "RQ4",
+      "status": "sufficient",
+      "evidence_count": 6,
+      "confidence": 0.63,
+      "missing_aspects": [],
+      "gap_types": [],
+      "reason": "Evidence provides indicative wholesale price ranges via margin bands (15\u201350%), keystone pricing (COGS\u00d72), and tiered bulk discounts, plus explicit guidance on MOQs (e.g., 50 units or $500 minimum). All content aligns and comes from a single source without contradictions."
+    },
+    {
+      "information_need_id": "IN10",
+      "research_question_id": "RQ5",
+      "status": "missing",
+      "evidence_count": 0,
+      "confidence": null,
+      "missing_aspects": [],
+      "gap_types": [
+        "no_evidence"
+      ],
+      "reason": "No relevant evidence mapped to this information need. contradiction signal unavailable: no structured contradiction metadata"
+    },
+    {
+      "information_need_id": "IN11",
+      "research_question_id": "RQ6",
+      "status": "insufficient",
+      "evidence_count": 1,
+      "confidence": 0.21,
+      "missing_aspects": [
+        "__legacy_need__"
+      ],
+      "gap_types": [
+        "insufficient_depth"
+      ],
+      "reason": "Only one evidence item exists and it lacks substantive regulatory details; it merely notes a 2026 Serbian regulation title without content. Therefore, the legacy information need is not supported, and no conflicts can be established."
+    },
+    {
+      "information_need_id": "IN12",
+      "research_question_id": "RQ6",
+      "status": "insufficient",
+      "evidence_count": 3,
+      "confidence": 0.3,
+      "missing_aspects": [
+        "__legacy_need__"
+      ],
+      "gap_types": [
+        "insufficient_depth"
+      ],
+      "reason": "Evidence discusses partnering and support organizations but does not synthesize direct/distributor/hybrid entry options or compare risk, cost, and speed trade-offs for entering Serbia\u2019s HoReCa microgreens market. No conflicting claims among the provided excerpts."
+    }
+  ],
+  "research_loop_state": {
+    "current_round": 1,
+    "research_loop_count": 2,
+    "termination_reason": "sufficiency_budget_exhausted",
+    "gap_attempt_counts": {
+      "IN1": 1,
+      "IN2": 1
+    },
+    "pending_targeted_need_id": "IN3",
+    "history": [
+      {
+        "attempt": 1,
+        "improved": false,
+        "round_number": 1,
+        "readiness_after": {
+          "research_outcome": "insufficient_research",
+          "ready_for_analysis": false,
+          "termination_reason": "",
+          "targeted_research_required": true,
+          "blocking_information_need_ids": [
+            "IN1",
+            "IN2",
+            "IN3",
+            "IN4",
+            "IN5",
+            "IN6",
+            "IN7",
+            "IN8",
+            "IN10",
+            "IN11",
+            "IN12"
+          ],
+          "research_question_assessments": [
+            {
+              "reason": "Blocking information needs: insufficient, insufficient",
+              "ready_for_analysis": false,
+              "research_question_id": "RQ1",
+              "information_need_assessments": [
+                {
+                  "reason": "All evidence concerns Serbia\u2019s BELEX15 stock index levels and forecasts, not the premium microgreens HoReCa market. No parts of the legacy information need are addressed; thus the need remains unsupported. No contradictory claims among the stock index items are relevant to the microgreens question.",
+                  "status": "insufficient",
+                  "freshness": null,
+                  "gap_types": [
+                    "insufficient_depth"
+                  ],
+                  "confidence": 0.2,
+                  "contradictions": [],
+                  "evidence_count": 4,
+                  "source_quality": null,
+                  "missing_aspects": [
+                    "__legacy_need__"
+                  ],
+                  "source_diversity": null,
+                  "search_directives": [
+                    "__legacy_need__"
+                  ],
+                  "information_need_id": "IN1",
+                  "research_question_id": "RQ1",
+                  "independent_source_count": 1,
+                  "quantitative_evidence_present": null
+                },
+                {
+                  "reason": "All evidence concerns the global food service market, not Serbia\u2019s premium microgreens HoReCa segment, and does not provide top-down or bottom-up triangulated estimates specific to the stated need.",
+                  "status": "insufficient",
+                  "freshness": null,
+                  "gap_types": [
+                    "insufficient_depth"
+                  ],
+                  "confidence": 0.3,
+                  "contradictions": [],
+                  "evidence_count": 20,
+                  "source_quality": null,
+                  "missing_aspects": [
+                    "__legacy_need__"
+                  ],
+                  "source_diversity": null,
+                  "search_directives": [
+                    "__legacy_need__"
+                  ],
+                  "information_need_id": "IN2",
+                  "research_question_id": "RQ1",
+                  "independent_source_count": 1,
+                  "quantitative_evidence_present": null
+                }
+              ],
+              "blocking_information_need_ids": [
+                "IN1",
+                "IN2"
+              ]
+            },
+            {
+              "reason": "Blocking information needs: insufficient, insufficient",
+              "ready_for_analysis": false,
+              "research_question_id": "RQ2",
+              "information_need_assessments": [
+                {
+                  "reason": "Evidence provides qualitative anecdotes about hospitality use and distribution channels but lacks quantification of HoReCa outlets by tier/cuisine, adoption rates, or projections to 2026. No conflicting claims among items.",
+                  "status": "insufficient",
+                  "freshness": null,
+                  "gap_types": [
+                    "insufficient_depth"
+                  ],
+                  "confidence": 0.3,
+                  "contradictions": [],
+                  "evidence_count": 6,
+                  "source_quality": null,
+                  "missing_aspects": [
+                    "__legacy_need__"
+                  ],
+                  "source_diversity": null,
+                  "search_directives": [
+                    "__legacy_need__"
+                  ],
+                  "information_need_id": "IN3",
+                  "research_question_id": "RQ2",
+                  "independent_source_count": 1,
+                  "quantitative_evidence_present": null
+                },
+                {
+                  "reason": "The single evidence item discusses shelf life and cold chain logistics for microgreens, not usage volumes per outlet type or seasonality. No aspects of the legacy need are addressed, and there are no conflicting evidence items.",
+                  "status": "insufficient",
+                  "freshness": null,
+                  "gap_types": [
+                    "insufficient_depth"
+                  ],
+                  "confidence": 0.23,
+                  "contradictions": [],
+                  "evidence_count": 1,
+                  "source_quality": null,
+                  "missing_aspects": [
+                    "__legacy_need__"
+                  ],
+                  "source_diversity": null,
+                  "search_directives": [
+                    "__legacy_need__"
+                  ],
+                  "information_need_id": "IN4",
+                  "research_question_id": "RQ2",
+                  "independent_source_count": 1,
+                  "quantitative_evidence_present": null
+                }
+              ],
+              "blocking_information_need_ids": [
+                "IN3",
+                "IN4"
+              ]
+            },
+            {
+              "reason": "Blocking information needs: insufficient, insufficient",
+              "ready_for_analysis": false,
+              "research_question_id": "RQ3",
+              "information_need_assessments": [
+                {
+                  "reason": "The provided evidence discusses consumer convenience foods, clean-label trends, and Chef Automate deployment topics, none of which address how restaurants and chefs in Serbia use microgreens or their buyer requirements and procurement criteria. No evidence supports the legacy information need.",
+                  "status": "insufficient",
+                  "freshness": null,
+                  "gap_types": [
+                    "insufficient_depth"
+                  ],
+                  "confidence": 0.2,
+                  "contradictions": [],
+                  "evidence_count": 9,
+                  "source_quality": null,
+                  "missing_aspects": [
+                    "__legacy_need__"
+                  ],
+                  "source_diversity": null,
+                  "search_directives": [
+                    "__legacy_need__"
+                  ],
+                  "information_need_id": "IN5",
+                  "research_question_id": "RQ3",
+                  "independent_source_count": 2,
+                  "quantitative_evidence_present": null
+                },
+                {
+                  "reason": "Available evidence focuses on bid submission logistics (deadlines, platforms, bid security) and explicitly states procurement notices do not include delivery frequency, shelf life, certifications, ordering steps beyond sealed bid submission, or credit terms in public text. No item provides the requested procurement criteria list, which would be in Tender Dossiers not supplied here. Therefore the legacy need is not supported, and no conflicting claims are present.",
+                  "status": "insufficient",
+                  "freshness": null,
+                  "gap_types": [
+                    "insufficient_depth"
+                  ],
+                  "confidence": 0.57,
+                  "contradictions": [],
+                  "evidence_count": 5,
+                  "source_quality": null,
+                  "missing_aspects": [
+                    "__legacy_need__"
+                  ],
+                  "source_diversity": null,
+                  "search_directives": [
+                    "__legacy_need__"
+                  ],
+                  "information_need_id": "IN6",
+                  "research_question_id": "RQ3",
+                  "independent_source_count": 1,
+                  "quantitative_evidence_present": null
+                }
+              ],
+              "blocking_information_need_ids": [
+                "IN5",
+                "IN6"
+              ]
+            },
+            {
+              "reason": "Blocking information needs: insufficient, insufficient",
+              "ready_for_analysis": false,
+              "research_question_id": "RQ4",
+              "information_need_assessments": [
+                {
+                  "reason": "Evidence discusses Serbian retail shopping patterns, farm fragmentation, and export stats but does not identify specific local producers, importers, or distributors, nor estimate their capacities or market coverage. No conflicting claims among the provided items.",
+                  "status": "insufficient",
+                  "freshness": null,
+                  "gap_types": [
+                    "insufficient_depth"
+                  ],
+                  "confidence": 0.3,
+                  "contradictions": [],
+                  "evidence_count": 8,
+                  "source_quality": null,
+                  "missing_aspects": [
+                    "__legacy_need__"
+                  ],
+                  "source_diversity": null,
+                  "search_directives": [
+                    "__legacy_need__"
+                  ],
+                  "information_need_id": "IN7",
+                  "research_question_id": "RQ4",
+                  "independent_source_count": 1,
+                  "quantitative_evidence_present": null
+                },
+                {
+                  "reason": "Evidence focuses on Serbia\u2019s public administration, services, health, and education, not on competitors, suppliers, product assortments, or price points. No item addresses the information need.",
+                  "status": "insufficient",
+                  "freshness": null,
+                  "gap_types": [
+                    "insufficient_depth"
+                  ],
+                  "confidence": 0.2,
+                  "contradictions": [],
+                  "evidence_count": 3,
+                  "source_quality": null,
+                  "missing_aspects": [
+                    "__legacy_need__"
+                  ],
+                  "source_diversity": null,
+                  "search_directives": [
+                    "__legacy_need__"
+                  ],
+                  "information_need_id": "IN8",
+                  "research_question_id": "RQ4",
+                  "independent_source_count": 1,
+                  "quantitative_evidence_present": null
+                },
+                {
+                  "reason": "Evidence provides indicative wholesale pricing methods/ranges (15\u201350% margin; keystone = 2\u00d7 COGS; tiered bulk discounts) and explicit MOQ examples (e.g., 50 units or $500 minimum), sufficiently addressing the legacy need to compile indicative ranges and MOQs. All evidence is consistent and from a single source; specificity by category or competitor is not required under legacy mode.",
+                  "status": "sufficient",
+                  "freshness": null,
+                  "gap_types": [],
+                  "confidence": 0.7,
+                  "contradictions": [],
+                  "evidence_count": 6,
+                  "source_quality": null,
+                  "missing_aspects": [],
+                  "source_diversity": null,
+                  "search_directives": [],
+                  "information_need_id": "IN9",
+                  "research_question_id": "RQ4",
+                  "independent_source_count": 1,
+                  "quantitative_evidence_present": null
+                }
+              ],
+              "blocking_information_need_ids": [
+                "IN7",
+                "IN8"
+              ]
+            },
+            {
+              "reason": "Blocking information needs: missing",
+              "ready_for_analysis": false,
+              "research_question_id": "RQ5",
+              "information_need_assessments": [
+                {
+                  "reason": "No relevant evidence mapped to this information need. contradiction signal unavailable: no structured contradiction metadata",
+                  "status": "missing",
+                  "freshness": null,
+                  "gap_types": [
+                    "no_evidence"
+                  ],
+                  "confidence": null,
+                  "contradictions": [],
+                  "evidence_count": 0,
+                  "source_quality": null,
+                  "missing_aspects": [],
+                  "source_diversity": null,
+                  "search_directives": [],
+                  "information_need_id": "IN10",
+                  "research_question_id": "RQ5",
+                  "independent_source_count": 0,
+                  "quantitative_evidence_present": null
+                }
+              ],
+              "blocking_information_need_ids": [
+                "IN10"
+              ]
+            },
+            {
+              "reason": "Blocking information needs: insufficient, insufficient",
+              "ready_for_analysis": false,
+              "research_question_id": "RQ6",
+              "information_need_assessments": [
+                {
+                  "reason": "Only one evidence item exists and it is merely a title/date noting a 2026 Serbian regulation without substantive content on food safety, primary production, labeling, or transport. Therefore, the legacy information need is not supported; no conflicting claims are present.",
+                  "status": "insufficient",
+                  "freshness": null,
+                  "gap_types": [
+                    "insufficient_depth"
+                  ],
+                  "confidence": 0.25,
+                  "contradictions": [],
+                  "evidence_count": 1,
+                  "source_quality": null,
+                  "missing_aspects": [
+                    "__legacy_need__"
+                  ],
+                  "source_diversity": null,
+                  "search_directives": [
+                    "__legacy_need__"
+                  ],
+                  "information_need_id": "IN11",
+                  "research_question_id": "RQ6",
+                  "independent_source_count": 1,
+                  "quantitative_evidence_present": null
+                },
+                {
+                  "reason": "The evidence discusses partnering with local entities and available support services, plus a disclaimer about an ITA chatbot. None of the items synthesize entry options (direct, distributor, hybrid) with explicit risk, cost, and speed trade-offs for Serbia\u2019s HoReCa microgreens context. No conflicting claims among the provided excerpts.",
+                  "status": "insufficient",
+                  "freshness": null,
+                  "gap_types": [
+                    "insufficient_depth"
+                  ],
+                  "confidence": 0.3,
+                  "contradictions": [],
+                  "evidence_count": 3,
+                  "source_quality": null,
+                  "missing_aspects": [
+                    "__legacy_need__"
+                  ],
+                  "source_diversity": null,
+                  "search_directives": [
+                    "__legacy_need__"
+                  ],
+                  "information_need_id": "IN12",
+                  "research_question_id": "RQ6",
+                  "independent_source_count": 1,
+                  "quantitative_evidence_present": null
+                }
+              ],
+              "blocking_information_need_ids": [
+                "IN11",
+                "IN12"
+              ]
+            }
+          ],
+          "blocking_research_question_ids": [
+            "RQ1",
+            "RQ2",
+            "RQ3",
+            "RQ4",
+            "RQ5",
+            "RQ6"
+          ]
+        },
+        "new_sources_count": 0,
+        "queries_generated": 1,
+        "targeted_need_ids": [
+          "IN1"
+        ],
+        "new_evidence_count": 0,
+        "blocking_need_ids_before": [
+          "IN1",
+          "IN10",
+          "IN11",
+          "IN12",
+          "IN2",
+          "IN3",
+          "IN4",
+          "IN5",
+          "IN6",
+          "IN7",
+          "IN8"
+        ]
+      },
+      {
+        "attempt": 2,
+        "improved": false,
+        "round_number": 1,
+        "readiness_after": {
+          "research_outcome": "insufficient_research",
+          "ready_for_analysis": false,
+          "termination_reason": "",
+          "targeted_research_required": true,
+          "blocking_information_need_ids": [
+            "IN1",
+            "IN2",
+            "IN3",
+            "IN4",
+            "IN5",
+            "IN6",
+            "IN7",
+            "IN8",
+            "IN10",
+            "IN11",
+            "IN12"
+          ],
+          "research_question_assessments": [
+            {
+              "reason": "Blocking information needs: insufficient, insufficient",
+              "ready_for_analysis": false,
+              "research_question_id": "RQ1",
+              "information_need_assessments": [
+                {
+                  "reason": "All evidence pertains to Serbia\u2019s BELEX15 stock index levels and forecasts, not to the premium microgreens HoReCa market. No part of the legacy information need (market scope, segmentation, or growth proxies for microgreens) is addressed.",
+                  "status": "insufficient",
+                  "freshness": null,
+                  "gap_types": [
+                    "insufficient_depth"
+                  ],
+                  "confidence": 0.2,
+                  "contradictions": [],
+                  "evidence_count": 4,
+                  "source_quality": null,
+                  "missing_aspects": [
+                    "__legacy_need__"
+                  ],
+                  "source_diversity": null,
+                  "search_directives": [
+                    "__legacy_need__"
+                  ],
+                  "information_need_id": "IN1",
+                  "research_question_id": "RQ1",
+                  "independent_source_count": 1,
+                  "quantitative_evidence_present": null
+                },
+                {
+                  "reason": "All evidence pertains to the global food service market and generic forecasting methods, not to Serbia\u2019s premium microgreens HoReCa market. No top-down foodservice spend or bottom-up supplier volume data specific to Serbia/microgreens is provided; thus the legacy need is not supported. No contradictory evidence items are present.",
+                  "status": "insufficient",
+                  "freshness": null,
+                  "gap_types": [
+                    "insufficient_depth"
+                  ],
+                  "confidence": 0.5,
+                  "contradictions": [],
+                  "evidence_count": 20,
+                  "source_quality": null,
+                  "missing_aspects": [
+                    "__legacy_need__"
+                  ],
+                  "source_diversity": null,
+                  "search_directives": [
+                    "__legacy_need__"
+                  ],
+                  "information_need_id": "IN2",
+                  "research_question_id": "RQ1",
+                  "independent_source_count": 1,
+                  "quantitative_evidence_present": null
+                }
+              ],
+              "blocking_information_need_ids": [
+                "IN1",
+                "IN2"
+              ]
+            },
+            {
+              "reason": "Blocking information needs: insufficient, insufficient",
+              "ready_for_analysis": false,
+              "research_question_id": "RQ2",
+              "information_need_assessments": [
+                {
+                  "reason": "Evidence describes qualitative usage trends in HoReCa and distribution channels but provides no quantification of HoReCa outlets by tier/cuisine, no adoption rates, and no penetration projections. Therefore the legacy need is not supported; there are no conflicting evidence items.",
+                  "status": "insufficient",
+                  "freshness": null,
+                  "gap_types": [
+                    "insufficient_depth"
+                  ],
+                  "confidence": 0.39,
+                  "contradictions": [],
+                  "evidence_count": 6,
+                  "source_quality": null,
+                  "missing_aspects": [
+                    "__legacy_need__"
+                  ],
+                  "source_diversity": null,
+                  "search_directives": [
+                    "__legacy_need__"
+                  ],
+                  "information_need_id": "IN3",
+                  "research_question_id": "RQ2",
+                  "independent_source_count": 1,
+                  "quantitative_evidence_present": null
+                },
+                {
+                  "reason": "The single evidence item addresses shelf life and cold chain logistics constraints, not average weekly microgreens usage per outlet type or seasonality. No evidence supports the legacy information need, and there are no conflicting evidence items.",
+                  "status": "insufficient",
+                  "freshness": null,
+                  "gap_types": [
+                    "insufficient_depth"
+                  ],
+                  "confidence": 0.2,
+                  "contradictions": [],
+                  "evidence_count": 1,
+                  "source_quality": null,
+                  "missing_aspects": [
+                    "__legacy_need__"
+                  ],
+                  "source_diversity": null,
+                  "search_directives": [
+                    "__legacy_need__"
+                  ],
+                  "information_need_id": "IN4",
+                  "research_question_id": "RQ2",
+                  "independent_source_count": 1,
+                  "quantitative_evidence_present": null
+                }
+              ],
+              "blocking_information_need_ids": [
+                "IN3",
+                "IN4"
+              ]
+            },
+            {
+              "reason": "Blocking information needs: insufficient, insufficient",
+              "ready_for_analysis": false,
+              "research_question_id": "RQ3",
+              "information_need_assessments": [
+                {
+                  "reason": "Evidence is mostly about convenience foods, clean-label trends, and a software deployment guide for Chef Automate\u2014none address how restaurants/chefs in Serbia use microgreens or their buyer requirements/procurement criteria. No excerpts discuss chef use-cases, dish categories, preferred formats, or quality attributes for microgreens, so the legacy need is unsupported and there are no conflicting evidence items.",
+                  "status": "insufficient",
+                  "freshness": null,
+                  "gap_types": [
+                    "insufficient_depth"
+                  ],
+                  "confidence": 0.19,
+                  "contradictions": [],
+                  "evidence_count": 9,
+                  "source_quality": null,
+                  "missing_aspects": [
+                    "__legacy_need__"
+                  ],
+                  "source_diversity": null,
+                  "search_directives": [
+                    "__legacy_need__"
+                  ],
+                  "information_need_id": "IN5",
+                  "research_question_id": "RQ3",
+                  "independent_source_count": 2,
+                  "quantitative_evidence_present": null
+                },
+                {
+                  "reason": "Evidence only details bid submission mechanics and platform use; it explicitly notes that delivery frequency, shelf life, certifications, ordering steps beyond sealed bid submission, and credit terms are not in the public notice and are instead in tender dossiers. No provided evidence supplies the requested procurement criteria list.",
+                  "status": "insufficient",
+                  "freshness": null,
+                  "gap_types": [
+                    "insufficient_depth"
+                  ],
+                  "confidence": 0.61,
+                  "contradictions": [],
+                  "evidence_count": 5,
+                  "source_quality": null,
+                  "missing_aspects": [
+                    "__legacy_need__"
+                  ],
+                  "source_diversity": null,
+                  "search_directives": [
+                    "__legacy_need__"
+                  ],
+                  "information_need_id": "IN6",
+                  "research_question_id": "RQ3",
+                  "independent_source_count": 1,
+                  "quantitative_evidence_present": null
+                }
+              ],
+              "blocking_information_need_ids": [
+                "IN5",
+                "IN6"
+              ]
+            },
+            {
+              "reason": "Blocking information needs: insufficient, insufficient",
+              "ready_for_analysis": false,
+              "research_question_id": "RQ4",
+              "information_need_assessments": [
+                {
+                  "reason": "Evidence provides high-level market patterns (consumer retail behavior, farm fragmentation, export destinations) but does not identify specific local producers, importers, or distributors, nor estimate their individual capacities or coverage. No contradictory evidence items on these specifics are present.",
+                  "status": "insufficient",
+                  "freshness": null,
+                  "gap_types": [
+                    "insufficient_depth"
+                  ],
+                  "confidence": 0.36,
+                  "contradictions": [],
+                  "evidence_count": 8,
+                  "source_quality": null,
+                  "missing_aspects": [
+                    "__legacy_need__"
+                  ],
+                  "source_diversity": null,
+                  "search_directives": [
+                    "__legacy_need__"
+                  ],
+                  "information_need_id": "IN7",
+                  "research_question_id": "RQ4",
+                  "independent_source_count": 1,
+                  "quantitative_evidence_present": null
+                },
+                {
+                  "reason": "Provided evidence discusses Serbia\u2019s public administration, health, water/sanitation, and education; none address competitors, suppliers, product assortments, or price points needed to benchmark assortments and service levels.",
+                  "status": "insufficient",
+                  "freshness": null,
+                  "gap_types": [
+                    "insufficient_depth"
+                  ],
+                  "confidence": 0.2,
+                  "contradictions": [],
+                  "evidence_count": 3,
+                  "source_quality": null,
+                  "missing_aspects": [
+                    "__legacy_need__"
+                  ],
+                  "source_diversity": null,
+                  "search_directives": [
+                    "__legacy_need__"
+                  ],
+                  "information_need_id": "IN8",
+                  "research_question_id": "RQ4",
+                  "independent_source_count": 1,
+                  "quantitative_evidence_present": null
+                },
+                {
+                  "reason": "Evidence provides indicative wholesale price ranges via margin bands (15\u201350%), keystone pricing (COGS\u00d72), and tiered bulk discounts, plus explicit guidance on MOQs (e.g., 50 units or $500 minimum). All content aligns and comes from a single source without contradictions.",
+                  "status": "sufficient",
+                  "freshness": null,
+                  "gap_types": [],
+                  "confidence": 0.63,
+                  "contradictions": [],
+                  "evidence_count": 6,
+                  "source_quality": null,
+                  "missing_aspects": [],
+                  "source_diversity": null,
+                  "search_directives": [],
+                  "information_need_id": "IN9",
+                  "research_question_id": "RQ4",
+                  "independent_source_count": 1,
+                  "quantitative_evidence_present": null
+                }
+              ],
+              "blocking_information_need_ids": [
+                "IN7",
+                "IN8"
+              ]
+            },
+            {
+              "reason": "Blocking information needs: missing",
+              "ready_for_analysis": false,
+              "research_question_id": "RQ5",
+              "information_need_assessments": [
+                {
+                  "reason": "No relevant evidence mapped to this information need. contradiction signal unavailable: no structured contradiction metadata",
+                  "status": "missing",
+                  "freshness": null,
+                  "gap_types": [
+                    "no_evidence"
+                  ],
+                  "confidence": null,
+                  "contradictions": [],
+                  "evidence_count": 0,
+                  "source_quality": null,
+                  "missing_aspects": [],
+                  "source_diversity": null,
+                  "search_directives": [],
+                  "information_need_id": "IN10",
+                  "research_question_id": "RQ5",
+                  "independent_source_count": 0,
+                  "quantitative_evidence_present": null
+                }
+              ],
+              "blocking_information_need_ids": [
+                "IN10"
+              ]
+            },
+            {
+              "reason": "Blocking information needs: insufficient, insufficient",
+              "ready_for_analysis": false,
+              "research_question_id": "RQ6",
+              "information_need_assessments": [
+                {
+                  "reason": "Only one evidence item exists and it lacks substantive regulatory details; it merely notes a 2026 Serbian regulation title without content. Therefore, the legacy information need is not supported, and no conflicts can be established.",
+                  "status": "insufficient",
+                  "freshness": null,
+                  "gap_types": [
+                    "insufficient_depth"
+                  ],
+                  "confidence": 0.21,
+                  "contradictions": [],
+                  "evidence_count": 1,
+                  "source_quality": null,
+                  "missing_aspects": [
+                    "__legacy_need__"
+                  ],
+                  "source_diversity": null,
+                  "search_directives": [
+                    "__legacy_need__"
+                  ],
+                  "information_need_id": "IN11",
+                  "research_question_id": "RQ6",
+                  "independent_source_count": 1,
+                  "quantitative_evidence_present": null
+                },
+                {
+                  "reason": "Evidence discusses partnering and support organizations but does not synthesize direct/distributor/hybrid entry options or compare risk, cost, and speed trade-offs for entering Serbia\u2019s HoReCa microgreens market. No conflicting claims among the provided excerpts.",
+                  "status": "insufficient",
+                  "freshness": null,
+                  "gap_types": [
+                    "insufficient_depth"
+                  ],
+                  "confidence": 0.3,
+                  "contradictions": [],
+                  "evidence_count": 3,
+                  "source_quality": null,
+                  "missing_aspects": [
+                    "__legacy_need__"
+                  ],
+                  "source_diversity": null,
+                  "search_directives": [
+                    "__legacy_need__"
+                  ],
+                  "information_need_id": "IN12",
+                  "research_question_id": "RQ6",
+                  "independent_source_count": 1,
+                  "quantitative_evidence_present": null
+                }
+              ],
+              "blocking_information_need_ids": [
+                "IN11",
+                "IN12"
+              ]
+            }
+          ],
+          "blocking_research_question_ids": [
+            "RQ1",
+            "RQ2",
+            "RQ3",
+            "RQ4",
+            "RQ5",
+            "RQ6"
+          ]
+        },
+        "new_sources_count": 1,
+        "queries_generated": 1,
+        "targeted_need_ids": [
+          "IN2"
+        ],
+        "new_evidence_count": 0,
+        "blocking_need_ids_before": [
+          "IN1",
+          "IN10",
+          "IN11",
+          "IN12",
+          "IN2",
+          "IN3",
+          "IN4",
+          "IN5",
+          "IN6",
+          "IN7",
+          "IN8"
+        ]
+      }
+    ]
+  },
+  "run_usage_in_task_results": {
+    "stages": {
+      "evidence": {
+        "stage": "evidence",
+        "retries": 0,
+        "llm_calls": 36,
+        "elapsed_ms": 125106,
+        "input_tokens": 0,
+        "output_tokens": 11120,
+        "reasoning_tokens": 0,
+        "stage_cap_reached": true
+      },
+      "sufficiency": {
+        "stage": "sufficiency",
+        "retries": 0,
+        "llm_calls": 36,
+        "elapsed_ms": 72636,
+        "input_tokens": 0,
+        "output_tokens": 4170,
+        "reasoning_tokens": 0,
+        "stage_cap_reached": true
+      }
+    },
+    "total_llm_calls": 72,
+    "workflow_run_id": "22678610-f5cd-4956-a96f-fd758c510716",
+    "budget_exhausted": false,
+    "exhaustion_stage": null,
+    "total_elapsed_ms": 197742,
+    "exhaustion_reason": null,
+    "estimated_cost_usd": null,
+    "total_input_tokens": 0,
+    "total_output_tokens": 15290,
+    "total_reasoning_tokens": 0
+  },
+  "run_usage_in_shared_state": null,
+  "shared_state_keys": [
+    "evidence_extraction",
+    "research_loop_state",
+    "research_readiness",
+    "source_acquisition"
+  ],
+  "source_acquisition_summary": {
+    "source_ids": [
+      "193d69a7-83ac-4658-90be-c5da3c7bbdb6",
+      "0f5b64c3-cad6-4db5-91c0-d2b091398726",
+      "2d5e993d-27b9-4ca4-b7a0-68dee75cbc6f",
+      "604fd380-8170-45ca-815f-ca889643604d",
+      "027ebd68-ab30-4ee9-b352-09b520032c7a",
+      "0dd3dc54-62fb-46d4-8dd5-b81ac7c765e3",
+      "f58e1d91-be86-48e1-812d-6a18dbd486c5",
+      "e9b3dbce-1bf1-4480-8bc3-c2011a20658e",
+      "7f82bcba-5bb2-48eb-a0f5-58a21c0d6080",
+      "5701f333-5f43-40e0-9cc4-cd1519a505f2",
+      "b8cc3a33-8b26-44f1-8465-4157c385db5c",
+      "fa8c220b-3aaf-4000-85b3-b825a48c7780",
+      "1e4b36a7-8e40-4413-99a7-ecc09b1cbe18",
+      "e41906d3-b3c3-404b-9b95-b4bcf6435fb5",
+      "fab03e6d-65e5-4a89-bb98-944440d5ddd1",
+      "4708efad-f032-49f1-8b44-afe04b3970f3",
+      "9c7b492c-d71e-40a1-ad58-50fd472bfd29",
+      "8a228ca8-660a-4f88-bf17-ad55e3395fe6"
+    ],
+    "limitations": [
+      "Source acquisition stopped early because the coverage target was satisfied",
+      "14 candidate URL(s) were not attempted after coverage target satisfaction",
+      "Unique candidate URLs (32) exceeded the per-run cap (18)"
+    ],
+    "failed_count": 5,
+    "acquired_count": 13,
+    "elapsed_seconds": 51.98,
+    "truncated_count": 2,
+    "budget_exhausted": false,
+    "candidates_found": 36,
+    "queries_executed": 12,
+    "sources_acquired": 13,
+    "retrieval_failures": 5,
+    "tavily_query_count": 12,
+    "candidate_count_raw": 36,
+    "candidates_attempted": 18,
+    "skipped_budget_count": 14,
+    "candidate_count_unique": 32,
+    "failure_category_counts": {
+      "http_error": 4,
+      "other_retrieval_error": 1
+    },
+    "information_needs_total": 12,
+    "skipped_duplicate_count": 0,
+    "coverage_target_satisfied": true,
+    "coverage_complete_early_stop": true,
+    "information_needs_covered_count": 12
+  }
+}
