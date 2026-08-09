@@ -4,6 +4,9 @@ from domain.planning.research_design import ResearchDesign
 from domain.research_quality.targeted_research_request import TargetedResearchRequest
 from domain.sources.search_query import SearchQuery
 
+from application.sources.expectation_aware_query_intent import (
+    build_expectation_aware_query_text,
+)
 from application.sources.url_canonicalizer import normalize_query_text
 
 
@@ -35,11 +38,13 @@ class TargetedSearchQueryBuilder:
             )
 
         queries: list[SearchQuery] = []
-        base_text = normalize_query_text(need.description)
-        if need.geography:
-            base_text = normalize_query_text(f"{base_text} {need.geography}")
-        if need.timeframe:
-            base_text = normalize_query_text(f"{base_text} {need.timeframe}")
+        semantic_targets = request.missing_aspects or request.search_directives
+        base_text = build_expectation_aware_query_text(
+            description=need.description,
+            geography=need.geography,
+            timeframe=need.timeframe,
+            semantic_targets=semantic_targets,
+        )
 
         queries.append(
             SearchQuery(

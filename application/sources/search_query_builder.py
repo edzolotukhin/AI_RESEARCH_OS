@@ -3,7 +3,9 @@ from __future__ import annotations
 from domain.planning.research_design import InformationNeed, ResearchDesign
 from domain.sources.search_query import SearchQuery
 
-from application.sources.url_canonicalizer import normalize_query_text
+from application.sources.expectation_aware_query_intent import (
+    build_expectation_aware_query_text,
+)
 
 
 class SearchQueryBuilder:
@@ -44,15 +46,15 @@ class SearchQueryBuilder:
         design: ResearchDesign,
         need: InformationNeed,
     ) -> SearchQuery:
-        query_text = normalize_query_text(need.description)
-        if need.geography:
-            query_text = normalize_query_text(
-                f"{query_text} {need.geography}",
-            )
-        if need.timeframe:
-            query_text = normalize_query_text(
-                f"{query_text} {need.timeframe}",
-            )
+        semantic_targets: tuple[str, ...] = ()
+        if need.evidence_expectation is not None:
+            semantic_targets = need.evidence_expectation.required_aspects
+        query_text = build_expectation_aware_query_text(
+            description=need.description,
+            geography=need.geography,
+            timeframe=need.timeframe,
+            semantic_targets=semantic_targets,
+        )
 
         rationale_parts = [f"Derived from information need {need.id}"]
         if need.geography:
