@@ -19,6 +19,7 @@ class RunUsageSummary:
     exhaustion_reason: str | None = None
     exhaustion_stage: str | None = None
     estimated_cost_usd: float | None = None
+    evidence_partition: dict[str, Any] | None = None
 
     def merge_budget(self, budget: ExecutionBudget) -> None:
         summary = budget.summary()
@@ -28,6 +29,7 @@ class RunUsageSummary:
         self.budget_exhausted = summary["exhausted"]
         self.exhaustion_reason = summary["exhaustion_reason"]
         self.exhaustion_stage = summary["exhaustion_stage"]
+        self.evidence_partition = dict(summary.get("evidence_partition") or {})
         for name, data in summary["stages"].items():
             self.stages[name] = StageBudgetUsage(
                 stage=name,
@@ -56,5 +58,6 @@ class RunUsageSummary:
             "exhaustion_reason": self.exhaustion_reason,
             "exhaustion_stage": self.exhaustion_stage,
             "estimated_cost_usd": self.estimated_cost_usd,
+            "evidence_partition": self.evidence_partition,
             "stages": {name: s.to_dict() for name, s in self.stages.items()},
         }

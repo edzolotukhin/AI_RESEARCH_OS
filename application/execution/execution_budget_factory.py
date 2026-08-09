@@ -17,6 +17,9 @@ def create_execution_budget(
         analysis_max_insights=resolved.analysis_max_insights,
         report_max_sections=resolved.report_max_sections or DEFAULT_REPORT_MAX_SECTIONS,
         evidence_max_llm_calls=resolved.evidence_max_llm_calls,
+        evidence_remediation_reserved_llm_calls=(
+            resolved.evidence_remediation_reserved_llm_calls
+        ),
         sufficiency_max_llm_calls=resolved.sufficiency_max_llm_calls,
         analysis_max_llm_calls=resolved.analysis_max_llm_calls,
         report_max_llm_calls=resolved.report_max_llm_calls,

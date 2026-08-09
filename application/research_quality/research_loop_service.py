@@ -18,8 +18,21 @@ from application.research_quality.research_loop_state import (
 )
 from application.research_quality.research_readiness_gate import ResearchReadinessGate
 from application.research_quality.budget_aware_readiness import (
+    apply_evidence_remediation_budget_termination,
     apply_sufficiency_budget_termination,
+    evidence_remediation_unavailable_reason,
     sufficiency_budget_available,
+)
+from application.research_quality.sufficiency_assessment_cache import (
+    SHARED_SUFFICIENCY_CACHE_KEY,
+    bind_sufficiency_assessment_cache,
+    get_sufficiency_assessment_cache,
+    persist_sufficiency_assessment_cache,
+    reset_sufficiency_assessment_cache,
+)
+from application.execution.budget_utils import (
+    EVIDENCE_REMEDIATION_BUDGET_REASON,
+    EVIDENCE_STAGE_CAP_REASON,
 )
 from domain.research_quality.research_termination_reason import (
     BUDGET_CONTROLLED_TERMINATION_REASONS,
@@ -121,6 +134,15 @@ class ResearchLoopService:
                     )
                     return self._finalize(context, result, loop_state)
 
+                remediation_stop = evidence_remediation_unavailable_reason()
+                if remediation_stop is not None:
+                    result, loop_state = apply_evidence_remediation_budget_termination(
+                        result,
+                        loop_state=loop_state,
+                        reason=remediation_stop,
+                    )
+                    return self._finalize(context, result, loop_state)
+
                 need_id = request.information_need_id
                 request = replace(
                     request,
@@ -134,6 +156,20 @@ class ResearchLoopService:
                 self._persist_loop_state(context, loop_state)
                 checkpoint_loop_progress(context)
                 iteration = self._runner.run(context, request)
+                if (
+                    iteration.budget_stop_reason
+                    in {
+                        EVIDENCE_STAGE_CAP_REASON,
+                        EVIDENCE_REMEDIATION_BUDGET_REASON,
+                    }
+                    and iteration.evidence_extracted == 0
+                ):
+                    result, loop_state = apply_evidence_remediation_budget_termination(
+                        result,
+                        loop_state=loop_state,
+                        reason=iteration.budget_stop_reason,
+                    )
+                    return self._finalize(context, result, loop_state)
                 try:
                     result = self._evaluate_for_context(context, design)
                 except BudgetExhaustedError as exc:
@@ -156,6 +192,9 @@ class ResearchLoopService:
                 )
                 loop_state.research_loop_count += 1
                 outcome = self._gate.research_outcome(result).value
+                cache_payload = context.read_shared(SHARED_SUFFICIENCY_CACHE_KEY)
+                if not isinstance(cache_payload, dict):
+                    cache_payload = {}
                 record = ResearchLoopIterationRecord(
                     attempt=loop_state.research_loop_count,
                     round_number=round_number,
@@ -166,6 +205,18 @@ class ResearchLoopService:
                     new_evidence_count=iteration.evidence_extracted,
                     readiness_after=serialize_readiness(result, research_outcome=outcome),
                     improved=gap_improved,
+                    extraction_attempted=iteration.extraction_attempted,
+                    budget_stop_reason=iteration.budget_stop_reason,
+                    reused_need_ids=tuple(
+                        str(item) for item in cache_payload.get("reused_need_ids", [])
+                    ),
+                    reassessed_need_ids=tuple(
+                        str(item)
+                        for item in cache_payload.get("reassessed_need_ids", [])
+                    ),
+                    missing_need_ids=tuple(
+                        str(item) for item in cache_payload.get("missing_need_ids", [])
+                    ),
                 )
                 loop_state.history.append(record)
                 loop_state.previous_readiness_result = serialize_readiness(
@@ -229,7 +280,13 @@ class ResearchLoopService:
             context.project.id,
             workflow_run_id=context.workflow_run.id,
         )
-        return self._evaluator.evaluate(design=design, evidence=evidence)
+        previous = get_sufficiency_assessment_cache()
+        bind_sufficiency_assessment_cache(context)
+        try:
+            return self._evaluator.evaluate(design=design, evidence=evidence)
+        finally:
+            persist_sufficiency_assessment_cache(context)
+            reset_sufficiency_assessment_cache(previous)
 
     @staticmethod
     def _require_design(context: WorkflowContext) -> ResearchDesign:

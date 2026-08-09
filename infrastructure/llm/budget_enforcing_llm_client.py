@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import time
 
+from application.execution.budget_utils import EVIDENCE_PURPOSE_REMEDIATION
 from application.execution.execution_budget_context import (
+    get_evidence_call_purpose,
     get_execution_budget,
     get_execution_stage,
 )
@@ -30,8 +32,11 @@ class BudgetEnforcingLLMClient(LLMClient):
         if budget is None:
             return self._delegate.generate(prompt, options=options)
 
+        purpose = get_evidence_call_purpose()
         stage = get_execution_stage() or "unknown"
-        budget.assert_can_call(stage)
+        if purpose == EVIDENCE_PURPOSE_REMEDIATION:
+            stage = "evidence"
+        budget.assert_can_call(stage, purpose=purpose)
 
         started = time.perf_counter()
         response = self._delegate.generate(prompt, options=options)
@@ -39,6 +44,7 @@ class BudgetEnforcingLLMClient(LLMClient):
 
         budget.record_llm_call(
             stage,
+            purpose=purpose,
             input_tokens=0,
             output_tokens=response.output_tokens or 0,
             reasoning_tokens=response.reasoning_tokens or 0,

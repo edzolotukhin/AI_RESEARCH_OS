@@ -20,6 +20,11 @@ class ResearchLoopIterationRecord:
     new_evidence_count: int
     readiness_after: dict[str, Any]
     improved: bool
+    extraction_attempted: bool = True
+    budget_stop_reason: str | None = None
+    reused_need_ids: tuple[str, ...] = ()
+    reassessed_need_ids: tuple[str, ...] = ()
+    missing_need_ids: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -32,6 +37,11 @@ class ResearchLoopIterationRecord:
             "new_evidence_count": self.new_evidence_count,
             "readiness_after": self.readiness_after,
             "improved": self.improved,
+            "extraction_attempted": self.extraction_attempted,
+            "budget_stop_reason": self.budget_stop_reason,
+            "reused_need_ids": list(self.reused_need_ids),
+            "reassessed_need_ids": list(self.reassessed_need_ids),
+            "missing_need_ids": list(self.missing_need_ids),
         }
 
 
@@ -79,6 +89,17 @@ class ResearchLoopState:
                 new_evidence_count=int(item.get("new_evidence_count", 0)),
                 readiness_after=dict(item.get("readiness_after", {})),
                 improved=bool(item.get("improved", False)),
+                extraction_attempted=bool(item.get("extraction_attempted", True)),
+                budget_stop_reason=item.get("budget_stop_reason"),
+                reused_need_ids=tuple(
+                    str(value) for value in item.get("reused_need_ids", [])
+                ),
+                reassessed_need_ids=tuple(
+                    str(value) for value in item.get("reassessed_need_ids", [])
+                ),
+                missing_need_ids=tuple(
+                    str(value) for value in item.get("missing_need_ids", [])
+                ),
             )
             for item in payload.get("history", [])
         ]

@@ -44,11 +44,18 @@ from application.evidence.evidence_extraction_diagnostics import (
 )
 from application.evidence.run_scoped_provenance import resolve_run_scoped_context
 from application.execution.budget_utils import (
+    EVIDENCE_INITIAL_PARTITION_REASON,
+    EVIDENCE_PURPOSE_INITIAL,
+    EVIDENCE_PURPOSE_REMEDIATION,
+    EVIDENCE_REMEDIATION_BUDGET_REASON,
     EVIDENCE_STAGE_CAP_REASON,
     is_evidence_graceful_budget_stop,
 )
 from application.execution.exceptions import BudgetExhaustedError
-from application.execution.execution_budget_context import get_execution_budget
+from application.execution.execution_budget_context import (
+    get_evidence_call_purpose,
+    get_execution_budget,
+)
 from application.ports.evidence_ports import EvidenceExtractor, EvidenceRepository
 from application.ports.source_ports import SourceRepository
 from application.sources.provenance_merge import is_successful_acquisition
@@ -319,9 +326,11 @@ class EvidenceExtractionService:
             stop_reason = self._next_evidence_budget_stop_reason()
             if stop_reason is not None:
                 budget_stop_reason = stop_reason
-                evidence_stage_budget_exhausted = (
-                    stop_reason == EVIDENCE_STAGE_CAP_REASON
-                )
+                evidence_stage_budget_exhausted = stop_reason in {
+                    EVIDENCE_STAGE_CAP_REASON,
+                    EVIDENCE_INITIAL_PARTITION_REASON,
+                    EVIDENCE_REMEDIATION_BUDGET_REASON,
+                }
                 budget_stop_before_any_attempt = diagnostics.extractor_attempts == 0
                 diagnostics.budget_stop = True
                 diagnostics.evidence_stage_cap_reached = evidence_stage_budget_exhausted
@@ -361,9 +370,11 @@ class EvidenceExtractionService:
                 if stop_reason is None:
                     raise
                 budget_stop_reason = stop_reason
-                evidence_stage_budget_exhausted = (
-                    stop_reason == EVIDENCE_STAGE_CAP_REASON
-                )
+                evidence_stage_budget_exhausted = stop_reason in {
+                    EVIDENCE_STAGE_CAP_REASON,
+                    EVIDENCE_INITIAL_PARTITION_REASON,
+                    EVIDENCE_REMEDIATION_BUDGET_REASON,
+                }
                 diagnostics.budget_stop = True
                 diagnostics.evidence_stage_cap_reached = evidence_stage_budget_exhausted
                 diagnostics.budget_stop_reason = budget_stop_reason
@@ -386,9 +397,11 @@ class EvidenceExtractionService:
             stop_reason = self._post_source_budget_stop_reason()
             if stop_reason is not None:
                 budget_stop_reason = stop_reason
-                evidence_stage_budget_exhausted = (
-                    stop_reason == EVIDENCE_STAGE_CAP_REASON
-                )
+                evidence_stage_budget_exhausted = stop_reason in {
+                    EVIDENCE_STAGE_CAP_REASON,
+                    EVIDENCE_INITIAL_PARTITION_REASON,
+                    EVIDENCE_REMEDIATION_BUDGET_REASON,
+                }
                 diagnostics.budget_stop = True
                 diagnostics.evidence_stage_cap_reached = evidence_stage_budget_exhausted
                 diagnostics.budget_stop_reason = budget_stop_reason
@@ -672,8 +685,9 @@ class EvidenceExtractionService:
         budget = get_execution_budget()
         if budget is None:
             return None
+        purpose = get_evidence_call_purpose() or EVIDENCE_PURPOSE_INITIAL
         try:
-            budget.assert_can_call("evidence")
+            budget.assert_can_call("evidence", purpose=purpose)
         except BudgetExhaustedError as exc:
             reason = cls._graceful_budget_stop_reason(exc)
             if reason is not None:
@@ -683,8 +697,24 @@ class EvidenceExtractionService:
 
     @classmethod
     def _post_source_budget_stop_reason(cls) -> str | None:
-        if cls._evidence_stage_cap_reached():
-            return EVIDENCE_STAGE_CAP_REASON
+        budget = get_execution_budget()
+        purpose = get_evidence_call_purpose() or EVIDENCE_PURPOSE_INITIAL
+        if budget is not None:
+            if purpose == EVIDENCE_PURPOSE_REMEDIATION:
+                if budget.evidence_total_cap_reached():
+                    return (
+                        EVIDENCE_REMEDIATION_BUDGET_REASON
+                        if budget.evidence_remediation_reserved > 0
+                        else EVIDENCE_STAGE_CAP_REASON
+                    )
+            elif budget.evidence_initial_partition_reached():
+                return (
+                    EVIDENCE_INITIAL_PARTITION_REASON
+                    if budget.evidence_remediation_reserved > 0
+                    else EVIDENCE_STAGE_CAP_REASON
+                )
+            elif budget.evidence_total_cap_reached():
+                return EVIDENCE_STAGE_CAP_REASON
         return cls._next_evidence_budget_stop_reason()
 
     @staticmethod

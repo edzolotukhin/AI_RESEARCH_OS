@@ -22,6 +22,12 @@ from application.research_quality.readiness_aggregation import (
     build_research_readiness_assessment,
     build_research_readiness_result,
 )
+from application.research_quality.sufficiency_assessment_cache import (
+    get_sufficiency_assessment_cache,
+)
+from application.research_quality.sufficiency_assessment_fingerprint import (
+    build_sufficiency_assessment_fingerprint,
+)
 
 
 class HybridResearchSufficiencyEvaluator:
@@ -92,7 +98,10 @@ class HybridResearchSufficiencyEvaluator:
         signals: DeterministicSufficiencySignals,
         evidence_by_id: dict[str, Evidence],
     ):
+        cache = get_sufficiency_assessment_cache()
         if signals.evidence_count == 0:
+            if cache is not None:
+                cache.record_missing(need.id)
             return build_information_need_assessment(signals=signals, semantic=None)
 
         mapped_evidence = tuple(
@@ -105,13 +114,35 @@ class HybridResearchSufficiencyEvaluator:
             max_items=self._max_evidence_items,
         )
         research_question = _research_question_for_need(design, need)
+        fingerprint = build_sufficiency_assessment_fingerprint(
+            information_need=need,
+            research_question=research_question,
+            evidence_ids=signals.evidence_ids,
+            evidence_by_id=evidence_by_id,
+            max_evidence_items=self._max_evidence_items,
+        )
+        if cache is not None:
+            reused = cache.lookup(need.id, fingerprint)
+            if reused is not None:
+                return reused
+
         semantic = self._semantic.assess(
             research_question=research_question,
             information_need=need,
             evidence=bounded,
             deterministic_signals=signals,
         )
-        return build_information_need_assessment(signals=signals, semantic=semantic)
+        assessment = build_information_need_assessment(
+            signals=signals,
+            semantic=semantic,
+        )
+        if cache is not None:
+            cache.store(
+                information_need_id=need.id,
+                fingerprint=fingerprint,
+                assessment=assessment,
+            )
+        return assessment
 
 
 def _research_question_for_need(

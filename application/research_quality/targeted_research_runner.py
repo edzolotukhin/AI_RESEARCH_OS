@@ -15,6 +15,8 @@ class TargetedResearchIterationResult:
     queries_executed: int
     sources_acquired: int
     evidence_extracted: int
+    extraction_attempted: bool = True
+    budget_stop_reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -23,6 +25,8 @@ class TargetedResearchIterationResult:
             "queries_executed": self.queries_executed,
             "sources_acquired": self.sources_acquired,
             "evidence_extracted": self.evidence_extracted,
+            "extraction_attempted": self.extraction_attempted,
+            "budget_stop_reason": self.budget_stop_reason,
         }
 
 

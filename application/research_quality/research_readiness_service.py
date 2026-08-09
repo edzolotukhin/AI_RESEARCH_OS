@@ -17,6 +17,13 @@ from application.research_quality.research_readiness_gate import ResearchReadine
 from application.research_quality.budget_aware_readiness import (
     apply_sufficiency_budget_termination,
 )
+from application.research_quality.sufficiency_assessment_cache import (
+    SHARED_SUFFICIENCY_CACHE_KEY,
+    bind_sufficiency_assessment_cache,
+    get_sufficiency_assessment_cache,
+    persist_sufficiency_assessment_cache,
+    reset_sufficiency_assessment_cache,
+)
 from domain.planning.research_design import ResearchDesign
 from domain.research_quality.research_readiness_result import ResearchReadinessResult
 
@@ -50,7 +57,13 @@ class ResearchReadinessService:
             context.project.id,
             workflow_run_id=context.workflow_run.id,
         )
-        return self._evaluator.evaluate(design=design, evidence=evidence)
+        previous = get_sufficiency_assessment_cache()
+        bind_sufficiency_assessment_cache(context)
+        try:
+            return self._evaluator.evaluate(design=design, evidence=evidence)
+        finally:
+            persist_sufficiency_assessment_cache(context)
+            reset_sufficiency_assessment_cache(previous)
 
     @staticmethod
     def _restore_loop_state(context: WorkflowContext) -> ResearchLoopState:
@@ -188,15 +201,43 @@ class ResearchReadinessService:
             payload.setdefault("research_loop_history", [])
         return payload
 
+    @staticmethod
+    def _attach_sufficiency_diagnostics(
+        context: WorkflowContext,
+        payload: dict[str, Any],
+    ) -> None:
+        cache_payload = context.read_shared(SHARED_SUFFICIENCY_CACHE_KEY)
+        if isinstance(cache_payload, dict):
+            payload["sufficiency_assessment_diagnostics"] = {
+                "semantic_assessment_calls": cache_payload.get(
+                    "semantic_assessment_calls",
+                    0,
+                ),
+                "reused_assessments": cache_payload.get("reused_assessments", 0),
+                "reassessed_fingerprint_changed": cache_payload.get(
+                    "reassessed_fingerprint_changed",
+                    0,
+                ),
+                "missing_no_evidence": cache_payload.get("missing_no_evidence", 0),
+                "missing_prior_state": cache_payload.get("missing_prior_state", 0),
+                "reused_need_ids": list(cache_payload.get("reused_need_ids", [])),
+                "reassessed_need_ids": list(
+                    cache_payload.get("reassessed_need_ids", []),
+                ),
+                "missing_need_ids": list(cache_payload.get("missing_need_ids", [])),
+            }
+
     def _persist(
         self,
         context: WorkflowContext,
         result: ResearchReadinessResult,
         loop_state: ResearchLoopState | None,
     ) -> None:
+        payload = self.build_shared_payload(result, loop_state=loop_state)
+        self._attach_sufficiency_diagnostics(context, payload)
         context.write_shared(
             SHARED_STATE_KEY,
-            self.build_shared_payload(result, loop_state=loop_state),
+            payload,
         )
         if loop_state is not None:
             context.write_shared(SHARED_LOOP_STATE_KEY, loop_state.to_dict())

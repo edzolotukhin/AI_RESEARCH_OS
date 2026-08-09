@@ -3,6 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from application.execution.budget_utils import (
+    EVIDENCE_INITIAL_PARTITION_REASON,
+    EVIDENCE_PURPOSE_INITIAL,
+    EVIDENCE_PURPOSE_REMEDIATION,
+    EVIDENCE_REMEDIATION_BUDGET_REASON,
+    EVIDENCE_STAGE_CAP_REASON,
+)
 from application.execution.exceptions import BudgetExhaustedError
 
 _STAGE_LLM_CALL_LIMITS: dict[str, str] = {
@@ -46,6 +53,7 @@ class ExecutionBudget:
     analysis_max_insights: int = 30
     report_max_sections: int = 12
     evidence_max_llm_calls: int = 50
+    evidence_remediation_reserved_llm_calls: int = 0
     sufficiency_max_llm_calls: int = 20
     analysis_max_llm_calls: int = 14
     report_max_llm_calls: int = 20
@@ -58,9 +66,34 @@ class ExecutionBudget:
     _total_llm_calls: int = 0
     _total_input_tokens: int = 0
     _total_output_tokens: int = 0
+    _evidence_initial_calls: int = 0
+    _evidence_remediation_calls: int = 0
     _exhausted: bool = False
     _exhaustion_reason: str | None = None
     _exhaustion_stage: str | None = None
+
+    @property
+    def evidence_remediation_reserved(self) -> int:
+        reserved = max(0, self.evidence_remediation_reserved_llm_calls)
+        return min(reserved, max(0, self.evidence_max_llm_calls))
+
+    @property
+    def evidence_initial_allowance(self) -> int:
+        return max(0, self.evidence_max_llm_calls - self.evidence_remediation_reserved)
+
+    @property
+    def evidence_initial_calls(self) -> int:
+        return self._evidence_initial_calls
+
+    @property
+    def evidence_remediation_calls(self) -> int:
+        return self._evidence_remediation_calls
+
+    def evidence_total_cap_reached(self) -> bool:
+        return self.stage_calls("evidence") >= self.evidence_max_llm_calls
+
+    def evidence_initial_partition_reached(self) -> bool:
+        return self._evidence_initial_calls >= self.evidence_initial_allowance
 
     def stage_calls(self, stage: str) -> int:
         usage = self._stage_usage.get(stage)
@@ -81,9 +114,18 @@ class ExecutionBudget:
             return False
         return self.stage_calls(stage) >= limit
 
-    def _downstream_reserve_required(self, stage: str) -> int:
+    def _downstream_reserve_required(
+        self,
+        stage: str,
+        *,
+        purpose: str | None = None,
+    ) -> int:
         """Reserve capacity for stages that have not run yet."""
         reserve = 0
+        resolved_purpose = purpose or EVIDENCE_PURPOSE_INITIAL
+        # Targeted extract runs inside readiness: protect A/R/V only.
+        if stage == "evidence" and resolved_purpose == EVIDENCE_PURPOSE_REMEDIATION:
+            stage = "sufficiency"
         if stage in {"planner", "search", "evidence"}:
             reserve += self.sufficiency_max_llm_calls
             reserve += self.analysis_max_llm_calls
@@ -100,7 +142,7 @@ class ExecutionBudget:
             reserve += self.review_max_llm_calls
         return reserve
 
-    def assert_can_call(self, stage: str) -> None:
+    def assert_can_call(self, stage: str, *, purpose: str | None = None) -> None:
         """Fail before issuing another LLM call when a limit is already reached."""
         if self._exhausted:
             raise BudgetExhaustedError(
@@ -108,7 +150,7 @@ class ExecutionBudget:
                 stage=stage,
             )
 
-        reserve = self._downstream_reserve_required(stage)
+        reserve = self._downstream_reserve_required(stage, purpose=purpose)
         if reserve > 0:
             allowed_before_downstream_cap = self.llm_max_calls_per_run - reserve
             if (
@@ -119,9 +161,10 @@ class ExecutionBudget:
         if self._total_llm_calls >= self.llm_max_calls_per_run:
             raise BudgetExhaustedError("llm_max_calls_per_run", stage=stage)
 
+        if stage == "evidence":
+            self._assert_can_call_evidence(purpose=purpose)
+            return
         stage_calls = self.stage_calls(stage)
-        if stage == "evidence" and stage_calls >= self.evidence_max_llm_calls:
-            raise BudgetExhaustedError("evidence_max_llm_calls", stage=stage)
         if stage == "sufficiency" and stage_calls >= self.sufficiency_max_llm_calls:
             raise BudgetExhaustedError("sufficiency_max_llm_calls", stage=stage)
         if stage == "analysis" and stage_calls >= self.analysis_max_llm_calls:
@@ -131,16 +174,63 @@ class ExecutionBudget:
         if stage == "review" and stage_calls >= self.review_max_llm_calls:
             raise BudgetExhaustedError("review_max_llm_calls", stage=stage)
 
+    def _assert_can_call_evidence(self, *, purpose: str | None) -> None:
+        resolved = purpose or EVIDENCE_PURPOSE_INITIAL
+        total = self.stage_calls("evidence")
+        if resolved == EVIDENCE_PURPOSE_INITIAL:
+            if self._evidence_initial_calls >= self.evidence_initial_allowance:
+                reason = (
+                    EVIDENCE_INITIAL_PARTITION_REASON
+                    if self.evidence_remediation_reserved > 0
+                    else EVIDENCE_STAGE_CAP_REASON
+                )
+                raise BudgetExhaustedError(reason, stage="evidence")
+            if total >= self.evidence_max_llm_calls:
+                raise BudgetExhaustedError(EVIDENCE_STAGE_CAP_REASON, stage="evidence")
+            return
+        if resolved == EVIDENCE_PURPOSE_REMEDIATION:
+            if total >= self.evidence_max_llm_calls:
+                reason = (
+                    EVIDENCE_REMEDIATION_BUDGET_REASON
+                    if self.evidence_remediation_reserved > 0
+                    else EVIDENCE_STAGE_CAP_REASON
+                )
+                raise BudgetExhaustedError(reason, stage="evidence")
+            leftover_initial = max(
+                0,
+                self.evidence_initial_allowance - self._evidence_initial_calls,
+            )
+            reserved_remaining = max(
+                0,
+                self.evidence_remediation_reserved - self._evidence_remediation_calls,
+            )
+            if leftover_initial + reserved_remaining <= 0:
+                raise BudgetExhaustedError(
+                    EVIDENCE_REMEDIATION_BUDGET_REASON
+                    if self.evidence_remediation_reserved > 0
+                    else EVIDENCE_STAGE_CAP_REASON,
+                    stage="evidence",
+                )
+            return
+        raise ValueError(f"unknown evidence purpose: {resolved!r}")
+
     def record_llm_call(
         self,
         stage: str,
         *,
+        purpose: str | None = None,
         input_tokens: int = 0,
         output_tokens: int = 0,
         reasoning_tokens: int = 0,
         elapsed_ms: int = 0,
         retry: bool = False,
     ) -> None:
+        if stage == "evidence":
+            resolved = purpose or EVIDENCE_PURPOSE_INITIAL
+            if resolved == EVIDENCE_PURPOSE_REMEDIATION:
+                self._evidence_remediation_calls += 1
+            else:
+                self._evidence_initial_calls += 1
         usage = self._stage_usage.setdefault(stage, StageBudgetUsage(stage=stage))
         usage.llm_calls += 1
         usage.input_tokens += input_tokens
@@ -198,6 +288,15 @@ class ExecutionBudget:
     def exhaustion_stage(self) -> str | None:
         return self._exhaustion_stage
 
+    def evidence_partition_snapshot(self) -> dict[str, Any]:
+        return {
+            "total_max": self.evidence_max_llm_calls,
+            "initial_allowance": self.evidence_initial_allowance,
+            "remediation_reserved": self.evidence_remediation_reserved,
+            "initial_calls": self._evidence_initial_calls,
+            "remediation_calls": self._evidence_remediation_calls,
+        }
+
     def summary(self) -> dict[str, Any]:
         return {
             "total_llm_calls": self._total_llm_calls,
@@ -206,6 +305,7 @@ class ExecutionBudget:
             "exhausted": self._exhausted,
             "exhaustion_reason": self._exhaustion_reason,
             "exhaustion_stage": self._exhaustion_stage,
+            "evidence_partition": self.evidence_partition_snapshot(),
             "stages": {
                 name: usage.to_dict() for name, usage in self._stage_usage.items()
             },

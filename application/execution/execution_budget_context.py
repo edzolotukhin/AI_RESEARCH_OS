@@ -21,6 +21,10 @@ _current_stage: ContextVar[str | None] = ContextVar(
     "execution_budget_stage",
     default=None,
 )
+_current_evidence_purpose: ContextVar[str | None] = ContextVar(
+    "evidence_call_purpose",
+    default=None,
+)
 
 EXECUTOR_STAGE_MAP: dict[str, str] = {
     "evidence": "evidence",
@@ -43,6 +47,14 @@ def get_execution_stage() -> str | None:
 
 def set_execution_stage(stage: str | None) -> None:
     _current_stage.set(stage)
+
+
+def get_evidence_call_purpose() -> str | None:
+    return _current_evidence_purpose.get()
+
+
+def set_evidence_call_purpose(purpose: str | None) -> None:
+    _current_evidence_purpose.set(purpose)
 
 
 def stage_for_executor(executor_id: str) -> str:
@@ -72,6 +84,7 @@ def finalize_run_budget(context: WorkflowContext) -> RunUsageSummary | None:
     if not isinstance(budget, ExecutionBudget):
         _current_budget.set(None)
         _current_stage.set(None)
+        _current_evidence_purpose.set(None)
         return None
 
     summary = context.execution_metadata.get(RUN_USAGE_SUMMARY_KEY)
@@ -83,4 +96,5 @@ def finalize_run_budget(context: WorkflowContext) -> RunUsageSummary | None:
     context.shared_state["run_usage_summary"] = summary.to_dict()
     _current_budget.set(None)
     _current_stage.set(None)
+    _current_evidence_purpose.set(None)
     return summary

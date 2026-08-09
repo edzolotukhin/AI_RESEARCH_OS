@@ -63,6 +63,7 @@ DESIGN_DOC_PATH = (
 PROFILE_B_WORKER = {
     "LLM_MAX_CALLS_PER_RUN": "120",
     "EVIDENCE_MAX_LLM_CALLS": "36",
+    "EVIDENCE_REMEDIATION_RESERVED_LLM_CALLS": "6",
     "SUFFICIENCY_MAX_LLM_CALLS": "36",
     "ANALYSIS_MAX_LLM_CALLS": "10",
     "REPORT_MAX_LLM_CALLS": "12",
@@ -189,6 +190,7 @@ class OverlayPresenceAndLowcostTests(unittest.TestCase):
         self.assertIn('REVIEW_MAX_CALLS: "1"', lowcost)
         self.assertIn('RESEARCH_MAX_GAP_ROUNDS_PER_RUN: "1"', lowcost)
         self.assertIn('TARGETED_MAX_ATTEMPTS_PER_GAP: "1"', lowcost)
+        self.assertNotIn("EVIDENCE_REMEDIATION_RESERVED_LLM_CALLS", lowcost)
 
     def test_c_profile_b_values_present(self) -> None:
         text = OVERLAY_PATH.read_text(encoding="utf-8")
@@ -221,6 +223,7 @@ class ComposeMergeAndConsistencyTests(unittest.TestCase):
         worker = _normalize_compose_env(self.merged["services"]["worker"]["environment"])
         self.assertEqual(worker["LLM_MAX_CALLS_PER_RUN"], "120")
         self.assertEqual(worker["EVIDENCE_MAX_LLM_CALLS"], "36")
+        self.assertEqual(worker["EVIDENCE_REMEDIATION_RESERVED_LLM_CALLS"], "6")
         self.assertEqual(worker["SUFFICIENCY_MAX_LLM_CALLS"], "36")
         self.assertEqual(worker["ANALYSIS_MAX_LLM_CALLS"], "10")
         self.assertEqual(worker["REPORT_MAX_LLM_CALLS"], "12")
@@ -307,7 +310,7 @@ class ReasoningRetryAndQualityInvariantTests(unittest.TestCase):
         extraction = (
             REPO_ROOT / "application" / "evidence" / "evidence_extraction_service.py"
         ).read_text(encoding="utf-8")
-        self.assertIn('assert_can_call("evidence")', extraction)
+        self.assertIn('assert_can_call("evidence"', extraction)
 
 
 class BudgetReserveAndDownstreamTests(unittest.TestCase):
@@ -376,6 +379,7 @@ class BudgetReserveAndDownstreamTests(unittest.TestCase):
         env = {
             "LLM_MAX_CALLS_PER_RUN": "120",
             "EVIDENCE_MAX_LLM_CALLS": "36",
+            "EVIDENCE_REMEDIATION_RESERVED_LLM_CALLS": "6",
             "SUFFICIENCY_MAX_LLM_CALLS": "36",
             "ANALYSIS_MAX_LLM_CALLS": "10",
             "REPORT_MAX_LLM_CALLS": "12",
@@ -385,6 +389,8 @@ class BudgetReserveAndDownstreamTests(unittest.TestCase):
             budget = create_execution_budget(ApplicationConfig.from_env())
         self.assertEqual(budget.llm_max_calls_per_run, 120)
         self.assertEqual(budget.evidence_max_llm_calls, 36)
+        self.assertEqual(budget.evidence_remediation_reserved_llm_calls, 6)
+        self.assertEqual(budget.evidence_initial_allowance, 30)
         self.assertEqual(budget.sufficiency_max_llm_calls, 36)
         self.assertEqual(budget.analysis_max_llm_calls, 10)
         self.assertEqual(budget.report_max_llm_calls, 12)
@@ -458,7 +464,7 @@ class BudgetReserveAndDownstreamTests(unittest.TestCase):
             if isinstance(node, ast.Attribute)
         }
         self.assertIn("assert_can_call", names)
-        self.assertIn('assert_can_call("evidence")', service_source)
+        self.assertIn('assert_can_call("evidence"', service_source)
 
 
 class OwnershipAndInvocationTests(unittest.TestCase):

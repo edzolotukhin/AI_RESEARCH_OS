@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from application.config import ApplicationConfig
 from application.evidence.evidence_extraction_service import EvidenceExtractionService
+from application.execution.budget_utils import EVIDENCE_PURPOSE_REMEDIATION
+from application.execution.execution_budget_context import (
+    get_evidence_call_purpose,
+    get_execution_stage,
+    set_evidence_call_purpose,
+    set_execution_stage,
+)
 from application.research_quality.targeted_research_bounds import TargetedResearchBounds
 from application.research_quality.targeted_research_runner import (
     TargetedResearchIterationResult,
@@ -51,17 +58,27 @@ class ProductionTargetedResearchRunner:
             queries,
             max_sources=self._bounds.max_sources_per_gap,
         )
-        evidence = self._evidence_extraction.extract_for_source_ids(
-            context,
-            acquisition.source_ids,
-            allow_empty=True,
-        )
+        previous_stage = get_execution_stage()
+        previous_purpose = get_evidence_call_purpose()
+        set_execution_stage("evidence")
+        set_evidence_call_purpose(EVIDENCE_PURPOSE_REMEDIATION)
+        try:
+            evidence = self._evidence_extraction.extract_for_source_ids(
+                context,
+                acquisition.source_ids,
+                allow_empty=True,
+            )
+        finally:
+            set_execution_stage(previous_stage)
+            set_evidence_call_purpose(previous_purpose)
         return TargetedResearchIterationResult(
             source_ids=acquisition.source_ids,
             evidence_ids=evidence.evidence_ids,
             queries_executed=acquisition.queries_executed,
             sources_acquired=acquisition.sources_acquired,
             evidence_extracted=evidence.evidence_extracted,
+            extraction_attempted=True,
+            budget_stop_reason=evidence.budget_stop_reason,
         )
 
     @staticmethod
