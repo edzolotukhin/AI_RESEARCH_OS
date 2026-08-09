@@ -230,8 +230,11 @@ class LowcostAndDefaultInvariantTests(unittest.TestCase):
         self.assertIn('RESEARCH_MAX_GAP_ROUNDS_PER_RUN: "1"', compose)
         self.assertIn('SOURCE_MIN_INFORMATION_NEED_COVERAGE_RATIO: "1.0"', compose)
 
-    def test_acceptance_overlay_not_implemented_yet(self) -> None:
-        self.assertFalse((REPO_ROOT / "docker-compose.full-pipeline-acceptance.yml").exists())
+    def test_acceptance_overlay_aliases_remain_unimplemented(self) -> None:
+        # P1-07.10.1 implements the designed filename; alternate aliases stay unused.
+        self.assertTrue(
+            (REPO_ROOT / "docker-compose.full-pipeline-acceptance.yml").exists(),
+        )
         self.assertFalse((REPO_ROOT / "docker-compose.acceptance.yml").exists())
         self.assertFalse((REPO_ROOT / "docker-compose.full-e2e.yml").exists())
 

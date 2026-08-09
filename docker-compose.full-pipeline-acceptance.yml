@@ -1,0 +1,43 @@
+# Controlled full-pipeline acceptance overlay (P1-07.10 Profile B).
+# NOT a production default. NOT a replacement for docker-compose.lowcost.yml.
+#
+# Purpose:
+#   docker-compose.yml                         = base runtime
+#   docker-compose.lowcost.yml                 = diagnostic / cost-bounded controlled runs
+#   docker-compose.full-pipeline-acceptance.yml = controlled full-pipeline acceptance run
+#
+# Intended invocation (do NOT stack on lowcost):
+#   docker compose -f docker-compose.yml -f docker-compose.full-pipeline-acceptance.yml up
+#
+# Search fairness risk is unchanged: SOURCE_MAX_SOURCES_PER_RUN=18 is opportunity,
+# not a 12/12 InformationNeed coverage guarantee.
+
+services:
+  api:
+    environment:
+      SOURCE_MAX_CANDIDATES_PER_QUERY: "3"
+      SOURCE_MAX_CANDIDATES_PER_INFORMATION_NEED: "3"
+      SOURCE_MAX_SOURCES_PER_RUN: "18"
+      SOURCE_MIN_SUCCESSFUL_SOURCES: "3"
+      SOURCE_MIN_INFORMATION_NEED_COVERAGE_RATIO: "1.0"
+
+  worker:
+    environment:
+      LLM_MAX_CALLS_PER_RUN: "120"
+
+      EVIDENCE_MAX_LLM_CALLS: "36"
+      SUFFICIENCY_MAX_LLM_CALLS: "36"
+      ANALYSIS_MAX_LLM_CALLS: "10"
+      REPORT_MAX_LLM_CALLS: "12"
+      REVIEW_MAX_CALLS: "3"
+
+      SOURCE_MAX_CANDIDATES_PER_QUERY: "3"
+      SOURCE_MAX_CANDIDATES_PER_INFORMATION_NEED: "3"
+      SOURCE_MAX_SOURCES_PER_RUN: "18"
+      SOURCE_MIN_SUCCESSFUL_SOURCES: "3"
+      SOURCE_MIN_INFORMATION_NEED_COVERAGE_RATIO: "1.0"
+
+      RESEARCH_MAX_GAP_ROUNDS_PER_RUN: "2"
+      TARGETED_MAX_ATTEMPTS_PER_GAP: "2"
+      TARGETED_MAX_QUERIES_PER_GAP: "1"
+      TARGETED_MAX_SOURCES_PER_GAP: "1"
