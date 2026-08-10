@@ -17,10 +17,28 @@ from domain.sources.source import Source
 from domain.sources.source_candidate import SourceCandidate
 
 from application.persistence.exceptions import ConcurrentModificationError
+from application.ports.evidence_ports import EvidenceRepository
 from application.ports.source_ports import (
     SearchProvider,
     SourceRepository,
     SourceRetriever,
+)
+from application.sources.deterministic_source_relevance import (
+    ACTION_EXHAUSTED,
+    ACTION_FETCH_FAILED,
+    ACTION_PROXY,
+    ACTION_REJECTED,
+    ACTION_SELECTED,
+    ACTION_SKIPPED_BUDGET,
+    ELIGIBILITY_INELIGIBLE,
+    ELIGIBILITY_PROXY,
+    ELIGIBILITY_UNSCORED,
+    GEO_UNKNOWN,
+    RelevanceContext,
+    SourceRelevanceDecision,
+    build_relevance_context,
+    evaluate_candidate,
+    selection_sort_key,
 )
 from application.sources.exceptions import DuplicateSourceError, SourceAcquisitionError
 from application.sources.provenance_merge import (
@@ -35,6 +53,10 @@ from application.sources.provenance_merge import (
 )
 from application.sources.search_query_builder import SearchQueryBuilder
 from application.sources.source_budget import SourceAcquisitionBudget
+from application.sources.source_need_exhaustion import (
+    exhausted_canonical_urls_for_need,
+    extraction_work_items,
+)
 from application.sources.url_canonicalizer import canonicalize_url
 
 from runtime.workflow_context import WorkflowContext
@@ -68,6 +90,9 @@ class SourceAcquisitionSummary:
     information_needs_total: int = 0
     failure_category_counts: dict[str, int] = field(default_factory=dict)
     limitations: tuple[str, ...] = ()
+    skipped_ineligible_count: int = 0
+    skipped_exhausted_count: int = 0
+    selection_decisions: tuple[dict[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         if self.tavily_query_count == 0 and self.queries_executed:
@@ -103,6 +128,9 @@ class SourceAcquisitionSummary:
             "information_needs_total": self.information_needs_total,
             "failure_category_counts": dict(self.failure_category_counts),
             "limitations": list(self.limitations),
+            "skipped_ineligible_count": self.skipped_ineligible_count,
+            "skipped_exhausted_count": self.skipped_exhausted_count,
+            "selection_decisions": [dict(item) for item in self.selection_decisions],
         }
 
 
@@ -117,6 +145,7 @@ class _PendingCandidate:
 class _CandidateGroup:
     canonical_url: str
     items: list[_PendingCandidate]
+    decision: SourceRelevanceDecision | None = None
 
     @property
     def best_rank(self) -> int:
@@ -138,6 +167,7 @@ class SourceAcquisitionService:
         source_repository: SourceRepository,
         query_builder: SearchQueryBuilder | None = None,
         budget: SourceAcquisitionBudget | None = None,
+        evidence_repository: EvidenceRepository | None = None,
     ) -> None:
         self._search_provider = search_provider
         self._source_retriever = source_retriever
@@ -146,6 +176,7 @@ class SourceAcquisitionService:
         self._query_builder = query_builder or SearchQueryBuilder(
             max_results=self._budget.max_candidates_per_query,
         )
+        self._evidence_repository = evidence_repository
 
     def acquire_for_context(self, context: WorkflowContext) -> SourceAcquisitionSummary:
         started = time.monotonic()
@@ -155,8 +186,14 @@ class SourceAcquisitionService:
         queries = self._query_builder.build_queries(design)
 
         raw_count, grouped = self._collect_candidates(queries)
-        prioritized = self._prioritize_groups(grouped)
-        unique_count = len(prioritized)
+        unique_count = len(grouped)
+        eligible, selection_decisions, skipped_ineligible, skipped_exhausted = (
+            self._select_groups(
+                grouped,
+                design=design,
+                exhausted_pairs=frozenset(),
+            )
+        )
 
         (
             source_ids,
@@ -171,13 +208,15 @@ class SourceAcquisitionService:
             coverage_target_satisfied,
             coverage_complete_early_stop,
             covered_needs,
+            selection_decisions,
         ) = self._acquire_candidates(
             project_id=project_id,
             workflow_run_id=workflow_run_id,
             research_design_id=design.id,
             design=design,
-            groups=prioritized,
+            groups=eligible,
             started_at=started,
+            selection_decisions=selection_decisions,
         )
 
         elapsed = time.monotonic() - started
@@ -215,6 +254,9 @@ class SourceAcquisitionService:
             information_needs_total=len(design.information_needs),
             failure_category_counts=dict(failure_categories),
             limitations=tuple(limitations),
+            skipped_ineligible_count=skipped_ineligible,
+            skipped_exhausted_count=skipped_exhausted,
+            selection_decisions=tuple(selection_decisions),
         )
 
         logger.info(
@@ -264,8 +306,15 @@ class SourceAcquisitionService:
         workflow_run_id = context.workflow_run.id
 
         raw_count, grouped = self._collect_candidates(queries)
-        prioritized = self._prioritize_groups(grouped)[:max_sources]
-        unique_count = len(prioritized)
+        unique_count = len(grouped)
+        exhausted_pairs = self._exhausted_pairs_for_queries(context, queries)
+        eligible, selection_decisions, skipped_ineligible, skipped_exhausted = (
+            self._select_groups(
+                grouped,
+                design=design,
+                exhausted_pairs=exhausted_pairs,
+            )
+        )
 
         (
             source_ids,
@@ -280,14 +329,16 @@ class SourceAcquisitionService:
             coverage_target_satisfied,
             coverage_complete_early_stop,
             covered_needs,
+            selection_decisions,
         ) = self._acquire_candidates(
             project_id=project_id,
             workflow_run_id=workflow_run_id,
             research_design_id=design.id,
             design=design,
-            groups=prioritized,
+            groups=eligible,
             started_at=started,
             max_source_groups=max_sources,
+            selection_decisions=selection_decisions,
         )
 
         elapsed = time.monotonic() - started
@@ -314,6 +365,9 @@ class SourceAcquisitionService:
             information_needs_total=len(design.information_needs),
             failure_category_counts=dict(failure_categories),
             limitations=(),
+            skipped_ineligible_count=skipped_ineligible,
+            skipped_exhausted_count=skipped_exhausted,
+            selection_decisions=tuple(selection_decisions),
         )
 
     def _resolve_design(self, context: WorkflowContext) -> ResearchDesign:
@@ -350,22 +404,146 @@ class SourceAcquisitionService:
                 )
         return raw_count, grouped
 
-    @staticmethod
-    def _prioritize_groups(
-        grouped: dict[str, list[_PendingCandidate]],
-    ) -> list[_CandidateGroup]:
-        groups = [
-            _CandidateGroup(canonical_url=canonical, items=items)
-            for canonical, items in grouped.items()
-        ]
-        groups.sort(
-            key=lambda group: (
-                -group.need_coverage,
-                group.best_rank,
-                group.canonical_url,
-            ),
+    def _exhausted_pairs_for_queries(
+        self,
+        context: WorkflowContext,
+        queries: list[SearchQuery],
+    ) -> frozenset[tuple[str, str]]:
+        if self._evidence_repository is None:
+            return frozenset()
+        work_items = extraction_work_items(context.shared_state)
+        if not work_items:
+            return frozenset()
+        need_ids = {query.information_need_id for query in queries}
+        sources = self._source_repository.list_for_project(
+            context.project.id,
+            workflow_run_id=context.workflow_run.id,
         )
-        return groups
+        evidence_rows = self._evidence_repository.list_for_project(
+            context.project.id,
+            workflow_run_id=context.workflow_run.id,
+        )
+        pairs: set[tuple[str, str]] = set()
+        for need_id in need_ids:
+            for canonical in exhausted_canonical_urls_for_need(
+                information_need_id=need_id,
+                sources=sources,
+                evidence_rows=evidence_rows,
+                work_items=work_items,
+                workflow_run_id=context.workflow_run.id,
+            ):
+                pairs.add((canonical, need_id))
+        return frozenset(pairs)
+
+    def _select_groups(
+        self,
+        grouped: dict[str, list[_PendingCandidate]],
+        *,
+        design: ResearchDesign,
+        exhausted_pairs: frozenset[tuple[str, str]],
+    ) -> tuple[list[_CandidateGroup], list[dict[str, Any]], int, int]:
+        need_by_id = {need.id: need for need in design.information_needs}
+        contexts: dict[str, RelevanceContext] = {}
+        eligible: list[_CandidateGroup] = []
+        decisions: list[dict[str, Any]] = []
+        skipped_ineligible = 0
+        skipped_exhausted = 0
+
+        for canonical, items in grouped.items():
+            fetchable: list[SourceRelevanceDecision] = []
+            exhausted_hits = 0
+            ineligible_hits = 0
+            for item in items:
+                need_id = item.query.information_need_id
+                if (canonical, need_id) in exhausted_pairs:
+                    exhausted_hits += 1
+                    decisions.append(
+                        {
+                            "canonical_url": canonical,
+                            "information_need_id": need_id,
+                            "provider_rank": item.candidate.rank,
+                            "title": item.candidate.title,
+                            "action": ACTION_EXHAUSTED,
+                            "eligibility": ELIGIBILITY_INELIGIBLE,
+                            "reason": "zero_grounded_evidence_after_extraction",
+                        }
+                    )
+                    continue
+                need = need_by_id.get(need_id)
+                if need is None:
+                    decision = SourceRelevanceDecision(
+                        eligibility=ELIGIBILITY_UNSCORED,
+                        geo_alignment=GEO_UNKNOWN,
+                        topic_score=0,
+                        rq_overlap=0,
+                        need_overlap=0,
+                        reason="unknown_information_need_unscored",
+                        information_need_id=need_id,
+                        provider_rank=int(item.candidate.rank or 0),
+                    )
+                else:
+                    context = contexts.setdefault(
+                        need.id,
+                        build_relevance_context(design, need),
+                    )
+                    decision = evaluate_candidate(
+                        context,
+                        item.candidate,
+                        canonical_url=canonical,
+                    )
+                if not decision.is_fetch_eligible:
+                    ineligible_hits += 1
+                    decisions.append(
+                        {
+                            "canonical_url": canonical,
+                            "title": item.candidate.title,
+                            "action": ACTION_REJECTED,
+                            **decision.to_dict(),
+                        }
+                    )
+                    continue
+                fetchable.append(decision)
+
+            if not fetchable:
+                if exhausted_hits and not ineligible_hits:
+                    skipped_exhausted += 1
+                elif ineligible_hits:
+                    skipped_ineligible += 1
+                elif exhausted_hits:
+                    skipped_exhausted += 1
+                continue
+
+            best = max(
+                fetchable,
+                key=lambda item: (item.tier_rank, item.topic_score, -item.geo_penalty),
+            )
+            eligible.append(
+                _CandidateGroup(
+                    canonical_url=canonical,
+                    items=items,
+                    decision=best,
+                )
+            )
+
+        eligible.sort(
+            key=lambda group: selection_sort_key(
+                decision=group.decision
+                or SourceRelevanceDecision(
+                    eligibility=ELIGIBILITY_UNSCORED,
+                    geo_alignment=GEO_UNKNOWN,
+                    topic_score=0,
+                    rq_overlap=0,
+                    need_overlap=0,
+                    reason="missing_decision",
+                    information_need_id="",
+                    provider_rank=group.best_rank,
+                ),
+                need_coverage=group.need_coverage,
+                best_rank=group.best_rank,
+                canonical_url=group.canonical_url,
+            )
+        )
+        return eligible, decisions, skipped_ineligible, skipped_exhausted
 
     def _acquire_candidates(
         self,
@@ -377,6 +555,7 @@ class SourceAcquisitionService:
         groups: list[_CandidateGroup],
         started_at: float,
         max_source_groups: int | None = None,
+        selection_decisions: list[dict[str, Any]] | None = None,
     ) -> tuple[
         list[str],
         int,
@@ -390,6 +569,7 @@ class SourceAcquisitionService:
         bool,
         bool,
         set[str],
+        list[dict[str, Any]],
     ]:
         source_ids: list[str] = []
         acquired = 0
@@ -404,10 +584,19 @@ class SourceAcquisitionService:
         covered_needs: set[str] = set()
         covered_questions: set[str] = set()
         source_group_limit = max_source_groups or self._budget.max_sources_per_run
+        decisions = list(selection_decisions or [])
 
         for index, group in enumerate(groups):
             if index >= source_group_limit:
                 skipped_budget += 1
+                decisions.append(
+                    {
+                        "canonical_url": group.canonical_url,
+                        "action": ACTION_SKIPPED_BUDGET,
+                        "provider_rank": group.best_rank,
+                        "reason": "source_attempt_cap",
+                    }
+                )
                 continue
 
             if self._budget_remaining(started_at) <= 0:
@@ -427,10 +616,24 @@ class SourceAcquisitionService:
                 attempted += 1
 
             source_ids.append(resolved.id)
+            decision_payload = {
+                "canonical_url": group.canonical_url,
+                "source_id": resolved.id,
+                "provider_rank": group.best_rank,
+                "retrieval_status": resolved.retrieval_status.value,
+            }
+            if group.decision is not None:
+                decision_payload.update(group.decision.to_dict())
             if is_successful_acquisition(resolved.retrieval_status):
                 acquired += 1
                 if resolved.retrieval_status == RetrievalStatus.TRUNCATED:
                     truncated += 1
+                eligibility = (group.decision.eligibility if group.decision else "")
+                decision_payload["action"] = (
+                    ACTION_PROXY
+                    if eligibility == ELIGIBILITY_PROXY
+                    else ACTION_SELECTED
+                )
             elif resolved.retrieval_status in {
                 RetrievalStatus.FAILED,
                 RetrievalStatus.UNSUPPORTED,
@@ -439,6 +642,11 @@ class SourceAcquisitionService:
                 category = _failure_category(resolved)
                 if category:
                     failure_categories[category] += 1
+                decision_payload["action"] = ACTION_FETCH_FAILED
+                decision_payload["failure_category"] = category
+            else:
+                decision_payload["action"] = ACTION_SELECTED
+            decisions.append(decision_payload)
 
             _update_coverage_from_source(
                 resolved,
@@ -479,6 +687,7 @@ class SourceAcquisitionService:
             coverage_target_satisfied,
             coverage_complete_early_stop,
             covered_needs,
+            decisions,
         )
 
     def _budget_remaining(self, started_at: float) -> float:

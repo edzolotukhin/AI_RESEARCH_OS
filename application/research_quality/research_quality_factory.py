@@ -86,6 +86,7 @@ def build_research_readiness_service(
             config=config,
             overrides=overrides,
             source_repository=source_repository,
+            evidence_repository=evidence_repository,
         )
         evidence_extraction = build_evidence_extraction_service(
             config=config,

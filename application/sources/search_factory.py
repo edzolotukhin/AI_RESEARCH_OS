@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from application.config import ApplicationConfig, ApplicationOverrides
 from application.executors.search_executor import SearchExecutor
+from application.ports.evidence_ports import EvidenceRepository
 from application.ports.source_ports import SearchProvider, SourceRepository, SourceRetriever
 from application.sources.search_query_builder import SearchQueryBuilder
 from application.sources.source_acquisition_service import SourceAcquisitionService
@@ -60,6 +61,7 @@ def build_source_acquisition_service(
     config: ApplicationConfig,
     overrides: ApplicationOverrides,
     source_repository: SourceRepository,
+    evidence_repository: EvidenceRepository | None = None,
 ) -> SourceAcquisitionService:
     budget = SourceAcquisitionBudget.from_config(config)
     return SourceAcquisitionService(
@@ -70,6 +72,7 @@ def build_source_acquisition_service(
             max_results=budget.max_candidates_per_query,
         ),
         budget=budget,
+        evidence_repository=evidence_repository,
     )
 
 

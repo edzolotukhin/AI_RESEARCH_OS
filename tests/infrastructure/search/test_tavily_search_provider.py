@@ -20,6 +20,7 @@ class TavilySearchProviderTests(unittest.TestCase):
                     "url": "https://example.com/a",
                     "title": "A",
                     "content": "Snippet A",
+                    "score": 0.42,
                 },
             ],
         }
@@ -36,8 +37,10 @@ class TavilySearchProviderTests(unittest.TestCase):
         self.assertEqual(candidates[0].provider, "tavily")
         self.assertEqual(candidates[0].url, "https://example.com/a")
         self.assertEqual(candidates[0].query_id, "sq-1")
+        self.assertEqual(candidates[0].metadata.get("provider_score"), "0.42")
         payload = client.post.call_args.kwargs["json"]
         self.assertEqual(payload["query"], "brand awareness")
+        self.assertEqual(set(payload), {"api_key", "query", "max_results"})
 
     def test_missing_api_key_raises_on_search(self) -> None:
         provider = TavilySearchProvider(api_key=None)

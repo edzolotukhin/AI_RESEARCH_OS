@@ -34,6 +34,7 @@ from application.research_quality.readiness_aggregation import (
     build_research_readiness_assessment,
     build_research_readiness_result,
 )
+from application.sources.deterministic_source_relevance import selection_sort_key
 from application.sources.source_acquisition_service import (
     SourceAcquisitionService,
     _PendingCandidate,
@@ -376,13 +377,36 @@ class SearchSchedulerSemanticsTests(unittest.TestCase):
                 _item("https://overlap.example/c", "IN7", 5),
             ],
         }
-        ordered = SourceAcquisitionService._prioritize_groups(grouped)
+        design = ResearchDesign(
+            id="design-sort",
+            research_questions=(
+                ResearchQuestion(id="RQ1", question="Q?", objective_refs=()),
+            ),
+            information_needs=tuple(
+                InformationNeed(
+                    id=need_id,
+                    research_question_id="RQ1",
+                    description="Need",
+                )
+                for need_id in ("IN1", "IN4", "IN7", "IN12")
+            ),
+        )
+        service = SourceAcquisitionService(
+            search_provider=Mock(),
+            source_retriever=Mock(),
+            source_repository=Mock(),
+        )
+        ordered, _, _, _ = service._select_groups(
+            grouped,
+            design=design,
+            exhausted_pairs=frozenset(),
+        )
         self.assertEqual(ordered[0].canonical_url, "https://overlap.example/c")
         self.assertEqual(ordered[1].canonical_url, "https://high-rank-need-a.example/a")
         self.assertEqual(ordered[2].canonical_url, "https://low-rank-need-b.example/b")
 
     def test_information_need_priority_not_used_in_acquisition_sort(self) -> None:
-        source = inspect.getsource(SourceAcquisitionService._prioritize_groups)
+        source = inspect.getsource(selection_sort_key)
         self.assertIn("need_coverage", source)
         self.assertIn("best_rank", source)
         self.assertNotIn("priority", source)

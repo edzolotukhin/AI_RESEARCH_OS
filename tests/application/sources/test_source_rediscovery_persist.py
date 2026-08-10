@@ -136,7 +136,7 @@ class SourceRediscoveryPersistTests(unittest.TestCase):
             source_retriever=DeterministicSourceRetriever(),
             source_repository=repository,
             query_builder=SearchQueryBuilder(),
-            budget=SourceAcquisitionBudget(min_successful_sources=1),
+            budget=SourceAcquisitionBudget(min_successful_sources=3),
         )
 
         design = ResearchDesign(

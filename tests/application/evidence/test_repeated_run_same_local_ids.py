@@ -88,7 +88,7 @@ class RepeatedRunSameLocalIdsTests(unittest.TestCase):
             source_retriever=DeterministicSourceRetriever(),
             source_repository=source_repo,
             query_builder=SearchQueryBuilder(),
-            budget=SourceAcquisitionBudget(min_successful_sources=1),
+            budget=SourceAcquisitionBudget(min_successful_sources=3),
         )
         extraction = EvidenceExtractionService(
             evidence_extractor=DeterministicEvidenceExtractor(),

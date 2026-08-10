@@ -63,7 +63,7 @@ class DeterministicSearchProvider(SearchProvider):
                     provider_result_id=f"{query.id}-{index}",
                     url=row["url"],
                     title=row["title"],
-                    snippet=row["snippet"],
+                    snippet=f"{row['snippet']} {query.query_text}".strip(),
                     source_type="web",
                     rank=index + 1,
                     query_id=query.id,

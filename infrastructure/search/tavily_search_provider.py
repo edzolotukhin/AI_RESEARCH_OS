@@ -47,6 +47,10 @@ class TavilySearchProvider(SearchProvider):
             url = item.get("url")
             if not url:
                 continue
+            metadata: dict[str, str] = {}
+            score = item.get("score")
+            if score is not None:
+                metadata["provider_score"] = str(score)
             candidates.append(
                 SourceCandidate(
                     provider="tavily",
@@ -58,6 +62,7 @@ class TavilySearchProvider(SearchProvider):
                     source_type="web",
                     rank=index + 1,
                     query_id=query.id,
+                    metadata=metadata,
                 ),
             )
         return candidates
