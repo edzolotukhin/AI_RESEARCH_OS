@@ -6,6 +6,11 @@ from domain.evidence.evidence_type import EvidenceType
 from domain.planning.research_design import ResearchDesign
 from domain.sources.source import Source
 
+from application.evidence.expectation_aware_extraction_context import (
+    EXTRACTION_SYSTEM_GUIDANCE,
+    build_extraction_need_payload,
+    format_extraction_need_line,
+)
 from application.evidence.evidence_extractor_response_shape import (
     publish_response_shape,
     reset_response_shape,
@@ -56,11 +61,7 @@ class LlmEvidenceExtractor(EvidenceExtractor):
         run_context: RunScopedSourceContext,
     ) -> list[EvidenceCandidate]:
         needs_payload = [
-            {
-                "id": need.id,
-                "research_question_id": need.research_question_id,
-                "description": need.description,
-            }
+            build_extraction_need_payload(need)
             for need in design.information_needs
             if need.id in run_context.information_need_ids
         ]
@@ -69,16 +70,7 @@ class LlmEvidenceExtractor(EvidenceExtractor):
             return []
 
         prompt = Prompt(
-            system=(
-                "Extract grounded research evidence from the provided source text chunk. "
-                "Return JSON only with shape "
-                '{"items":[{"statement":"...","source_excerpt":"...",'
-                '"information_need_id":"...","evidence_type":"direct_excerpt",'
-                '"direct":true,"confidence":0.8}]}. '
-                "source_excerpt MUST be an exact substring of source_text after "
-                "whitespace normalization. Do not invent IDs beyond "
-                "information_need_id values listed in information_needs."
-            ),
+            system=EXTRACTION_SYSTEM_GUIDANCE,
             user=self._build_user_payload(source=source, needs_payload=needs_payload),
         )
         response_shape: ResponseShapeDiagnostics | None = None
@@ -239,10 +231,7 @@ class LlmEvidenceExtractor(EvidenceExtractor):
             "information_needs:",
         ]
         for need in needs_payload:
-            lines.append(
-                f"- id={need['id']} question_id={need['research_question_id']} "
-                f"description={need['description']}",
-            )
+            lines.append(format_extraction_need_line(need))
         return "\n".join(lines)
 
     def _parse_payload(self, content: str) -> dict[str, Any]:
