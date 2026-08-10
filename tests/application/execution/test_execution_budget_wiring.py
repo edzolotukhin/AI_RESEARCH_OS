@@ -271,6 +271,9 @@ class BudgetExhaustionBehaviorTests(unittest.TestCase):
         from infrastructure.persistence.memory.in_memory_finding_repository import (
             InMemoryFindingRepository,
         )
+        from infrastructure.persistence.memory.in_memory_evidence_repository import (
+            InMemoryEvidenceRepository,
+        )
         from infrastructure.persistence.memory.in_memory_insight_repository import (
             InMemoryInsightRepository,
         )
@@ -357,6 +360,7 @@ class BudgetExhaustionBehaviorTests(unittest.TestCase):
             semantic_review_engine=review_engine,
             finding_repository=finding_repo,
             insight_repository=insight_repo,
+            evidence_repository=InMemoryEvidenceRepository(),
             report_repository=report_repo,
             artifact_repository=artifact_repo,
             review_repository=review_repo,

@@ -7,6 +7,8 @@ from domain.reports.report import Report
 from domain.reviews.review_issue import ReviewIssue
 from domain.reviews.review_result import ReviewResult
 
+from application.review.review_support_context import ReviewSupportContext
+
 
 @dataclass(frozen=True)
 class ReviewSectionInput:
@@ -45,6 +47,7 @@ class SemanticReviewInput:
     research_questions: tuple[str, ...]
     section_inputs: tuple[ReviewSectionInput, ...]
     existing_issues: tuple[ReviewIssue, ...] = ()
+    support_context: ReviewSupportContext | None = None
 
 
 class SemanticReviewEngine(Protocol):

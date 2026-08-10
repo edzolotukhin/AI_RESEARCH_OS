@@ -50,6 +50,7 @@ def build_review_service(session_factory: DatabaseSessionFactory):
         semantic_review_engine=DeterministicReviewEngine(),
         finding_repository=PostgreSQLFindingRepository(session_factory),
         insight_repository=PostgreSQLInsightRepository(session_factory),
+        evidence_repository=PostgreSQLEvidenceRepository(session_factory),
         report_repository=PostgreSQLReportRepository(session_factory),
         artifact_repository=PostgreSQLArtifactRepository(session_factory),
         review_repository=PostgreSQLReviewRepository(session_factory),

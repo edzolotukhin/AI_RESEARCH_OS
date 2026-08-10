@@ -217,8 +217,8 @@ class ReviewArchitectureTests(unittest.TestCase):
             limitations=design.limitations,
             max_sections=12,
         )))
-        batches = build_rq_batch_inputs(report, max_batches=7)
-        self.assertLessEqual(len(batches), 7)
+        plan = build_rq_batch_inputs(report, max_batches=7)
+        self.assertLessEqual(len(plan.batches), 7)
 
         mock_llm = Mock()
         mock_llm.generate.return_value = LLMResponse(content='{"issues":[]}')

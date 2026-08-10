@@ -74,6 +74,7 @@ def build_review_executor(
         ),
         finding_repository=finding_repository,
         insight_repository=insight_repository,
+        evidence_repository=evidence_repository,
         report_repository=report_repository,
         artifact_repository=artifact_repository,
         review_repository=review_repository,

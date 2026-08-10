@@ -14,6 +14,7 @@ from application.persistence.exceptions import ConcurrentModificationError
 from application.persistence.records import ArtifactRecord
 from application.ports.analysis_ports import FindingRepository, InsightRepository
 from application.ports.artifact_repository import ArtifactRepository
+from application.ports.evidence_ports import EvidenceRepository
 from application.ports.report_ports import ReportRepository
 from application.ports.review_ports import (
     ReviewRepository,
@@ -34,6 +35,11 @@ from application.review.exceptions import (
     DuplicateReviewError,
     ReviewConfigurationError,
     ReviewError,
+)
+from application.review.review_support_context import (
+    build_review_support_context,
+    incomplete_review_coverage_issue,
+    support_reference_issues,
 )
 from application.review.structural_review import (
     compute_quality_dimensions,
@@ -85,6 +91,7 @@ class ReviewService:
         semantic_review_engine: SemanticReviewEngine,
         finding_repository: FindingRepository,
         insight_repository: InsightRepository,
+        evidence_repository: EvidenceRepository,
         report_repository: ReportRepository,
         artifact_repository: ArtifactRepository,
         review_repository: ReviewRepository,
@@ -95,12 +102,14 @@ class ReviewService:
         self._semantic_review_engine = semantic_review_engine
         self._finding_repository = finding_repository
         self._insight_repository = insight_repository
+        self._evidence_repository = evidence_repository
         self._report_repository = report_repository
         self._artifact_repository = artifact_repository
         self._review_repository = review_repository
         self._report_service = report_service
         self._max_revision_attempts = max_revision_attempts
         self._max_chars_per_section = max_chars_per_section
+        self._last_support_diagnostics: dict[str, Any] = {}
 
     def review_for_context(self, context: WorkflowContext) -> ReviewSummary:
         design = self._report_service._resolve_design(context)
@@ -128,6 +137,41 @@ class ReviewService:
                 project_id,
                 workflow_run_id=workflow_run_id,
             )
+            evidence_items = self._evidence_repository.list_for_project(
+                project_id,
+                workflow_run_id=workflow_run_id,
+            )
+            # Run/design isolation: drop any foreign records that leaked into lists.
+            findings = [
+                item
+                for item in findings
+                if item.workflow_run_id == workflow_run_id
+                and item.research_design_id == design.id
+                and item.project_id == project_id
+            ]
+            insights = [
+                item
+                for item in insights
+                if item.workflow_run_id == workflow_run_id
+                and item.research_design_id == design.id
+                and item.project_id == project_id
+            ]
+            evidence_items = [
+                item
+                for item in evidence_items
+                if item.workflow_run_id == workflow_run_id
+                and item.research_design_id == design.id
+                and item.project_id == project_id
+            ]
+
+            support_context = build_review_support_context(
+                report=report,
+                findings=findings,
+                insights=insights,
+                evidence_items=evidence_items,
+            )
+            support_issues = support_reference_issues(support_context)
+            self._last_support_diagnostics = dict(support_context.diagnostics)
 
             pre_review_issues = run_deterministic_pre_review(
                 report=report,
@@ -154,9 +198,15 @@ class ReviewService:
                     question.question for question in design.research_questions
                 ),
                 structural_issues=structural_issues,
+                support_context=support_context,
             )
+            coverage_issues = self._incomplete_coverage_issues()
             all_issues = deduplicate_and_cluster_review_issues(
-                pre_review_issues + structural_issues + candidates_to_issues(semantic_candidates),
+                pre_review_issues
+                + structural_issues
+                + support_issues
+                + coverage_issues
+                + candidates_to_issues(semantic_candidates),
             )
             dimensions = compute_quality_dimensions(all_issues)
             verdict = compute_verdict(all_issues)
@@ -227,6 +277,7 @@ class ReviewService:
         brief_objectives: tuple[str, ...],
         research_questions: tuple[str, ...],
         structural_issues: tuple,
+        support_context,
     ):
         section_inputs = build_section_inputs(
             report,
@@ -241,6 +292,7 @@ class ReviewService:
             research_questions=research_questions,
             section_inputs=section_inputs,
             existing_issues=structural_issues,
+            support_context=support_context,
         )
         try:
             return self._semantic_review_engine.review_report(review_input)
@@ -259,6 +311,27 @@ class ReviewService:
             raise ReviewError(
                 format_review_parse_failure_message(diagnostics),
             ) from exc
+
+    def _incomplete_coverage_issues(self) -> tuple:
+        engine = self._semantic_review_engine
+        if not isinstance(engine, LlmReviewEngine):
+            return ()
+        plan = engine.last_batch_plan
+        if plan is None or not plan.omitted_batch_ids:
+            return ()
+        issue = incomplete_review_coverage_issue(
+            omitted_batch_ids=plan.omitted_batch_ids,
+            max_batches=engine._max_review_calls,
+        )
+        self._last_support_diagnostics = {
+            **self._last_support_diagnostics,
+            "incomplete_review_coverage": True,
+            "omitted_batch_ids": list(plan.omitted_batch_ids),
+            "semantic_batches": len(plan.batches),
+            "total_group_count": plan.total_group_count,
+            "review_calls_used": engine.llm_call_count,
+        }
+        return (issue,)
 
     def _build_parse_failure_diagnostics(
         self,

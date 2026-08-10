@@ -113,13 +113,23 @@ class ReviewBatchInput:
     research_question_refs: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class ReviewBatchPlan:
+    """RQ-batch plan with explicit omitted groups for fail-closed coverage."""
+
+    batches: tuple[ReviewBatchInput, ...]
+    omitted_batch_ids: tuple[str, ...]
+    total_group_count: int
+
+
 def build_rq_batch_inputs(
     report: Report,
     *,
+    max_chars_per_section: int = 8000,
     max_chars_per_batch: int = 12000,
     max_batches: int = 7,
-) -> tuple[ReviewBatchInput, ...]:
-    """Group sections by primary RQ + one global batch; bounded semantic review calls."""
+) -> ReviewBatchPlan:
+    """Group sections by primary RQ + global batch; enforce section + batch bounds."""
     from application.report.substantive_coverage import primary_research_question_for_section
 
     groups: dict[str, list[int]] = {}
@@ -128,13 +138,20 @@ def build_rq_batch_inputs(
         key = primary or "__global__"
         groups.setdefault(key, []).append(index)
 
+    ordered_groups = sorted(groups.items())
     batches: list[ReviewBatchInput] = []
-    for batch_id, indices in sorted(groups.items()):
+    omitted: list[str] = []
+    for batch_id, indices in ordered_groups:
         if len(batches) >= max_batches:
-            break
+            omitted.append(batch_id)
+            continue
         sections = [report.sections[i] for i in indices]
+        per_section_budget = min(
+            max_chars_per_section,
+            max(1, max_chars_per_batch // max(1, len(indices))),
+        )
         content_parts = [
-            f"## {section.title}\n{section.content[: max_chars_per_batch // max(1, len(indices))]}"
+            f"## {section.title}\n{section.content[:per_section_budget]}"
             for section in sections
         ]
         finding_refs: set[str] = set()
@@ -159,4 +176,8 @@ def build_rq_batch_inputs(
                 research_question_refs=tuple(sorted(rq_refs)),
             ),
         )
-    return tuple(batches)
+    return ReviewBatchPlan(
+        batches=tuple(batches),
+        omitted_batch_ids=tuple(omitted),
+        total_group_count=len(ordered_groups),
+    )

@@ -453,6 +453,7 @@ def execute_offline_replay(
         semantic_review_engine=semantic_engine,
         finding_repository=PostgreSQLFindingRepository(replay_session_factory),
         insight_repository=PostgreSQLInsightRepository(replay_session_factory),
+        evidence_repository=PostgreSQLEvidenceRepository(replay_session_factory),
         report_repository=PostgreSQLReportRepository(replay_session_factory),
         artifact_repository=PostgreSQLArtifactRepository(replay_session_factory),
         review_repository=PostgreSQLReviewRepository(replay_session_factory),
@@ -527,7 +528,7 @@ def execute_offline_replay(
     )
     semantic_candidates = semantic_engine.review_report(semantic_input)
     semantic_calls = semantic_engine.llm_call_count
-    batches = build_rq_batch_inputs(report, max_batches=review_max_calls)
+    batches = build_rq_batch_inputs(report, max_batches=review_max_calls).batches
 
     all_issues = deduplicate_and_cluster_review_issues(
         pre_issues + structural + candidates_to_issues(semantic_candidates),

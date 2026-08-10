@@ -22,9 +22,12 @@ from application.ports.review_ports import (
 )
 from infrastructure.review.deterministic_review_engine import (
     ReviewBatchInput,
+    ReviewBatchPlan,
     build_rq_batch_inputs,
 )
 from infrastructure.llm.llm_client import LLMClient
+
+DEFAULT_MAX_SUPPORT_CHARS_PER_BATCH = 6000
 
 _VALID_ISSUE_TYPES = {member.value for member in ReviewIssueType}
 _VALID_SEVERITIES = {member.value for member in ReviewIssueSeverity}
@@ -64,6 +67,7 @@ class LlmReviewEngine:
         max_suggested_action_chars: int = DEFAULT_REVIEW_MAX_SUGGESTED_ACTION_CHARS,
         max_review_calls: int = 7,
         max_chars_per_batch: int = 12000,
+        max_support_chars_per_batch: int = DEFAULT_MAX_SUPPORT_CHARS_PER_BATCH,
     ) -> None:
         self._structured_output = ReviewStructuredOutputGenerator(
             llm_client=llm_client,
@@ -77,9 +81,11 @@ class LlmReviewEngine:
         self._max_suggested_action_chars = max_suggested_action_chars
         self._max_review_calls = max_review_calls
         self._max_chars_per_batch = max_chars_per_batch
+        self._max_support_chars_per_batch = max_support_chars_per_batch
         self._last_section_stats: ReviewSectionEngineStats | None = None
         self._section_stats: list[ReviewSectionEngineStats] = []
         self._llm_call_count: int = 0
+        self._last_batch_plan: ReviewBatchPlan | None = None
 
     @property
     def last_section_stats(self) -> ReviewSectionEngineStats | None:
@@ -93,6 +99,10 @@ class LlmReviewEngine:
     def llm_call_count(self) -> int:
         return self._llm_call_count
 
+    @property
+    def last_batch_plan(self) -> ReviewBatchPlan | None:
+        return self._last_batch_plan
+
     def review_report(
         self,
         review_input: SemanticReviewInput,
@@ -100,12 +110,14 @@ class LlmReviewEngine:
         candidates: list[ReviewIssueCandidate] = []
         self._section_stats = []
         self._llm_call_count = 0
-        batches = build_rq_batch_inputs(
+        plan = build_rq_batch_inputs(
             review_input.report,
+            max_chars_per_section=self._max_chars_per_section,
             max_chars_per_batch=self._max_chars_per_batch,
             max_batches=self._max_review_calls,
         )
-        for batch in batches:
+        self._last_batch_plan = plan
+        for batch in plan.batches:
             prompt = Prompt(
                 system=self._system_prompt(),
                 user=self._build_batch_payload(review_input, batch),
@@ -169,25 +181,33 @@ class LlmReviewEngine:
         review_input: SemanticReviewInput,
     ) -> int:
         """Maximum characters passed to a single LLM review request."""
-        batches = build_rq_batch_inputs(
+        plan = build_rq_batch_inputs(
             review_input.report,
+            max_chars_per_section=self._max_chars_per_section,
             max_chars_per_batch=self._max_chars_per_batch,
             max_batches=self._max_review_calls,
         )
-        if not batches:
+        if not plan.batches:
             return 0
         return max(
             len(self._build_batch_payload(review_input, batch))
-            for batch in batches
+            for batch in plan.batches
         )
 
     def _system_prompt(self) -> str:
         return (
             "You are an independent desk-research quality reviewer. "
-            "Assess whether report prose is supported by the referenced Findings "
-            "and Insights. Flag probable unsupported or overstated claims, hidden "
-            "contradictions, missing major caveats, and weak answers to research "
-            "questions. Do NOT provide chain-of-thought. "
+            "Judge REPORT CLAIMS against the supplied support objects "
+            "(Finding statement/rationale, Insight statement/implication, "
+            "Evidence statement/source_excerpt). "
+            "Valid IDs alone are NOT semantic support. "
+            "Do NOT invent missing evidence. "
+            "Do NOT independently reassess whether Analysis should have created "
+            "a Finding (that is out of scope). "
+            "Flag unsupported/overstated claims, contradictions with supplied "
+            "support, missing support, invalid support references, missing major "
+            "caveats, and weak answers to research questions. "
+            "Do NOT provide chain-of-thought. "
             "Return compact JSON only with shape "
             '{"issues":[{"issue_type":"unsupported_claim",'
             '"severity":"major","message":"...",'
@@ -203,7 +223,7 @@ class LlmReviewEngine:
             f"Return at most {self._max_issues_per_section} issues. "
             f"Keep each message under {self._max_message_chars} characters. "
             "Do not include full report text in the response. "
-            "Use only IDs from the provided section context. "
+            "Use only IDs from the provided section/support context. "
             'If no semantic issues exist, return {"issues":[]}.'
         )
 
@@ -237,23 +257,53 @@ class LlmReviewEngine:
         review_input: SemanticReviewInput,
         batch: ReviewBatchInput,
     ) -> str:
+        # Enforce per-section bound even if batch builder missed it.
+        bounded_section_content = self._enforce_section_bound_on_batch_content(
+            batch.section_content,
+        )
         lines = [
             f"brief_objectives: {list(review_input.brief_objectives)}",
             f"research_questions: {list(review_input.research_questions)}",
             f"batch_id: {batch.batch_id}",
             f"batch_label: {batch.batch_label}",
             f"section_indices: {list(batch.section_indices)}",
-            f"section_content: {batch.section_content[: self._max_chars_per_batch]}",
+            f"section_content: {bounded_section_content[: self._max_chars_per_batch]}",
             f"finding_refs: {list(batch.finding_refs)}",
             f"insight_refs: {list(batch.insight_refs)}",
             f"citation_ids: {list(batch.citation_ids)}",
             f"research_question_refs: {list(batch.research_question_refs)}",
         ]
+        support = review_input.support_context
+        if support is not None:
+            support_text = support.render_for_section_indices(
+                batch.section_indices,
+                max_chars=self._max_support_chars_per_batch,
+            )
+            lines.append("support_context:")
+            lines.append(support_text)
+        else:
+            lines.append("support_context: (none provided)")
         if review_input.existing_issues:
             lines.append("existing_structural_issues:")
             for issue in review_input.existing_issues[:10]:
                 lines.append(f"- {issue.issue_type.value}: {issue.message[:200]}")
         return "\n".join(lines)
+
+    def _enforce_section_bound_on_batch_content(self, content: str) -> str:
+        """Ensure no ## section body exceeds max_chars_per_section in batch text."""
+        if not content:
+            return content
+        parts = content.split("\n\n## ")
+        rebuilt: list[str] = []
+        for index, part in enumerate(parts):
+            chunk = part if index == 0 else f"## {part}"
+            if "\n" in chunk:
+                title, body = chunk.split("\n", 1)
+                body = body[: self._max_chars_per_section]
+                rebuilt.append(f"{title}\n{body}")
+            else:
+                rebuilt.append(chunk[: self._max_chars_per_section + 64])
+        return "\n\n".join(rebuilt)
 
     def _map_batch_issues(
         self,
@@ -269,6 +319,15 @@ class LlmReviewEngine:
         allowed_evidence: set[str] = set()
         for index in batch.section_indices:
             allowed_evidence.update(review_input.report.sections[index].evidence_refs)
+        support = review_input.support_context
+        if support is not None:
+            for index in batch.section_indices:
+                section_support = support.section_for_index(index)
+                if section_support is None:
+                    continue
+                for finding in section_support.findings:
+                    allowed_evidence.update(finding.evidence_refs)
+                allowed_evidence.update(item.id for item in section_support.evidence)
         allowed_sources = {
             str(entry.get("source_id", "")).strip()
             for entry in (review_input.report.citation_registry or {}).values()

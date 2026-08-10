@@ -144,9 +144,13 @@ class LlmReviewEngineTests(unittest.TestCase):
         engine.review_report(review_input)
 
         payload = mock_llm.generate.call_args[0][0].user
-        self.assertIn("x" * 120, payload)
-        self.assertNotIn("x" * 121, payload)
-        self.assertLessEqual(engine.max_input_chars_per_request(review_input), 1200)
+        section_part = payload.split("section_content: ", 1)[1].split("\nfinding_refs:", 1)[0]
+        body = section_part.split("\n", 1)[1] if "\n" in section_part else section_part
+        self.assertIn("x" * 120, body)
+        self.assertNotIn("x" * 121, body)
+        self.assertLessEqual(len(body), 120)
+        # Live path may include support_context header; keep total request reasonable.
+        self.assertLessEqual(engine.max_input_chars_per_request(review_input), 2500)
 
 
 if __name__ == "__main__":
