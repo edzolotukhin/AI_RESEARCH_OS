@@ -153,6 +153,10 @@ class EvidenceRemediationPartitionTests(unittest.TestCase):
 
     def test_config_default_and_from_env(self) -> None:
         self.assertEqual(ApplicationConfig().evidence_remediation_reserved_llm_calls, 0)
+        self.assertEqual(
+            ApplicationConfig().evidence_remediation_max_llm_calls_per_attempt,
+            0,
+        )
         env = {"EVIDENCE_REMEDIATION_RESERVED_LLM_CALLS": "6", "EVIDENCE_MAX_LLM_CALLS": "36"}
         with patch.dict(os.environ, env, clear=False):
             config = ApplicationConfig.from_env()

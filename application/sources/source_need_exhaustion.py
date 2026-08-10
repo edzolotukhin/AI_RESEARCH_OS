@@ -12,6 +12,7 @@ Not exhausted (technical / incomplete / non-semantic):
 - invalid_json / empty / incomplete / schema mismatch provider output
 - extractor exception / timeout / retry / budget_stop / pending
 - no_run_context
+- bounded_partial remediations extraction (attempt envelope stopped early)
 - extractor_status == success with candidates that failed grounding or
   other post-parse filters (conservative: attempt unusable, source not spent)
 
@@ -24,6 +25,10 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
+from application.execution.remediation_attempt_envelope import (
+    EXTRACTION_BOUNDED_PARTIAL,
+    SHARED_REMEDIATION_EXTRACTION_KEY,
+)
 from domain.evidence.evidence import Evidence
 from domain.sources.source import Source
 
@@ -95,6 +100,8 @@ def qualifying_zero_yield_source_need_pairs(
             grouped.setdefault((source_id, need_id), []).append(item)
     exhausted: set[tuple[str, str]] = set()
     for pair, items in grouped.items():
+        if any(_is_bounded_partial_item(item) for item in items):
+            continue
         if items and all(work_item_is_valid_zero_yield(item) for item in items):
             exhausted.add(pair)
     return frozenset(exhausted)
@@ -151,10 +158,37 @@ def exhausted_canonical_urls_for_need(
 def _work_items(shared_state: Mapping[str, Any] | None) -> list[Mapping[str, Any]]:
     if not shared_state:
         return []
-    extraction = shared_state.get("evidence_extraction") or {}
-    diagnostics = extraction.get("diagnostics") or {}
-    items = diagnostics.get("work_items") or []
-    return [item for item in items if isinstance(item, Mapping)]
+    items: list[Mapping[str, Any]] = []
+    items.extend(_items_from_extraction_block(shared_state.get("evidence_extraction")))
+    items.extend(
+        _items_from_extraction_block(shared_state.get(SHARED_REMEDIATION_EXTRACTION_KEY)),
+    )
+    return items
+
+
+def _items_from_extraction_block(block: object) -> list[Mapping[str, Any]]:
+    if not isinstance(block, Mapping):
+        return []
+    diagnostics = block.get("diagnostics") or {}
+    if not isinstance(diagnostics, Mapping):
+        return []
+    processing_state = diagnostics.get("extraction_processing_state")
+    items: list[Mapping[str, Any]] = []
+    for item in diagnostics.get("work_items") or []:
+        if not isinstance(item, Mapping):
+            continue
+        merged = dict(item)
+        if processing_state and not merged.get("source_processing_state"):
+            merged["source_processing_state"] = processing_state
+        items.append(merged)
+    return items
+
+
+def _is_bounded_partial_item(item: Mapping[str, Any]) -> bool:
+    for key in ("source_processing_state", "extraction_processing_state"):
+        if str(item.get(key) or "") == EXTRACTION_BOUNDED_PARTIAL:
+            return True
+    return False
 
 
 def _need_ids(item: Mapping[str, Any]) -> list[str]:

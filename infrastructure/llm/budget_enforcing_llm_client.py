@@ -8,6 +8,10 @@ from application.execution.execution_budget_context import (
     get_execution_budget,
     get_execution_stage,
 )
+from application.execution.remediation_attempt_envelope import (
+    RemediationAttemptEnvelopeReached,
+    remediations_attempt_envelope_blocks_call,
+)
 from application.execution.execution_budget_retry import (
     consume_llm_call_retry_flag,
 )
@@ -36,6 +40,8 @@ class BudgetEnforcingLLMClient(LLMClient):
         stage = get_execution_stage() or "unknown"
         if purpose == EVIDENCE_PURPOSE_REMEDIATION:
             stage = "evidence"
+        if remediations_attempt_envelope_blocks_call(budget, purpose=purpose):
+            raise RemediationAttemptEnvelopeReached()
         budget.assert_can_call(stage, purpose=purpose)
 
         started = time.perf_counter()

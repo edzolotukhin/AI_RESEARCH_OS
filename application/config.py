@@ -113,6 +113,7 @@ class ApplicationConfig:
     targeted_max_queries_per_gap: int = 2
     targeted_max_sources_per_gap: int = 3
     evidence_remediation_reserved_llm_calls: int = 0
+    evidence_remediation_max_llm_calls_per_attempt: int = 0
 
     @classmethod
     def from_env(cls) -> ApplicationConfig:
@@ -302,6 +303,15 @@ class ApplicationConfig:
             evidence_remediation_reserved_llm_calls=max(
                 0,
                 int(os.environ.get("EVIDENCE_REMEDIATION_RESERVED_LLM_CALLS", "0")),
+            ),
+            evidence_remediation_max_llm_calls_per_attempt=max(
+                0,
+                int(
+                    os.environ.get(
+                        "EVIDENCE_REMEDIATION_MAX_LLM_CALLS_PER_ATTEMPT",
+                        "0",
+                    ),
+                ),
             ),
             sufficiency_max_llm_calls=int(
                 os.environ.get("SUFFICIENCY_MAX_LLM_CALLS", "20"),

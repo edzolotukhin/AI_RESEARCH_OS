@@ -64,6 +64,7 @@ PROFILE_B_WORKER = {
     "LLM_MAX_CALLS_PER_RUN": "120",
     "EVIDENCE_MAX_LLM_CALLS": "36",
     "EVIDENCE_REMEDIATION_RESERVED_LLM_CALLS": "6",
+    "EVIDENCE_REMEDIATION_MAX_LLM_CALLS_PER_ATTEMPT": "3",
     "SUFFICIENCY_MAX_LLM_CALLS": "36",
     "ANALYSIS_MAX_LLM_CALLS": "10",
     "REPORT_MAX_LLM_CALLS": "12",
@@ -191,6 +192,7 @@ class OverlayPresenceAndLowcostTests(unittest.TestCase):
         self.assertIn('RESEARCH_MAX_GAP_ROUNDS_PER_RUN: "1"', lowcost)
         self.assertIn('TARGETED_MAX_ATTEMPTS_PER_GAP: "1"', lowcost)
         self.assertNotIn("EVIDENCE_REMEDIATION_RESERVED_LLM_CALLS", lowcost)
+        self.assertNotIn("EVIDENCE_REMEDIATION_MAX_LLM_CALLS_PER_ATTEMPT", lowcost)
 
     def test_c_profile_b_values_present(self) -> None:
         text = OVERLAY_PATH.read_text(encoding="utf-8")
@@ -224,6 +226,7 @@ class ComposeMergeAndConsistencyTests(unittest.TestCase):
         self.assertEqual(worker["LLM_MAX_CALLS_PER_RUN"], "120")
         self.assertEqual(worker["EVIDENCE_MAX_LLM_CALLS"], "36")
         self.assertEqual(worker["EVIDENCE_REMEDIATION_RESERVED_LLM_CALLS"], "6")
+        self.assertEqual(worker["EVIDENCE_REMEDIATION_MAX_LLM_CALLS_PER_ATTEMPT"], "3")
         self.assertEqual(worker["SUFFICIENCY_MAX_LLM_CALLS"], "36")
         self.assertEqual(worker["ANALYSIS_MAX_LLM_CALLS"], "10")
         self.assertEqual(worker["REPORT_MAX_LLM_CALLS"], "12")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from application.config import ApplicationConfig
 from application.evidence.evidence_extraction_service import EvidenceExtractionService
 from application.execution.budget_utils import EVIDENCE_PURPOSE_REMEDIATION
@@ -8,6 +10,10 @@ from application.execution.execution_budget_context import (
     get_execution_stage,
     set_evidence_call_purpose,
     set_execution_stage,
+)
+from application.execution.remediation_attempt_envelope import (
+    EXTRACTION_ORDERING_DOCUMENT_ORDER,
+    SHARED_REMEDIATION_EXTRACTION_KEY,
 )
 from application.research_quality.targeted_research_bounds import TargetedResearchBounds
 from application.research_quality.targeted_research_runner import (
@@ -67,10 +73,18 @@ class ProductionTargetedResearchRunner:
                 context,
                 acquisition.source_ids,
                 allow_empty=True,
+                attempt_max_llm_calls=(
+                    self._config.evidence_remediation_max_llm_calls_per_attempt
+                ),
             )
         finally:
             set_execution_stage(previous_stage)
             set_evidence_call_purpose(previous_purpose)
+        context.write_shared(SHARED_REMEDIATION_EXTRACTION_KEY, evidence.to_dict())
+        attempt_diagnostics = self._remediation_attempt_diagnostics(
+            evidence=evidence,
+            acquisition=acquisition,
+        )
         return TargetedResearchIterationResult(
             source_ids=acquisition.source_ids,
             evidence_ids=evidence.evidence_ids,
@@ -79,7 +93,55 @@ class ProductionTargetedResearchRunner:
             evidence_extracted=evidence.evidence_extracted,
             extraction_attempted=True,
             budget_stop_reason=evidence.budget_stop_reason,
+            extraction_processing_state=evidence.extraction_processing_state,
+            remediation_attempt_diagnostics=attempt_diagnostics,
         )
+
+    @staticmethod
+    def _remediation_attempt_diagnostics(
+        *,
+        evidence,
+        acquisition,
+    ) -> dict[str, Any]:
+        diagnostics = evidence.diagnostics
+        payload: dict[str, Any] = {
+            "source_ids": list(acquisition.source_ids),
+            "sources_acquired": acquisition.sources_acquired,
+            "skipped_duplicate_count": acquisition.skipped_duplicate_count,
+            "extraction_ordering": EXTRACTION_ORDERING_DOCUMENT_ORDER,
+            "evidence_delta": evidence.evidence_extracted,
+            "source_delta": acquisition.sources_acquired,
+            "attempt_completed": True,
+        }
+        if diagnostics is None:
+            payload["processing_state"] = evidence.extraction_processing_state
+            return payload
+        payload.update(
+            {
+                "planned_chunk_count": diagnostics.planned_work_items,
+                "processed_chunk_count": diagnostics.processed_work_items,
+                "skipped_chunk_count": diagnostics.skipped_work_items,
+                "configured_attempt_call_cap": (
+                    diagnostics.remediation_attempt_configured_limit
+                ),
+                "effective_attempt_call_cap": (
+                    diagnostics.remediation_attempt_effective_limit
+                ),
+                "remediation_calls_remaining_before": (
+                    diagnostics.remediation_calls_remaining_before
+                ),
+                "actual_evidence_calls_consumed": (
+                    diagnostics.remediation_attempt_calls_consumed
+                ),
+                "remediation_calls_remaining_after": (
+                    diagnostics.remediation_calls_remaining_after
+                ),
+                "capped": diagnostics.remediation_attempt_capped,
+                "processing_state": diagnostics.extraction_processing_state,
+                "budget_stop_reason": diagnostics.budget_stop_reason,
+            }
+        )
+        return payload
 
     @staticmethod
     def _require_design(context: WorkflowContext) -> ResearchDesign:

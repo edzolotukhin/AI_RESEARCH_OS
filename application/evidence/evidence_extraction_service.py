@@ -56,6 +56,16 @@ from application.execution.execution_budget_context import (
     get_evidence_call_purpose,
     get_execution_budget,
 )
+from application.execution.remediation_attempt_envelope import (
+    EXTRACTION_BOUNDED_PARTIAL,
+    EXTRACTION_FULLY_PROCESSED,
+    RemediationAttemptEnvelope,
+    RemediationAttemptEnvelopeReached,
+    activate_remediation_attempt_envelope,
+    build_remediation_attempt_envelope,
+    remediations_reserved_remaining,
+    reset_remediation_attempt_envelope,
+)
 from application.ports.evidence_ports import EvidenceExtractor, EvidenceRepository
 from application.ports.source_ports import SourceRepository
 from application.sources.provenance_merge import is_successful_acquisition
@@ -75,6 +85,7 @@ class EvidenceExtractionSummary:
     evidence_stage_budget_exhausted: bool = False
     budget_stop_reason: str | None = None
     diagnostics: EvidenceExtractionDiagnostics | None = None
+    extraction_processing_state: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -87,6 +98,8 @@ class EvidenceExtractionSummary:
         }
         if self.budget_stop_reason is not None:
             payload["budget_stop_reason"] = self.budget_stop_reason
+        if self.extraction_processing_state is not None:
+            payload["extraction_processing_state"] = self.extraction_processing_state
         if self.diagnostics is not None:
             payload["diagnostics"] = self.diagnostics.to_dict()
         return payload
@@ -164,6 +177,7 @@ class EvidenceExtractionService:
         source_ids: tuple[str, ...],
         *,
         allow_empty: bool = False,
+        attempt_max_llm_calls: int = 0,
     ) -> EvidenceExtractionSummary:
         """Extract evidence from specific run-scoped sources (targeted append)."""
         design = self._resolve_design(context)
@@ -229,6 +243,7 @@ class EvidenceExtractionService:
                 research_design_id=design.id,
                 allow_empty_failure=not allow_empty,
                 diagnostics=diagnostics,
+                attempt_max_llm_calls=attempt_max_llm_calls,
             )
         finally:
             deactivate_diagnostics(token)
@@ -311,6 +326,7 @@ class EvidenceExtractionService:
         research_design_id: str,
         allow_empty_failure: bool,
         diagnostics: EvidenceExtractionDiagnostics,
+        attempt_max_llm_calls: int = 0,
     ) -> EvidenceExtractionSummary:
         evidence_ids: list[str] = []
         extracted = 0
@@ -321,8 +337,77 @@ class EvidenceExtractionService:
         evidence_stage_budget_exhausted = False
         budget_stop_reason: str | None = None
         budget_stop_before_any_attempt = False
+        envelope = None
+        envelope_token = None
+        purpose = get_evidence_call_purpose()
+        if attempt_max_llm_calls > 0 and purpose == EVIDENCE_PURPOSE_REMEDIATION:
+            envelope = build_remediation_attempt_envelope(
+                configured_limit=attempt_max_llm_calls,
+                budget=get_execution_budget(),
+            )
+            if envelope is not None:
+                envelope_token = activate_remediation_attempt_envelope(envelope)
+                diagnostics.remediation_attempt_configured_limit = (
+                    envelope.configured_limit
+                )
+                diagnostics.remediation_attempt_effective_limit = (
+                    envelope.effective_limit
+                )
+                diagnostics.remediation_calls_remaining_before = (
+                    envelope.remediations_reserved_remaining_at_start
+                )
+        diagnostics.planned_work_items = len(queue)
 
+        try:
+            return self._run_extract_work_queue(
+                queue,
+                design=design,
+                project_id=project_id,
+                workflow_run_id=workflow_run_id,
+                research_design_id=research_design_id,
+                allow_empty_failure=allow_empty_failure,
+                diagnostics=diagnostics,
+                envelope=envelope,
+                evidence_ids=evidence_ids,
+                extracted=extracted,
+                failures=failures,
+                sources_without_evidence=sources_without_evidence,
+                sources_with_evidence=sources_with_evidence,
+                sources_touched=sources_touched,
+                evidence_stage_budget_exhausted=evidence_stage_budget_exhausted,
+                budget_stop_reason=budget_stop_reason,
+                budget_stop_before_any_attempt=budget_stop_before_any_attempt,
+            )
+        finally:
+            if envelope_token is not None:
+                reset_remediation_attempt_envelope(envelope_token)
+
+    def _run_extract_work_queue(
+        self,
+        queue: list[EvidenceExtractionWorkItem],
+        *,
+        design: ResearchDesign,
+        project_id: str,
+        workflow_run_id: str,
+        research_design_id: str,
+        allow_empty_failure: bool,
+        diagnostics: EvidenceExtractionDiagnostics,
+        envelope: RemediationAttemptEnvelope | None,
+        evidence_ids: list[str],
+        extracted: int,
+        failures: int,
+        sources_without_evidence: set[str],
+        sources_with_evidence: set[str],
+        sources_touched: set[str],
+        evidence_stage_budget_exhausted: bool,
+        budget_stop_reason: str | None,
+        budget_stop_before_any_attempt: bool,
+    ) -> EvidenceExtractionSummary:
         for queue_index, work_item in enumerate(queue):
+            budget = get_execution_budget()
+            if envelope is not None and budget is not None and envelope.reached(budget):
+                diagnostics.remediation_attempt_capped = True
+                break
             stop_reason = self._next_evidence_budget_stop_reason()
             if stop_reason is not None:
                 budget_stop_reason = stop_reason
@@ -365,6 +450,10 @@ class EvidenceExtractionService:
                         trace=trace,
                     )
                 )
+            except RemediationAttemptEnvelopeReached:
+                diagnostics.remediation_attempt_capped = True
+                reset_active_work_item(work_item_token)
+                break
             except BudgetExhaustedError as exc:
                 stop_reason = self._graceful_budget_stop_reason(exc)
                 if stop_reason is None:
@@ -409,6 +498,11 @@ class EvidenceExtractionService:
 
         sources_without_evidence -= sources_with_evidence
         diagnostics.persisted_evidence = extracted
+        self._finalize_attempt_envelope_diagnostics(
+            diagnostics,
+            queue_len=len(queue),
+            envelope=envelope,
+        )
         diagnostics.classify(
             persisted_evidence=extracted,
             budget_stop_before_any_attempt=budget_stop_before_any_attempt,
@@ -424,6 +518,7 @@ class EvidenceExtractionService:
                 evidence_stage_budget_exhausted=evidence_stage_budget_exhausted,
                 budget_stop_reason=budget_stop_reason,
                 diagnostics=diagnostics,
+                extraction_processing_state=diagnostics.extraction_processing_state,
             )
             raise EvidenceExtractionError(
                 f"No grounded evidence extracted for workflow run {workflow_run_id}",
@@ -439,7 +534,39 @@ class EvidenceExtractionService:
             evidence_stage_budget_exhausted=evidence_stage_budget_exhausted,
             budget_stop_reason=budget_stop_reason,
             diagnostics=diagnostics,
+            extraction_processing_state=diagnostics.extraction_processing_state,
         )
+
+    @staticmethod
+    def _finalize_attempt_envelope_diagnostics(
+        diagnostics: EvidenceExtractionDiagnostics,
+        *,
+        queue_len: int,
+        envelope: RemediationAttemptEnvelope | None,
+    ) -> None:
+        processed = len(diagnostics.work_items)
+        skipped = max(0, queue_len - processed)
+        diagnostics.planned_work_items = queue_len
+        diagnostics.processed_work_items = processed
+        diagnostics.skipped_work_items = skipped
+        budget = get_execution_budget()
+        if envelope is not None and budget is not None:
+            consumed = envelope.actual_evidence_calls_consumed(budget)
+            diagnostics.remediation_attempt_calls_consumed = consumed
+            diagnostics.remediation_calls_remaining_after = (
+                remediations_reserved_remaining(budget)
+            )
+            if envelope.reached(budget):
+                diagnostics.remediation_attempt_capped = True
+            if skipped > 0 and diagnostics.remediation_attempt_capped:
+                diagnostics.extraction_processing_state = EXTRACTION_BOUNDED_PARTIAL
+            elif skipped == 0:
+                diagnostics.extraction_processing_state = EXTRACTION_FULLY_PROCESSED
+        elif skipped == 0:
+            diagnostics.extraction_processing_state = EXTRACTION_FULLY_PROCESSED
+        if diagnostics.extraction_processing_state:
+            for trace in diagnostics.work_items:
+                trace.source_processing_state = diagnostics.extraction_processing_state
 
     def _extract_work_item(
         self,

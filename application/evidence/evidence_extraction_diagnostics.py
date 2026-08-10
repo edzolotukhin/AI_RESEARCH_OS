@@ -109,6 +109,7 @@ class WorkItemTrace:
     text_passed_to_extractor_length: int = 0
     grounding_search_start: int | None = None
     grounding_search_end: int | None = None
+    source_processing_state: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -135,6 +136,8 @@ class WorkItemTrace:
             payload["grounding_search_start"] = self.grounding_search_start
         if self.grounding_search_end is not None:
             payload["grounding_search_end"] = self.grounding_search_end
+        if self.source_processing_state:
+            payload["source_processing_state"] = self.source_processing_state
         return payload
 
 
@@ -169,6 +172,17 @@ class EvidenceExtractionDiagnostics:
     work_items: list[WorkItemTrace] = field(default_factory=list)
     failure_classification: str = EvidenceStageFailureClassification.SUCCESS.value
     response_classification_counts: dict[str, int] = field(default_factory=dict)
+    extraction_processing_state: str | None = None
+    extraction_ordering: str = "document_order"
+    remediation_attempt_configured_limit: int | None = None
+    remediation_attempt_effective_limit: int | None = None
+    remediation_calls_remaining_before: int | None = None
+    remediation_calls_remaining_after: int | None = None
+    remediation_attempt_calls_consumed: int = 0
+    remediation_attempt_capped: bool = False
+    planned_work_items: int = 0
+    processed_work_items: int = 0
+    skipped_work_items: int = 0
 
     def record_response_classification(self, classification: str | None) -> None:
         if not classification:
@@ -297,7 +311,31 @@ class EvidenceExtractionDiagnostics:
             "budget_stop_reason": self.budget_stop_reason,
             "failure_classification": self.failure_classification,
             "work_items": [item.to_dict() for item in self.work_items],
+            "extraction_ordering": self.extraction_ordering,
+            "planned_work_items": self.planned_work_items,
+            "processed_work_items": self.processed_work_items,
+            "skipped_work_items": self.skipped_work_items,
+            "remediation_attempt_calls_consumed": self.remediation_attempt_calls_consumed,
+            "remediation_attempt_capped": self.remediation_attempt_capped,
         }
+        if self.extraction_processing_state is not None:
+            payload["extraction_processing_state"] = self.extraction_processing_state
+        if self.remediation_attempt_configured_limit is not None:
+            payload["remediation_attempt_configured_limit"] = (
+                self.remediation_attempt_configured_limit
+            )
+        if self.remediation_attempt_effective_limit is not None:
+            payload["remediation_attempt_effective_limit"] = (
+                self.remediation_attempt_effective_limit
+            )
+        if self.remediation_calls_remaining_before is not None:
+            payload["remediation_calls_remaining_before"] = (
+                self.remediation_calls_remaining_before
+            )
+        if self.remediation_calls_remaining_after is not None:
+            payload["remediation_calls_remaining_after"] = (
+                self.remediation_calls_remaining_after
+            )
         if self.response_classification_counts:
             payload["response_classification_counts"] = dict(
                 self.response_classification_counts,

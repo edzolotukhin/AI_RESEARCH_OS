@@ -35,6 +35,9 @@ from application.execution.budget_utils import (
     EVIDENCE_REMEDIATION_BUDGET_REASON,
     EVIDENCE_STAGE_CAP_REASON,
 )
+from application.execution.remediation_attempt_envelope import (
+    EXTRACTION_BOUNDED_PARTIAL,
+)
 from domain.research_quality.research_termination_reason import (
     BUDGET_CONTROLLED_TERMINATION_REASONS,
 )
@@ -166,7 +169,8 @@ class ResearchLoopService:
                 checkpoint_loop_progress(context)
                 iteration = self._runner.run(context, request)
                 if (
-                    iteration.budget_stop_reason
+                    iteration.extraction_processing_state != EXTRACTION_BOUNDED_PARTIAL
+                    and iteration.budget_stop_reason
                     in {
                         EVIDENCE_STAGE_CAP_REASON,
                         EVIDENCE_REMEDIATION_BUDGET_REASON,
@@ -204,6 +208,28 @@ class ResearchLoopService:
                 cache_payload = context.read_shared(SHARED_SUFFICIENCY_CACHE_KEY)
                 if not isinstance(cache_payload, dict):
                     cache_payload = {}
+                attempt_diagnostics = dict(
+                    iteration.remediation_attempt_diagnostics or {},
+                )
+                attempt_diagnostics.update(
+                    {
+                        "research_question_id": request.research_question_id,
+                        "information_need_id": need_id,
+                        "attempt_number": request.attempt,
+                        "attempt_completed": True,
+                        "improved": gap_improved,
+                        "sufficiency_reassessed": bool(
+                            cache_payload.get("reassessed_need_ids"),
+                        ),
+                        "fingerprint_changed": int(
+                            cache_payload.get("reassessed_fingerprint_changed") or 0,
+                        )
+                        > 0,
+                        "status_before": self._need_status_value(previous, need_id),
+                        "status_after": self._need_status_value(result, need_id),
+                        "termination_reason": None,
+                    }
+                )
                 record = ResearchLoopIterationRecord(
                     attempt=loop_state.research_loop_count,
                     round_number=round_number,
@@ -226,6 +252,7 @@ class ResearchLoopService:
                     missing_need_ids=tuple(
                         str(item) for item in cache_payload.get("missing_need_ids", [])
                     ),
+                    remediation_attempt_diagnostics=attempt_diagnostics,
                 )
                 loop_state.history.append(record)
                 loop_state.previous_readiness_result = serialize_readiness(
@@ -358,6 +385,17 @@ class ResearchLoopService:
             for need_id in record.targeted_need_ids:
                 last_improved[need_id] = bool(record.improved)
         return {need_id for need_id, flag in last_improved.items() if flag}
+
+    @staticmethod
+    def _need_status_value(
+        result: ResearchReadinessResult,
+        need_id: str,
+    ) -> str | None:
+        for assessment in result.research_question_assessments:
+            for need in assessment.information_need_assessments:
+                if need.information_need_id == need_id:
+                    return need.status.value
+        return None
 
     @staticmethod
     def _remaining_remediation_evidence_calls() -> int | None:

@@ -25,9 +25,10 @@ class ResearchLoopIterationRecord:
     reused_need_ids: tuple[str, ...] = ()
     reassessed_need_ids: tuple[str, ...] = ()
     missing_need_ids: tuple[str, ...] = ()
+    remediation_attempt_diagnostics: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "attempt": self.attempt,
             "round_number": self.round_number,
             "blocking_need_ids_before": list(self.blocking_need_ids_before),
@@ -43,6 +44,11 @@ class ResearchLoopIterationRecord:
             "reassessed_need_ids": list(self.reassessed_need_ids),
             "missing_need_ids": list(self.missing_need_ids),
         }
+        if self.remediation_attempt_diagnostics is not None:
+            payload["remediation_attempt_diagnostics"] = dict(
+                self.remediation_attempt_diagnostics,
+            )
+        return payload
 
 
 @dataclass
@@ -103,6 +109,11 @@ class ResearchLoopState:
                 ),
                 missing_need_ids=tuple(
                     str(value) for value in item.get("missing_need_ids", [])
+                ),
+                remediation_attempt_diagnostics=(
+                    dict(item["remediation_attempt_diagnostics"])
+                    if isinstance(item.get("remediation_attempt_diagnostics"), dict)
+                    else None
                 ),
             )
             for item in payload.get("history", [])
