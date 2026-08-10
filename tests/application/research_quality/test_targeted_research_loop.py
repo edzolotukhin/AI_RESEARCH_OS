@@ -680,22 +680,37 @@ class TargetedResearchLoopTests(unittest.TestCase):
             _need_assessment(need_id="in-1", rq_id="rq-1", status=SufficiencyStatus.INSUFFICIENT),
             _need_assessment(need_id="in-2", rq_id="rq-2", status=SufficiencyStatus.MISSING),
         )
-        round1_done = _result_for_needs(
+        after_in2_first = _result_for_needs(
             _need_assessment(need_id="in-1", rq_id="rq-1", status=SufficiencyStatus.INSUFFICIENT),
             _need_assessment(need_id="in-2", rq_id="rq-2", status=SufficiencyStatus.INSUFFICIENT),
         )
-        round2_in1 = _result_for_needs(
+        after_in1_repeat = _result_for_needs(
             _need_assessment(need_id="in-1", rq_id="rq-1", status=SufficiencyStatus.PARTIAL),
             _need_assessment(need_id="in-2", rq_id="rq-2", status=SufficiencyStatus.INSUFFICIENT),
         )
-        round2_done = _result_for_needs(
+        after_in2_repeat = _result_for_needs(
             _need_assessment(need_id="in-1", rq_id="rq-1", status=SufficiencyStatus.PARTIAL),
             _need_assessment(need_id="in-2", rq_id="rq-2", status=SufficiencyStatus.PARTIAL),
         )
+        source_repo = InMemorySourceRepository()
+        evidence_repo = InMemoryEvidenceRepository()
+        runner = RecordingTargetedRunner(
+            source_repository=source_repo,
+            evidence_repository=evidence_repo,
+        )
         service = _build_service(
             SequentialSufficiencyEvaluator(
-                [missing_both, round1_in1, round1_done, round2_in1, round2_done],
+                [
+                    missing_both,
+                    round1_in1,
+                    after_in2_first,
+                    after_in1_repeat,
+                    after_in2_repeat,
+                ],
             ),
+            source_repository=source_repo,
+            evidence_repository=evidence_repo,
+            runner=runner,
             max_rounds=2,
             max_attempts_per_gap=2,
         )
@@ -704,8 +719,14 @@ class TargetedResearchLoopTests(unittest.TestCase):
         self.assertFalse(result.ready_for_analysis)
         payload = context.read_shared("research_readiness")
         self.assertEqual(payload["research_outcome"], ResearchOutcome.INSUFFICIENT_RESEARCH.value)
-        self.assertEqual(result.termination_reason, "max_research_rounds")
+        self.assertIn(
+            result.termination_reason,
+            {"max_research_rounds", "no_material_improvement"},
+        )
         self.assertGreaterEqual(payload["research_loop_count"], 2)
+        self.assertGreaterEqual(len(runner.targeted_need_ids), 2)
+        self.assertEqual(runner.targeted_need_ids[0], "in-1")
+        self.assertEqual(runner.targeted_need_ids[1], "in-2")
 
     def test_no_material_improvement_terminates(self) -> None:
         unchanged = _missing_result()

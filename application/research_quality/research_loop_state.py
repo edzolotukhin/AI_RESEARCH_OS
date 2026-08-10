@@ -55,10 +55,13 @@ class ResearchLoopState:
     termination_reason: str = ""
     history: list[ResearchLoopIterationRecord] | None = None
     previous_readiness_result: dict[str, Any] | None = None
+    scheduler_decisions: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.history is None:
             self.history = []
+        if self.scheduler_decisions is None:
+            self.scheduler_decisions = []
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -70,6 +73,7 @@ class ResearchLoopState:
             "termination_reason": self.termination_reason,
             "history": [item.to_dict() for item in (self.history or [])],
             "previous_readiness_result": self.previous_readiness_result,
+            "scheduler_decisions": [dict(item) for item in self.scheduler_decisions],
         }
 
     @classmethod
@@ -108,6 +112,11 @@ class ResearchLoopState:
             str(need_id): int(count)
             for need_id, count in raw_counts.items()
         }
+        scheduler_decisions = [
+            dict(item)
+            for item in payload.get("scheduler_decisions") or []
+            if isinstance(item, dict)
+        ]
         return cls(
             research_loop_count=int(payload.get("research_loop_count", 0)),
             current_round=int(payload.get("current_round", 0)),
@@ -117,6 +126,7 @@ class ResearchLoopState:
             termination_reason=str(payload.get("termination_reason", "")),
             history=history,
             previous_readiness_result=payload.get("previous_readiness_result"),
+            scheduler_decisions=scheduler_decisions,
         )
 
 

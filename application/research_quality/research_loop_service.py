@@ -7,7 +7,8 @@ from application.execution.exceptions import BudgetExhaustedError
 from application.ports.evidence_ports import EvidenceRepository
 from application.ports.research_quality_ports import ResearchSufficiencyEvaluator
 from application.ports.source_ports import SourceRepository
-from application.research_quality.gap_scheduler import select_next_actionable_gap
+from application.execution.execution_budget_context import get_execution_budget
+from application.research_quality.gap_scheduler import decide_next_actionable_gap
 from application.research_quality.gap_selection import select_actionable_gaps
 from application.research_quality.research_loop_checkpoint import checkpoint_loop_progress
 from application.research_quality.research_loop_state import (
@@ -112,12 +113,19 @@ class ResearchLoopService:
                     loop_state.termination_reason = "no_actionable_gaps"
                     break
 
-                request = select_next_actionable_gap(
+                decision = decide_next_actionable_gap(
                     gaps,
                     gap_attempt_counts=loop_state.gap_attempt_counts,
                     stalled_need_ids=stalled_need_ids,
                     max_attempts_per_gap=self._bounds.max_attempts_per_gap,
+                    remaining_remediation_evidence_calls=(
+                        self._remaining_remediation_evidence_calls()
+                    ),
+                    prior_improved_need_ids=self._prior_improved_need_ids(
+                        loop_state,
+                    ),
                 )
+                request = decision.selected
                 if request is None:
                     if not sufficiency_budget_available():
                         result, loop_state = apply_sufficiency_budget_termination(
@@ -143,6 +151,7 @@ class ResearchLoopService:
                     )
                     return self._finalize(context, result, loop_state)
 
+                loop_state.scheduler_decisions.append(decision.to_dict())
                 need_id = request.information_need_id
                 request = replace(
                     request,
@@ -341,3 +350,21 @@ class ResearchLoopService:
                 continue
             stalled.update(record.targeted_need_ids)
         return stalled
+
+    @staticmethod
+    def _prior_improved_need_ids(loop_state: ResearchLoopState) -> set[str]:
+        last_improved: dict[str, bool] = {}
+        for record in loop_state.history or []:
+            for need_id in record.targeted_need_ids:
+                last_improved[need_id] = bool(record.improved)
+        return {need_id for need_id, flag in last_improved.items() if flag}
+
+    @staticmethod
+    def _remaining_remediation_evidence_calls() -> int | None:
+        budget = get_execution_budget()
+        if budget is None:
+            return None
+        return max(
+            0,
+            budget.evidence_remediation_reserved - budget.evidence_remediation_calls,
+        )
