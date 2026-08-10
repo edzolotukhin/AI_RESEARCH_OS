@@ -9,6 +9,10 @@ from application.sources.expectation_aware_query_intent import (
 )
 from application.sources.url_canonicalizer import normalize_query_text
 
+SEMANTIC_TARGET_MISSING_ASPECTS = "missing_aspects"
+SEMANTIC_TARGET_EE_FALLBACK = "EE_fallback"
+SEMANTIC_TARGET_LEGACY_DIRECTIVES = "legacy_directives"
+
 
 class TargetedSearchQueryBuilder:
     """Build bounded search queries for one targeted InformationNeed gap."""
@@ -37,16 +41,28 @@ class TargetedSearchQueryBuilder:
                 "InformationNeed does not belong to the specified ResearchQuestion",
             )
 
-        queries: list[SearchQuery] = []
-        semantic_targets = request.missing_aspects or request.search_directives
+        question = next(
+            (
+                item
+                for item in design.research_questions
+                if item.id == need.research_question_id
+            ),
+            None,
+        )
+        subject_context = question.question if question is not None else ""
+        semantic_targets, target_source = self._resolve_semantic_targets(
+            need=need,
+            request=request,
+        )
         base_text = build_expectation_aware_query_text(
+            subject_context=subject_context,
             description=need.description,
             geography=need.geography,
             timeframe=need.timeframe,
             semantic_targets=semantic_targets,
         )
 
-        queries.append(
+        queries: list[SearchQuery] = [
             SearchQuery(
                 id=f"sq-target-{need.id}-a{request.attempt}-0",
                 research_question_id=need.research_question_id,
@@ -59,10 +75,11 @@ class TargetedSearchQueryBuilder:
                 max_results=max_results,
                 rationale=(
                     f"Targeted base query for information need {need.id} "
-                    f"(attempt {request.attempt})"
+                    f"(attempt {request.attempt}); "
+                    f"semantic_target_source={target_source}"
                 ),
             ),
-        )
+        ]
 
         for index, directive in enumerate(request.search_directives, start=1):
             if len(queries) >= max_queries:
@@ -89,3 +106,21 @@ class TargetedSearchQueryBuilder:
             )
 
         return queries[:max_queries]
+
+    @staticmethod
+    def _resolve_semantic_targets(
+        *,
+        need,
+        request: TargetedResearchRequest,
+    ) -> tuple[tuple[str, ...], str]:
+        """Resolve targeted semantic targets without inventing EE aspects."""
+        if need.evidence_expectation is not None:
+            if request.missing_aspects:
+                return tuple(request.missing_aspects), SEMANTIC_TARGET_MISSING_ASPECTS
+            return (
+                tuple(need.evidence_expectation.required_aspects),
+                SEMANTIC_TARGET_EE_FALLBACK,
+            )
+        if request.missing_aspects:
+            return tuple(request.missing_aspects), SEMANTIC_TARGET_LEGACY_DIRECTIVES
+        return tuple(request.search_directives), SEMANTIC_TARGET_LEGACY_DIRECTIVES

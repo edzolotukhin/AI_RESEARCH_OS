@@ -27,11 +27,16 @@ def build_expectation_aware_query_text(
     geography: str | None = None,
     timeframe: str | None = None,
     semantic_targets: Sequence[str] = (),
+    subject_context: str | None = None,
 ) -> str:
     """Compose one deterministic Search query carrying semantic aspect intent.
 
-    Order: need description, unique aspect phrases, geography, timeframe.
-    Identical inputs always yield identical text. Pure application logic.
+    Order: optional subject/topic context, need description, unique aspect
+    phrases, geography, timeframe. Identical inputs always yield identical
+    text. Pure application logic.
+
+    ``subject_context`` is optional and defaults unused so initial Search
+    (P1-07.13.1) remains behaviorally unchanged when omitted.
     """
     parts: list[str] = []
     seen_phrases: set[str] = set()
@@ -49,6 +54,8 @@ def build_expectation_aware_query_text(
         seen_phrases.add(key)
         parts.append(text)
 
+    if subject_context:
+        _append(subject_context)
     _append(description)
     for aspect_id in semantic_targets:
         _append(render_aspect_query_terms(aspect_id))

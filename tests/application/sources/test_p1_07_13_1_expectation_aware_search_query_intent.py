@@ -350,9 +350,12 @@ class NoExtraLlmBudgetTests(unittest.TestCase):
         self.assertNotIn("budget", source.lower())
         builder_src = inspect.getsource(SearchQueryBuilder._build_query)
         targeted_src = inspect.getsource(TargetedSearchQueryBuilder.build_queries)
+        resolve_src = inspect.getsource(TargetedSearchQueryBuilder._resolve_semantic_targets)
         self.assertIn("build_expectation_aware_query_text", builder_src)
         self.assertIn("build_expectation_aware_query_text", targeted_src)
-        self.assertIn("missing_aspects", targeted_src)
+        self.assertIn("missing_aspects", resolve_src)
+        self.assertIn("required_aspects", resolve_src)
+        self.assertIn("subject_context", targeted_src)
 
 
 if __name__ == "__main__":
