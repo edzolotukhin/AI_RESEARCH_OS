@@ -184,10 +184,10 @@ def create_application_container(
         execution_log_store=persistence.execution_log_store,
     )
 
-    llm_client = overrides.llm_client or _create_llm_client(config)
-    from infrastructure.llm.budget_enforcing_llm_client import BudgetEnforcingLLMClient
+    from application.llm.stage_llm_clients import resolve_stage_llm_clients
 
-    llm_client = BudgetEnforcingLLMClient(llm_client)
+    stage_llm_clients = resolve_stage_llm_clients(config, overrides)
+    planner_llm_client = stage_llm_clients.planner
 
     executor_catalog = ExecutorCatalog.from_capabilities(
         AGENT_EXECUTOR_CAPABILITIES,
@@ -212,7 +212,7 @@ def create_application_container(
         bounds=planner_bounds,
     )
     structured_output_generator = StructuredOutputGenerator(
-        llm_client=llm_client,
+        llm_client=planner_llm_client,
         parser=structured_output_parser,
         executor_catalog=executor_catalog,
         payload_schema=RESEARCH_DESIGN_PAYLOAD_SCHEMA,
@@ -254,7 +254,7 @@ def create_application_container(
         report_repository=report_repository,
         review_repository=review_repository,
         artifact_repository=persistence.artifact_repository,
-        llm_client=llm_client,
+        stage_llm_clients=stage_llm_clients,
     )
 
     _ensure_executor_catalog_matches_registry(
@@ -419,7 +419,7 @@ def _build_agent_executors(
     report_repository,
     review_repository,
     artifact_repository,
-    llm_client,
+    stage_llm_clients,
 ) -> dict:
     use_deterministic_stages = (
         overrides.deterministic_stage_executors
@@ -461,14 +461,14 @@ def _build_agent_executors(
         overrides=overrides,
         evidence_repository=evidence_repository,
         source_repository=source_repository,
-        llm_client=llm_client,
+        llm_client=stage_llm_clients.evidence,
     )
     executors["research_quality"] = build_research_readiness_executor(
         config=config,
         overrides=overrides,
         evidence_repository=evidence_repository,
         source_repository=source_repository,
-        llm_client=llm_client,
+        llm_client=stage_llm_clients.evidence,
     )
     executors["analysis"] = build_analysis_executor(
         config=config,
@@ -476,7 +476,7 @@ def _build_agent_executors(
         evidence_repository=evidence_repository,
         finding_repository=finding_repository,
         insight_repository=insight_repository,
-        llm_client=llm_client,
+        llm_client=stage_llm_clients.analysis,
     )
     executors["report"] = (
         overrides.report_executor
@@ -490,7 +490,7 @@ def _build_agent_executors(
             source_repository=source_repository,
             report_repository=report_repository,
             artifact_repository=artifact_repository,
-            llm_client=llm_client,
+            llm_client=stage_llm_clients.report,
         )
     )
     executors["review"] = (
@@ -506,7 +506,7 @@ def _build_agent_executors(
             report_repository=report_repository,
             artifact_repository=artifact_repository,
             review_repository=review_repository,
-            llm_client=llm_client,
+            llm_client=stage_llm_clients.review,
         )
     )
     return executors
@@ -531,19 +531,12 @@ def _ensure_executor_catalog_matches_registry(
 
 
 def _create_llm_client(config: ApplicationConfig):
-    import os
+    """
+    Legacy live LLM client constructor.
 
-    if os.environ.get("DETERMINISTIC_PLANNER", "").lower() in {"1", "true", "yes"}:
-        from infrastructure.llm.deterministic_llm_client import DeterministicLLMClient
+    DETERMINISTIC_PLANNER no longer affects this function (P1-08.2).
+    Prefer resolve_stage_llm_clients() for stage-scoped composition.
+    """
+    from application.llm.stage_llm_clients import create_live_llm_client
 
-        return DeterministicLLMClient()
-
-    from infrastructure.llm.llm_configuration import LLMConfiguration
-    from infrastructure.llm.openai_client import OpenAIClient
-
-    llm_configuration = LLMConfiguration(
-        model=config.llm_model,
-        max_tokens=config.llm_max_tokens,
-    )
-
-    return OpenAIClient(configuration=llm_configuration)
+    return create_live_llm_client(config)

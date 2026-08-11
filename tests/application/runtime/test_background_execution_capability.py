@@ -83,7 +83,7 @@ class BackgroundExecutionCapabilityTests(unittest.TestCase):
 
 class DeterministicPlannerSelectionTests(unittest.TestCase):
 
-    def test_deterministic_planner_is_not_default(self) -> None:
+    def test_live_llm_client_is_default_without_deterministic_planner(self) -> None:
         from application.composition_root import _create_llm_client
         from infrastructure.llm.openai_client import OpenAIClient
 
@@ -93,13 +93,32 @@ class DeterministicPlannerSelectionTests(unittest.TestCase):
             client = _create_llm_client(ApplicationConfig())
         self.assertIsInstance(client, OpenAIClient)
 
-    def test_deterministic_planner_selected_only_when_explicit(self) -> None:
+    def test_deterministic_planner_does_not_change_legacy_live_constructor(self) -> None:
+        """P1-08.2: _create_llm_client is live-only; planner flag is stage-scoped."""
         from application.composition_root import _create_llm_client
-        from infrastructure.llm.deterministic_llm_client import DeterministicLLMClient
+        from infrastructure.llm.openai_client import OpenAIClient
 
         with patch.dict(os.environ, {"DETERMINISTIC_PLANNER": "1"}, clear=False):
             client = _create_llm_client(ApplicationConfig())
-        self.assertIsInstance(client, DeterministicLLMClient)
+        self.assertIsInstance(client, OpenAIClient)
+
+    def test_stage_clients_isolate_deterministic_planner(self) -> None:
+        from application.llm.stage_llm_clients import (
+            resolve_stage_llm_clients,
+            unwrap_llm_client,
+        )
+        from infrastructure.llm.deterministic_llm_client import DeterministicLLMClient
+        from infrastructure.llm.openai_client import OpenAIClient
+
+        clients = resolve_stage_llm_clients(
+            ApplicationConfig(),
+            environ={"DETERMINISTIC_PLANNER": "1"},
+        )
+        self.assertIsInstance(unwrap_llm_client(clients.planner), DeterministicLLMClient)
+        self.assertIsInstance(unwrap_llm_client(clients.analysis), OpenAIClient)
+        self.assertIsInstance(unwrap_llm_client(clients.report), OpenAIClient)
+        self.assertIsInstance(unwrap_llm_client(clients.review), OpenAIClient)
+        self.assertIsInstance(unwrap_llm_client(clients.evidence), OpenAIClient)
 
 
 if __name__ == "__main__":

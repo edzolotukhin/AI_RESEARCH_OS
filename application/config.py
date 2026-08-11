@@ -352,6 +352,11 @@ class ApplicationOverrides:
     """
 
     llm_client: LLMClient | None = None
+    planner_llm_client: LLMClient | None = None
+    analysis_llm_client: LLMClient | None = None
+    report_llm_client: LLMClient | None = None
+    review_llm_client: LLMClient | None = None
+    evidence_llm_client: LLMClient | None = None
     project_repository: ProjectRepository | None = None
     project_service: ProjectService | None = None
     registry: Registry | None = None
