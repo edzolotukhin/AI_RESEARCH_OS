@@ -19,6 +19,10 @@ class SecurityBoundaryTests(unittest.TestCase):
             {"fastapi", "starlette", "sqlalchemy"},
         )
 
+    def test_domain_and_application_do_not_import_openpyxl(self) -> None:
+        self._assert_package_has_no_imports("domain", {"openpyxl"})
+        self._assert_package_has_no_imports("application", {"openpyxl"})
+
     def test_api_routers_do_not_import_postgresql_repositories(self) -> None:
         router_dir = REPO_ROOT / "api" / "routers"
         forbidden = "infrastructure.persistence.postgresql.repositories"

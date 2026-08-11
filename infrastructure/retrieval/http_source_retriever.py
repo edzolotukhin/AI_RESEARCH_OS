@@ -12,6 +12,13 @@ from application.ports.source_ports import SourceRetriever
 from infrastructure.retrieval.html_text_extractor import extract_text_from_html
 from infrastructure.retrieval.network_safety import UnsafeUrlError
 from infrastructure.retrieval.redirect_fetcher import fetch_with_validated_redirects
+from infrastructure.retrieval.xlsx_text_extractor import (
+    XLSX_CONTENT_TYPE,
+    extract_xlsx_text,
+    is_unsupported_spreadsheet_url,
+    is_xlsx_content_type,
+    looks_like_xlsx_url,
+)
 
 
 RETRIEVAL_FAILURE_CATEGORIES = {
@@ -116,6 +123,37 @@ class HttpSourceRetriever(SourceRetriever):
                 content_type=content_type,
             )
 
+        if self._should_extract_xlsx(content_type=content_type, url=final_url):
+            return self._acquire_xlsx(
+                candidate=candidate,
+                retrieved_at=now,
+                final_url=final_url,
+                content_type=content_type or XLSX_CONTENT_TYPE,
+                body=body,
+                body_truncated=truncated,
+            )
+
+        if is_unsupported_spreadsheet_url(final_url) or content_type in {
+            "application/vnd.ms-excel",
+            "application/vnd.ms-excel.sheet.binary.macroenabled.12",
+            "application/vnd.oasis.opendocument.spreadsheet",
+        }:
+            return Source(
+                id="",
+                project_id="",
+                url=final_url,
+                canonical_url=final_url,
+                title=candidate.title,
+                retrieved_at=now,
+                source_type=candidate.source_type or "web",
+                content_type=content_type,
+                retrieval_status=RetrievalStatus.UNSUPPORTED,
+                metadata={
+                    "reason": "unsupported_spreadsheet_format",
+                    "failure_category": "unsupported_content_type",
+                },
+            )
+
         if not any(content_type.startswith(item) for item in self._SUPPORTED_CONTENT_TYPES):
             if content_type.startswith("application/pdf"):
                 return Source(
@@ -181,6 +219,140 @@ class HttpSourceRetriever(SourceRetriever):
             content_type=content_type,
             retrieval_status=status,
             content_text=extracted,
+            content_checksum=checksum,
+            metadata=metadata,
+        )
+
+    def _should_extract_xlsx(self, *, content_type: str, url: str) -> bool:
+        if is_xlsx_content_type(content_type):
+            return True
+        # Defensive fallback: .xlsx URL with ambiguous/octet-stream MIME.
+        if looks_like_xlsx_url(url) and (
+            not content_type
+            or content_type
+            in {
+                "application/octet-stream",
+                "binary/octet-stream",
+                "application/zip",
+            }
+            or is_xlsx_content_type(content_type)
+        ):
+            return True
+        return False
+
+    def _acquire_xlsx(
+        self,
+        *,
+        candidate: SourceCandidate,
+        retrieved_at: str,
+        final_url: str,
+        content_type: str,
+        body: bytes,
+        body_truncated: bool,
+    ) -> Source:
+        result = extract_xlsx_text(body, content_type=content_type)
+        metadata: dict[str, object] = dict(result.metadata)
+        if body_truncated:
+            metadata["truncated"] = True
+            metadata["body_truncated"] = True
+            metadata["failure_category"] = "content_too_large"
+            metadata["workbook_truncated"] = True
+
+        if result.error == "encrypted_workbook":
+            return Source(
+                id="",
+                project_id="",
+                url=final_url,
+                canonical_url=final_url,
+                title=candidate.title,
+                retrieved_at=retrieved_at,
+                source_type=candidate.source_type or "web",
+                content_type=content_type,
+                retrieval_status=RetrievalStatus.UNSUPPORTED,
+                metadata={
+                    **metadata,
+                    "reason": "encrypted_workbook",
+                    "failure_category": "unsupported_content_type",
+                },
+            )
+
+        if result.error in {"workbook_parse_failed", "no_renderable_cells"}:
+            return Source(
+                id="",
+                project_id="",
+                url=final_url,
+                canonical_url=final_url,
+                title=candidate.title,
+                retrieved_at=retrieved_at,
+                source_type=candidate.source_type or "web",
+                content_type=content_type,
+                retrieval_status=RetrievalStatus.FAILED,
+                metadata={
+                    **metadata,
+                    "reason": result.error,
+                    "failure_category": "other_retrieval_error",
+                },
+            )
+
+        if result.error:
+            return Source(
+                id="",
+                project_id="",
+                url=final_url,
+                canonical_url=final_url,
+                title=candidate.title,
+                retrieved_at=retrieved_at,
+                source_type=candidate.source_type or "web",
+                content_type=content_type,
+                retrieval_status=RetrievalStatus.FAILED,
+                metadata={
+                    **metadata,
+                    "reason": result.error,
+                    "failure_category": "other_retrieval_error",
+                },
+            )
+
+        text = result.text.strip()
+        if not text:
+            return Source(
+                id="",
+                project_id="",
+                url=final_url,
+                canonical_url=final_url,
+                title=candidate.title,
+                retrieved_at=retrieved_at,
+                source_type=candidate.source_type or "web",
+                content_type=content_type,
+                retrieval_status=RetrievalStatus.FAILED,
+                metadata={
+                    **metadata,
+                    "reason": "no_renderable_cells",
+                    "failure_category": "other_retrieval_error",
+                },
+            )
+
+        workbook_truncated = bool(metadata.get("workbook_truncated")) or body_truncated
+        status = (
+            RetrievalStatus.TRUNCATED
+            if workbook_truncated or body_truncated
+            else RetrievalStatus.ACQUIRED
+        )
+        if workbook_truncated:
+            metadata["workbook_truncated"] = True
+            metadata.setdefault("failure_category", "content_too_large")
+
+        checksum = _content_checksum(text)
+        return Source(
+            id="",
+            project_id="",
+            url=final_url,
+            canonical_url=final_url,
+            title=candidate.title,
+            retrieved_at=retrieved_at,
+            source_type=candidate.source_type or "web",
+            content_type=content_type,
+            retrieval_status=status,
+            content_text=text,
             content_checksum=checksum,
             metadata=metadata,
         )
