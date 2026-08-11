@@ -515,7 +515,12 @@ class SourceAcquisitionService:
 
             best = max(
                 fetchable,
-                key=lambda item: (item.tier_rank, item.topic_score, -item.geo_penalty),
+                key=lambda item: (
+                    item.expectation_boost,
+                    item.tier_rank,
+                    item.topic_score,
+                    -item.geo_penalty,
+                ),
             )
             eligible.append(
                 _CandidateGroup(
@@ -589,14 +594,17 @@ class SourceAcquisitionService:
         for index, group in enumerate(groups):
             if index >= source_group_limit:
                 skipped_budget += 1
-                decisions.append(
-                    {
-                        "canonical_url": group.canonical_url,
-                        "action": ACTION_SKIPPED_BUDGET,
-                        "provider_rank": group.best_rank,
-                        "reason": "source_attempt_cap",
-                    }
-                )
+                skip_payload: dict[str, Any] = {
+                    "canonical_url": group.canonical_url,
+                    "action": ACTION_SKIPPED_BUDGET,
+                    "provider_rank": group.best_rank,
+                    "reason": "source_attempt_cap",
+                }
+                if group.decision is not None:
+                    skip_payload.update(group.decision.to_dict())
+                    skip_payload["action"] = ACTION_SKIPPED_BUDGET
+                    skip_payload["reason"] = "source_attempt_cap"
+                decisions.append(skip_payload)
                 continue
 
             if self._budget_remaining(started_at) <= 0:

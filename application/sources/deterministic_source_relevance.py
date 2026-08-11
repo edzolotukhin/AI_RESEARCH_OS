@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
+from domain.planning.evidence_nature import EvidenceNature
 from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
 from domain.sources.source_candidate import SourceCandidate
 
@@ -277,6 +278,55 @@ ACTION_SELECTED = "selected"
 ACTION_PROXY = "proxy_deprioritized"
 ACTION_REJECTED = "unrelated_rejected"
 ACTION_EXHAUSTED = "exhausted_for_need"
+
+# Structural / lexical signals for primary statistics (not a domain whitelist).
+_STATISTICS_CONTENT_TOKENS = frozenset(
+    {
+        "bulletin",
+        "census",
+        "dashboard",
+        "dataset",
+        "datasets",
+        "deployment",
+        "deployments",
+        "indicator",
+        "indicators",
+        "installations",
+        "quarterly",
+        "statistical",
+        "statistics",
+        "statistic",
+        "timeseries",
+        "workbook",
+    }
+)
+_STATISTICS_PATH_MARKERS = (
+    "/statistics",
+    "/stats/",
+    "/stats?",
+    "/transparency",
+    "/opendata",
+    "/open-data",
+    "/dataset",
+    "/datasets/",
+    "/data-dashboard",
+    "/dashboard",
+)
+_PREFERRED_AUTHORITY_TYPE_TOKENS = frozenset(
+    {
+        "certification",
+        "government",
+        "institutional",
+        "official",
+        "programme",
+        "program",
+        "regulator",
+        "regulatory",
+        "standards",
+        "statistical",
+        "statistics",
+    }
+)
 ACTION_SKIPPED_BUDGET = "skipped_budget"
 ACTION_FETCH_FAILED = "fetch_failed"
 
@@ -316,6 +366,8 @@ class RelevanceContext:
     required_geo_tokens: frozenset[str]
     has_distinctive_anchors: bool
     legacy_expectation: bool
+    quantitative_expectation: bool = False
+    preferred_source_type_tokens: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -328,6 +380,9 @@ class SourceRelevanceDecision:
     reason: str
     information_need_id: str
     provider_rank: int
+    expectation_boost: int = 0
+    authority_score: int = 0
+    statistics_signal: int = 0
 
     @property
     def is_fetch_eligible(self) -> bool:
@@ -360,6 +415,9 @@ class SourceRelevanceDecision:
             "reason": self.reason,
             "information_need_id": self.information_need_id,
             "provider_rank": self.provider_rank,
+            "expectation_boost": self.expectation_boost,
+            "authority_score": self.authority_score,
+            "statistics_signal": self.statistics_signal,
         }
 
 
@@ -404,6 +462,18 @@ def build_relevance_context(
         for token in (topic_anchors - required_geo)
         if not token.isdigit() and token not in _GENERIC_CONTRACT_WORDS
     )
+    quantitative = False
+    if need.evidence_expectation is not None:
+        ee = need.evidence_expectation
+        quantitative = bool(ee.requires_quantitative_evidence) or ee.nature in {
+            EvidenceNature.QUANTITATIVE,
+            EvidenceNature.MIXED,
+        }
+    preferred_tokens = frozenset(
+        token
+        for item in need.preferred_source_types
+        for token in tokenize(item, min_length=3)
+    )
     return RelevanceContext(
         information_need_id=need.id,
         research_question_id=need.research_question_id,
@@ -414,6 +484,8 @@ def build_relevance_context(
         required_geo_tokens=required_geo,
         has_distinctive_anchors=len(distinctive) >= _MIN_DISTINCTIVE_ANCHORS,
         legacy_expectation=legacy,
+        quantitative_expectation=quantitative,
+        preferred_source_type_tokens=preferred_tokens,
     )
 
 
@@ -423,13 +495,43 @@ def evaluate_candidate(
     *,
     canonical_url: str = "",
 ) -> SourceRelevanceDecision:
-    blob = _candidate_blob(candidate, canonical_url)
+    url = canonical_url or candidate.url or ""
+    blob = _candidate_blob(candidate, url)
     candidate_tokens = tokenize(blob) | geography_tokens(blob)
     rq_overlap = len(context.rq_tokens & candidate_tokens)
     need_overlap = len(context.need_tokens & candidate_tokens)
     anchor_overlap = len(context.topic_anchors & candidate_tokens)
     geo_alignment = _classify_geography(context.required_geo_tokens, candidate_tokens)
     provider_rank = int(candidate.rank or 0)
+    authority_score = _authority_score(url)
+    statistics_signal = _statistics_signal(candidate_tokens, url)
+
+    def _decision(
+        *,
+        eligibility: str,
+        topic_score: int,
+        reason: str,
+    ) -> SourceRelevanceDecision:
+        boost = _expectation_boost(
+            context=context,
+            eligibility=eligibility,
+            topic_score=topic_score,
+            authority_score=authority_score,
+            statistics_signal=statistics_signal,
+        )
+        return SourceRelevanceDecision(
+            eligibility=eligibility,
+            geo_alignment=geo_alignment,
+            topic_score=topic_score,
+            rq_overlap=rq_overlap,
+            need_overlap=need_overlap,
+            reason=reason,
+            information_need_id=context.information_need_id,
+            provider_rank=provider_rank,
+            expectation_boost=boost,
+            authority_score=authority_score,
+            statistics_signal=statistics_signal,
+        )
 
     if not context.has_distinctive_anchors or context.legacy_expectation:
         reason = (
@@ -445,15 +547,10 @@ def evaluate_candidate(
                 else ELIGIBILITY_PROXY
             )
             reason = f"legacy_topic_aligned_geo_{geo_alignment}"
-        return SourceRelevanceDecision(
+        return _decision(
             eligibility=eligibility,
-            geo_alignment=geo_alignment,
             topic_score=anchor_overlap,
-            rq_overlap=rq_overlap,
-            need_overlap=need_overlap,
             reason=reason,
-            information_need_id=context.information_need_id,
-            provider_rank=provider_rank,
         )
 
     topic_signal = frozenset(
@@ -472,27 +569,17 @@ def evaluate_candidate(
         and distinctive_overlap == 0
         and generic_contract_overlap
     ):
-        return SourceRelevanceDecision(
+        return _decision(
             eligibility=ELIGIBILITY_INELIGIBLE,
-            geo_alignment=geo_alignment,
             topic_score=need_overlap,
-            rq_overlap=rq_overlap,
-            need_overlap=need_overlap,
             reason="generic_local_overlap_without_parent_topic",
-            information_need_id=context.information_need_id,
-            provider_rank=provider_rank,
         )
 
     if distinctive_overlap == 0 and context.has_distinctive_anchors:
-        return SourceRelevanceDecision(
+        return _decision(
             eligibility=ELIGIBILITY_UNSCORED,
-            geo_alignment=geo_alignment,
             topic_score=0,
-            rq_overlap=rq_overlap,
-            need_overlap=need_overlap,
             reason="no_positive_topic_signal_unscored",
-            information_need_id=context.information_need_id,
-            provider_rank=provider_rank,
         )
 
     topic_score = (rq_overlap * 3) + need_overlap + len(
@@ -505,15 +592,10 @@ def evaluate_candidate(
         eligibility = ELIGIBILITY_PROXY
         reason = f"topic_aligned_geo_{geo_alignment}"
 
-    return SourceRelevanceDecision(
+    return _decision(
         eligibility=eligibility,
-        geo_alignment=geo_alignment,
         topic_score=topic_score,
-        rq_overlap=rq_overlap,
-        need_overlap=need_overlap,
         reason=reason,
-        information_need_id=context.information_need_id,
-        provider_rank=provider_rank,
     )
 
 
@@ -524,7 +606,12 @@ def selection_sort_key(
     best_rank: int,
     canonical_url: str,
 ) -> tuple:
+    # Expectation boost leads so topic-aligned official statistics are not
+    # displaced by blogs that merely match geography (DIRECT vs PROXY) under
+    # SOURCE_MAX_SOURCES_PER_RUN. Boost stays 0 without topic alignment.
+    # need_coverage retains cross-IN fairness.
     return (
+        -decision.expectation_boost,
         -decision.tier_rank,
         -need_coverage,
         -decision.topic_score,
@@ -532,6 +619,83 @@ def selection_sort_key(
         best_rank,
         canonical_url,
     )
+
+
+def _authority_score(url: str) -> int:
+    """Structural public-sector / institutional host+path signal (not a domain whitelist)."""
+    raw = str(url or "").strip()
+    if not raw:
+        return 0
+    try:
+        parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+    except ValueError:
+        return 0
+    host = (parsed.netloc or "").casefold()
+    if host.startswith("www."):
+        host = host[4:]
+    path = (parsed.path or "").casefold()
+    score = 0
+    if (
+        host.endswith(".gov")
+        or ".gov." in host
+        or host.endswith(".gob")
+        or ".gob." in host
+        or ".gouv." in host
+        or host.endswith(".europa.eu")
+        or host.endswith(".int")
+    ):
+        score += 2
+    if any(marker in path for marker in _STATISTICS_PATH_MARKERS):
+        score += 1
+    if path.endswith(".xlsx") or path.endswith(".xls") or path.endswith(".csv"):
+        score += 1
+    return min(score, 3)
+
+
+def _statistics_signal(candidate_tokens: frozenset[str], url: str) -> int:
+    score = len(candidate_tokens & _STATISTICS_CONTENT_TOKENS)
+    path = ""
+    try:
+        path = urlparse(url if "://" in url else f"https://{url}").path.casefold()
+    except ValueError:
+        path = ""
+    if any(marker in path for marker in _STATISTICS_PATH_MARKERS):
+        score += 1
+    if path.endswith((".xlsx", ".xls", ".csv")):
+        score += 1
+    return min(score, 3)
+
+
+def _expectation_boost(
+    *,
+    context: RelevanceContext,
+    eligibility: str,
+    topic_score: int,
+    authority_score: int,
+    statistics_signal: int,
+) -> int:
+    """Boost only when topic-aligned; authority never overrides mismatch."""
+    if eligibility == ELIGIBILITY_INELIGIBLE:
+        return 0
+    if topic_score <= 0:
+        return 0
+    if not context.quantitative_expectation:
+        return 0
+
+    preferred_match = bool(
+        context.preferred_source_type_tokens & _PREFERRED_AUTHORITY_TYPE_TOKENS
+    )
+    # Strong: topic-aligned official/primary statistics.
+    if authority_score >= 2 and statistics_signal >= 1:
+        return 100 + (10 * statistics_signal) + authority_score
+    if authority_score >= 1 and statistics_signal >= 2:
+        return 80 + (10 * statistics_signal) + authority_score
+    if authority_score >= 2 and preferred_match:
+        return 40 + authority_score
+    # Weak: non-authoritative pages that merely say "statistics".
+    if statistics_signal >= 2 and authority_score == 0:
+        return 5
+    return 0
 
 
 def _classify_geography(
