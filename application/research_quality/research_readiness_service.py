@@ -83,6 +83,7 @@ class ResearchReadinessService:
                 raise
             result, _ = apply_sufficiency_budget_termination(
                 self._missing_readiness_fallback(context),
+                reason=exc.reason,
             )
             loop_state: ResearchLoopState | None = None
             if not result.ready_for_analysis:
@@ -108,6 +109,7 @@ class ResearchReadinessService:
                     result, loop_state = apply_sufficiency_budget_termination(
                         result,
                         loop_state=loop_state,
+                        reason=exc.reason,
                     )
             else:
                 result = replace(result, termination_reason="max_research_rounds")

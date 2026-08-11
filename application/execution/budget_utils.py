@@ -93,5 +93,12 @@ def is_sufficiency_stage_cap_exhaustion(error: BaseException | None) -> bool:
 
 
 def is_sufficiency_graceful_budget_stop(error: BaseException | None) -> bool:
-    """Return True when sufficiency evaluation may terminate research gracefully."""
-    return is_sufficiency_stage_cap_exhaustion(error)
+    """Return True when sufficiency evaluation may terminate research gracefully.
+
+    Covers stage-cap exhaustion and global downstream-reserve protection that
+    blocks another sufficiency call without allowing Analysis/Report/Review
+    capacity to be consumed. Unrelated BudgetExhaustedError reasons remain fatal.
+    """
+    return is_sufficiency_stage_cap_exhaustion(error) or is_downstream_reserve_exhaustion(
+        error
+    )

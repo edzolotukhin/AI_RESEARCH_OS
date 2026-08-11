@@ -22,7 +22,7 @@ from application.research_quality.budget_aware_readiness import (
     apply_evidence_remediation_budget_termination,
     apply_sufficiency_budget_termination,
     evidence_remediation_unavailable_reason,
-    sufficiency_budget_available,
+    sufficiency_unavailable_reason,
 )
 from application.research_quality.sufficiency_assessment_cache import (
     SHARED_SUFFICIENCY_CACHE_KEY,
@@ -130,18 +130,22 @@ class ResearchLoopService:
                 )
                 request = decision.selected
                 if request is None:
-                    if not sufficiency_budget_available():
+                    sufficiency_stop = sufficiency_unavailable_reason()
+                    if sufficiency_stop is not None:
                         result, loop_state = apply_sufficiency_budget_termination(
                             result,
                             loop_state=loop_state,
+                            reason=sufficiency_stop,
                         )
                         return self._finalize(context, result, loop_state)
                     break
 
-                if not sufficiency_budget_available():
+                sufficiency_stop = sufficiency_unavailable_reason()
+                if sufficiency_stop is not None:
                     result, loop_state = apply_sufficiency_budget_termination(
                         result,
                         loop_state=loop_state,
+                        reason=sufficiency_stop,
                     )
                     return self._finalize(context, result, loop_state)
 
@@ -191,6 +195,7 @@ class ResearchLoopService:
                     result, loop_state = apply_sufficiency_budget_termination(
                         previous,
                         loop_state=loop_state,
+                        reason=exc.reason,
                     )
                     return self._finalize(context, result, loop_state)
 
@@ -273,10 +278,12 @@ class ResearchLoopService:
             if loop_state.termination_reason == "no_actionable_gaps":
                 break
             if not round_had_improvement:
-                if not sufficiency_budget_available():
+                sufficiency_stop = sufficiency_unavailable_reason()
+                if sufficiency_stop is not None:
                     result, loop_state = apply_sufficiency_budget_termination(
                         result,
                         loop_state=loop_state,
+                        reason=sufficiency_stop,
                     )
                     return self._finalize(context, result, loop_state)
                 loop_state.termination_reason = "no_material_improvement"
