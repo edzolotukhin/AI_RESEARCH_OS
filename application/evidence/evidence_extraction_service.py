@@ -27,7 +27,9 @@ from application.evidence.provenance_validation import (
     validate_candidate_provenance,
 )
 from application.evidence.evidence_extraction_scheduler import (
+    EXTRACTION_ORDERING_COVERAGE_BEFORE_DEPTH,
     EvidenceExtractionWorkItem,
+    PHASE_FIRST_OPPORTUNITY,
     build_need_fair_extraction_queue,
 )
 from application.evidence.evidence_extraction_diagnostics import (
@@ -156,6 +158,14 @@ class EvidenceExtractionService:
         )
         diagnostics.queue_items = len(queue)
         diagnostics.outer_chunks = len(queue)
+        diagnostics.extraction_ordering = EXTRACTION_ORDERING_COVERAGE_BEFORE_DEPTH
+        diagnostics.first_opportunity_work_items = sum(
+            1 for item in queue if item.phase == PHASE_FIRST_OPPORTUNITY
+        )
+        diagnostics.depth_work_items = (
+            diagnostics.queue_items - diagnostics.first_opportunity_work_items
+        )
+        diagnostics.first_opportunity_sources = diagnostics.first_opportunity_work_items
 
         token = activate_diagnostics(diagnostics)
         try:
@@ -232,6 +242,14 @@ class EvidenceExtractionService:
         )
         diagnostics.queue_items = len(queue)
         diagnostics.outer_chunks = len(queue)
+        diagnostics.extraction_ordering = EXTRACTION_ORDERING_COVERAGE_BEFORE_DEPTH
+        diagnostics.first_opportunity_work_items = sum(
+            1 for item in queue if item.phase == PHASE_FIRST_OPPORTUNITY
+        )
+        diagnostics.depth_work_items = (
+            diagnostics.queue_items - diagnostics.first_opportunity_work_items
+        )
+        diagnostics.first_opportunity_sources = diagnostics.first_opportunity_work_items
 
         token = activate_diagnostics(diagnostics)
         try:
@@ -430,11 +448,15 @@ class EvidenceExtractionService:
                 source_id=source_id,
                 source_content_checksum=work_item.source.content_checksum or "",
                 information_need_ids=work_item.run_context.information_need_ids,
-                outer_chunk_index=queue_index,
+                outer_chunk_index=work_item.chunk_index,
                 outer_chunk_normalized_start=work_item.chunk.original_normalized_start,
                 outer_chunk_normalized_end=work_item.chunk.original_normalized_end,
                 outer_chunk_length=len(work_item.chunk.text),
                 text_passed_to_extractor_length=len(work_item.chunk.text),
+                phase=work_item.phase,
+                source_first_attempt=work_item.source_first_attempt,
+                primary_need_id=work_item.primary_need_id,
+                chunk_index=work_item.chunk_index,
             )
             diagnostics.work_items.append(trace)
             work_item_token = set_active_work_item(trace)

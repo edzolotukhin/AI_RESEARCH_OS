@@ -27,6 +27,9 @@ from domain.workflow_template import WorkflowTemplate
 
 from application.config import ApplicationConfig
 from application.evidence.chunked_evidence_extractor import ChunkedEvidenceExtractor
+from application.evidence.evidence_extraction_scheduler import (
+    EXTRACTION_ORDERING_COVERAGE_BEFORE_DEPTH,
+)
 from application.evidence.evidence_extraction_service import EvidenceExtractionService
 from application.execution.budget_utils import (
     EVIDENCE_PURPOSE_INITIAL,
@@ -976,7 +979,7 @@ class ObservabilityAndInvariantTests(unittest.TestCase):
         self.assertEqual(payload["remediation_attempt_calls_consumed"], 3)
         self.assertEqual(payload["extraction_processing_state"], EXTRACTION_BOUNDED_PARTIAL)
         self.assertEqual(payload["remediation_calls_remaining_after"], 3)
-        self.assertEqual(payload["extraction_ordering"], EXTRACTION_ORDERING_DOCUMENT_ORDER)
+        self.assertEqual(payload["extraction_ordering"], EXTRACTION_ORDERING_COVERAGE_BEFORE_DEPTH)
 
     def test_scheduler_source_unchanged_first_opportunity(self) -> None:
         gaps = (

@@ -110,6 +110,10 @@ class WorkItemTrace:
     grounding_search_start: int | None = None
     grounding_search_end: int | None = None
     source_processing_state: str = ""
+    phase: str = ""
+    source_first_attempt: bool = False
+    primary_need_id: str = ""
+    chunk_index: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -128,6 +132,13 @@ class WorkItemTrace:
             "inner_chunks": [item.to_dict() for item in self.inner_chunks],
             "candidate_outcomes": [item.to_dict() for item in self.candidate_outcomes],
         }
+        if self.phase:
+            payload["phase"] = self.phase
+            payload["source_first_attempt"] = self.source_first_attempt
+        if self.primary_need_id:
+            payload["primary_need_id"] = self.primary_need_id
+        if self.chunk_index is not None:
+            payload["chunk_index"] = self.chunk_index
         if self.exception_class is not None:
             payload["exception_class"] = self.exception_class
         if self.exception_message is not None:
@@ -173,7 +184,7 @@ class EvidenceExtractionDiagnostics:
     failure_classification: str = EvidenceStageFailureClassification.SUCCESS.value
     response_classification_counts: dict[str, int] = field(default_factory=dict)
     extraction_processing_state: str | None = None
-    extraction_ordering: str = "document_order"
+    extraction_ordering: str = "coverage_before_depth_need_fair"
     remediation_attempt_configured_limit: int | None = None
     remediation_attempt_effective_limit: int | None = None
     remediation_calls_remaining_before: int | None = None
@@ -183,6 +194,9 @@ class EvidenceExtractionDiagnostics:
     planned_work_items: int = 0
     processed_work_items: int = 0
     skipped_work_items: int = 0
+    first_opportunity_work_items: int = 0
+    depth_work_items: int = 0
+    first_opportunity_sources: int = 0
 
     def record_response_classification(self, classification: str | None) -> None:
         if not classification:
@@ -315,6 +329,9 @@ class EvidenceExtractionDiagnostics:
             "planned_work_items": self.planned_work_items,
             "processed_work_items": self.processed_work_items,
             "skipped_work_items": self.skipped_work_items,
+            "first_opportunity_work_items": self.first_opportunity_work_items,
+            "depth_work_items": self.depth_work_items,
+            "first_opportunity_sources": self.first_opportunity_sources,
             "remediation_attempt_calls_consumed": self.remediation_attempt_calls_consumed,
             "remediation_attempt_capped": self.remediation_attempt_capped,
         }
