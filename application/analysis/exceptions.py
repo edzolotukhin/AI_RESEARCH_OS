@@ -23,3 +23,7 @@ class InvalidAnalysisProvenanceError(AnalysisError):
     def __init__(self, message: str, *, category: str | None = None) -> None:
         super().__init__(message)
         self.category = category
+
+
+class FindingEntailmentError(AnalysisError):
+    """Raised when Finding↔Evidence semantic entailment validation fails closed."""

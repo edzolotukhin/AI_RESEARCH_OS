@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from domain.evidence.evidence import Evidence
 from domain.findings.finding import Finding
 from domain.findings.finding_type import FindingType
 from domain.findings.insight import Insight
@@ -31,7 +32,18 @@ from application.analysis.exceptions import (
     AnalysisError,
     DuplicateFindingError,
     DuplicateInsightError,
+    FindingEntailmentError,
     InvalidAnalysisProvenanceError,
+)
+from application.analysis.finding_entailment import (
+    AcceptAllFindingEntailmentValidator,
+    FindingEntailmentDiagnostics,
+    FindingEntailmentStatus,
+    FindingEntailmentValidator,
+    ProvenanceValidFinding,
+    batch_entailment_candidates,
+    project_entailment_candidate,
+    resolve_research_question_text,
 )
 from application.analysis.provenance_validation import (
     validate_finding_candidate,
@@ -62,9 +74,10 @@ class AnalysisSummary:
     finding_candidates_rejected: int
     insight_candidates_rejected: int
     batch_failures: int
+    entailment_diagnostics: FindingEntailmentDiagnostics | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "finding_ids": list(self.finding_ids),
             "insight_ids": list(self.insight_ids),
             "evidence_batches_processed": self.evidence_batches_processed,
@@ -72,6 +85,9 @@ class AnalysisSummary:
             "insight_candidates_rejected": self.insight_candidates_rejected,
             "batch_failures": self.batch_failures,
         }
+        if self.entailment_diagnostics is not None:
+            payload["entailment"] = self.entailment_diagnostics.to_dict()
+        return payload
 
 
 class AnalysisService:
@@ -86,6 +102,9 @@ class AnalysisService:
         insight_repository: InsightRepository,
         max_evidence_per_batch: int,
         max_chars_per_batch: int,
+        finding_entailment_validator: FindingEntailmentValidator | None = None,
+        max_entailment_candidates_per_batch: int | None = None,
+        max_entailment_chars_per_batch: int | None = None,
     ) -> None:
         self._analysis_engine = analysis_engine
         self._evidence_repository = evidence_repository
@@ -93,6 +112,11 @@ class AnalysisService:
         self._insight_repository = insight_repository
         self._max_evidence_per_batch = max_evidence_per_batch
         self._max_chars_per_batch = max_chars_per_batch
+        self._finding_entailment_validator = (
+            finding_entailment_validator or AcceptAllFindingEntailmentValidator()
+        )
+        self._max_entailment_candidates_per_batch = max_entailment_candidates_per_batch
+        self._max_entailment_chars_per_batch = max_entailment_chars_per_batch
 
     def analyze_for_context(self, context: WorkflowContext) -> AnalysisSummary:
         design = self._resolve_design(context)
@@ -100,6 +124,7 @@ class AnalysisService:
         project_id = context.project.id
         workflow_run_id = context.workflow_run.id
         research_design_id = design.id
+        questions_by_id = {question.id: question for question in design.research_questions}
 
         evidence_items = self._evidence_repository.list_for_project(
             project_id,
@@ -117,10 +142,12 @@ class AnalysisService:
             max_chars_per_batch=self._max_chars_per_batch,
         )
 
-        finding_ids: list[str] = []
+        provenance_valid: list[ProvenanceValidFinding] = []
         finding_candidates_rejected = 0
         batch_failures = 0
         batch_diagnostics: list[AnalysisBatchDiagnostics] = []
+        entailment_diagnostics = FindingEntailmentDiagnostics()
+        next_candidate_index = 1
 
         for batch_question_id, evidence_batch in batches:
             normalized_question_id = (
@@ -198,7 +225,11 @@ class AnalysisService:
             else:
                 batch_diag.candidate_count = len(candidates)
 
+            entailment_diagnostics.generated_candidate_count += len(candidates)
+
             for candidate in candidates:
+                candidate_id = f"fc-{next_candidate_index:04d}"
+                next_candidate_index += 1
                 try:
                     validated = validate_finding_candidate(
                         candidate,
@@ -208,12 +239,6 @@ class AnalysisService:
                         research_design_id=research_design_id,
                         design=design,
                     )
-                    finding_id = self._persist_finding(
-                        candidate=validated,
-                        project_id=project_id,
-                        workflow_run_id=workflow_run_id,
-                        research_design_id=research_design_id,
-                    )
                 except InvalidAnalysisProvenanceError as exc:
                     finding_candidates_rejected += 1
                     batch_diag.rejected_count += 1
@@ -222,14 +247,24 @@ class AnalysisService:
                         batch_diag.rejection_counts.get(category, 0) + 1
                     )
                     continue
+
                 batch_diag.valid_count += 1
-                if finding_id not in finding_ids:
-                    finding_ids.append(finding_id)
+                provenance_valid.append(
+                    ProvenanceValidFinding(
+                        candidate_id=candidate_id,
+                        candidate=validated,
+                        research_question_text=resolve_research_question_text(
+                            validated,
+                            questions_by_id=questions_by_id,
+                        ),
+                    ),
+                )
 
             logger.info(
                 "analysis_batch_complete workflow_run_id=%s batch_question_id=%s "
-                "evidence_count=%s candidate_count=%s valid_count=%s rejected_count=%s "
-                "engine_dropped_count=%s failure_category=%s rejection_counts=%s",
+                "evidence_count=%s candidate_count=%s provenance_valid_count=%s "
+                "rejected_count=%s engine_dropped_count=%s failure_category=%s "
+                "rejection_counts=%s",
                 workflow_run_id,
                 normalized_question_id,
                 batch_diag.evidence_count,
@@ -242,7 +277,9 @@ class AnalysisService:
             )
             batch_diagnostics.append(batch_diag)
 
-        if not finding_ids:
+        entailment_diagnostics.provenance_valid_candidate_count = len(provenance_valid)
+
+        if not provenance_valid:
             failure_diagnostics = AnalysisFailureDiagnostics(
                 workflow_run_id=workflow_run_id,
                 evidence_count=len(evidence_items),
@@ -256,6 +293,44 @@ class AnalysisService:
                 format_zero_findings_message(failure_diagnostics),
             )
             raise AnalysisError(format_zero_findings_message(failure_diagnostics))
+
+        supported_candidates = self._run_entailment_gate(
+            provenance_valid=provenance_valid,
+            evidence_by_id=evidence_by_id,
+            diagnostics=entailment_diagnostics,
+            workflow_run_id=workflow_run_id,
+        )
+
+        finding_ids: list[str] = []
+        for item in supported_candidates:
+            finding_id = self._persist_finding(
+                candidate=item.candidate,
+                project_id=project_id,
+                workflow_run_id=workflow_run_id,
+                research_design_id=research_design_id,
+            )
+            if finding_id not in finding_ids:
+                finding_ids.append(finding_id)
+
+        if not finding_ids:
+            failure_diagnostics = AnalysisFailureDiagnostics(
+                workflow_run_id=workflow_run_id,
+                evidence_count=len(evidence_items),
+                batch_count=len(batches),
+                batch_failures=batch_failures,
+                finding_candidates_rejected=(
+                    finding_candidates_rejected
+                    + entailment_diagnostics.entailment_submitted_count
+                    - entailment_diagnostics.entailment_accepted_count
+                ),
+                batches=batch_diagnostics,
+            )
+            message = (
+                f"{format_zero_findings_message(failure_diagnostics)}; "
+                f"entailment={entailment_diagnostics.to_dict()}"
+            )
+            logger.error("analysis_zero_supported_findings %s", message)
+            raise AnalysisError(message)
 
         persisted_findings = [
             self._finding_repository.get_by_id(finding_id)
@@ -322,10 +397,120 @@ class AnalysisService:
             finding_ids=tuple(finding_ids),
             insight_ids=tuple(insight_ids),
             evidence_batches_processed=len(batches),
-            finding_candidates_rejected=finding_candidates_rejected,
+            finding_candidates_rejected=(
+                finding_candidates_rejected
+                + sum(entailment_diagnostics.rejected_by_status.values())
+            ),
             insight_candidates_rejected=insight_candidates_rejected,
             batch_failures=batch_failures,
+            entailment_diagnostics=entailment_diagnostics,
         )
+
+    def _run_entailment_gate(
+        self,
+        *,
+        provenance_valid: list[ProvenanceValidFinding],
+        evidence_by_id: dict[str, Evidence],
+        diagnostics: FindingEntailmentDiagnostics,
+        workflow_run_id: str,
+    ) -> list[ProvenanceValidFinding]:
+        projections = [
+            project_entailment_candidate(item, evidence_by_id=evidence_by_id)
+            for item in provenance_valid
+        ]
+        batch_kwargs: dict[str, int] = {}
+        if self._max_entailment_candidates_per_batch is not None:
+            batch_kwargs["max_candidates_per_batch"] = (
+                self._max_entailment_candidates_per_batch
+            )
+        if self._max_entailment_chars_per_batch is not None:
+            batch_kwargs["max_chars_per_batch"] = self._max_entailment_chars_per_batch
+
+        batches = batch_entailment_candidates(projections, **batch_kwargs)
+        diagnostics.entailment_submitted_count = len(projections)
+
+        verdicts_by_id: dict[str, FindingEntailmentStatus] = {}
+        for batch in batches:
+            try:
+                verdicts = self._finding_entailment_validator.validate_batch(batch)
+            except BudgetExhaustedError as exc:
+                diagnostics.budget_stop_reason = str(exc)
+                raise AnalysisError(
+                    f"Finding entailment budget exhausted for workflow run "
+                    f"{workflow_run_id}; no unvalidated Findings persisted; "
+                    f"entailment={diagnostics.to_dict()}",
+                ) from exc
+            except FindingEntailmentError as exc:
+                raise AnalysisError(
+                    f"Finding entailment validation failed closed for workflow run "
+                    f"{workflow_run_id}: {exc}; entailment={diagnostics.to_dict()}",
+                ) from exc
+            except AnalysisConfigurationError as exc:
+                if is_budget_exhaustion(exc):
+                    diagnostics.budget_stop_reason = str(exc)
+                    raise AnalysisError(
+                        f"Finding entailment budget exhausted for workflow run "
+                        f"{workflow_run_id}; no unvalidated Findings persisted; "
+                        f"entailment={diagnostics.to_dict()}",
+                    ) from exc
+                raise AnalysisError(
+                    f"Finding entailment validation failed for workflow run "
+                    f"{workflow_run_id}: {exc}; entailment={diagnostics.to_dict()}",
+                ) from exc
+            except Exception as exc:
+                raise AnalysisError(
+                    f"Finding entailment validation failed for workflow run "
+                    f"{workflow_run_id}: {exc}; entailment={diagnostics.to_dict()}",
+                ) from exc
+
+            diagnostics.entailment_calls += 1
+            if len(verdicts) != len(batch):
+                raise AnalysisError(
+                    f"Finding entailment returned unexpected verdict count for "
+                    f"workflow run {workflow_run_id}; entailment={diagnostics.to_dict()}",
+                )
+            for projection, verdict in zip(batch, verdicts, strict=True):
+                if verdict.candidate_id != projection.candidate_id:
+                    raise AnalysisError(
+                        f"Finding entailment verdict order mismatch for workflow run "
+                        f"{workflow_run_id}; entailment={diagnostics.to_dict()}",
+                    )
+                if projection.candidate_id in verdicts_by_id:
+                    raise AnalysisError(
+                        f"Duplicate entailment coverage for {projection.candidate_id}",
+                    )
+                status = verdict.status
+                if (
+                    projection.truncated
+                    and status == FindingEntailmentStatus.SUPPORTED
+                ):
+                    status = FindingEntailmentStatus.INSUFFICIENT_EVIDENCE
+                verdicts_by_id[projection.candidate_id] = status
+
+        if len(verdicts_by_id) != len(projections):
+            raise AnalysisError(
+                f"Incomplete entailment coverage for workflow run {workflow_run_id}; "
+                f"entailment={diagnostics.to_dict()}",
+            )
+
+        supported: list[ProvenanceValidFinding] = []
+        by_id = {item.candidate_id: item for item in provenance_valid}
+        for item in provenance_valid:
+            status = verdicts_by_id[item.candidate_id]
+            if status == FindingEntailmentStatus.SUPPORTED:
+                supported.append(item)
+                diagnostics.entailment_accepted_count += 1
+            else:
+                diagnostics.record_rejection(item.candidate_id, status)
+                logger.info(
+                    "finding_entailment_rejected workflow_run_id=%s candidate_id=%s "
+                    "status=%s statement=%s",
+                    workflow_run_id,
+                    item.candidate_id,
+                    status.value,
+                    item.candidate.statement[:160],
+                )
+        return supported
 
     def _resolve_design(self, context: WorkflowContext) -> ResearchDesign:
         template = context.workflow_template

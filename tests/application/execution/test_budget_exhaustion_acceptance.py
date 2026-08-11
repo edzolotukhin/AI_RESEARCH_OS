@@ -424,14 +424,23 @@ class RunUsageSummaryPersistenceTests(unittest.TestCase):
 
 class LiveShapedBudgetFitTests(unittest.TestCase):
     def test_seven_rq_batches_plus_insights_fit_analysis_cap(self) -> None:
+        """Finding batches + entailment + insights must fit analysis_max_llm_calls.
+
+        P1-09.1 adds one bounded entailment call without raising the Analysis cap.
+        """
         budget = ExecutionBudget(analysis_max_llm_calls=14)
         set_execution_stage("analysis")
         for _ in range(7):
             budget.assert_can_call("analysis")
             budget.record_llm_call("analysis")
+        # entailment batch
         budget.assert_can_call("analysis")
         budget.record_llm_call("analysis")
-        self.assertEqual(budget.stage_calls("analysis"), 8)
+        # insights
+        budget.assert_can_call("analysis")
+        budget.record_llm_call("analysis")
+        self.assertEqual(budget.stage_calls("analysis"), 9)
+        self.assertLessEqual(budget.stage_calls("analysis"), budget.analysis_max_llm_calls)
 
     def test_full_pipeline_stage_caps_sum_within_global(self) -> None:
         budget = ExecutionBudget(
@@ -454,10 +463,16 @@ class StageCapIsolationTests(unittest.TestCase):
     """Stage caps must not poison run-level budget for downstream stages."""
 
     def test_evidence_cap_allows_analysis_first_call(self) -> None:
+        # Global must leave room after downstream reserve so the evidence stage
+        # cap is reachable (pre-existing fixture gap at HEAD used global=100 with
+        # default reserve=61, so evidence never reached its stage cap).
         budget = ExecutionBudget(
-            llm_max_calls_per_run=100,
+            llm_max_calls_per_run=200,
             evidence_max_llm_calls=50,
+            sufficiency_max_llm_calls=20,
             analysis_max_llm_calls=14,
+            report_max_llm_calls=20,
+            review_max_llm_calls=7,
         )
         set_execution_stage("evidence")
         for _ in range(50):

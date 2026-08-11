@@ -6,6 +6,7 @@ from typing import Any
 
 from application.ports.project_repository import ProjectRepository
 from application.ports.analysis_ports import AnalysisEngine, FindingRepository, InsightRepository
+from application.analysis.finding_entailment import FindingEntailmentValidator
 from application.ports.evidence_ports import EvidenceExtractor, EvidenceRepository
 from application.ports.report_ports import ReportEngine, ReportRepository
 from application.ports.review_ports import SemanticReviewEngine
@@ -368,6 +369,7 @@ class ApplicationOverrides:
     evidence_extractor: EvidenceExtractor | None = None
     evidence_repository: EvidenceRepository | None = None
     analysis_engine: AnalysisEngine | None = None
+    finding_entailment_validator: FindingEntailmentValidator | None = None
     finding_repository: FindingRepository | None = None
     insight_repository: InsightRepository | None = None
     report_engine: ReportEngine | None = None
