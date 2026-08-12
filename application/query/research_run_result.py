@@ -274,3 +274,309 @@ class ResearchRunResult:
             "artifact_status": self.artifact_status.to_dict(),
             "provenance_summary": self.provenance_summary.to_dict(),
         }
+
+
+# --- P1-19.2 inspectable result detail bounds ---
+
+DETAIL_TEXT_BOUND = 800
+EVIDENCE_EXCERPT_DETAIL_BOUND = 800
+REVIEW_ISSUE_MESSAGE_BOUND = 1000
+REVIEW_DETAIL_SUMMARY_BOUND = 2000
+EXECUTIVE_SUMMARY_DETAIL_BOUND = 4000
+REPORT_SECTION_CONTENT_BOUND = 12000
+REPORT_TOTAL_CONTENT_BOUND = 64000
+MAX_DETAIL_COLLECTION_ITEMS = 200
+
+
+@dataclass(frozen=True)
+class BoundedTextProjection:
+    value: str
+    truncated: bool
+    original_length: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "value": self.value,
+            "truncated": self.truncated,
+            "original_length": self.original_length,
+        }
+
+
+@dataclass(frozen=True)
+class DetailTruncationProjection:
+    collection_truncated: bool = False
+    total_counts: dict[str, int] = field(default_factory=dict)
+    report_truncated: bool = False
+    section_truncated_ids: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "collection_truncated": self.collection_truncated,
+            "total_counts": dict(self.total_counts),
+            "report_truncated": self.report_truncated,
+            "section_truncated_ids": list(self.section_truncated_ids),
+        }
+
+
+@dataclass(frozen=True)
+class SourceDetailItem:
+    id: str
+    title: str
+    publisher: str
+    url: str
+    canonical_url: str
+    source_type: str
+    content_type: str
+    retrieval_status: str
+    truncated: bool
+    evidence_count: int
+    language: str = ""
+    published_at: str | None = None
+    retrieved_at: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "id": self.id,
+            "title": self.title,
+            "publisher": self.publisher,
+            "url": self.url,
+            "canonical_url": self.canonical_url,
+            "source_type": self.source_type,
+            "content_type": self.content_type,
+            "retrieval_status": self.retrieval_status,
+            "truncated": self.truncated,
+            "evidence_count": self.evidence_count,
+        }
+        if self.language:
+            payload["language"] = self.language
+        if self.published_at is not None:
+            payload["published_at"] = self.published_at
+        if self.retrieved_at:
+            payload["retrieved_at"] = self.retrieved_at
+        return payload
+
+
+@dataclass(frozen=True)
+class EvidenceDetailItem:
+    id: str
+    statement: BoundedTextProjection
+    source_excerpt: BoundedTextProjection
+    source_id: str
+    evidence_type: str
+    research_question_refs: tuple[str, ...]
+    information_need_refs: tuple[str, ...]
+    confidence: float | None = None
+    source_locator: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "id": self.id,
+            "statement": self.statement.to_dict(),
+            "source_excerpt": self.source_excerpt.to_dict(),
+            "source_id": self.source_id,
+            "evidence_type": self.evidence_type,
+            "research_question_refs": list(self.research_question_refs),
+            "information_need_refs": list(self.information_need_refs),
+        }
+        if self.confidence is not None:
+            payload["confidence"] = self.confidence
+        if self.source_locator:
+            payload["source_locator"] = dict(self.source_locator)
+        return payload
+
+
+@dataclass(frozen=True)
+class FindingDetailItem:
+    id: str
+    statement: BoundedTextProjection
+    rationale: BoundedTextProjection
+    evidence_refs: tuple[str, ...]
+    research_question_refs: tuple[str, ...]
+    information_need_refs: tuple[str, ...]
+    confidence: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "id": self.id,
+            "statement": self.statement.to_dict(),
+            "rationale": self.rationale.to_dict(),
+            "evidence_refs": list(self.evidence_refs),
+            "research_question_refs": list(self.research_question_refs),
+            "information_need_refs": list(self.information_need_refs),
+        }
+        if self.confidence is not None:
+            payload["confidence"] = self.confidence
+        return payload
+
+
+@dataclass(frozen=True)
+class InsightDetailItem:
+    id: str
+    statement: BoundedTextProjection
+    implication: BoundedTextProjection
+    finding_refs: tuple[str, ...]
+    research_question_refs: tuple[str, ...]
+    confidence: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "id": self.id,
+            "statement": self.statement.to_dict(),
+            "implication": self.implication.to_dict(),
+            "finding_refs": list(self.finding_refs),
+            "research_question_refs": list(self.research_question_refs),
+        }
+        if self.confidence is not None:
+            payload["confidence"] = self.confidence
+        return payload
+
+
+@dataclass(frozen=True)
+class ReportSectionDetailItem:
+    id: str
+    title: str
+    content: BoundedTextProjection
+    finding_refs: tuple[str, ...]
+    insight_refs: tuple[str, ...]
+    evidence_refs: tuple[str, ...]
+    citation_ids: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "content": self.content.to_dict(),
+            "finding_refs": list(self.finding_refs),
+            "insight_refs": list(self.insight_refs),
+            "evidence_refs": list(self.evidence_refs),
+            "citation_ids": list(self.citation_ids),
+        }
+
+
+@dataclass(frozen=True)
+class ReportDetailProjection:
+    id: str
+    title: str
+    executive_summary: BoundedTextProjection
+    limitations: tuple[str, ...]
+    revision_number: int
+    previous_report_id: str | None
+    sections: tuple[ReportSectionDetailItem, ...]
+    citation_registry: dict[str, dict[str, Any]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "executive_summary": self.executive_summary.to_dict(),
+            "limitations": list(self.limitations),
+            "revision_number": self.revision_number,
+            "previous_report_id": self.previous_report_id,
+            "sections": [section.to_dict() for section in self.sections],
+            "citation_registry": dict(self.citation_registry),
+        }
+
+
+@dataclass(frozen=True)
+class ReviewIssueDetailItem:
+    id: str
+    issue_type: str
+    severity: str
+    message: BoundedTextProjection
+    report_section_id: str | None
+    finding_refs: tuple[str, ...]
+    insight_refs: tuple[str, ...]
+    evidence_refs: tuple[str, ...]
+    source_refs: tuple[str, ...]
+    research_question_refs: tuple[str, ...]
+    suggested_action: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "issue_type": self.issue_type,
+            "severity": self.severity,
+            "message": self.message.to_dict(),
+            "report_section_id": self.report_section_id,
+            "finding_refs": list(self.finding_refs),
+            "insight_refs": list(self.insight_refs),
+            "evidence_refs": list(self.evidence_refs),
+            "source_refs": list(self.source_refs),
+            "research_question_refs": list(self.research_question_refs),
+            "suggested_action": self.suggested_action,
+        }
+
+
+@dataclass(frozen=True)
+class QualityDimensionDetailItem:
+    name: str
+    status: str
+    message: BoundedTextProjection
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "status": self.status,
+            "message": self.message.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class ReviewDetailProjection:
+    id: str
+    report_id: str
+    artifact_id: str | None
+    verdict: str
+    review_attempt: int
+    previous_report_id: str | None
+    summary: BoundedTextProjection
+    issues: tuple[ReviewIssueDetailItem, ...]
+    quality_dimensions: tuple[QualityDimensionDetailItem, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "report_id": self.report_id,
+            "artifact_id": self.artifact_id,
+            "verdict": self.verdict,
+            "review_attempt": self.review_attempt,
+            "previous_report_id": self.previous_report_id,
+            "summary": self.summary.to_dict(),
+            "issues": [issue.to_dict() for issue in self.issues],
+            "quality_dimensions": [item.to_dict() for item in self.quality_dimensions],
+        }
+
+
+@dataclass(frozen=True)
+class ResearchRunDetailPayload:
+    sources: tuple[SourceDetailItem, ...]
+    evidence: tuple[EvidenceDetailItem, ...]
+    findings: tuple[FindingDetailItem, ...]
+    insights: tuple[InsightDetailItem, ...]
+    report: ReportDetailProjection | None
+    review: ReviewDetailProjection | None
+    truncation: DetailTruncationProjection
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "sources": [item.to_dict() for item in self.sources],
+            "evidence": [item.to_dict() for item in self.evidence],
+            "findings": [item.to_dict() for item in self.findings],
+            "insights": [item.to_dict() for item in self.insights],
+            "report": self.report.to_dict() if self.report is not None else None,
+            "review": self.review.to_dict() if self.review is not None else None,
+            "truncation": self.truncation.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class ResearchRunResultDetail:
+    """P1-19.2 summary + bounded inspectable detail for one terminal Research run."""
+
+    result: ResearchRunResult
+    detail: ResearchRunDetailPayload
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = self.result.to_dict()
+        payload["detail"] = self.detail.to_dict()
+        return payload

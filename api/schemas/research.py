@@ -78,3 +78,15 @@ class ResearchResultResponse(BaseModel):
         data = dict(payload)
         data["research_id"] = data.get("run_id", "")
         return cls.model_validate(data)
+
+
+class ResearchResultDetailResponse(ResearchResultResponse):
+    """P1-19.2 summary + bounded inspectable detail."""
+
+    detail: dict[str, Any]
+
+    @classmethod
+    def from_detail_dict(cls, payload: dict[str, Any]) -> ResearchResultDetailResponse:
+        data = dict(payload)
+        data["research_id"] = data.get("run_id", "")
+        return cls.model_validate(data)

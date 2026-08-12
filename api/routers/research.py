@@ -22,6 +22,7 @@ from api.dependencies import (
 from api.routers.workflow_runs import start_research
 from api.schemas.common import ErrorDetail, ErrorResponse
 from api.schemas.research import (
+    ResearchResultDetailResponse,
     ResearchResultResponse,
     ResearchStatusResponse,
     ResearchSubmissionResponse,
@@ -262,3 +263,87 @@ def get_research_result(
         )
 
     return ResearchResultResponse.from_result_dict(result.to_dict())
+
+
+@router.get(
+    "/{research_id}/result/detail",
+    response_model=ResearchResultDetailResponse,
+    summary="Get inspectable terminal Research result detail",
+    operation_id="getResearchResultDetail",
+    description=(
+        "Returns the P1-18.1 ResearchRunResult summary plus bounded inspectable "
+        "entity detail for P1-20 UI consumption. Available only for terminal Research."
+    ),
+    dependencies=[Depends(bearer_scheme)],
+    responses={
+        401: {"description": "Authentication required."},
+        404: {"description": "Research not found."},
+        409: {"description": "Research is still running."},
+    },
+)
+def get_research_result_detail(
+    research_id: str,
+    authorization: AuthorizationDep,
+    principal: PrincipalDep,
+    result_query: ResearchRunResultQueryServiceDep,
+) -> ResearchResultDetailResponse | JSONResponse:
+    try:
+        workflow_run, _ = authorization.require_run(principal, research_id)
+    except (AccessDeniedError, EntityNotFoundError):
+        return _error(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="research_not_found",
+            message="Research not found.",
+            details={"research_id": research_id},
+        )
+
+    from application.query.research_status_query_service import (
+        ResearchStatusQueryService,
+    )
+
+    execution_status = ResearchStatusQueryService.project_execution_status(
+        workflow_run,
+    )
+    phase = ResearchStatusQueryService.project_phase(workflow_run)
+    if execution_status != ResearchExecutionStatus.TERMINAL:
+        return _error(
+            status_code=status.HTTP_409_CONFLICT,
+            code="research_not_terminal",
+            message="Research is still running.",
+            details={
+                "research_id": research_id,
+                "execution_status": execution_status.value,
+                "phase": phase.value,
+            },
+        )
+
+    try:
+        result = result_query.get_detail_for_run(research_id)
+    except EntityNotFoundError:
+        return _error(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="research_not_found",
+            message="Research not found.",
+            details={"research_id": research_id},
+        )
+    except ResearchRunResultProjectionError as exc:
+        message = str(exc)
+        if "not terminal" in message.lower():
+            return _error(
+                status_code=status.HTTP_409_CONFLICT,
+                code="research_not_terminal",
+                message="Research is still running.",
+                details={
+                    "research_id": research_id,
+                    "execution_status": execution_status.value,
+                    "phase": phase.value,
+                },
+            )
+        return _error(
+            status_code=status.HTTP_409_CONFLICT,
+            code="research_result_unavailable",
+            message="Research result cannot be projected safely.",
+            details={"research_id": research_id},
+        )
+
+    return ResearchResultDetailResponse.from_detail_dict(result.to_dict())

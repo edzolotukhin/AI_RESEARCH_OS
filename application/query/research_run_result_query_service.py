@@ -15,17 +15,38 @@ from application.ports.source_ports import SourceRepository
 from application.ports.workflow_run_repository import WorkflowRunRepository
 from application.query.research_run_result import (
     ArtifactStatusProjection,
+    BoundedTextProjection,
     BudgetUsageProjection,
     CollectionSummary,
+    DETAIL_TEXT_BOUND,
+    DetailTruncationProjection,
     EntityRefItem,
+    EVIDENCE_EXCERPT_DETAIL_BOUND,
+    EvidenceDetailItem,
+    EXECUTIVE_SUMMARY_DETAIL_BOUND,
+    FindingDetailItem,
+    InsightDetailItem,
+    MAX_DETAIL_COLLECTION_ITEMS,
     ProvenanceLink,
     ProvenanceSummary,
+    QualityDimensionDetailItem,
     ReadinessProjection,
+    REPORT_SECTION_CONTENT_BOUND,
+    REPORT_TOTAL_CONTENT_BOUND,
+    ReportDetailProjection,
     ReportProjection,
+    ReportSectionDetailItem,
+    ResearchRunDetailPayload,
     ResearchRunOutcome,
     ResearchRunResult,
+    ResearchRunResultDetail,
     ResearchRunResultProjectionError,
+    ReviewDetailProjection,
+    ReviewIssueDetailItem,
+    REVIEW_DETAIL_SUMMARY_BOUND,
+    REVIEW_ISSUE_MESSAGE_BOUND,
     ReviewProjection,
+    SourceDetailItem,
 )
 from application.research_quality.readiness_result_codec import (
     extract_research_readiness,
@@ -177,6 +198,59 @@ class ResearchRunResultQueryService:
             provenance_summary=provenance,
             correlation_id=self._correlation_id(workflow_run, task_results),
         )
+
+    def get_detail_for_run(self, run_id: str) -> ResearchRunResultDetail:
+        """Project terminal Research run into summary + bounded inspectable detail."""
+        result = self.get_for_run(run_id)
+        workflow_run = self._workflow_run_repository.get_by_id(run_id)
+        if workflow_run is None:
+            raise EntityNotFoundError(f"WorkflowRun not found: {run_id}")
+
+        project_id = workflow_run.project_id
+        sources = self._source_repository.list_for_project(
+            project_id,
+            workflow_run_id=run_id,
+        )
+        evidence = self._evidence_repository.list_for_project(
+            project_id,
+            workflow_run_id=run_id,
+        )
+        findings = self._finding_repository.list_for_project(
+            project_id,
+            workflow_run_id=run_id,
+        )
+        insights = self._insight_repository.list_for_project(
+            project_id,
+            workflow_run_id=run_id,
+        )
+        reports = self._report_repository.list_for_project(
+            project_id,
+            workflow_run_id=run_id,
+        )
+        reviews = self._review_repository.list_for_project(
+            project_id,
+            workflow_run_id=run_id,
+        )
+
+        latest_report_entity = self._select_latest_report(reports)
+        latest_review_entity = self._select_latest_review(
+            reviews,
+            latest_report_entity,
+        )
+
+        detail = self._project_detail_payload(
+            run_id=run_id,
+            sources=sources,
+            evidence=evidence,
+            findings=findings,
+            insights=insights,
+            latest_report=latest_report_entity,
+            latest_review=latest_review_entity,
+            summary_report=result.latest_report,
+            summary_review=result.latest_review,
+        )
+
+        return ResearchRunResultDetail(result=result, detail=detail)
 
     def _derive_outcome(
         self,
@@ -816,3 +890,329 @@ class ResearchRunResultQueryService:
             if isinstance(shared, dict) and shared.get("correlation_id"):
                 return str(shared["correlation_id"])
         return None
+
+    @staticmethod
+    def _bound_detail_text(value: str, limit: int) -> BoundedTextProjection:
+        text = str(value or "")
+        original_length = len(text)
+        if original_length <= limit:
+            return BoundedTextProjection(
+                value=text,
+                truncated=False,
+                original_length=original_length,
+            )
+        return BoundedTextProjection(
+            value=text[: max(0, limit - 1)] + "…",
+            truncated=True,
+            original_length=original_length,
+        )
+
+    @staticmethod
+    def _run_scoped_sources(sources: list[Source], run_id: str) -> list[Source]:
+        return sorted(
+            [
+                item
+                for item in sources
+                if run_id in item.workflow_run_refs
+            ],
+            key=lambda item: item.id,
+        )
+
+    @staticmethod
+    def _run_scoped_evidence(evidence: list[Evidence], run_id: str) -> list[Evidence]:
+        return sorted(
+            [item for item in evidence if item.workflow_run_id == run_id],
+            key=lambda item: item.id,
+        )
+
+    @staticmethod
+    def _run_scoped_findings(findings: list[Finding], run_id: str) -> list[Finding]:
+        return sorted(
+            [item for item in findings if item.workflow_run_id == run_id],
+            key=lambda item: item.id,
+        )
+
+    @staticmethod
+    def _run_scoped_insights(insights: list[Insight], run_id: str) -> list[Insight]:
+        return sorted(
+            [item for item in insights if item.workflow_run_id == run_id],
+            key=lambda item: item.id,
+        )
+
+    @staticmethod
+    def _truncate_collection(
+        items: list[Any],
+        *,
+        max_items: int,
+    ) -> tuple[list[Any], bool]:
+        if len(items) <= max_items:
+            return items, False
+        return items[:max_items], True
+
+    def _project_detail_payload(
+        self,
+        *,
+        run_id: str,
+        sources: list[Source],
+        evidence: list[Evidence],
+        findings: list[Finding],
+        insights: list[Insight],
+        latest_report: Report | None,
+        latest_review: ReviewResult | None,
+        summary_report: ReportProjection | None,
+        summary_review: ReviewProjection | None,
+    ) -> ResearchRunDetailPayload:
+        scoped_sources = self._run_scoped_sources(sources, run_id)
+        scoped_evidence = self._run_scoped_evidence(evidence, run_id)
+        scoped_findings = self._run_scoped_findings(findings, run_id)
+        scoped_insights = self._run_scoped_insights(insights, run_id)
+
+        evidence_count_by_source: dict[str, int] = {}
+        for item in scoped_evidence:
+            evidence_count_by_source[item.source_id] = (
+                evidence_count_by_source.get(item.source_id, 0) + 1
+            )
+
+        total_counts = {
+            "sources": len(scoped_sources),
+            "evidence": len(scoped_evidence),
+            "findings": len(scoped_findings),
+            "insights": len(scoped_insights),
+        }
+
+        sources_slice, sources_truncated = self._truncate_collection(
+            scoped_sources,
+            max_items=MAX_DETAIL_COLLECTION_ITEMS,
+        )
+        evidence_slice, evidence_truncated = self._truncate_collection(
+            scoped_evidence,
+            max_items=MAX_DETAIL_COLLECTION_ITEMS,
+        )
+        findings_slice, findings_truncated = self._truncate_collection(
+            scoped_findings,
+            max_items=MAX_DETAIL_COLLECTION_ITEMS,
+        )
+        insights_slice, insights_truncated = self._truncate_collection(
+            scoped_insights,
+            max_items=MAX_DETAIL_COLLECTION_ITEMS,
+        )
+
+        source_details = tuple(
+            SourceDetailItem(
+                id=item.id,
+                title=item.title,
+                publisher=item.publisher,
+                url=item.url,
+                canonical_url=item.canonical_url,
+                source_type=item.source_type,
+                content_type=item.content_type,
+                retrieval_status=item.retrieval_status.value,
+                truncated=item.retrieval_status == RetrievalStatus.TRUNCATED,
+                evidence_count=evidence_count_by_source.get(item.id, 0),
+                language=item.language,
+                published_at=item.published_at,
+                retrieved_at=item.retrieved_at,
+            )
+            for item in sources_slice
+        )
+
+        evidence_details = tuple(
+            EvidenceDetailItem(
+                id=item.id,
+                statement=self._bound_detail_text(item.statement, DETAIL_TEXT_BOUND),
+                source_excerpt=self._bound_detail_text(
+                    item.source_excerpt,
+                    EVIDENCE_EXCERPT_DETAIL_BOUND,
+                ),
+                source_id=item.source_id,
+                evidence_type=item.evidence_type.value,
+                research_question_refs=item.research_question_refs,
+                information_need_refs=item.information_need_refs,
+                confidence=item.confidence,
+                source_locator=dict(item.source_locator) if item.source_locator else {},
+            )
+            for item in evidence_slice
+        )
+
+        finding_details = tuple(
+            FindingDetailItem(
+                id=item.id,
+                statement=self._bound_detail_text(item.statement, DETAIL_TEXT_BOUND),
+                rationale=self._bound_detail_text(item.rationale, DETAIL_TEXT_BOUND),
+                evidence_refs=item.evidence_refs,
+                research_question_refs=item.research_question_refs,
+                information_need_refs=item.information_need_refs,
+                confidence=item.confidence,
+            )
+            for item in findings_slice
+        )
+
+        insight_details = tuple(
+            InsightDetailItem(
+                id=item.id,
+                statement=self._bound_detail_text(item.statement, DETAIL_TEXT_BOUND),
+                implication=self._bound_detail_text(item.implication, DETAIL_TEXT_BOUND),
+                finding_refs=item.finding_refs,
+                research_question_refs=item.research_question_refs,
+                confidence=item.confidence,
+            )
+            for item in insights_slice
+        )
+
+        report_detail: ReportDetailProjection | None = None
+        report_truncated = False
+        section_truncated_ids: list[str] = []
+        if summary_report is not None and latest_report is not None:
+            report_detail, report_truncated, section_truncated_ids = (
+                self._project_report_detail(latest_report)
+            )
+
+        review_detail: ReviewDetailProjection | None = None
+        if summary_review is not None and latest_review is not None:
+            review_detail = self._project_review_detail(latest_review)
+
+        collection_truncated = any(
+            (
+                sources_truncated,
+                evidence_truncated,
+                findings_truncated,
+                insights_truncated,
+            ),
+        )
+
+        truncation = DetailTruncationProjection(
+            collection_truncated=collection_truncated,
+            total_counts=total_counts,
+            report_truncated=report_truncated,
+            section_truncated_ids=tuple(sorted(section_truncated_ids)),
+        )
+
+        return ResearchRunDetailPayload(
+            sources=source_details,
+            evidence=evidence_details,
+            findings=finding_details,
+            insights=insight_details,
+            report=report_detail,
+            review=review_detail,
+            truncation=truncation,
+        )
+
+    def _project_report_detail(
+        self,
+        report: Report,
+    ) -> tuple[ReportDetailProjection, bool, list[str]]:
+        section_truncated_ids: list[str] = []
+        report_truncated = False
+        total_content_chars = 0
+        section_details: list[ReportSectionDetailItem] = []
+
+        for section in report.sections:
+            remaining_budget = REPORT_TOTAL_CONTENT_BOUND - total_content_chars
+            if remaining_budget <= 0:
+                report_truncated = True
+                bounded = BoundedTextProjection(value="", truncated=True, original_length=len(section.content))
+                section_truncated_ids.append(section.id)
+            else:
+                per_section_limit = min(REPORT_SECTION_CONTENT_BOUND, remaining_budget)
+                bounded = self._bound_detail_text(section.content, per_section_limit)
+                if bounded.truncated:
+                    section_truncated_ids.append(section.id)
+            total_content_chars += len(bounded.value)
+            if bounded.truncated or total_content_chars >= REPORT_TOTAL_CONTENT_BOUND:
+                report_truncated = True
+
+            section_details.append(
+                ReportSectionDetailItem(
+                    id=section.id,
+                    title=section.title,
+                    content=bounded,
+                    finding_refs=section.finding_refs,
+                    insight_refs=section.insight_refs,
+                    evidence_refs=section.evidence_refs,
+                    citation_ids=section.citation_ids,
+                ),
+            )
+
+        return (
+            ReportDetailProjection(
+                id=report.id,
+                title=report.title,
+                executive_summary=self._bound_detail_text(
+                    report.executive_summary,
+                    EXECUTIVE_SUMMARY_DETAIL_BOUND,
+                ),
+                limitations=tuple(str(item) for item in report.limitations),
+                revision_number=report.revision_number,
+                previous_report_id=report.previous_report_id,
+                sections=tuple(section_details),
+                citation_registry=self._project_citation_registry(
+                    report.citation_registry,
+                ),
+            ),
+            report_truncated,
+            section_truncated_ids,
+        )
+
+    @staticmethod
+    def _project_citation_registry(
+        registry: dict[str, dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        safe: dict[str, dict[str, Any]] = {}
+        for key in sorted(registry):
+            value = registry[key]
+            if not isinstance(value, dict):
+                continue
+            entry: dict[str, Any] = {
+                "citation_id": str(value.get("citation_id", key)),
+            }
+            source_id = value.get("source_id")
+            if source_id is not None:
+                entry["source_id"] = str(source_id)
+            label = value.get("label")
+            if label:
+                entry["label"] = str(label)[:200]
+            safe[str(key)] = entry
+        return safe
+
+    def _project_review_detail(self, review: ReviewResult) -> ReviewDetailProjection:
+        issues = tuple(
+            ReviewIssueDetailItem(
+                id=issue.id,
+                issue_type=issue.issue_type.value,
+                severity=issue.severity.value,
+                message=self._bound_detail_text(
+                    issue.message,
+                    REVIEW_ISSUE_MESSAGE_BOUND,
+                ),
+                report_section_id=issue.report_section_id,
+                finding_refs=issue.finding_refs,
+                insight_refs=issue.insight_refs,
+                evidence_refs=issue.evidence_refs,
+                source_refs=issue.source_refs,
+                research_question_refs=issue.research_question_refs,
+                suggested_action=issue.suggested_action,
+            )
+            for issue in review.issues
+        )
+        quality_dimensions = tuple(
+            QualityDimensionDetailItem(
+                name=dimension.name.value,
+                status=dimension.status.value,
+                message=self._bound_detail_text(dimension.message, DETAIL_TEXT_BOUND),
+            )
+            for dimension in review.quality_dimensions
+        )
+        return ReviewDetailProjection(
+            id=review.id,
+            report_id=review.report_id,
+            artifact_id=review.artifact_id,
+            verdict=review.verdict.value,
+            review_attempt=review.review_attempt,
+            previous_report_id=review.previous_report_id,
+            summary=self._bound_detail_text(
+                review.summary,
+                REVIEW_DETAIL_SUMMARY_BOUND,
+            ),
+            issues=issues,
+            quality_dimensions=quality_dimensions,
+        )
