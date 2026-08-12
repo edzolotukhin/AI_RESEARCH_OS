@@ -16,6 +16,7 @@ from api.dependencies import (
     InsightServiceDep,
     ReportQueryServiceDep,
     ReviewQueryServiceDep,
+    ResearchRunResultQueryServiceDep,
     ExecutionLogServiceDep,
     SourceServiceDep,
     WorkflowServiceDep,
@@ -25,6 +26,7 @@ from application.persistence.exceptions import (
     DuplicateEntityError,
     EntityNotFoundError,
 )
+from application.query.research_run_result import ResearchRunResultProjectionError
 from application.research.brief_normalizer import normalize_research_brief_payload
 from application.research.brief_validator import validate_research_brief
 from application.research_quality.readiness_result_codec import (
@@ -919,6 +921,38 @@ def get_workflow_run_results(
         research_loop_count=loop_count,
         research_loop_history=loop_history,
     )
+
+
+@router.get(
+    "/workflow-runs/{run_id}/research-result",
+    summary="Get coherent ResearchRunResult projection for a terminal run",
+    operation_id="getWorkflowRunResearchResult",
+    description=(
+        "Returns the bounded product read projection for a terminal Research run. "
+        "Product outcome is distinct from workflow status and from results_ready."
+    ),
+    dependencies=[Depends(bearer_scheme)],
+    responses={
+        401: {"description": "Authentication required."},
+        404: {"description": "Workflow run not found."},
+        409: {"description": "Run state cannot be projected safely."},
+    },
+)
+def get_workflow_run_research_result(
+    run_id: str,
+    research_result_service: ResearchRunResultQueryServiceDep,
+    authorization: AuthorizationDep,
+    principal: PrincipalDep,
+):
+    authorization.require_run(principal, run_id)
+    try:
+        result = research_result_service.get_for_run(run_id)
+    except ResearchRunResultProjectionError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": str(exc)},
+        )
+    return result.to_dict()
 
 
 @router.get(

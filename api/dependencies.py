@@ -15,6 +15,9 @@ from application.services.report_query_service import ReportQueryService
 from application.services.review_query_service import ReviewQueryService
 from application.services.source_service import SourceService
 from application.services.workflow_service import WorkflowService
+from application.query.research_run_result_query_service import (
+    ResearchRunResultQueryService,
+)
 
 
 def get_container(request: Request) -> ApplicationContainer:
@@ -71,6 +74,12 @@ def get_review_query_service(container: ContainerDep) -> ReviewQueryService:
     return container.review_query_service
 
 
+def get_research_run_result_query_service(
+    container: ContainerDep,
+) -> ResearchRunResultQueryService:
+    return container.research_run_result_query_service
+
+
 AgencyDep = Annotated[Agency, Depends(get_agency)]
 ProjectServiceDep = Annotated[ProjectService, Depends(get_project_service)]
 WorkflowServiceDep = Annotated[WorkflowService, Depends(get_workflow_service)]
@@ -81,6 +90,10 @@ FindingServiceDep = Annotated[FindingService, Depends(get_finding_service)]
 InsightServiceDep = Annotated[InsightService, Depends(get_insight_service)]
 ReportQueryServiceDep = Annotated[ReportQueryService, Depends(get_report_query_service)]
 ReviewQueryServiceDep = Annotated[ReviewQueryService, Depends(get_review_query_service)]
+ResearchRunResultQueryServiceDep = Annotated[
+    ResearchRunResultQueryService,
+    Depends(get_research_run_result_query_service),
+]
 ExecutionLogServiceDep = Annotated[
     ExecutionLogService,
     Depends(get_execution_log_service),
