@@ -35,8 +35,10 @@ def build_expectation_aware_query_text(
     phrases, geography, timeframe. Identical inputs always yield identical
     text. Pure application logic.
 
-    ``subject_context`` is optional and defaults unused so initial Search
-    (P1-07.13.1) remains behaviorally unchanged when omitted.
+    ``subject_context`` carries the parent ResearchQuestion (or equivalent
+    category anchor). Initial Search (P1-21.1) and targeted Search both pass
+    it when a parent question is available. Omitting it remains a deterministic
+    fallback for callers that have no parent subject.
     """
     parts: list[str] = []
     seen_phrases: set[str] = set()

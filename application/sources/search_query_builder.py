@@ -46,10 +46,22 @@ class SearchQueryBuilder:
         design: ResearchDesign,
         need: InformationNeed,
     ) -> SearchQuery:
+        # Parity with TargetedSearchQueryBuilder: parent RQ text anchors the
+        # category/subject so a generic InformationNeed cannot drop Brief topic.
+        question = next(
+            (
+                item
+                for item in design.research_questions
+                if item.id == need.research_question_id
+            ),
+            None,
+        )
+        subject_context = question.question if question is not None else ""
         semantic_targets: tuple[str, ...] = ()
         if need.evidence_expectation is not None:
             semantic_targets = need.evidence_expectation.required_aspects
         query_text = build_expectation_aware_query_text(
+            subject_context=subject_context,
             description=need.description,
             geography=need.geography,
             timeframe=need.timeframe,
@@ -57,6 +69,8 @@ class SearchQueryBuilder:
         )
 
         rationale_parts = [f"Derived from information need {need.id}"]
+        if subject_context:
+            rationale_parts.append("subject_context=parent_research_question")
         if need.geography:
             rationale_parts.append(f"geography={need.geography}")
         if need.timeframe:

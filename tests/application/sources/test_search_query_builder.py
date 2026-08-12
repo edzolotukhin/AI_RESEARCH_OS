@@ -39,6 +39,7 @@ class SearchQueryBuilderTests(unittest.TestCase):
         self.assertEqual(query.id, "sq-in-1")
         self.assertEqual(query.research_question_id, "rq-1")
         self.assertEqual(query.information_need_id, "in-1")
+        self.assertIn("brand awareness", query.query_text)
         self.assertIn("brand tracking", query.query_text)
         self.assertIn("Germany", query.query_text)
         self.assertIn("2024-2026", query.query_text)
@@ -50,7 +51,7 @@ class SearchQueryBuilderTests(unittest.TestCase):
         design = ResearchDesign(
             id="design-2",
             research_questions=(
-                ResearchQuestion(id="rq-1", question="Q?", objective_refs=()),
+                ResearchQuestion(id="rq-1", question="   ", objective_refs=()),
             ),
             information_needs=(
                 InformationNeed(

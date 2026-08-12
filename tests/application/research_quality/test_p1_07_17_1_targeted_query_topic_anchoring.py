@@ -424,14 +424,18 @@ class TargetedQueryTopicAnchoringTests(unittest.TestCase):
             expectation=_ee(IN1_ASPECTS),
         )
         initial = SearchQueryBuilder(max_results=3).build_queries(design)[0].query_text
+        # P1-21.1: initial Search now includes parent RQ subject_context (parity
+        # with targeted Search). Aspect/geo/timeframe contract otherwise unchanged.
         expected = build_expectation_aware_query_text(
+            subject_context=IN1_RQ,
             description=IN1_DESCRIPTION,
             geography="Serbia",
             timeframe="2019-2026",
             semantic_targets=IN1_ASPECTS,
         )
         self.assertEqual(initial, expected)
-        self.assertFalse(initial.casefold().startswith("what is the serbian premium"))
+        self.assertTrue(initial.casefold().startswith("what is the serbian premium"))
+        self.assertIn("microgreens", initial.casefold())
         for phrase in _phrases(IN1_ASPECTS):
             self.assertIn(phrase, initial)
 
@@ -541,6 +545,7 @@ class SharedHelperCompatibilityTests(unittest.TestCase):
         self.assertIn("missing_aspects", resolve_src)
         self.assertIn("required_aspects", resolve_src)
         self.assertIn("subject_context", targeted_src)
+        self.assertIn("subject_context", builder_src)
 
 
 if __name__ == "__main__":

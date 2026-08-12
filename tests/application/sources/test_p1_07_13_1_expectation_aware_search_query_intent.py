@@ -149,9 +149,12 @@ class ExpectationAwareInitialQueryTests(unittest.TestCase):
     def test_case_7_legacy_ee_none_compatible(self) -> None:
         design = _design(expectation=None)
         query = SearchQueryBuilder().build_queries(design)[0]
+        # P1-21.1: initial Search includes parent RQ subject_context (parity
+        # with targeted Search). EE-none still omits aspect phrases.
         self.assertEqual(
             query.query_text,
             build_expectation_aware_query_text(
+                subject_context="What is the market?",
                 description=IN1_DESCRIPTION,
                 geography="Serbia",
                 timeframe="2019-2026",
@@ -161,6 +164,7 @@ class ExpectationAwareInitialQueryTests(unittest.TestCase):
         self.assertNotIn("market value estimate", query.query_text)
         self.assertIn("Serbia", query.query_text)
         self.assertIn("2019-2026", query.query_text)
+        self.assertIn("What is the market?", query.query_text)
 
     def test_in1_in2_style_before_after_fixture_shapes(self) -> None:
         old_in1 = build_expectation_aware_query_text(
@@ -356,6 +360,8 @@ class NoExtraLlmBudgetTests(unittest.TestCase):
         self.assertIn("missing_aspects", resolve_src)
         self.assertIn("required_aspects", resolve_src)
         self.assertIn("subject_context", targeted_src)
+        # P1-21.1: initial Search also passes parent RQ subject_context.
+        self.assertIn("subject_context", builder_src)
 
 
 if __name__ == "__main__":
