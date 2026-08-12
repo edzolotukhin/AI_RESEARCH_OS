@@ -238,6 +238,8 @@ docker compose up -d api worker
 
 Set `AI_RESEARCH_OS_API_KEY` in `.env` to the bootstrap plaintext (shown once). Business routes require `Authorization: Bearer <key>`. `/health` and `/ready` remain public.
 
+The internal Research UI (`/ui/research/new`) authenticates server-side. Stock Compose passes `UI_INTERNAL_API_KEY` (or, if unset, `AI_RESEARCH_OS_API_KEY`) into the API container only. Do not put the key in templates, JavaScript, cookies, or query strings. Optional: set `UI_INTERNAL_API_KEY` in `.env` to a dedicated UI key; otherwise the bootstrap key is reused inside the API process.
+
 For offline smoke without a live LLM, opt in explicitly:
 
 ```bash

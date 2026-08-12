@@ -42,7 +42,7 @@ textarea { resize: vertical; }
 .outcome-not-ready { border-color: var(--not-ready); }
 .outcome-quality-rejected { border-color: var(--quality-rejected); }
 .outcome-execution-failed { border-color: var(--execution-failed); }
-.outcome-title { margin: 0.25rem 0; }
+.outcome-limitation, .publisher { color: var(--muted); display: block; font-size: 0.95rem; }
 .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 999px; font-size: 0.8rem; }
 .badge-warning { background: #fef3c7; color: #92400e; }
 .finding-card, .evidence-card, .source-card, .insight-card { border-top: 1px solid var(--border); padding-top: 0.75rem; margin-top: 0.75rem; }

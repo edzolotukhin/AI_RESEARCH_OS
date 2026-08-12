@@ -12,6 +12,9 @@
   <h2 class="outcome-title">{{ outcome_labels.get(detail.outcome, detail.outcome) }}</h2>
   {% if detail.outcome == 'NOT_READY' %}
   <p class="outcome-message">Research completed, but the available evidence was not sufficient to safely produce a final analysis or report.</p>
+  {% if detail.termination_reason %}
+  <p class="outcome-limitation">{{ safe_text(detail.termination_reason_label) }}</p>
+  {% endif %}
   {% elif detail.outcome == 'QUALITY_REJECTED' %}
   <p class="outcome-message">Research reached report and review, but the quality gate did not approve the final artifact.</p>
   {% elif detail.outcome == 'EXECUTION_FAILED' %}
@@ -19,12 +22,12 @@
   {% endif %}
 </section>
 
-{% if detail.limitations %}
-<section class="panel">
+{% if detail.limitation_items %}
+<section class="panel" id="limitations-panel">
   <h3>Limitations</h3>
   <ul class="plain-list">
-    {% for item in detail.limitations %}
-    <li>{{ safe_text(item) }}</li>
+    {% for item in detail.limitation_items %}
+    <li>{{ safe_text(item.label) }}</li>
     {% endfor %}
   </ul>
 </section>
@@ -100,14 +103,53 @@
 </section>
 {% endif %}
 
+{% if detail.outcome == 'NOT_READY' %}
+<section class="panel evidence-panel" id="evidence-panel">
+  <h3>Evidence ({{ detail.evidence_shown_count }})</h3>
+  {% if detail.evidence_truncated %}
+  <p class="truncation-note">Showing {{ detail.evidence_shown_count }} of {{ detail.evidence_total_count }} evidence items.</p>
+  {% endif %}
+  {% if detail.evidence_enriched %}
+    {% for ev in detail.evidence_enriched %}
+    <div class="evidence-card" id="evidence-{{ ev.id }}">
+      <p class="evidence-statement">{{ render_bounded(ev.statement) }}</p>
+      <blockquote class="source-excerpt">{{ render_bounded(ev.source_excerpt) }}</blockquote>
+      {% set src = ev.source %}
+      {% if src %}
+      <div class="source-card" id="evidence-source-{{ src.id }}">
+        <strong>{{ safe_text(src.title) }}</strong>
+        {% if src.publisher %}<span class="publisher">{{ safe_text(src.publisher) }}</span>{% endif %}
+        {% set url = safe_external_url(src.url) %}
+        {% if url.href %}
+        <a href="{{ url.href }}" target="_blank" rel="noopener noreferrer">{{ safe_text(url.display) }}</a>
+        {% else %}
+        <span class="unsafe-url">{{ safe_text(url.display) }}</span>
+        {% endif %}
+      </div>
+      {% else %}
+      <p class="empty-inline">Source details are not available for this evidence item.</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  {% else %}
+  <p class="empty-inline">No evidence available.</p>
+  {% endif %}
+</section>
+{% endif %}
+
 {% if detail.inner.sources and detail.outcome == 'NOT_READY' %}
 <section class="panel sources-panel">
-  <h3>Sources ({{ detail.inner.sources|length }})</h3>
+  <h3>Sources ({{ detail.source_shown_count }})</h3>
   {% for src in detail.inner.sources %}
   <div class="source-card">
     <strong>{{ safe_text(src.title) }}</strong>
+    {% if src.publisher %}<span class="publisher">{{ safe_text(src.publisher) }}</span>{% endif %}
     {% set url = safe_external_url(src.url) %}
-    {% if url.href %}<a href="{{ url.href }}" target="_blank" rel="noopener noreferrer">{{ safe_text(url.display) }}</a>{% endif %}
+    {% if url.href %}
+    <a href="{{ url.href }}" target="_blank" rel="noopener noreferrer">{{ safe_text(url.display) }}</a>
+    {% else %}
+    <span class="unsafe-url">{{ safe_text(url.display) }}</span>
+    {% endif %}
   </div>
   {% endfor %}
 </section>
@@ -152,6 +194,13 @@
     <dt>Workflow status</dt><dd>{{ safe_text(detail.workflow_status) }}</dd>
     <dt>Sources</dt><dd>{{ detail.inner.sources|length }}</dd>
     <dt>Evidence</dt><dd>{{ detail.inner.evidence|length }}</dd>
+    {% if detail.termination_reason %}
+    <dt>Termination reason</dt><dd><code>{{ safe_text(detail.termination_reason) }}</code></dd>
+    {% endif %}
+    {% if detail.limitation_items %}
+    <dt>Limitation codes</dt>
+    <dd>{% for item in detail.limitation_items %}<code>{{ safe_text(item.code) }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</dd>
+    {% endif %}
   </dl>
   {% if detail.inner.sources %}
   <h4>Source inventory</h4>

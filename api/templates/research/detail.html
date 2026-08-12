@@ -7,6 +7,8 @@
   <div class="alert alert-error" role="alert">{{ error_message }}</div>
   {% elif page_state == 'auth_error' %}
   <div class="alert alert-error" role="alert">{{ error_message }}</div>
+  {% elif status and status.execution_status == 'TERMINAL' %}
+  <h1>Research result</h1>
   {% elif status %}
   <h1>Research progress</h1>
   {% endif %}

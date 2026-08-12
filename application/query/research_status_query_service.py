@@ -59,6 +59,8 @@ _ACTIVE_TASK_STATUSES = frozenset(
         TaskStatus.WAITING,
     },
 )
+_RUNNING_TASK_STATUSES = frozenset({TaskStatus.RUNNING})
+_READY_TASK_STATUSES = frozenset({TaskStatus.READY})
 
 
 class ResearchStatusQueryService:
@@ -121,14 +123,23 @@ class ResearchStatusQueryService:
         if workflow_run.is_terminal:
             return ResearchPhase.COMPLETED
 
-        active_phases = [
+        running_phases = [
             cls._phase_for_task(task)
             for task in workflow_run.tasks
-            if task.status in _ACTIVE_TASK_STATUSES
+            if task.status in _RUNNING_TASK_STATUSES
         ]
-        active_phases = [phase for phase in active_phases if phase is not None]
-        if active_phases:
-            return max(active_phases, key=lambda item: _PHASE_RANK[item])
+        running_phases = [phase for phase in running_phases if phase is not None]
+        if running_phases:
+            return max(running_phases, key=lambda item: _PHASE_RANK[item])
+
+        ready_phases = [
+            cls._phase_for_task(task)
+            for task in workflow_run.tasks
+            if task.status in _READY_TASK_STATUSES
+        ]
+        ready_phases = [phase for phase in ready_phases if phase is not None]
+        if ready_phases:
+            return min(ready_phases, key=lambda item: _PHASE_RANK[item])
 
         # Infer from pipeline progress: first incomplete stage after completed work.
         by_definition = {task.definition_id: task for task in workflow_run.tasks}

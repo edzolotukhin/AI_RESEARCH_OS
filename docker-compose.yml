@@ -56,6 +56,10 @@ services:
       DATABASE_URL: postgresql+psycopg://ai_research_os:ai_research_os_dev@postgres:5432/ai_research_os
       PROJECTS_ROOT: /tmp/projects
       <<: *live-research-env
+      # Server-side Research UI credential. Prefer UI_INTERNAL_API_KEY; otherwise
+      # the existing bootstrap key. Never rendered to the browser.
+      UI_INTERNAL_API_KEY: ${UI_INTERNAL_API_KEY:-}
+      AI_RESEARCH_OS_API_KEY: ${AI_RESEARCH_OS_API_KEY:-}
     ports:
       - "8000:8000"
     healthcheck:

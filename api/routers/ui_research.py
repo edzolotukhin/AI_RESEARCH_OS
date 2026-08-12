@@ -17,6 +17,7 @@ from api.ui.presentation import (
     brief_form_defaults,
     bounded_text,
     build_result_view_model,
+    humanize_limitation,
     parse_brief_form,
     phase_index,
     safe_external_url,
@@ -51,6 +52,7 @@ def _template_context(request: Request, **extra):
         "phase_order": [phase.value for phase in PHASE_ORDER],
         "outcome_labels": OUTCOME_LABELS,
         "outcome_css": OUTCOME_CSS,
+        "humanize_limitation": humanize_limitation,
         **extra,
     }
 

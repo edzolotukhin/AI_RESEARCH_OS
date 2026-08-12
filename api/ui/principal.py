@@ -14,10 +14,10 @@ def resolve_ui_principal(container: ApplicationContainer) -> AuthenticatedPrinci
     if container.authentication_service is None:
         raise RuntimeError("Authentication is not configured for this deployment.")
 
-    api_key = os.environ.get("UI_INTERNAL_API_KEY") or getattr(
-        container,
-        "_test_api_key_plaintext",
-        None,
+    api_key = (
+        (os.environ.get("UI_INTERNAL_API_KEY") or "").strip()
+        or (os.environ.get("AI_RESEARCH_OS_API_KEY") or "").strip()
+        or getattr(container, "_test_api_key_plaintext", None)
     )
     if not api_key:
         raise AuthenticationRequiredError(

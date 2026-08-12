@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import html
 import re
 from typing import Any
 from urllib.parse import urlparse
@@ -59,7 +58,49 @@ EXECUTION_FAILED_MESSAGE = (
     "Research could not complete because of a technical execution problem."
 )
 
+LIMITATION_LABELS: dict[str, str] = {
+    "insufficient_research": (
+        "The available research was not sufficient to support a reliable analysis."
+    ),
+    "evidence_remediation_budget_exhausted": (
+        "The research reached its evidence-gathering limit before all information "
+        "requirements could be supported."
+    ),
+    "downstream_reserve_exhausted": (
+        "The research stopped before analysis because the remaining execution "
+        "capacity was reserved for downstream quality checks."
+    ),
+    "sufficiency_budget_exhausted": (
+        "The research reached its evidence-sufficiency limit before all information "
+        "requirements could be supported."
+    ),
+}
+
+UNKNOWN_LIMITATION_LABEL = "Research completed with additional limitations."
+
 _LIST_SPLIT_RE = re.compile(r"[\n,;]+")
+
+
+def humanize_limitation(code: Any) -> str:
+    key = str(code or "").strip()
+    if not key:
+        return UNKNOWN_LIMITATION_LABEL
+    mapped = LIMITATION_LABELS.get(key)
+    if mapped:
+        return mapped
+    if " " not in key and "_" in key:
+        return UNKNOWN_LIMITATION_LABEL
+    return key
+
+
+def limitation_items(codes: list[Any] | None) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    for code in codes or []:
+        key = str(code or "").strip()
+        if not key:
+            continue
+        items.append({"code": key, "label": humanize_limitation(key)})
+    return items
 
 
 def split_list_field(value: str | None) -> list[str]:
@@ -127,8 +168,10 @@ def brief_form_defaults() -> dict[str, Any]:
 
 def build_result_view_model(detail_payload: dict[str, Any]) -> dict[str, Any]:
     inner = detail_payload.get("detail") or {}
-    evidence_by_id = {item["id"]: item for item in inner.get("evidence", [])}
-    sources_by_id = {item["id"]: item for item in inner.get("sources", [])}
+    evidence_items = list(inner.get("evidence") or [])
+    source_items = list(inner.get("sources") or [])
+    evidence_by_id = {item["id"]: item for item in evidence_items if item.get("id")}
+    sources_by_id = {item["id"]: item for item in source_items if item.get("id")}
     findings = []
     for finding in inner.get("findings", []):
         linked_evidence = [
@@ -137,12 +180,31 @@ def build_result_view_model(detail_payload: dict[str, Any]) -> dict[str, Any]:
             if eid in evidence_by_id
         ]
         findings.append({**finding, "linked_evidence": linked_evidence})
+    evidence_enriched = [
+        {**item, "source": sources_by_id.get(item.get("source_id"))}
+        for item in evidence_items
+    ]
+    truncation = inner.get("truncation") or {}
+    total_counts = truncation.get("total_counts") or {}
+    evidence_total = int(total_counts.get("evidence") or len(evidence_items))
+    source_total = int(total_counts.get("sources") or len(source_items))
     return {
         **detail_payload,
         "inner": inner,
         "evidence_by_id": evidence_by_id,
         "sources_by_id": sources_by_id,
         "findings_enriched": findings,
+        "evidence_enriched": evidence_enriched,
+        "limitation_items": limitation_items(detail_payload.get("limitations")),
+        "termination_reason_label": humanize_limitation(
+            detail_payload.get("termination_reason"),
+        ),
+        "evidence_shown_count": len(evidence_items),
+        "evidence_total_count": evidence_total,
+        "source_shown_count": len(source_items),
+        "source_total_count": source_total,
+        "evidence_truncated": bool(truncation.get("collection_truncated"))
+        or (evidence_total > len(evidence_items)),
     }
 
 
