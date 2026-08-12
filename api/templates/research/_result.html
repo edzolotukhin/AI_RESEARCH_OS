@@ -1,0 +1,171 @@
+{% macro render_bounded(field) -%}
+  {% if field is mapping %}
+    {{ bounded_text(field) }}
+  {% else %}
+    {{ safe_text(field) }}
+  {% endif %}
+{%- endmacro %}
+
+{% if detail %}
+<section class="panel outcome-panel {{ outcome_css.get(detail.outcome, '') }}" id="outcome-panel">
+  <p class="outcome-kicker">Research outcome</p>
+  <h2 class="outcome-title">{{ outcome_labels.get(detail.outcome, detail.outcome) }}</h2>
+  {% if detail.outcome == 'NOT_READY' %}
+  <p class="outcome-message">Research completed, but the available evidence was not sufficient to safely produce a final analysis or report.</p>
+  {% elif detail.outcome == 'QUALITY_REJECTED' %}
+  <p class="outcome-message">Research reached report and review, but the quality gate did not approve the final artifact.</p>
+  {% elif detail.outcome == 'EXECUTION_FAILED' %}
+  <p class="outcome-message">Research could not complete because of a technical execution problem.</p>
+  {% endif %}
+</section>
+
+{% if detail.limitations %}
+<section class="panel">
+  <h3>Limitations</h3>
+  <ul class="plain-list">
+    {% for item in detail.limitations %}
+    <li>{{ safe_text(item) }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if detail.inner.report %}
+<section class="panel report-panel">
+  <h3>{% if detail.outcome == 'QUALITY_REJECTED' %}Latest report <span class="badge badge-warning">Not approved</span>{% else %}Report{% endif %}</h3>
+  <h4>{{ safe_text(detail.inner.report.title) }}</h4>
+  <div class="report-summary">
+    <h5>Executive summary</h5>
+    <div class="rich-text">{{ render_bounded(detail.inner.report.executive_summary) }}</div>
+  </div>
+  {% for section in detail.inner.report.sections %}
+  <article class="report-section" id="section-{{ section.id }}">
+    <h5>{{ safe_text(section.title) }}</h5>
+    <div class="rich-text">{{ render_bounded(section.content) }}</div>
+  </article>
+  {% endfor %}
+</section>
+{% elif detail.outcome == 'APPROVED' %}
+<section class="panel empty-state"><p>No report available.</p></section>
+{% endif %}
+
+{% if detail.findings_enriched %}
+<section class="panel findings-panel">
+  <h3>Findings</h3>
+  {% for finding in detail.findings_enriched %}
+  <article class="finding-card" id="finding-{{ finding.id }}">
+    <h4>{{ render_bounded(finding.statement) }}</h4>
+    {% if finding.rationale %}<div class="finding-rationale">{{ render_bounded(finding.rationale) }}</div>{% endif %}
+    <p class="meta-line">Supporting evidence: {{ finding.evidence_refs|length }}</p>
+    <button type="button" class="link-button view-evidence-btn" data-target="evidence-for-{{ finding.id }}">View evidence</button>
+    <div class="evidence-drawer" id="evidence-for-{{ finding.id }}" hidden>
+      {% for ev in finding.linked_evidence %}
+      <div class="evidence-card" id="evidence-{{ ev.id }}">
+        <p class="evidence-statement">{{ render_bounded(ev.statement) }}</p>
+        <blockquote class="source-excerpt">{{ render_bounded(ev.source_excerpt) }}</blockquote>
+        {% set src = detail.sources_by_id.get(ev.source_id) %}
+        {% if src %}
+        <div class="source-card" id="source-{{ src.id }}">
+          <strong>{{ safe_text(src.title) }}</strong>
+          {% if src.publisher %}<span class="publisher">{{ safe_text(src.publisher) }}</span>{% endif %}
+          {% set url = safe_external_url(src.url) %}
+          {% if url.href %}
+          <a href="{{ url.href }}" target="_blank" rel="noopener noreferrer">{{ safe_text(url.display) }}</a>
+          {% else %}
+          <span class="unsafe-url">{{ safe_text(url.display) }}</span>
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+      {% else %}
+      <p class="empty-inline">No linked evidence in this view.</p>
+      {% endfor %}
+    </div>
+  </article>
+  {% endfor %}
+</section>
+{% elif detail.outcome not in ['NOT_READY', 'EXECUTION_FAILED'] %}
+<section class="panel empty-state"><p>No findings available.</p></section>
+{% endif %}
+
+{% if detail.inner.insights %}
+<section class="panel insights-panel">
+  <h3>Insights</h3>
+  {% for insight in detail.inner.insights %}
+  <article class="insight-card">
+    <h4>{{ render_bounded(insight.statement) }}</h4>
+    {% if insight.implication %}<p>{{ render_bounded(insight.implication) }}</p>{% endif %}
+  </article>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if detail.inner.sources and detail.outcome == 'NOT_READY' %}
+<section class="panel sources-panel">
+  <h3>Sources ({{ detail.inner.sources|length }})</h3>
+  {% for src in detail.inner.sources %}
+  <div class="source-card">
+    <strong>{{ safe_text(src.title) }}</strong>
+    {% set url = safe_external_url(src.url) %}
+    {% if url.href %}<a href="{{ url.href }}" target="_blank" rel="noopener noreferrer">{{ safe_text(url.display) }}</a>{% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if detail.inner.review %}
+<section class="panel review-panel">
+  <h3>Quality review</h3>
+  <p>Verdict: <strong>{{ safe_text(detail.inner.review.verdict) }}</strong></p>
+  <div class="rich-text">{{ render_bounded(detail.inner.review.summary) }}</div>
+  {% if detail.inner.review.issues %}
+  <h4>Major issues</h4>
+  <ul class="issue-list">
+    {% for issue in detail.inner.review.issues if issue.severity == 'major' %}
+    <li><strong>{{ safe_text(issue.issue_type) }}</strong>: {{ render_bounded(issue.message) }}</li>
+    {% else %}<li class="empty-inline">None listed.</li>{% endfor %}
+  </ul>
+  <h4>Minor issues</h4>
+  <ul class="issue-list">
+    {% for issue in detail.inner.review.issues if issue.severity == 'minor' %}
+    <li><strong>{{ safe_text(issue.issue_type) }}</strong>: {{ render_bounded(issue.message) }}</li>
+    {% else %}<li class="empty-inline">None listed.</li>{% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if detail.inner.truncation and detail.inner.truncation.collection_truncated %}
+<section class="panel truncation-panel">
+  <p class="truncation-note">Some collections were truncated in this view.
+    {% for key, count in detail.inner.truncation.total_counts.items() %}
+    {{ key }}: {{ count }}{% if not loop.last %}, {% endif %}
+    {% endfor %}
+  </p>
+</section>
+{% endif %}
+
+<details class="panel advanced-panel">
+  <summary>Research details</summary>
+  <dl class="meta-grid">
+    <dt>Research ID</dt><dd><code>{{ detail.research_id or detail.run_id }}</code></dd>
+    <dt>Workflow status</dt><dd>{{ safe_text(detail.workflow_status) }}</dd>
+    <dt>Sources</dt><dd>{{ detail.inner.sources|length }}</dd>
+    <dt>Evidence</dt><dd>{{ detail.inner.evidence|length }}</dd>
+  </dl>
+  {% if detail.inner.sources %}
+  <h4>Source inventory</h4>
+  {% for src in detail.inner.sources %}
+  <div class="source-card">
+    <strong>{{ safe_text(src.title) }}</strong>
+    {% set url = safe_external_url(src.url) %}
+    {% if url.href %}
+    <a href="{{ url.href }}" target="_blank" rel="noopener noreferrer">{{ safe_text(url.display) }}</a>
+    {% else %}
+    <span class="unsafe-url">{{ safe_text(url.display) }}</span>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% endif %}
+</details>
+{% endif %}

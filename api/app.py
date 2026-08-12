@@ -20,6 +20,7 @@ from api.routers import (
     research,
     reviews,
     sources,
+    ui_research,
     workflow_runs,
 )
 
@@ -69,6 +70,7 @@ def create_fastapi_app(
     app.include_router(health.router)
     app.include_router(projects.router)
     app.include_router(research.router)
+    app.include_router(ui_research.router)
     app.include_router(workflow_runs.router)
     app.include_router(artifacts.router)
     app.include_router(sources.router)
@@ -76,6 +78,8 @@ def create_fastapi_app(
     app.include_router(findings.router)
     app.include_router(reports.router)
     app.include_router(reviews.router)
+
+    ui_research.mount_ui_static(app)
 
     _configure_openapi_security(app)
 
@@ -102,9 +106,9 @@ def _configure_openapi_security(app: FastAPI) -> None:
             "scheme": "bearer",
             "description": "Service API key issued via bootstrap CLI.",
         }
-        public_paths = {"/health", "/ready", "/openapi.json", "/docs", "/redoc"}
+        public_paths = {"/health", "/ready", "/openapi.json", "/docs", "/redoc", "/ui", "/static"}
         for path, methods in openapi_schema.get("paths", {}).items():
-            if path in public_paths:
+            if path in public_paths or path.startswith("/ui/"):
                 continue
             for operation in methods.values():
                 if isinstance(operation, dict):

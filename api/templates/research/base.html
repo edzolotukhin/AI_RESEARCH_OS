@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}AI Research OS{% endblock %}</title>
+  <link rel="stylesheet" href="/static/research.css">
+  {% block head_extra %}{% endblock %}
+</head>
+<body>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="/ui/research/new">AI Research OS</a>
+      <nav aria-label="Primary">
+        <a href="/ui/research/new">New Research</a>
+      </nav>
+    </div>
+  </header>
+  <main class="container page-main">
+    {% block content %}{% endblock %}
+  </main>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,13 @@
+<section class="panel progress-panel" id="progress-panel" aria-live="polite">
+  <h2>Research in progress</h2>
+  <p class="phase-label" id="current-phase-label">{{ phase_labels.get(status.phase, status.phase) }}</p>
+  <ol class="phase-stepper" id="phase-stepper">
+    {% for phase in phase_order %}
+    <li class="phase-step {% if loop.index0 < current_phase_index %}is-complete{% elif loop.index0 == current_phase_index %}is-current{% endif %}" data-phase="{{ phase }}">
+      <span class="phase-step-name">{{ phase.replace('_', ' ').title() }}</span>
+      <span class="phase-step-copy">{{ phase_labels.get(phase, phase) }}</span>
+    </li>
+    {% endfor %}
+  </ol>
+  <p class="polling-note" id="polling-note">Checking progress every few seconds…</p>
+</section>

@@ -1,0 +1,79 @@
+{% extends "research/base.html" %}
+{% block title %}New Research — AI Research OS{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Start new research</h1>
+  <p class="lede">Enter a normal research brief. The system will plan, gather evidence, analyze, and review automatically.</p>
+
+  {% if error_message %}
+  <div class="alert alert-error" role="alert">{{ error_message }}</div>
+  {% endif %}
+
+  <form method="post" action="/ui/research" class="brief-form" id="research-brief-form" novalidate>
+    <fieldset {% if form_state == 'submitting' %}disabled{% endif %}>
+      <legend class="sr-only">Research brief</legend>
+
+      <label for="title">Title</label>
+      <input id="title" name="title" type="text" value="{{ form.title }}" maxlength="200">
+
+      <label for="business_question">Business question <span class="required">*</span></label>
+      <textarea id="business_question" name="business_question" rows="3" required>{{ form.business_question }}</textarea>
+
+      <label for="objectives">Objectives</label>
+      <textarea id="objectives" name="objectives" rows="2" placeholder="One objective per line">{{ form.objectives }}</textarea>
+
+      <div class="grid-2">
+        <div>
+          <label for="geography">Geography</label>
+          <input id="geography" name="geography" type="text" value="{{ form.geography }}" placeholder="e.g. Germany, EU">
+        </div>
+        <div>
+          <label for="timeframe">Timeframe</label>
+          <input id="timeframe" name="timeframe" type="text" value="{{ form.timeframe }}" placeholder="e.g. 2026">
+        </div>
+      </div>
+
+      <details class="advanced-panel">
+        <summary>Advanced details</summary>
+        <div class="advanced-body">
+          <label for="market">Market</label>
+          <input id="market" name="market" type="text" value="{{ form.market }}">
+
+          <label for="target_entities">Target entities</label>
+          <textarea id="target_entities" name="target_entities" rows="2">{{ form.target_entities }}</textarea>
+
+          <label for="constraints">Constraints</label>
+          <textarea id="constraints" name="constraints" rows="2">{{ form.constraints }}</textarea>
+
+          <label for="deliverables">Deliverables</label>
+          <textarea id="deliverables" name="deliverables" rows="2">{{ form.deliverables }}</textarea>
+
+          <label for="language">Language</label>
+          <input id="language" name="language" type="text" value="{{ form.language }}" maxlength="16">
+
+          <label for="context">Context</label>
+          <textarea id="context" name="context" rows="2">{{ form.context }}</textarea>
+
+          <label for="known_information">Known information</label>
+          <textarea id="known_information" name="known_information" rows="2">{{ form.known_information }}</textarea>
+
+          <label for="exclusions">Exclusions</label>
+          <textarea id="exclusions" name="exclusions" rows="2">{{ form.exclusions }}</textarea>
+        </div>
+      </details>
+
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary" id="start-research-btn">
+          {% if form_state == 'submitting' %}Submitting…{% else %}Start Research{% endif %}
+        </button>
+        <p class="form-hint" id="form-state-hint" aria-live="polite">
+          {% if form_state == 'ready' %}Ready to submit{% elif form_state == 'validation_error' %}Please correct the highlighted fields{% elif form_state == 'submission_error' %}Submission failed{% elif form_state == 'auth_error' %}Authentication unavailable{% endif %}
+        </p>
+      </div>
+    </fieldset>
+  </form>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="/static/research.js"></script>
+{% endblock %}
