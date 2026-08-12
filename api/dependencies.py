@@ -18,6 +18,9 @@ from application.services.workflow_service import WorkflowService
 from application.query.research_run_result_query_service import (
     ResearchRunResultQueryService,
 )
+from application.query.research_status_query_service import (
+    ResearchStatusQueryService,
+)
 
 
 def get_container(request: Request) -> ApplicationContainer:
@@ -80,6 +83,12 @@ def get_research_run_result_query_service(
     return container.research_run_result_query_service
 
 
+def get_research_status_query_service(
+    container: ContainerDep,
+) -> ResearchStatusQueryService:
+    return container.research_status_query_service
+
+
 AgencyDep = Annotated[Agency, Depends(get_agency)]
 ProjectServiceDep = Annotated[ProjectService, Depends(get_project_service)]
 WorkflowServiceDep = Annotated[WorkflowService, Depends(get_workflow_service)]
@@ -93,6 +102,10 @@ ReviewQueryServiceDep = Annotated[ReviewQueryService, Depends(get_review_query_s
 ResearchRunResultQueryServiceDep = Annotated[
     ResearchRunResultQueryService,
     Depends(get_research_run_result_query_service),
+]
+ResearchStatusQueryServiceDep = Annotated[
+    ResearchStatusQueryService,
+    Depends(get_research_status_query_service),
 ]
 ExecutionLogServiceDep = Annotated[
     ExecutionLogService,

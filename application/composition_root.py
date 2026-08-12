@@ -56,6 +56,9 @@ from application.services.review_query_service import ReviewQueryService
 from application.query.research_run_result_query_service import (
     ResearchRunResultQueryService,
 )
+from application.query.research_status_query_service import (
+    ResearchStatusQueryService,
+)
 from application.services.source_service import SourceService
 from application.evidence.evidence_factory import build_evidence_executor
 from application.analysis.analysis_factory import build_analysis_executor
@@ -191,6 +194,10 @@ def create_application_container(
         report_repository=report_repository,
         review_repository=review_repository,
         artifact_repository=persistence.artifact_repository,
+    )
+    research_status_query_service = ResearchStatusQueryService(
+        workflow_run_repository=persistence.workflow_run_repository,
+        research_run_result_query_service=research_run_result_query_service,
     )
 
     execution_log_service = ExecutionLogService(
@@ -384,6 +391,7 @@ def create_application_container(
         report_query_service=report_query_service,
         review_query_service=review_query_service,
         research_run_result_query_service=research_run_result_query_service,
+        research_status_query_service=research_status_query_service,
         execution_log_service=execution_log_service,
         durable_workflow_service=durable_workflow_service,
         worker_execution_service=worker_execution_service,

@@ -22,6 +22,9 @@ from application.services.authorization_service import AuthorizationService
 from application.query.research_run_result_query_service import (
     ResearchRunResultQueryService,
 )
+from application.query.research_status_query_service import (
+    ResearchStatusQueryService,
+)
 
 from application.runtime.background_execution_capability import (
     BackgroundExecutionCapability,
@@ -49,6 +52,7 @@ class ApplicationContainer:
     report_query_service: ReportQueryService
     review_query_service: ReviewQueryService
     research_run_result_query_service: ResearchRunResultQueryService
+    research_status_query_service: ResearchStatusQueryService
     execution_log_service: ExecutionLogService
     durable_workflow_service: DurableWorkflowService | None = None
     worker_execution_service: WorkerExecutionService | None = None

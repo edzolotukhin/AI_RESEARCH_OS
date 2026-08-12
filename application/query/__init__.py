@@ -8,10 +8,22 @@ from application.query.research_run_result import (
 from application.query.research_run_result_query_service import (
     ResearchRunResultQueryService,
 )
+from application.query.research_status import (
+    ResearchExecutionStatus,
+    ResearchPhase,
+    ResearchStatusProjection,
+)
+from application.query.research_status_query_service import (
+    ResearchStatusQueryService,
+)
 
 __all__ = [
+    "ResearchExecutionStatus",
+    "ResearchPhase",
     "ResearchRunOutcome",
     "ResearchRunResult",
     "ResearchRunResultProjectionError",
     "ResearchRunResultQueryService",
+    "ResearchStatusProjection",
+    "ResearchStatusQueryService",
 ]
