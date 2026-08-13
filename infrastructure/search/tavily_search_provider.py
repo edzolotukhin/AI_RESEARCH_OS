@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from domain.sources.search_query import SearchQuery
+from domain.sources.retrieval_arm import RetrievalArm
 from domain.sources.source_candidate import SourceCandidate
 
 from application.ports.source_ports import SearchProvider
@@ -75,7 +76,8 @@ class TavilySearchProvider(SearchProvider):
             "query": query.provider_query_text or query.query_text,
             "max_results": query.max_results,
         }
-        if country_resolution.country:
+        localized = query.retrieval_arm in {None, RetrievalArm.LOCALIZED}
+        if localized and country_resolution.country:
             payload["country"] = country_resolution.country
         try:
             response = client.post(self._API_URL, json=payload)
@@ -94,8 +96,10 @@ class TavilySearchProvider(SearchProvider):
                 continue
             metadata = self._candidate_audit_metadata(
                 query=query,
-                country=country_resolution.country,
+                country=(country_resolution.country if localized else None),
                 resolution_status=country_resolution.status.value,
+                retrieval_arm=(query.retrieval_arm or RetrievalArm.LOCALIZED),
+                result_count=len(results),
             )
             score = item.get("score")
             if score is not None:
@@ -122,6 +126,8 @@ class TavilySearchProvider(SearchProvider):
         query: SearchQuery,
         country: str | None,
         resolution_status: str,
+        retrieval_arm: RetrievalArm,
+        result_count: int,
     ) -> dict[str, str]:
         applied = str(country is not None).lower()
         metadata = {
@@ -131,10 +137,28 @@ class TavilySearchProvider(SearchProvider):
             "country_resolution_status": resolution_status,
             "search_depth": "basic",
             "max_results": str(query.max_results),
+            "retrieval_arm": retrieval_arm.value,
+            "provider_query_text": query.provider_query_text or query.query_text,
+            "provider_result_count": str(result_count),
         }
         if country:
             metadata["provider_country"] = country
         return metadata
+
+    def supports_retrieval_arm(
+        self,
+        arm: RetrievalArm,
+        query: SearchQuery,
+    ) -> bool:
+        if arm is RetrievalArm.BASELINE:
+            return True
+        if arm is not RetrievalArm.LOCALIZED:
+            return False
+        resolution = resolve_supported_country(
+            query.geography,
+            supported_countries=self._SUPPORTED_COUNTRIES,
+        )
+        return resolution.country is not None
 
     def _default_client(self):
         import httpx

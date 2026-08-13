@@ -4,6 +4,7 @@ from domain.planning.research_design import ResearchDesign
 from domain.research_brief import ResearchBrief
 from domain.research_quality.targeted_research_request import TargetedResearchRequest
 from domain.sources.search_query import SearchQuery
+from domain.sources.retrieval_arm import RetrievalArm
 
 from application.sources.expectation_aware_query_intent import (
     build_expectation_aware_query_text,
@@ -99,6 +100,7 @@ class TargetedSearchQueryBuilder:
                     )
                     or ""
                 ),
+                retrieval_arm=RetrievalArm.BASELINE,
             ),
         ]
 
@@ -138,6 +140,7 @@ class TargetedSearchQueryBuilder:
                         )
                         or ""
                     ),
+                    retrieval_arm=RetrievalArm.BASELINE,
                 ),
             )
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from domain.sources.search_query import SearchQuery
+from domain.sources.retrieval_arm import RetrievalArm
 from domain.sources.source import Source
 from domain.sources.source_candidate import SourceCandidate
 
@@ -13,6 +14,14 @@ class SearchProvider(ABC):
     @abstractmethod
     def search(self, query: SearchQuery) -> list[SourceCandidate]:
         """Execute a search query and return ranked source candidates."""
+
+    def supports_retrieval_arm(
+        self,
+        arm: RetrievalArm,
+        query: SearchQuery,
+    ) -> bool:
+        """Whether this provider can safely execute the semantic arm."""
+        return arm is RetrievalArm.BASELINE
 
 
 class SourceRetriever(ABC):

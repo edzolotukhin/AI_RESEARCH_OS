@@ -3,6 +3,7 @@ from __future__ import annotations
 from domain.planning.research_design import InformationNeed, ResearchDesign
 from domain.research_brief import ResearchBrief
 from domain.sources.search_query import SearchQuery
+from domain.sources.retrieval_arm import RetrievalArm
 
 from application.sources.expectation_aware_query_intent import (
     build_expectation_aware_query_text,
@@ -110,4 +111,5 @@ class SearchQueryBuilder:
                 )
                 or ""
             ),
+            retrieval_arm=RetrievalArm.BASELINE,
         )

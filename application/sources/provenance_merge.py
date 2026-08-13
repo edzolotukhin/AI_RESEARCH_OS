@@ -50,6 +50,10 @@ def build_discovery_record(
     research_design_id: str,
     research_question_id: str = "",
     information_need_id: str = "",
+    retrieval_arm: str = "baseline",
+    provider_country: str = "",
+    provider_query_text: str = "",
+    provider_result_count: str = "",
 ) -> dict[str, Any]:
     return {
         "provider": provider,
@@ -59,6 +63,10 @@ def build_discovery_record(
         "research_design_id": research_design_id,
         "research_question_id": research_question_id,
         "information_need_id": information_need_id,
+        "retrieval_arm": retrieval_arm,
+        "provider_country": provider_country,
+        "provider_query_text": provider_query_text,
+        "provider_result_count": provider_result_count,
     }
 
 
@@ -74,6 +82,7 @@ def merge_discovery_records(
             str(item.get("workflow_run_id", "")),
             str(item.get("research_design_id", "")),
             str(item.get("rank", "")),
+            str(item.get("retrieval_arm", "baseline")),
         )
         for item in merged
     }
@@ -84,6 +93,7 @@ def merge_discovery_records(
             str(record.get("workflow_run_id", "")),
             str(record.get("research_design_id", "")),
             str(record.get("rank", "")),
+            str(record.get("retrieval_arm", "baseline")),
         )
         if key in seen:
             continue
@@ -120,13 +130,14 @@ def apply_provenance_delta(existing: Source, delta: ProvenanceDelta) -> Source:
     return existing
 
 
-def discovery_record_key(record: dict[str, Any]) -> tuple[str, str, str, str, str]:
+def discovery_record_key(record: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
     return (
         str(record.get("provider", "")),
         str(record.get("query_id", "")),
         str(record.get("workflow_run_id", "")),
         str(record.get("research_design_id", "")),
         str(record.get("rank", "")),
+        str(record.get("retrieval_arm", "baseline")),
     )
 
 

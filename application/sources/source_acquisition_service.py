@@ -14,6 +14,7 @@ from domain.planning.research_design import ResearchDesign
 from domain.research_brief import ResearchBrief
 from domain.sources.retrieval_status import RetrievalStatus
 from domain.sources.search_query import SearchQuery
+from domain.sources.retrieval_arm import RetrievalArm
 from domain.sources.source import Source
 from domain.sources.source_candidate import SourceCandidate
 
@@ -41,7 +42,11 @@ from application.sources.deterministic_source_relevance import (
     evaluate_candidate,
     selection_sort_key,
 )
-from application.sources.exceptions import DuplicateSourceError, SourceAcquisitionError
+from application.sources.exceptions import (
+    DuplicateSourceError,
+    SearchProviderError,
+    SourceAcquisitionError,
+)
 from application.sources.provenance_merge import (
     ProvenanceDelta,
     apply_first_acquisition,
@@ -53,6 +58,7 @@ from application.sources.provenance_merge import (
     missing_discovery_records,
 )
 from application.sources.search_query_builder import SearchQueryBuilder
+from application.sources.retrieval_portfolio import derive_initial_retrieval_portfolio
 from application.sources.source_budget import SourceAcquisitionBudget
 from application.sources.source_need_exhaustion import (
     exhausted_canonical_urls_for_need,
@@ -94,6 +100,7 @@ class SourceAcquisitionSummary:
     skipped_ineligible_count: int = 0
     skipped_exhausted_count: int = 0
     selection_decisions: tuple[dict[str, Any], ...] = ()
+    retrieval_arm_call_counts: dict[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.tavily_query_count == 0 and self.queries_executed:
@@ -132,6 +139,7 @@ class SourceAcquisitionSummary:
             "skipped_ineligible_count": self.skipped_ineligible_count,
             "skipped_exhausted_count": self.skipped_exhausted_count,
             "selection_decisions": [dict(item) for item in self.selection_decisions],
+            "retrieval_arm_call_counts": dict(self.retrieval_arm_call_counts),
         }
 
 
@@ -187,7 +195,15 @@ class SourceAcquisitionService:
         brief = context.project.research_brief
         queries = self._query_builder.build_queries(design, brief=brief)
 
-        raw_count, grouped = self._collect_candidates(queries)
+        portfolio_queries = [
+            arm_query
+            for query in queries
+            for arm_query in derive_initial_retrieval_portfolio(
+                query,
+                supports_arm=self._search_provider.supports_retrieval_arm,
+            )
+        ]
+        raw_count, grouped = self._collect_candidates(portfolio_queries)
         unique_count = len(grouped)
         eligible, selection_decisions, skipped_ineligible, skipped_exhausted = (
             self._select_groups(
@@ -236,11 +252,11 @@ class SourceAcquisitionService:
 
         summary = SourceAcquisitionSummary(
             source_ids=tuple(source_ids),
-            queries_executed=len(queries),
+            queries_executed=len(portfolio_queries),
             candidates_found=raw_count,
             sources_acquired=acquired,
             retrieval_failures=failures,
-            tavily_query_count=len(queries),
+            tavily_query_count=len(portfolio_queries),
             candidate_count_raw=raw_count,
             candidate_count_unique=unique_count,
             candidates_attempted=attempted,
@@ -260,6 +276,12 @@ class SourceAcquisitionService:
             skipped_ineligible_count=skipped_ineligible,
             skipped_exhausted_count=skipped_exhausted,
             selection_decisions=tuple(selection_decisions),
+            retrieval_arm_call_counts=dict(
+                Counter(
+                    (query.retrieval_arm or RetrievalArm.BASELINE).value
+                    for query in portfolio_queries
+                )
+            ),
         )
 
         logger.info(
@@ -391,7 +413,22 @@ class SourceAcquisitionService:
         raw_count = 0
 
         for query in queries:
-            candidates = self._search_provider.search(query)
+            try:
+                candidates = self._search_provider.search(query)
+            except SearchProviderError:
+                if query.retrieval_arm is RetrievalArm.LOCALIZED:
+                    logger.warning(
+                        "localized_retrieval_arm_failed",
+                        extra={
+                            "event": "localized_retrieval_arm_failed",
+                            "query_id": query.id,
+                            "information_need_id": query.information_need_id,
+                            "retrieval_arm": RetrievalArm.LOCALIZED.value,
+                        },
+                        exc_info=True,
+                    )
+                    continue
+                raise
             raw_count += len(candidates)
             for candidate in candidates[: self._budget.max_candidates_per_information_need]:
                 if not _is_supported_scheme(candidate.url):
@@ -836,6 +873,21 @@ class SourceAcquisitionService:
                     research_design_id=research_design_id,
                     research_question_id=item.query.research_question_id,
                     information_need_id=item.query.information_need_id,
+                    retrieval_arm=(
+                        item.query.retrieval_arm or RetrievalArm.BASELINE
+                    ).value,
+                    provider_country=item.candidate.metadata.get(
+                        "provider_country",
+                        "",
+                    ),
+                    provider_query_text=item.candidate.metadata.get(
+                        "provider_query_text",
+                        item.query.provider_query_text or item.query.query_text,
+                    ),
+                    provider_result_count=item.candidate.metadata.get(
+                        "provider_result_count",
+                        "",
+                    ),
                 ),
             )
         return ProvenanceDelta(

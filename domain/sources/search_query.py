@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from domain.sources.retrieval_arm import RetrievalArm
+
 
 @dataclass(frozen=True)
 class SearchQuery:
@@ -21,6 +23,9 @@ class SearchQuery:
     # Transient provider-facing projection. Intentionally excluded from
     # serialization so the complete query remains the durable semantic contract.
     provider_query_text: str = ""
+    # Transient execution strategy. None preserves the pre-portfolio direct
+    # adapter contract; production portfolio execution always sets an arm.
+    retrieval_arm: RetrievalArm | None = None
 
     def __post_init__(self) -> None:
         if not self.query_text.strip():
