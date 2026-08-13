@@ -30,9 +30,11 @@ from urllib.parse import urlparse
 
 from domain.planning.evidence_nature import EvidenceNature
 from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
+from domain.research_brief import ResearchBrief
 from domain.sources.source_candidate import SourceCandidate
 
 from application.sources.expectation_aware_query_intent import render_aspect_query_terms
+from application.sources.category_subject import resolve_category_subject
 from application.sources.url_canonicalizer import normalize_query_text
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
@@ -442,6 +444,8 @@ class SourceRelevanceDecision:
 def build_relevance_context(
     design: ResearchDesign,
     need: InformationNeed,
+    *,
+    brief: ResearchBrief | None = None,
 ) -> RelevanceContext:
     question = _question_for_need(design, need)
     rq_text_parts = []
@@ -492,7 +496,7 @@ def build_relevance_context(
         for item in need.preferred_source_types
         for token in tokenize(item, min_length=3)
     )
-    category_subject_tokens = _derive_category_subject_tokens(design)
+    category_subject_tokens = _derive_category_subject_tokens(design, brief=brief)
     return RelevanceContext(
         information_need_id=need.id,
         research_question_id=need.research_question_id,
@@ -747,61 +751,14 @@ def _expectation_boost(
     return 0
 
 
-def _derive_category_subject_tokens(design: ResearchDesign) -> frozenset[str]:
-    """Conservatively derive a domain-neutral category subject from the design.
-
-    Multiple ResearchQuestions provide the strongest deterministic signal: a
-    category repeated across every question while geography and generic
-    contract language are removed. For a single question, require the subject
-    to also occur in every child InformationNeed. Ambiguous or overly broad
-    results fail open by returning an empty set.
-    """
-    question_token_sets = [
-        set(tokenize(question.question, min_length=3))
-        for question in design.research_questions
-        if question.question.strip()
-    ]
-    if not question_token_sets:
-        return frozenset()
-
-    shared = set.intersection(*question_token_sets)
-    if len(question_token_sets) == 1:
-        question_id = design.research_questions[0].id
-        child_sets = [
-            set(tokenize(need.description, min_length=3))
-            for need in design.information_needs
-            if need.research_question_id == question_id and need.description.strip()
-        ]
-        if not child_sets:
-            return frozenset()
-        shared &= set.intersection(*child_sets)
-
-    geography: set[str] = set()
-    timeframe: set[str] = set()
-    aspect_tokens: set[str] = set()
-    for need in design.information_needs:
-        geography.update(geography_tokens(need.geography))
-        timeframe.update(tokenize(need.timeframe, min_length=3))
-        if need.evidence_expectation is not None:
-            geography.update(geography_tokens(need.evidence_expectation.geography))
-            timeframe.update(tokenize(need.evidence_expectation.timeframe, min_length=3))
-            for aspect in need.evidence_expectation.required_aspects:
-                aspect_tokens.update(
-                    tokenize(render_aspect_query_terms(aspect), min_length=3)
-                )
-
-    subject = {
-        token
-        for token in shared
-        if token not in geography
-        and token not in timeframe
-        and token not in aspect_tokens
-        and token not in _GENERIC_CONTRACT_WORDS
-        and not token.isdigit()
-    }
-    if not subject or len(subject) > 5:
-        return frozenset()
-    return frozenset(subject)
+def _derive_category_subject_tokens(
+    design: ResearchDesign,
+    *,
+    brief: ResearchBrief | None = None,
+) -> frozenset[str]:
+    """Compatibility wrapper over the shared P1-23.1 subject resolver."""
+    subject = resolve_category_subject(brief=brief, design=design)
+    return subject.tokens if subject is not None else frozenset()
 
 
 def _classify_geography(

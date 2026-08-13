@@ -28,6 +28,7 @@ def build_expectation_aware_query_text(
     timeframe: str | None = None,
     semantic_targets: Sequence[str] = (),
     subject_context: str | None = None,
+    category_context: str | None = None,
 ) -> str:
     """Compose one deterministic Search query carrying semantic aspect intent.
 
@@ -58,6 +59,8 @@ def build_expectation_aware_query_text(
 
     if subject_context:
         _append(subject_context)
+    if category_context:
+        _append(category_context)
     _append(description)
     for aspect_id in semantic_targets:
         _append(render_aspect_query_terms(aspect_id))

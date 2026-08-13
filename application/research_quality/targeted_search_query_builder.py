@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from domain.planning.research_design import ResearchDesign
+from domain.research_brief import ResearchBrief
 from domain.research_quality.targeted_research_request import TargetedResearchRequest
 from domain.sources.search_query import SearchQuery
 
 from application.sources.expectation_aware_query_intent import (
     build_expectation_aware_query_text,
 )
+from application.sources.category_subject import resolve_category_subject
 from application.sources.url_canonicalizer import normalize_query_text
 
 SEMANTIC_TARGET_MISSING_ASPECTS = "missing_aspects"
@@ -24,6 +26,7 @@ class TargetedSearchQueryBuilder:
         request: TargetedResearchRequest,
         max_queries: int,
         max_results: int,
+        brief: ResearchBrief | None = None,
     ) -> list[SearchQuery]:
         if max_queries < 1:
             raise ValueError("max_queries must be at least 1.")
@@ -50,12 +53,14 @@ class TargetedSearchQueryBuilder:
             None,
         )
         subject_context = question.question if question is not None else ""
+        category = resolve_category_subject(brief=brief, design=design)
         semantic_targets, target_source = self._resolve_semantic_targets(
             need=need,
             request=request,
         )
         base_text = build_expectation_aware_query_text(
             subject_context=subject_context,
+            category_context=category.text if category is not None else "",
             description=need.description,
             geography=need.geography,
             timeframe=need.timeframe,
@@ -92,7 +97,13 @@ class TargetedSearchQueryBuilder:
                     id=f"sq-target-{need.id}-a{request.attempt}-{index}",
                     research_question_id=need.research_question_id,
                     information_need_id=need.id,
-                    query_text=directive_text,
+                    query_text=build_expectation_aware_query_text(
+                        subject_context=subject_context,
+                        category_context=category.text if category is not None else "",
+                        description=directive_text,
+                        geography=need.geography,
+                        timeframe=need.timeframe,
+                    ),
                     language=design.language,
                     geography=need.geography,
                     timeframe=need.timeframe,

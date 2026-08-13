@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from domain.planning.research_design import InformationNeed, ResearchDesign
+from domain.research_brief import ResearchBrief
 from domain.sources.search_query import SearchQuery
 
 from application.sources.expectation_aware_query_intent import (
     build_expectation_aware_query_text,
 )
+from application.sources.category_subject import resolve_category_subject
 
 
 class SearchQueryBuilder:
@@ -14,7 +16,12 @@ class SearchQueryBuilder:
     def __init__(self, *, max_results: int = 5) -> None:
         self._max_results = max_results
 
-    def build_queries(self, design: ResearchDesign) -> list[SearchQuery]:
+    def build_queries(
+        self,
+        design: ResearchDesign,
+        *,
+        brief: ResearchBrief | None = None,
+    ) -> list[SearchQuery]:
         if not design.information_needs:
             raise ValueError(
                 "ResearchDesign must contain at least one information need "
@@ -26,7 +33,7 @@ class SearchQueryBuilder:
 
         for need in design.information_needs:
             self._validate_need(need, question_ids)
-            queries.append(self._build_query(design, need))
+            queries.append(self._build_query(design, need, brief=brief))
 
         return queries
 
@@ -45,6 +52,8 @@ class SearchQueryBuilder:
         self,
         design: ResearchDesign,
         need: InformationNeed,
+        *,
+        brief: ResearchBrief | None,
     ) -> SearchQuery:
         # Parity with TargetedSearchQueryBuilder: parent RQ text anchors the
         # category/subject so a generic InformationNeed cannot drop Brief topic.
@@ -57,11 +66,13 @@ class SearchQueryBuilder:
             None,
         )
         subject_context = question.question if question is not None else ""
+        category = resolve_category_subject(brief=brief, design=design)
         semantic_targets: tuple[str, ...] = ()
         if need.evidence_expectation is not None:
             semantic_targets = need.evidence_expectation.required_aspects
         query_text = build_expectation_aware_query_text(
             subject_context=subject_context,
+            category_context=category.text if category is not None else "",
             description=need.description,
             geography=need.geography,
             timeframe=need.timeframe,
@@ -71,6 +82,8 @@ class SearchQueryBuilder:
         rationale_parts = [f"Derived from information need {need.id}"]
         if subject_context:
             rationale_parts.append("subject_context=parent_research_question")
+        if category is not None:
+            rationale_parts.append(f"category_subject={category.source}")
         if need.geography:
             rationale_parts.append(f"geography={need.geography}")
         if need.timeframe:

@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from domain.planning.research_design import ResearchDesign
+from domain.research_brief import ResearchBrief
 from domain.sources.retrieval_status import RetrievalStatus
 from domain.sources.search_query import SearchQuery
 from domain.sources.source import Source
@@ -183,7 +184,8 @@ class SourceAcquisitionService:
         design = self._resolve_design(context)
         project_id = context.project.id
         workflow_run_id = context.workflow_run.id
-        queries = self._query_builder.build_queries(design)
+        brief = context.project.research_brief
+        queries = self._query_builder.build_queries(design, brief=brief)
 
         raw_count, grouped = self._collect_candidates(queries)
         unique_count = len(grouped)
@@ -191,6 +193,7 @@ class SourceAcquisitionService:
             self._select_groups(
                 grouped,
                 design=design,
+                brief=brief,
                 exhausted_pairs=frozenset(),
             )
         )
@@ -302,6 +305,7 @@ class SourceAcquisitionService:
 
         started = time.monotonic()
         design = self._resolve_design(context)
+        brief = context.project.research_brief
         project_id = context.project.id
         workflow_run_id = context.workflow_run.id
 
@@ -312,6 +316,7 @@ class SourceAcquisitionService:
             self._select_groups(
                 grouped,
                 design=design,
+                brief=brief,
                 exhausted_pairs=exhausted_pairs,
             )
         )
@@ -440,6 +445,7 @@ class SourceAcquisitionService:
         grouped: dict[str, list[_PendingCandidate]],
         *,
         design: ResearchDesign,
+        brief: ResearchBrief | None = None,
         exhausted_pairs: frozenset[tuple[str, str]],
     ) -> tuple[list[_CandidateGroup], list[dict[str, Any]], int, int]:
         need_by_id = {need.id: need for need in design.information_needs}
@@ -484,7 +490,7 @@ class SourceAcquisitionService:
                 else:
                     context = contexts.setdefault(
                         need.id,
-                        build_relevance_context(design, need),
+                        build_relevance_context(design, need, brief=brief),
                     )
                     decision = evaluate_candidate(
                         context,

@@ -58,6 +58,7 @@ class ProductionTargetedResearchRunner:
             request=request,
             max_queries=self._bounds.max_queries_per_gap,
             max_results=self._config.source_max_candidates_per_query,
+            brief=context.project.research_brief,
         )
         acquisition = self._source_acquisition.acquire_targeted_queries(
             context,
