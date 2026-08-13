@@ -516,6 +516,7 @@ class SourceAcquisitionService:
             best = max(
                 fetchable,
                 key=lambda item: (
+                    item.category_rank,
                     item.expectation_boost,
                     item.tier_rank,
                     item.topic_score,

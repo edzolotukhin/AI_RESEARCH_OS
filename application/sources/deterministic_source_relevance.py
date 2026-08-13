@@ -269,6 +269,10 @@ ELIGIBILITY_PROXY = "proxy"
 ELIGIBILITY_INELIGIBLE = "ineligible"
 ELIGIBILITY_UNSCORED = "unscored"
 
+CATEGORY_PRESERVING = "preserving"
+CATEGORY_NOT_PRESERVING = "not_preserving"
+CATEGORY_UNSCORED = "unscored"
+
 GEO_DIRECT = "direct"
 GEO_PROXY = "proxy"
 GEO_UNRELATED = "unrelated"
@@ -368,6 +372,7 @@ class RelevanceContext:
     legacy_expectation: bool
     quantitative_expectation: bool = False
     preferred_source_type_tokens: frozenset[str] = frozenset()
+    category_subject_tokens: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -383,6 +388,8 @@ class SourceRelevanceDecision:
     expectation_boost: int = 0
     authority_score: int = 0
     statistics_signal: int = 0
+    category_alignment: str = CATEGORY_UNSCORED
+    category_overlap: int = 0
 
     @property
     def is_fetch_eligible(self) -> bool:
@@ -395,6 +402,14 @@ class SourceRelevanceDecision:
         if self.eligibility in {ELIGIBILITY_PROXY, ELIGIBILITY_UNSCORED}:
             return 2
         return 0
+
+    @property
+    def category_rank(self) -> int:
+        return {
+            CATEGORY_PRESERVING: 2,
+            CATEGORY_UNSCORED: 1,
+            CATEGORY_NOT_PRESERVING: 0,
+        }.get(self.category_alignment, 1)
 
     @property
     def geo_penalty(self) -> int:
@@ -418,6 +433,9 @@ class SourceRelevanceDecision:
             "expectation_boost": self.expectation_boost,
             "authority_score": self.authority_score,
             "statistics_signal": self.statistics_signal,
+            "category_alignment": self.category_alignment,
+            "category_overlap": self.category_overlap,
+            "category_subject_available": bool(self.category_alignment != CATEGORY_UNSCORED),
         }
 
 
@@ -474,6 +492,7 @@ def build_relevance_context(
         for item in need.preferred_source_types
         for token in tokenize(item, min_length=3)
     )
+    category_subject_tokens = _derive_category_subject_tokens(design)
     return RelevanceContext(
         information_need_id=need.id,
         research_question_id=need.research_question_id,
@@ -486,6 +505,7 @@ def build_relevance_context(
         legacy_expectation=legacy,
         quantitative_expectation=quantitative,
         preferred_source_type_tokens=preferred_tokens,
+        category_subject_tokens=category_subject_tokens,
     )
 
 
@@ -505,6 +525,13 @@ def evaluate_candidate(
     provider_rank = int(candidate.rank or 0)
     authority_score = _authority_score(url)
     statistics_signal = _statistics_signal(candidate_tokens, url)
+    category_overlap = len(context.category_subject_tokens & candidate_tokens)
+    if not context.category_subject_tokens:
+        category_alignment = CATEGORY_UNSCORED
+    elif category_overlap > 0:
+        category_alignment = CATEGORY_PRESERVING
+    else:
+        category_alignment = CATEGORY_NOT_PRESERVING
 
     def _decision(
         *,
@@ -512,12 +539,19 @@ def evaluate_candidate(
         topic_score: int,
         reason: str,
     ) -> SourceRelevanceDecision:
+        if (
+            category_alignment == CATEGORY_NOT_PRESERVING
+            and eligibility == ELIGIBILITY_DIRECT
+        ):
+            eligibility = ELIGIBILITY_PROXY
+            reason = "category_not_preserved"
         boost = _expectation_boost(
             context=context,
             eligibility=eligibility,
             topic_score=topic_score,
             authority_score=authority_score,
             statistics_signal=statistics_signal,
+            category_alignment=category_alignment,
         )
         return SourceRelevanceDecision(
             eligibility=eligibility,
@@ -531,6 +565,8 @@ def evaluate_candidate(
             expectation_boost=boost,
             authority_score=authority_score,
             statistics_signal=statistics_signal,
+            category_alignment=category_alignment,
+            category_overlap=category_overlap,
         )
 
     if not context.has_distinctive_anchors or context.legacy_expectation:
@@ -585,12 +621,20 @@ def evaluate_candidate(
     topic_score = (rq_overlap * 3) + need_overlap + len(
         context.required_geo_tokens & candidate_tokens
     )
-    if geo_alignment == GEO_DIRECT and rq_overlap + need_overlap > 0:
+    if (
+        geo_alignment == GEO_DIRECT
+        and rq_overlap + need_overlap > 0
+        and category_alignment != CATEGORY_NOT_PRESERVING
+    ):
         eligibility = ELIGIBILITY_DIRECT
         reason = "topic_and_geography_aligned"
     else:
         eligibility = ELIGIBILITY_PROXY
-        reason = f"topic_aligned_geo_{geo_alignment}"
+        reason = (
+            "category_not_preserved"
+            if category_alignment == CATEGORY_NOT_PRESERVING
+            else f"topic_aligned_geo_{geo_alignment}"
+        )
 
     return _decision(
         eligibility=eligibility,
@@ -606,11 +650,13 @@ def selection_sort_key(
     best_rank: int,
     canonical_url: str,
 ) -> tuple:
-    # Expectation boost leads so topic-aligned official statistics are not
-    # displaced by blogs that merely match geography (DIRECT vs PROXY) under
-    # SOURCE_MAX_SOURCES_PER_RUN. Boost stays 0 without topic alignment.
+    # Category preservation leads before the run-level source-attempt cap.
+    # P1-12 expectation promotion remains active inside that category tier.
+    # Legacy decisions without a reliable category subject fail open at the
+    # neutral category rank.
     # need_coverage retains cross-IN fairness.
     return (
+        -getattr(decision, "category_rank", 1),
         -decision.expectation_boost,
         -decision.tier_rank,
         -need_coverage,
@@ -673,9 +719,12 @@ def _expectation_boost(
     topic_score: int,
     authority_score: int,
     statistics_signal: int,
+    category_alignment: str = CATEGORY_UNSCORED,
 ) -> int:
     """Boost only when topic-aligned; authority never overrides mismatch."""
     if eligibility == ELIGIBILITY_INELIGIBLE:
+        return 0
+    if category_alignment == CATEGORY_NOT_PRESERVING:
         return 0
     if topic_score <= 0:
         return 0
@@ -696,6 +745,63 @@ def _expectation_boost(
     if statistics_signal >= 2 and authority_score == 0:
         return 5
     return 0
+
+
+def _derive_category_subject_tokens(design: ResearchDesign) -> frozenset[str]:
+    """Conservatively derive a domain-neutral category subject from the design.
+
+    Multiple ResearchQuestions provide the strongest deterministic signal: a
+    category repeated across every question while geography and generic
+    contract language are removed. For a single question, require the subject
+    to also occur in every child InformationNeed. Ambiguous or overly broad
+    results fail open by returning an empty set.
+    """
+    question_token_sets = [
+        set(tokenize(question.question, min_length=3))
+        for question in design.research_questions
+        if question.question.strip()
+    ]
+    if not question_token_sets:
+        return frozenset()
+
+    shared = set.intersection(*question_token_sets)
+    if len(question_token_sets) == 1:
+        question_id = design.research_questions[0].id
+        child_sets = [
+            set(tokenize(need.description, min_length=3))
+            for need in design.information_needs
+            if need.research_question_id == question_id and need.description.strip()
+        ]
+        if not child_sets:
+            return frozenset()
+        shared &= set.intersection(*child_sets)
+
+    geography: set[str] = set()
+    timeframe: set[str] = set()
+    aspect_tokens: set[str] = set()
+    for need in design.information_needs:
+        geography.update(geography_tokens(need.geography))
+        timeframe.update(tokenize(need.timeframe, min_length=3))
+        if need.evidence_expectation is not None:
+            geography.update(geography_tokens(need.evidence_expectation.geography))
+            timeframe.update(tokenize(need.evidence_expectation.timeframe, min_length=3))
+            for aspect in need.evidence_expectation.required_aspects:
+                aspect_tokens.update(
+                    tokenize(render_aspect_query_terms(aspect), min_length=3)
+                )
+
+    subject = {
+        token
+        for token in shared
+        if token not in geography
+        and token not in timeframe
+        and token not in aspect_tokens
+        and token not in _GENERIC_CONTRACT_WORDS
+        and not token.isdigit()
+    }
+    if not subject or len(subject) > 5:
+        return frozenset()
+    return frozenset(subject)
 
 
 def _classify_geography(
