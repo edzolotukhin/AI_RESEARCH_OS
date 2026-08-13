@@ -29,7 +29,7 @@ class TavilySearchProvider(SearchProvider):
         client = self._http_client or self._default_client()
         payload = {
             "api_key": self._api_key,
-            "query": query.query_text,
+            "query": query.provider_query_text or query.query_text,
             "max_results": query.max_results,
         }
         try:

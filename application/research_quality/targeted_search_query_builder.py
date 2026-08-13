@@ -7,8 +7,10 @@ from domain.sources.search_query import SearchQuery
 
 from application.sources.expectation_aware_query_intent import (
     build_expectation_aware_query_text,
+    render_aspect_query_terms,
 )
 from application.sources.category_subject import resolve_category_subject
+from application.sources.provider_query_projector import project_provider_query_text
 from application.sources.url_canonicalizer import normalize_query_text
 
 SEMANTIC_TARGET_MISSING_ASPECTS = "missing_aspects"
@@ -83,6 +85,20 @@ class TargetedSearchQueryBuilder:
                     f"(attempt {request.attempt}); "
                     f"semantic_target_source={target_source}"
                 ),
+                provider_query_text=(
+                    project_provider_query_text(
+                        category_subject=category.text if category is not None else None,
+                        geography=need.geography,
+                        core_intent=need.description,
+                        timeframe=need.timeframe,
+                        targeted_intent=(
+                            render_aspect_query_terms(semantic_targets[0])
+                            if semantic_targets
+                            else None
+                        ),
+                    )
+                    or ""
+                ),
             ),
         ]
 
@@ -112,6 +128,15 @@ class TargetedSearchQueryBuilder:
                     rationale=(
                         f"Targeted directive query for information need {need.id} "
                         f"(attempt {request.attempt})"
+                    ),
+                    provider_query_text=(
+                        project_provider_query_text(
+                            category_subject=category.text if category is not None else None,
+                            geography=need.geography,
+                            core_intent=directive_text,
+                            timeframe=need.timeframe,
+                        )
+                        or ""
                     ),
                 ),
             )

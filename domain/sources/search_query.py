@@ -18,6 +18,9 @@ class SearchQuery:
     preferred_source_types: tuple[str, ...] = ()
     max_results: int = 5
     rationale: str = ""
+    # Transient provider-facing projection. Intentionally excluded from
+    # serialization so the complete query remains the durable semantic contract.
+    provider_query_text: str = ""
 
     def __post_init__(self) -> None:
         if not self.query_text.strip():
