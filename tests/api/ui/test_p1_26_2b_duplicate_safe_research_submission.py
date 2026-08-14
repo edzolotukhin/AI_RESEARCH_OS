@@ -113,6 +113,17 @@ class _Status:
         )
 
 
+class _WorkflowService:
+    def __init__(self, agency: _Agency) -> None:
+        self.agency = agency
+
+    def get_workflow_run(self, run_id):
+        run = self.agency.runs.get(run_id)
+        if run is None:
+            raise EntityNotFoundError("missing run")
+        return run
+
+
 class PropertyADTests(unittest.TestCase):
     def setUp(self) -> None:
         self.principal = AuthenticatedPrincipal("principal-a", "UI")
@@ -122,6 +133,7 @@ class PropertyADTests(unittest.TestCase):
         self.container = SimpleNamespace(
             background_execution=None,
             agency=self.agency,
+            workflow_service=_WorkflowService(self.agency),
             research_submission_service=self.service,
             research_status_query_service=_Status(self.agency),
         )
@@ -207,7 +219,9 @@ class PropertyADTests(unittest.TestCase):
         project_id = project_id_for_submission(principal_id=self.principal.principal_id, submission_key=self.key)
         self.agency.create_project("x", owner_principal_id=self.principal.principal_id, project_id=project_id)
         self.service.resolve_submission(project_id=project_id, idempotency_key=self.key, request_fingerprint="fp", correlation_id=None, source="ui")
-        self.assertEqual("SUBMITTING", self.facade.get_submission_status(self.key)["execution_status"])
+        status = self.facade.get_submission_status(self.key)
+        self.assertEqual("SUBMITTING", status["execution_status"])
+        self.assertEqual(status["research_id"], status["run_id"])
 
     def test_case_10_project_without_submission_is_not_false_success(self):
         project_id = project_id_for_submission(principal_id=self.principal.principal_id, submission_key=self.key)

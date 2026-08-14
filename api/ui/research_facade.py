@@ -152,20 +152,26 @@ class ResearchUiFacade:
             "submission_key": key,
             "submission_status": record.status,
             "project_id": project_id,
-            "research_id": None,
-            "run_id": None,
+            "research_id": record.run_id,
+            "run_id": record.run_id,
             "execution_status": "SUBMITTING",
             "research_url": None,
         }
         try:
-            workflow_run, _ = self._authorization.require_run(
-                self._principal,
+            materialized_run = self._container.workflow_service.get_workflow_run(
                 record.run_id,
             )
         except EntityNotFoundError:
             if record.status == ResearchSubmissionStatus.FAILED:
                 payload["execution_status"] = "SUBMISSION_FAILED"
             return payload
+
+        if materialized_run.project_id != project_id:
+            raise AccessDeniedError("Research submission run linkage is invalid.")
+        workflow_run, _ = self._authorization.require_run(
+            self._principal,
+            materialized_run.id,
+        )
 
         payload.update(
             self._container.research_status_query_service.get_status(
