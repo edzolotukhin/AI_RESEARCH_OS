@@ -31,7 +31,13 @@ from infrastructure.llm.budget_enforcing_llm_client import BudgetEnforcingLLMCli
 
 class EvidenceRemediationPartitionTests(unittest.TestCase):
     def test_default_reserved_is_zero_and_matches_legacy_total_envelope(self) -> None:
-        budget = ExecutionBudget(evidence_max_llm_calls=50)
+        budget = ExecutionBudget(
+            evidence_max_llm_calls=50,
+            sufficiency_max_llm_calls=0,
+            analysis_max_llm_calls=0,
+            report_max_llm_calls=0,
+            review_max_llm_calls=0,
+        )
         self.assertEqual(budget.evidence_remediation_reserved, 0)
         self.assertEqual(budget.evidence_initial_allowance, 50)
         for _ in range(50):
@@ -152,7 +158,7 @@ class EvidenceRemediationPartitionTests(unittest.TestCase):
         self.assertEqual(budget.evidence_remediation_calls, 1)
 
     def test_config_default_and_from_env(self) -> None:
-        self.assertEqual(ApplicationConfig().evidence_remediation_reserved_llm_calls, 0)
+        self.assertEqual(ApplicationConfig().evidence_remediation_reserved_llm_calls, 6)
         self.assertEqual(
             ApplicationConfig().evidence_remediation_max_llm_calls_per_attempt,
             0,

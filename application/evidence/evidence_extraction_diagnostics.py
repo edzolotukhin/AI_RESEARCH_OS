@@ -114,6 +114,11 @@ class WorkItemTrace:
     source_first_attempt: bool = False
     primary_need_id: str = ""
     chunk_index: int | None = None
+    selection_reason: str = ""
+    budget_remaining_before: int | None = None
+    budget_remaining_after: int | None = None
+    source_outcome_before: dict[str, Any] = field(default_factory=dict)
+    source_outcome_after: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -139,6 +144,16 @@ class WorkItemTrace:
             payload["primary_need_id"] = self.primary_need_id
         if self.chunk_index is not None:
             payload["chunk_index"] = self.chunk_index
+        if self.selection_reason:
+            payload["selection_reason"] = self.selection_reason
+        if self.budget_remaining_before is not None:
+            payload["budget_remaining_before"] = self.budget_remaining_before
+        if self.budget_remaining_after is not None:
+            payload["budget_remaining_after"] = self.budget_remaining_after
+        if self.source_outcome_before:
+            payload["source_outcome_before"] = dict(self.source_outcome_before)
+        if self.source_outcome_after:
+            payload["source_outcome_after"] = dict(self.source_outcome_after)
         if self.exception_class is not None:
             payload["exception_class"] = self.exception_class
         if self.exception_message is not None:

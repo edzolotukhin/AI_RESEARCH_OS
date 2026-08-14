@@ -30,7 +30,11 @@ from application.evidence.evidence_extraction_scheduler import (
     EXTRACTION_ORDERING_COVERAGE_BEFORE_DEPTH,
     EvidenceExtractionWorkItem,
     PHASE_FIRST_OPPORTUNITY,
+    SELECTION_FIRST_OPPORTUNITY,
+    SourceOutcomeState,
     build_need_fair_extraction_queue,
+    record_source_outcome,
+    select_next_adaptive_depth,
 )
 from application.evidence.evidence_extraction_diagnostics import (
     CandidateOutcome,
@@ -421,7 +425,30 @@ class EvidenceExtractionService:
         budget_stop_reason: str | None,
         budget_stop_before_any_attempt: bool,
     ) -> EvidenceExtractionSummary:
-        for queue_index, work_item in enumerate(queue):
+        first_pending = [
+            item for item in queue if item.phase == PHASE_FIRST_OPPORTUNITY
+        ]
+        depth_pending = [item for item in queue if item.phase != PHASE_FIRST_OPPORTUNITY]
+        states = {
+            item.source.id: SourceOutcomeState(source_id=item.source.id)
+            for item in queue
+        }
+        evidence_counts_by_need = self._evidence_counts_by_need(
+            project_id=project_id,
+            workflow_run_id=workflow_run_id,
+        )
+        queue_index = 0
+        while first_pending or depth_pending:
+            if first_pending:
+                work_item = first_pending.pop(0)
+                selection_reason = SELECTION_FIRST_OPPORTUNITY
+            else:
+                work_item, selection_reason = select_next_adaptive_depth(
+                    depth_pending,
+                    states=states,
+                    evidence_counts_by_need=evidence_counts_by_need,
+                )
+                depth_pending.remove(work_item)
             budget = get_execution_budget()
             if envelope is not None and budget is not None and envelope.reached(budget):
                 diagnostics.remediation_attempt_capped = True
@@ -442,6 +469,7 @@ class EvidenceExtractionService:
 
             source_id = work_item.source.id
             sources_touched.add(source_id)
+            state = states[source_id]
 
             trace = WorkItemTrace(
                 queue_index=queue_index,
@@ -457,6 +485,9 @@ class EvidenceExtractionService:
                 source_first_attempt=work_item.source_first_attempt,
                 primary_need_id=work_item.primary_need_id,
                 chunk_index=work_item.chunk_index,
+                selection_reason=selection_reason,
+                budget_remaining_before=self._evidence_budget_remaining(),
+                source_outcome_before=state.to_dict(),
             )
             diagnostics.work_items.append(trace)
             work_item_token = set_active_work_item(trace)
@@ -504,6 +535,27 @@ class EvidenceExtractionService:
                 sources_with_evidence.add(source_id)
             elif had_none:
                 sources_without_evidence.add(source_id)
+
+            persisted_outcomes = [
+                outcome
+                for outcome in trace.candidate_outcomes
+                if outcome.outcome == "persisted"
+            ]
+            valid_empty = self._trace_is_valid_empty(trace)
+            record_source_outcome(
+                state,
+                phase=work_item.phase,
+                persisted_evidence=len(persisted_outcomes),
+                valid_empty=valid_empty,
+            )
+            for outcome in persisted_outcomes:
+                for need_id in outcome.information_need_refs:
+                    evidence_counts_by_need[need_id] = (
+                        evidence_counts_by_need.get(need_id, 0) + 1
+                    )
+            trace.source_outcome_after = state.to_dict()
+            trace.budget_remaining_after = self._evidence_budget_remaining()
+            queue_index += 1
 
             stop_reason = self._post_source_budget_stop_reason()
             if stop_reason is not None:
@@ -557,6 +609,48 @@ class EvidenceExtractionService:
             budget_stop_reason=budget_stop_reason,
             diagnostics=diagnostics,
             extraction_processing_state=diagnostics.extraction_processing_state,
+        )
+
+    def _evidence_counts_by_need(
+        self,
+        *,
+        project_id: str,
+        workflow_run_id: str,
+    ) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for evidence in self._evidence_repository.list_for_project(
+            project_id,
+            workflow_run_id=workflow_run_id,
+        ):
+            for need_id in evidence.information_need_refs:
+                counts[need_id] = counts.get(need_id, 0) + 1
+        return counts
+
+    @staticmethod
+    def _trace_is_valid_empty(trace: WorkItemTrace) -> bool:
+        if trace.raw_candidate_count != 0 or not trace.inner_chunks:
+            return False
+        return all(
+            item.extractor_status == "success"
+            and item.response_shape is not None
+            and item.response_shape.response_classification == "valid_empty_result"
+            for item in trace.inner_chunks
+        )
+
+    @staticmethod
+    def _evidence_budget_remaining() -> int | None:
+        budget = get_execution_budget()
+        if budget is None:
+            return None
+        purpose = get_evidence_call_purpose() or EVIDENCE_PURPOSE_INITIAL
+        if purpose == EVIDENCE_PURPOSE_REMEDIATION:
+            return max(
+                0,
+                budget.evidence_max_llm_calls - budget.stage_calls("evidence"),
+            )
+        return max(
+            0,
+            budget.evidence_initial_allowance - budget.evidence_initial_calls,
         )
 
     @staticmethod

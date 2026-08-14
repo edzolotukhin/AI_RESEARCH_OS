@@ -16,6 +16,12 @@ from infrastructure.llm.llm_client import LLMClient
 
 from registry.registry import Registry
 
+
+def _default_evidence_remediation_reserve() -> str:
+    """Activate the accepted reserve only for the stock 50-call profile."""
+    configured_cap = int(os.environ.get("EVIDENCE_MAX_LLM_CALLS", "50"))
+    return "6" if configured_cap == 50 else "0"
+
 from application.analysis.evidence_batching import (
     DEFAULT_ANALYSIS_MAX_CHARS_PER_BATCH,
     DEFAULT_ANALYSIS_MAX_EVIDENCE_PER_BATCH,
@@ -113,7 +119,7 @@ class ApplicationConfig:
     targeted_max_attempts_per_gap: int = 2
     targeted_max_queries_per_gap: int = 2
     targeted_max_sources_per_gap: int = 3
-    evidence_remediation_reserved_llm_calls: int = 0
+    evidence_remediation_reserved_llm_calls: int = 6
     evidence_remediation_max_llm_calls_per_attempt: int = 0
 
     @classmethod
@@ -303,7 +309,12 @@ class ApplicationConfig:
             evidence_max_llm_calls=int(os.environ.get("EVIDENCE_MAX_LLM_CALLS", "50")),
             evidence_remediation_reserved_llm_calls=max(
                 0,
-                int(os.environ.get("EVIDENCE_REMEDIATION_RESERVED_LLM_CALLS", "0")),
+                int(
+                    os.environ.get(
+                        "EVIDENCE_REMEDIATION_RESERVED_LLM_CALLS",
+                        _default_evidence_remediation_reserve(),
+                    )
+                ),
             ),
             evidence_remediation_max_llm_calls_per_attempt=max(
                 0,

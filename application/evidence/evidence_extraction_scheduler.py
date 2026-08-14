@@ -17,6 +17,10 @@ from application.evidence.run_scoped_provenance import (
 PHASE_FIRST_OPPORTUNITY = "first_opportunity"
 PHASE_DEPTH = "depth"
 EXTRACTION_ORDERING_COVERAGE_BEFORE_DEPTH = "coverage_before_depth_need_fair"
+SELECTION_FIRST_OPPORTUNITY = "first_opportunity"
+SELECTION_EXPLORATORY_DEPTH = "exploratory_depth"
+SELECTION_PRODUCTIVE_DEPTH = "productive_depth"
+SELECTION_DEPRIORITIZED_EMPTY_DEPTH = "deprioritized_repeated_empty_depth"
 
 
 @dataclass(frozen=True)
@@ -30,6 +34,115 @@ class EvidenceExtractionWorkItem:
     source_first_attempt: bool = False
     chunk_index: int = 0
     primary_need_id: str = ""
+
+
+@dataclass
+class SourceOutcomeState:
+    """Run-local observed extraction outcomes used only for depth allocation."""
+
+    source_id: str
+    calls_attempted: int = 0
+    productive_calls: int = 0
+    valid_empty_calls: int = 0
+    evidence_yielded: int = 0
+    depth_calls: int = 0
+    consecutive_empty_depth: int = 0
+    first_opportunity_completed: bool = False
+    last_outcome: str = "unobserved"
+
+    @property
+    def repeated_zero_yield(self) -> bool:
+        return self.productive_calls == 0 and self.valid_empty_calls >= 2
+
+    def to_dict(self) -> dict[str, int | str | bool]:
+        return {
+            "source_id": self.source_id,
+            "calls_attempted": self.calls_attempted,
+            "productive_calls": self.productive_calls,
+            "valid_empty_calls": self.valid_empty_calls,
+            "evidence_yielded": self.evidence_yielded,
+            "depth_calls": self.depth_calls,
+            "consecutive_empty_depth": self.consecutive_empty_depth,
+            "first_opportunity_completed": self.first_opportunity_completed,
+            "last_outcome": self.last_outcome,
+            "repeated_zero_yield": self.repeated_zero_yield,
+        }
+
+
+def record_source_outcome(
+    state: SourceOutcomeState,
+    *,
+    phase: str,
+    persisted_evidence: int,
+    valid_empty: bool,
+) -> None:
+    """Record an executed outcome without predicting any unexecuted chunk."""
+    state.calls_attempted += 1
+    if phase == PHASE_FIRST_OPPORTUNITY:
+        state.first_opportunity_completed = True
+    else:
+        state.depth_calls += 1
+    if persisted_evidence > 0:
+        state.productive_calls += 1
+        state.evidence_yielded += persisted_evidence
+        state.consecutive_empty_depth = 0
+        state.last_outcome = "productive"
+    elif valid_empty:
+        state.valid_empty_calls += 1
+        if phase == PHASE_DEPTH:
+            state.consecutive_empty_depth += 1
+        state.last_outcome = "valid_empty"
+    else:
+        state.last_outcome = "non_productive_other"
+
+
+def adaptive_depth_selection_key(
+    work_item: EvidenceExtractionWorkItem,
+    *,
+    state: SourceOutcomeState,
+    evidence_counts_by_need: dict[str, int],
+) -> tuple[int, int, int, int, str, str, int]:
+    """Stable, bounded priority based solely on already-observed outcomes."""
+    uncovered = sum(
+        1
+        for need_id in work_item.run_context.information_need_ids
+        if evidence_counts_by_need.get(need_id, 0) == 0
+    )
+    productivity_rank = 0 if state.productive_calls > 0 else 1
+    return (
+        1 if state.repeated_zero_yield else 0,
+        state.depth_calls,
+        -uncovered,
+        productivity_rank,
+        work_item.primary_need_id,
+        work_item.source.id,
+        work_item.chunk_index,
+    )
+
+
+def select_next_adaptive_depth(
+    pending: list[EvidenceExtractionWorkItem],
+    *,
+    states: dict[str, SourceOutcomeState],
+    evidence_counts_by_need: dict[str, int],
+) -> tuple[EvidenceExtractionWorkItem, str]:
+    """Select one deterministic depth item after first-opportunity fairness."""
+    selected = min(
+        pending,
+        key=lambda item: adaptive_depth_selection_key(
+            item,
+            state=states[item.source.id],
+            evidence_counts_by_need=evidence_counts_by_need,
+        ),
+    )
+    state = states[selected.source.id]
+    if state.repeated_zero_yield:
+        reason = SELECTION_DEPRIORITIZED_EMPTY_DEPTH
+    elif state.productive_calls > 0:
+        reason = SELECTION_PRODUCTIVE_DEPTH
+    else:
+        reason = SELECTION_EXPLORATORY_DEPTH
+    return selected, reason
 
 
 @dataclass(frozen=True)
