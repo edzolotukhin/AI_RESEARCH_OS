@@ -59,10 +59,17 @@ class Agency:
         name: str,
         *,
         owner_principal_id: str | None = None,
+        project_id: str | None = None,
     ) -> Project:
+        if project_id is None:
+            return self._project_service.create_project(
+                name,
+                owner_principal_id=owner_principal_id,
+            )
         return self._project_service.create_project(
             name,
             owner_principal_id=owner_principal_id,
+            project_id=project_id,
         )
 
     def get_project(self, project_id: str) -> Project:

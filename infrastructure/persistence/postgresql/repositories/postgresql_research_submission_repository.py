@@ -94,6 +94,18 @@ class PostgreSQLResearchSubmissionRepository(ResearchSubmissionRepository):
                 return
             model.status = ResearchSubmissionStatus.COMPLETED
 
+    def mark_failed(self, *, project_id: str, idempotency_key: str) -> None:
+        with self._session_factory.session() as session:
+            model = session.execute(
+                select(ResearchSubmissionModel).where(
+                    ResearchSubmissionModel.project_id == project_id,
+                    ResearchSubmissionModel.idempotency_key == idempotency_key,
+                )
+            ).scalar_one_or_none()
+            if model is None:
+                return
+            model.status = ResearchSubmissionStatus.FAILED
+
     def get_by_key(
         self,
         *,

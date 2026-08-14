@@ -93,6 +93,32 @@ class ResearchSubmissionService:
             idempotency_key=idempotency_key,
         )
 
+    def mark_failed(
+        self,
+        *,
+        project_id: str,
+        idempotency_key: str,
+    ) -> None:
+        if self._submission_repository is None:
+            return
+        self._submission_repository.mark_failed(
+            project_id=project_id,
+            idempotency_key=idempotency_key,
+        )
+
+    def get_submission(
+        self,
+        *,
+        project_id: str,
+        idempotency_key: str,
+    ) -> ResearchSubmissionRecord | None:
+        if self._submission_repository is None:
+            return None
+        return self._submission_repository.get_by_key(
+            project_id=project_id,
+            idempotency_key=idempotency_key,
+        )
+
     def resolve_visible_run(
         self,
         *,

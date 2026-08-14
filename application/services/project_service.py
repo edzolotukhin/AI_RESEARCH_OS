@@ -37,8 +37,12 @@ class ProjectService:
         name: str,
         *,
         owner_principal_id: str | None = None,
+        project_id: str | None = None,
     ) -> Project:
-        project = self._project_factory.create(name)
+        if project_id is None:
+            project = self._project_factory.create(name)
+        else:
+            project = self._project_factory.create(name, project_id=project_id)
         project.owner_principal_id = owner_principal_id
         self._project_repository.create(project)
         return project

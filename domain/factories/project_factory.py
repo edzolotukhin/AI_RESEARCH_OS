@@ -10,12 +10,12 @@ class ProjectFactory(BaseFactory):
     Фабрика создания проектов.
     """
 
-    def create(self, name: str) -> Project:
+    def create(self, name: str, *, project_id: str | None = None) -> Project:
 
         now = datetime.now(UTC).isoformat()
 
         return Project(
-            id=str(uuid4()),
+            id=project_id or str(uuid4()),
             name=name,
             created_at=now,
             updated_at=now,

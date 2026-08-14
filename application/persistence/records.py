@@ -71,6 +71,7 @@ class ResearchSubmissionStatus:
 
     PENDING = "pending"
     COMPLETED = "completed"
+    FAILED = "failed"
 
 
 @dataclass(frozen=True)

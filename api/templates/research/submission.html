@@ -1,0 +1,19 @@
+{% extends "research/base.html" %}
+{% block title %}Research submission — AI Research OS{% endblock %}
+{% block content %}
+<section class="panel" id="submission-root" data-submission-key="{{ submission_key }}">
+  <h1>Research submission</h1>
+  {% if error_message %}
+  <div class="alert alert-error" role="alert">{{ error_message }}</div>
+  {% elif submission.submission_status == "failed" %}
+  <div class="alert alert-error" role="alert">Research submission could not be started. This submission was not repeated.</div>
+  {% else %}
+  <p class="lede">Your submission is durable. Planning is still in progress.</p>
+  <p id="submission-state" aria-live="polite">Waiting for the Research identity…</p>
+  <p class="form-hint">You can safely refresh this page. Do not submit the brief again.</p>
+  {% endif %}
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="/static/research.js"></script>
+{% endblock %}

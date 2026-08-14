@@ -35,6 +35,10 @@ class ResearchSubmissionRepository(ABC):
         """Mark a submission completed after WorkflowRun creation succeeds."""
 
     @abstractmethod
+    def mark_failed(self, *, project_id: str, idempotency_key: str) -> None:
+        """Mark a submission failed without releasing its idempotency claim."""
+
+    @abstractmethod
     def get_by_key(
         self,
         *,

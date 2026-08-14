@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import APIRouter, Form, Request, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -28,6 +29,7 @@ from application.persistence.exceptions import (
     AccessDeniedError,
     AuthenticationRequiredError,
     EntityNotFoundError,
+    IdempotencyConflictError,
 )
 from domain.common.exceptions import ValidationError
 from application.query.research_run_result import ResearchRunResultProjectionError
@@ -64,12 +66,14 @@ def ui_root() -> RedirectResponse:
 
 @router.get("/research/new", response_class=HTMLResponse, include_in_schema=False)
 def research_new_form(request: Request) -> HTMLResponse:
+    form = brief_form_defaults()
+    form["submission_key"] = str(uuid4())
     return templates.TemplateResponse(
         request,
         "research/new.html",
         _template_context(
             request,
-            form=brief_form_defaults(),
+            form=form,
             form_state="ready",
             error_message=None,
         ),
@@ -93,7 +97,9 @@ def research_submit(
     context: str = Form(""),
     known_information: str = Form(""),
     exclusions: str = Form(""),
+    submission_key: str = Form(""),
 ) -> Response:
+    submission_key = submission_key.strip() or str(uuid4())
     form = {
         "title": title,
         "business_question": business_question,
@@ -108,6 +114,7 @@ def research_submit(
         "context": context,
         "known_information": known_information,
         "exclusions": exclusions,
+        "submission_key": submission_key,
     }
     try:
         brief_payload = parse_brief_form(form)
@@ -117,8 +124,14 @@ def research_submit(
         submission = facade.submit_research(
             brief_payload=brief_payload,
             response=response,
+            submission_key=submission_key,
         )
-        research_id = submission["research_id"]
+        research_id = submission.get("research_id")
+        if not research_id:
+            return RedirectResponse(
+                url=f"/ui/research/submissions/{submission_key}",
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
         return RedirectResponse(
             url=f"/ui/research/{research_id}",
             status_code=status.HTTP_303_SEE_OTHER,
@@ -134,6 +147,18 @@ def research_submit(
                 error_message=str(exc),
             ),
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+    except IdempotencyConflictError:
+        return templates.TemplateResponse(
+            request,
+            "research/new.html",
+            _template_context(
+                request,
+                form=form,
+                form_state="validation_error",
+                error_message="This submission key was already used for different research.",
+            ),
+            status_code=status.HTTP_409_CONFLICT,
         )
     except AuthenticationRequiredError:
         return templates.TemplateResponse(
@@ -155,12 +180,65 @@ def research_submit(
                 request,
                 form=form,
                 form_state="submission_error",
-                error_message="Research could not be submitted. Please try again.",
+                error_message="Research could not be submitted. Use the submission status before trying again.",
             ),
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
 
+@router.get(
+    "/research/submissions/{submission_key}",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+def research_submission_page(request: Request, submission_key: str) -> Response:
+    try:
+        facade = build_research_ui_facade(request.app.state.container)
+        payload = facade.get_submission_status(submission_key)
+        if payload.get("research_url"):
+            return RedirectResponse(
+                url=payload["research_url"],
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+        return templates.TemplateResponse(
+            request,
+            "research/submission.html",
+            _template_context(
+                request,
+                submission=payload,
+                submission_key=submission_key,
+            ),
+        )
+    except (ValueError, AccessDeniedError, EntityNotFoundError):
+        return templates.TemplateResponse(
+            request,
+            "research/submission.html",
+            _template_context(
+                request,
+                submission=None,
+                submission_key="",
+                error_message="Research submission not found.",
+            ),
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+
+
+@router.get(
+    "/research/submissions/{submission_key}/status.json",
+    include_in_schema=False,
+)
+def research_submission_status_json(
+    request: Request,
+    submission_key: str,
+) -> JSONResponse:
+    try:
+        facade = build_research_ui_facade(request.app.state.container)
+        return JSONResponse(facade.get_submission_status(submission_key))
+    except (ValueError, AccessDeniedError, EntityNotFoundError):
+        return JSONResponse(
+            {"error": "submission_not_found"},
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
 @router.get("/research/{research_id}", response_class=HTMLResponse, include_in_schema=False)
 def research_detail_page(request: Request, research_id: str) -> Response:
     try:

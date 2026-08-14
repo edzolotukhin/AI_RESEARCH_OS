@@ -10,6 +10,7 @@
   {% endif %}
 
   <form method="post" action="/ui/research" class="brief-form" id="research-brief-form" novalidate>
+    <input id="submission_key" name="submission_key" type="hidden" value="{{ form.submission_key }}">
     <fieldset {% if form_state == 'submitting' %}disabled{% endif %}>
       <legend class="sr-only">Research brief</legend>
 

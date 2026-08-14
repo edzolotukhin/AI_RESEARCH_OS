@@ -73,6 +73,25 @@ class InMemoryResearchSubmissionRepository(ResearchSubmissionRepository):
             self._by_key[key] = completed
             self._by_run_id[completed.run_id] = completed
 
+    def mark_failed(self, *, project_id: str, idempotency_key: str) -> None:
+        key = (project_id, idempotency_key)
+        with self._lock:
+            existing = self._by_key.get(key)
+            if existing is None:
+                return
+            failed = ResearchSubmissionRecord(
+                project_id=existing.project_id,
+                idempotency_key=existing.idempotency_key,
+                request_fingerprint=existing.request_fingerprint,
+                run_id=existing.run_id,
+                correlation_id=existing.correlation_id,
+                source=existing.source,
+                created_at=existing.created_at,
+                status=ResearchSubmissionStatus.FAILED,
+            )
+            self._by_key[key] = failed
+            self._by_run_id[failed.run_id] = failed
+
     def get_by_key(
         self,
         *,

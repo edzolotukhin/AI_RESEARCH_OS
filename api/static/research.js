@@ -15,6 +15,30 @@
   }
 
   const root = document.getElementById("research-root");
+  const submissionRoot = document.getElementById("submission-root");
+  if (submissionRoot && submissionRoot.dataset.submissionKey) {
+    const key = submissionRoot.dataset.submissionKey;
+    const state = document.getElementById("submission-state");
+    const reconcile = async function () {
+      try {
+        const response = await fetch(`/ui/research/submissions/${encodeURIComponent(key)}/status.json`);
+        if (!response.ok) return;
+        const payload = await response.json();
+        if (payload.research_url) {
+          window.location.replace(payload.research_url);
+          return;
+        }
+        if (state && payload.submission_status === "failed") {
+          state.textContent = "Research submission failed without being repeated.";
+          return;
+        }
+      } catch (_) {
+        // A transient read failure never resubmits Research.
+      }
+      window.setTimeout(reconcile, 2000);
+    };
+    window.setTimeout(reconcile, 500);
+  }
   if (!root) {
     return;
   }
