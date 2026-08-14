@@ -6,14 +6,12 @@ import json
 import unittest
 
 from application.research_quality.raw_semantic_decision_contract import (
+    DEFAULT_RAW_SEMANTIC_MAX_REASON_CHARS,
     FORBIDDEN_RAW_SEMANTIC_POLICY_FIELDS,
     evaluate_raw_semantic_decision_payload,
     raw_semantic_decision_payload_contract,
 )
 from domain.research_quality.semantic_decision_normalizer import LEGACY_NEED_ASPECT_ID
-
-DEFAULT_RAW_SEMANTIC_MAX_REASON_CHARS = 500
-
 
 def _valid_payload() -> dict[str, object]:
     return {

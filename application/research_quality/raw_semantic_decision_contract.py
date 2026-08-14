@@ -75,7 +75,10 @@ def raw_semantic_decision_output_instructions() -> str:
             "substantively shows the InformationNeed cannot be answered by further research "
             "(rare); never together with missing_aspects for the same insufficiency.",
             "- confidence: numeric value in [0, 1].",
-            "- reason: concise non-empty explanation.",
+            (
+                "- reason: concise non-empty explanation; it MUST be at most "
+                f"{DEFAULT_RAW_SEMANTIC_MAX_REASON_CHARS} characters."
+            ),
             "",
             "Exclusivity:",
             "- An aspect identifier MUST NOT appear in both supported_aspects and missing_aspects.",
@@ -109,6 +112,18 @@ def render_raw_semantic_decision_output_contract() -> str:
             raw_semantic_decision_payload_schema_text(),
         ],
     )
+
+
+def render_raw_semantic_decision_correction(*, rejection_code: str | None) -> str:
+    """Return field-specific corrective guidance for a bounded contract rejection."""
+    if rejection_code == "reason_too_long":
+        return (
+            "Validation failed for field 'reason': the value is too long. "
+            f"The maximum allowed length is {DEFAULT_RAW_SEMANTIC_MAX_REASON_CHARS} "
+            "characters. Return a corrected JSON response whose reason is non-empty "
+            "and fits within this maximum."
+        )
+    return "Regenerate valid JSON only. Keep output compact."
 
 
 def evaluate_raw_semantic_decision_payload(payload: Mapping[str, Any]) -> str | None:

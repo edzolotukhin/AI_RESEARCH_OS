@@ -12,6 +12,7 @@ from application.research_quality.raw_semantic_decision_contract import (
     raw_semantic_decision_payload_contract,
     raw_semantic_decision_payload_schema_text,
     render_allowed_aspect_contract,
+    render_raw_semantic_decision_correction,
 )
 from application.research_quality.semantic_sufficiency_contract import (
     SEMANTIC_SUFFICIENCY_PAYLOAD_SCHEMA,
@@ -237,6 +238,7 @@ class SufficiencyStructuredOutputGenerator:
                     error=last_error,
                     payload_schema=payload_schema,
                     allowed_aspect_ids=allowed_aspect_ids,
+                    contract_rejection_code=failure_record.contract_rejection_code,
                 )
 
         if last_error is not None:
@@ -369,13 +371,20 @@ def _build_correction_prompt(
     error: StructuredOutputError,
     payload_schema: str,
     allowed_aspect_ids: tuple[str, ...] = (),
+    contract_rejection_code: str | None = None,
 ) -> Prompt:
     preview = (invalid_response.content or "")[:_RESPONSE_PREVIEW_LIMIT]
     compact_note = (
-        "Regenerate compact valid JSON only. Keep aspect identifiers and reason "
-        "short and within scope of the InformationNeed."
-        if error.is_truncated
-        else "Regenerate valid JSON only. Keep output compact."
+        render_raw_semantic_decision_correction(
+            rejection_code=contract_rejection_code,
+        )
+        if contract_rejection_code == "reason_too_long"
+        else (
+            "Regenerate compact valid JSON only. Keep aspect identifiers and reason "
+            "short and within scope of the InformationNeed."
+            if error.is_truncated
+            else render_raw_semantic_decision_correction(rejection_code=None)
+        )
     )
     sections = [
         original_prompt.user,
