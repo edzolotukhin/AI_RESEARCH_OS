@@ -1,16 +1,32 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import re
+import unicodedata
 from dataclasses import dataclass
 
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
 
+def canonicalize_grounding_text(text: str) -> str:
+    """Return the exact-comparison representation used by extraction and grounding.
+
+    HTML character references are decoded once using the standard-library HTML
+    rules, canonically equivalent Unicode sequences are normalized to NFC, and
+    whitespace runs (including NBSP after entity decoding) are collapsed. Case
+    and punctuation remain significant: this is representation alignment, not
+    approximate or semantic matching.
+    """
+    rendered = html.unescape(text)
+    normalized_unicode = unicodedata.normalize("NFC", rendered)
+    return _WHITESPACE_RE.sub(" ", normalized_unicode).strip()
+
+
 def normalize_source_text(text: str) -> str:
-    """Collapse whitespace for deterministic substring grounding checks."""
-    return _WHITESPACE_RE.sub(" ", text).strip()
+    """Backward-compatible name for the canonical grounding representation."""
+    return canonicalize_grounding_text(text)
 
 
 @dataclass(frozen=True)
