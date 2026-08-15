@@ -119,12 +119,16 @@ def build_research_readiness_assessment(
     )
     ready = all(
         assessment.status == SufficiencyStatus.SUFFICIENT
+        and assessment.assessment_current
         for assessment in sorted_assessments
     )
     blocking_ids = tuple(
         assessment.information_need_id
         for assessment in sorted_assessments
-        if assessment.status in READINESS_BLOCKING_STATUSES
+        if (
+            assessment.status in READINESS_BLOCKING_STATUSES
+            or not assessment.assessment_current
+        )
     )
     if ready:
         reason = "All information needs sufficient."
@@ -132,7 +136,10 @@ def build_research_readiness_assessment(
         blocking_statuses = [
             assessment.status.value
             for assessment in sorted_assessments
-            if assessment.status in READINESS_BLOCKING_STATUSES
+            if (
+                assessment.status in READINESS_BLOCKING_STATUSES
+                or not assessment.assessment_current
+            )
         ]
         reason = "Blocking information needs: " + ", ".join(blocking_statuses)
     return ResearchReadinessAssessment(
@@ -162,10 +169,10 @@ def build_research_readiness_result(
         need.information_need_id
         for assessment in sorted_assessments
         for need in assessment.information_need_assessments
-        if need.status in READINESS_BLOCKING_STATUSES
+        if need.status in READINESS_BLOCKING_STATUSES or not need.assessment_current
     )
     has_actionable = any(
-        need.status in ACTIONABLE_BLOCKING_STATUSES
+        need.status in ACTIONABLE_BLOCKING_STATUSES or not need.assessment_current
         for assessment in sorted_assessments
         for need in assessment.information_need_assessments
     )

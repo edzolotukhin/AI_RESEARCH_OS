@@ -16,7 +16,7 @@ def _has_actionable_blocking_gap(
     assessments: tuple[ResearchReadinessAssessment, ...],
 ) -> bool:
     return any(
-        need.status in ACTIONABLE_BLOCKING_STATUSES
+        need.status in ACTIONABLE_BLOCKING_STATUSES or not need.assessment_current
         for assessment in assessments
         for need in assessment.information_need_assessments
     )

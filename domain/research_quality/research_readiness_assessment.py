@@ -18,7 +18,10 @@ def _blocking_need_ids(
     return tuple(
         assessment.information_need_id
         for assessment in assessments
-        if assessment.status in READINESS_BLOCKING_STATUSES
+        if (
+            assessment.status in READINESS_BLOCKING_STATUSES
+            or not assessment.assessment_current
+        )
     )
 
 
@@ -80,9 +83,16 @@ class ResearchReadinessAssessment:
         expected_blocking = _blocking_need_ids(self.information_need_assessments)
         if self.ready_for_analysis:
             blocking_statuses = [
-                assessment.status.value
+                (
+                    assessment.status.value
+                    if assessment.assessment_current
+                    else f"{assessment.status.value}:stale_evidence"
+                )
                 for assessment in self.information_need_assessments
-                if assessment.status in READINESS_BLOCKING_STATUSES
+                if (
+                    assessment.status in READINESS_BLOCKING_STATUSES
+                    or not assessment.assessment_current
+                )
             ]
             if blocking_statuses:
                 raise ValidationError(
@@ -108,6 +118,7 @@ class ResearchReadinessAssessment:
 
         if any(
             assessment.status != SufficiencyStatus.SUFFICIENT
+            or not assessment.assessment_current
             for assessment in self.information_need_assessments
         ) and self.ready_for_analysis:
             raise ValidationError(

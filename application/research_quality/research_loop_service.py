@@ -31,6 +31,9 @@ from application.research_quality.sufficiency_assessment_cache import (
     persist_sufficiency_assessment_cache,
     reset_sufficiency_assessment_cache,
 )
+from application.research_quality.terminal_state_reconciliation import (
+    reconcile_terminal_readiness,
+)
 from application.execution.budget_utils import (
     EVIDENCE_REMEDIATION_BUDGET_REASON,
     EVIDENCE_STAGE_CAP_REASON,
@@ -192,11 +195,96 @@ class ResearchLoopService:
                 except BudgetExhaustedError as exc:
                     if not is_sufficiency_graceful_budget_stop(exc):
                         raise
+                    cache_payload = context.read_shared(SHARED_SUFFICIENCY_CACHE_KEY)
+                    result = reconcile_terminal_readiness(
+                        design=design,
+                        evidence=self._evidence_repository.list_for_project(
+                            context.project.id,
+                            workflow_run_id=context.workflow_run.id,
+                        ),
+                        previous=previous,
+                        cache_payload=(
+                            cache_payload if isinstance(cache_payload, dict) else None
+                        ),
+                    )
                     result, loop_state = apply_sufficiency_budget_termination(
-                        previous,
+                        result,
                         loop_state=loop_state,
                         reason=exc.reason,
                     )
+                    gap_improved = need_readiness_improved(
+                        previous,
+                        result,
+                        need_id,
+                    )
+                    loop_state.gap_attempt_counts[need_id] = (
+                        loop_state.gap_attempt_counts.get(need_id, 0) + 1
+                    )
+                    loop_state.research_loop_count += 1
+                    outcome = self._gate.research_outcome(result).value
+                    cache_payload = (
+                        cache_payload if isinstance(cache_payload, dict) else {}
+                    )
+                    attempt_diagnostics = dict(
+                        iteration.remediation_attempt_diagnostics or {},
+                    )
+                    attempt_diagnostics.update(
+                        {
+                            "research_question_id": request.research_question_id,
+                            "information_need_id": need_id,
+                            "attempt_number": request.attempt,
+                            "attempt_completed": True,
+                            "improved": gap_improved,
+                            "sufficiency_reassessed": bool(
+                                cache_payload.get("reassessed_need_ids"),
+                            ),
+                            "fingerprint_changed": int(
+                                cache_payload.get("reassessed_fingerprint_changed") or 0,
+                            )
+                            > 0,
+                            "status_before": self._need_status_value(previous, need_id),
+                            "status_after": self._need_status_value(result, need_id),
+                            "terminal_state_reconciled": True,
+                            "termination_reason": exc.reason,
+                        }
+                    )
+                    loop_state.history.append(
+                        ResearchLoopIterationRecord(
+                            attempt=loop_state.research_loop_count,
+                            round_number=round_number,
+                            blocking_need_ids_before=blocking_before,
+                            targeted_need_ids=(need_id,),
+                            queries_generated=iteration.queries_executed,
+                            new_sources_count=iteration.sources_acquired,
+                            new_evidence_count=iteration.evidence_extracted,
+                            readiness_after=serialize_readiness(
+                                result,
+                                research_outcome=outcome,
+                            ),
+                            improved=gap_improved,
+                            extraction_attempted=iteration.extraction_attempted,
+                            budget_stop_reason=iteration.budget_stop_reason,
+                            reused_need_ids=tuple(
+                                str(item)
+                                for item in cache_payload.get("reused_need_ids", [])
+                            ),
+                            reassessed_need_ids=tuple(
+                                str(item)
+                                for item in cache_payload.get("reassessed_need_ids", [])
+                            ),
+                            missing_need_ids=tuple(
+                                str(item)
+                                for item in cache_payload.get("missing_need_ids", [])
+                            ),
+                            remediation_attempt_diagnostics=attempt_diagnostics,
+                        )
+                    )
+                    loop_state.previous_readiness_result = serialize_readiness(
+                        previous,
+                        research_outcome=self._gate.research_outcome(previous).value,
+                    )
+                    loop_state.pending_targeted_need_id = ""
+                    loop_state.pending_attempt = 0
                     return self._finalize(context, result, loop_state)
 
                 gap_improved = need_readiness_improved(previous, result, need_id)

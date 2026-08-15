@@ -79,6 +79,26 @@ class SufficiencyAssessmentCache:
         self.semantic_assessment_calls += 1
         self.reassessed_need_ids.append(information_need_id)
 
+    def completed_entry(
+        self,
+        information_need_id: str,
+    ) -> tuple[str, InformationNeedAssessment] | None:
+        """Return a completed cached assessment without changing pass diagnostics."""
+        entry = self.entries.get(information_need_id)
+        if not isinstance(entry, dict):
+            return None
+        if entry.get("contract_version") != self.contract_version:
+            return None
+        fingerprint = str(entry.get("fingerprint") or "")
+        payload = entry.get("assessment")
+        if not fingerprint or not isinstance(payload, dict):
+            return None
+        try:
+            assessment = InformationNeedAssessment.from_dict(payload)
+        except Exception:
+            return None
+        return fingerprint, assessment
+
     def record_missing(self, information_need_id: str) -> None:
         self.missing_no_evidence += 1
         self.missing_need_ids.append(information_need_id)

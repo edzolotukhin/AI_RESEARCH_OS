@@ -41,6 +41,10 @@ class InformationNeedAssessment:
     reason: str = ""
     quality_contract_mode: str = ""
     required_aspect_ids: tuple[str, ...] = ()
+    assessment_current: bool = True
+    assessment_evidence_fingerprint: str = ""
+    terminal_evidence_fingerprint: str = ""
+    terminal_evidence_count: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -76,6 +80,16 @@ class InformationNeedAssessment:
             "required_aspect_ids",
             tuple_of_str(self.required_aspect_ids),
         )
+        object.__setattr__(
+            self,
+            "assessment_evidence_fingerprint",
+            str(self.assessment_evidence_fingerprint).strip(),
+        )
+        object.__setattr__(
+            self,
+            "terminal_evidence_fingerprint",
+            str(self.terminal_evidence_fingerprint).strip(),
+        )
 
         if not self.information_need_id:
             raise ValidationError("information_need_id must not be empty")
@@ -87,6 +101,11 @@ class InformationNeedAssessment:
             "independent_source_count",
             self.independent_source_count,
         )
+        if self.terminal_evidence_count is not None:
+            validate_non_negative_count(
+                "terminal_evidence_count",
+                self.terminal_evidence_count,
+            )
         validate_unit_score("source_quality", self.source_quality)
         validate_unit_score("freshness", self.freshness)
         validate_unit_score("source_diversity", self.source_diversity)
@@ -101,6 +120,20 @@ class InformationNeedAssessment:
             raise ValidationError(
                 "MISSING assessments must have evidence_count == 0",
             )
+        if not self.assessment_current and GapType.STALE_EVIDENCE not in self.gap_types:
+            raise ValidationError(
+                "non-current assessments must include stale_evidence",
+            )
+        if (
+            self.assessment_current
+            and self.assessment_evidence_fingerprint
+            and self.terminal_evidence_fingerprint
+            and self.assessment_evidence_fingerprint
+            != self.terminal_evidence_fingerprint
+        ):
+            raise ValidationError(
+                "current assessments require matching evidence fingerprints",
+            )
         if self.status == SufficiencyStatus.SUFFICIENT:
             if self.evidence_count == 0:
                 raise ValidationError(
@@ -111,7 +144,7 @@ class InformationNeedAssessment:
                 for gap_type in self.gap_types
                 if gap_type in BLOCKING_GAP_TYPES
             ]
-            if blocking:
+            if blocking and self.assessment_current:
                 raise ValidationError(
                     "SUFFICIENT assessments must not include blocking gap types: "
                     + ", ".join(blocking),
@@ -136,6 +169,10 @@ class InformationNeedAssessment:
             "reason": self.reason,
             "quality_contract_mode": self.quality_contract_mode,
             "required_aspect_ids": list(self.required_aspect_ids),
+            "assessment_current": self.assessment_current,
+            "assessment_evidence_fingerprint": self.assessment_evidence_fingerprint,
+            "terminal_evidence_fingerprint": self.terminal_evidence_fingerprint,
+            "terminal_evidence_count": self.terminal_evidence_count,
         }
 
     @classmethod
@@ -174,4 +211,16 @@ class InformationNeedAssessment:
             reason=str(payload.get("reason", "")),
             quality_contract_mode=str(payload.get("quality_contract_mode", "")),
             required_aspect_ids=tuple_of_str(payload.get("required_aspect_ids")),
+            assessment_current=bool(payload.get("assessment_current", True)),
+            assessment_evidence_fingerprint=str(
+                payload.get("assessment_evidence_fingerprint", "")
+            ),
+            terminal_evidence_fingerprint=str(
+                payload.get("terminal_evidence_fingerprint", "")
+            ),
+            terminal_evidence_count=(
+                int(payload["terminal_evidence_count"])
+                if payload.get("terminal_evidence_count") is not None
+                else None
+            ),
         )
