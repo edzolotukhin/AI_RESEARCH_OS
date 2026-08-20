@@ -169,8 +169,7 @@ def fingerprint_analysis_specification(
     *,
     digest_provider: DeterministicDigestProvider,
 ) -> str:
-    return canonical_digest(
-        {
+    payload = {
             "specification_id": specification.specification_id,
             "variable_id": specification.variable_id,
             "statistic_family": specification.statistic_family,
@@ -180,9 +179,27 @@ def fingerprint_analysis_specification(
             "presentation_threshold_percent": canonical_scalar(
                 specification.presentation_threshold_percent
             ),
-        },
-        digest_provider=digest_provider,
-    )
+        }
+    if specification.statistic_family == "CROSS_TAB":
+        payload.update(
+            {
+                "column_variable_id": getattr(specification, "column_variable_id", ""),
+                "percentage_orientation": getattr(specification, "percentage_orientation", ""),
+                "filter_variable_id": getattr(specification, "filter_variable_id", None),
+                "filter_category_value": canonical_scalar(
+                    getattr(specification, "filter_category_value", None),
+                ),
+                "row_categories": [
+                    canonical_scalar(item)
+                    for item in getattr(specification, "row_categories", ())
+                ],
+                "column_categories": [
+                    canonical_scalar(item)
+                    for item in getattr(specification, "column_categories", ())
+                ],
+            }
+        )
+    return canonical_digest(payload, digest_provider=digest_provider)
 
 
 def fingerprint_statistical_result_payload(
