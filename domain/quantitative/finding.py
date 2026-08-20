@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import Enum
-from typing import Any
+from typing import Any, Mapping
 
 
 class QuantitativeClaimType(str, Enum):
@@ -62,3 +62,26 @@ class QuantitativeFinding:
     support_validation_status: QuantitativeSupportStatus = QuantitativeSupportStatus.UNVALIDATED
     support_validation_fingerprint: str = ""
     support_validation_version: str = "qh-1"
+
+
+@dataclass(frozen=True)
+class QuantitativeFindingRejection:
+    proposal_ordinal: int
+    proposal_payload: Mapping[str, Any]
+    reason: str
+    rejection_fingerprint: str
+
+
+@dataclass(frozen=True)
+class QuantitativeFindingGenerationResult:
+    generation_id: str
+    input_result_bundle_fingerprint: str
+    generator_identity: str
+    prompt_version: str
+    prompt_fingerprint: str
+    proposed_findings: tuple[QuantitativeFinding, ...]
+    accepted_findings: tuple[QuantitativeFinding, ...]
+    rejected_findings: tuple[QuantitativeFindingRejection, ...]
+    generation_metadata: Mapping[str, Any]
+    acceptance_summary: Mapping[str, int]
+    generation_fingerprint: str
