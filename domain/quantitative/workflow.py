@@ -66,3 +66,21 @@ class QuantitativeTerminalResult:
     execution_status: str
     terminal_outcome: QuantitativeTerminalOutcome
     fingerprint: str
+@dataclass(frozen=True)
+class QuantitativeStudyProjection:
+    study_id: str
+    project_id: str
+    run_id: str
+    title: str
+    description: str
+    state: str
+    dataset_record_id: str | None = None
+    codebook_record_id: str | None = None
+    qc_record_id: str | None = None
+    qc_approval_id: str | None = None
+    target_plan_record_id: str | None = None
+    weight_set_record_id: str | None = None
+    weight_approval_id: str | None = None
+    terminal_result_record_id: str | None = None
+    revision: int = 0
+    fingerprint: str = ""

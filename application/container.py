@@ -25,6 +25,7 @@ from application.query.research_run_result_query_service import (
 from application.query.research_status_query_service import (
     ResearchStatusQueryService,
 )
+from typing import Any
 
 from application.runtime.background_execution_capability import (
     BackgroundExecutionCapability,
@@ -61,6 +62,7 @@ class ApplicationContainer:
     authorization_service: AuthorizationService | None = None
     background_execution: BackgroundExecutionCapability | None = None
     readiness_check: ReadinessCheck | None = None
+    quantitative_ui_service: Any | None = None
     _shutdown_callbacks: list[ShutdownCallback] = field(default_factory=list)
 
     @property

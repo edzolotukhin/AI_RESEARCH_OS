@@ -29,6 +29,8 @@ from application.task_lifecycle_manager import TaskLifecycleManager
 from application.task_scheduler import TaskScheduler
 from application.workflow_engine import WorkflowEngine
 from application.quantitative.workflow import QuantitativeStageExecutor
+from application.quantitative.state_persistence import QuantitativeStateService
+from application.quantitative.ui_service import QuantitativeUiService
 
 from agency.agency import Agency
 
@@ -98,6 +100,9 @@ from infrastructure.persistence.persistence_factory import build_persistence_bun
 from infrastructure.security.sha256_api_key_material_provider import (
     Sha256ApiKeyMaterialProvider,
 )
+from infrastructure.security.sha256_digest_provider import Sha256DigestProvider
+from infrastructure.quantitative.importers import SavPyreadstatAdapter, XlsxOpenpyxlAdapter
+from infrastructure.quantitative.storage.protected_file_dataset_storage import ProtectedFileDatasetStorage
 
 from loaders.agent_loader import AgentLoader
 
@@ -383,6 +388,29 @@ def create_application_container(
         shutdown_callbacks=shutdown_callbacks,
     )
 
+    quantitative_ui_service = None
+    if persistence.quantitative_state_repository is not None:
+        digest_provider = Sha256DigestProvider()
+        quantitative_state_service = QuantitativeStateService(
+            repository=persistence.quantitative_state_repository,
+            digest_provider=digest_provider,
+        )
+        protected_root = f"{config.projects_root}/.quantitative-protected"
+        quantitative_ui_service = QuantitativeUiService(
+            project_service=project_service,
+            workflow_service=workflow_service,
+            state_service=quantitative_state_service,
+            digest_provider=digest_provider,
+            storage_factory=lambda project_id, run_id: ProtectedFileDatasetStorage(
+                root=protected_root,
+                project_id=project_id,
+                run_id=run_id,
+                digest_provider=digest_provider,
+            ),
+            importers=(SavPyreadstatAdapter(), XlsxOpenpyxlAdapter()),
+            offline_generation_enabled=config.deterministic_stage_executors,
+        )
+
     return ApplicationContainer(
         config=config,
         agency=agency,
@@ -406,6 +434,7 @@ def create_application_container(
         authorization_service=authorization_service,
         background_execution=background_execution,
         readiness_check=readiness_check,
+        quantitative_ui_service=quantitative_ui_service,
         _shutdown_callbacks=shutdown_callbacks,
     )
 

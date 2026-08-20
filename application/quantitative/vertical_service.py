@@ -17,6 +17,7 @@ from application.quantitative.quality_control import (
 from application.quantitative.report_composition import QuantitativeReportCompositionService
 from application.quantitative.state_persistence import QuantitativeStateService, authority_fingerprint
 from application.quantitative.weighting import WeightImportService, approve_weight_set, build_analytical_view
+from application.quantitative.target_margin_weighting import TargetMarginWeightingService
 from application.quantitative.workflow import (
     QuantitativeApprovalRequired, QuantitativeApprovalService, QuantitativeWorkflowError,
 )
@@ -31,7 +32,7 @@ from domain.quantitative.quality import (
     CleaningDecisionSet, DatasetQualityState, QualityControlRun, QuestionnaireSnapshot,
 )
 from domain.quantitative.report import QuantitativeReportCompositionResult
-from domain.quantitative.weighting import WeightSet, WeightSetApproval, WeightingMode
+from domain.quantitative.weighting import WeightSet, WeightSetApproval, WeightingMode, WeightingTargetPlan
 from domain.quantitative.workflow import QuantitativeAnalysisManifest, QuantitativeTerminalOutcome, QuantitativeTerminalResult
 from application.quantitative.fingerprints import canonical_digest
 
@@ -50,6 +51,8 @@ class QuantitativeVerticalPlan:
     numeric: NumericAnalysisSpecification
     nps: NpsAnalysisSpecification
     cleaning_decision_set: CleaningDecisionSet | None = None
+    weight_mode: str = "IMPORT_PRECOMPUTED_WEIGHTSET"
+    weighting_target_plan: WeightingTargetPlan | None = None
 
 
 class RealQuantitativeStageService:
@@ -70,6 +73,7 @@ class RealQuantitativeStageService:
         self.qc = DataQualityService(storage=storage, digest_provider=digest_provider)
         self.cleaner = CleaningEngine(storage=storage, digest_provider=digest_provider)
         self.weights = WeightImportService(storage=storage, digest_provider=digest_provider)
+        self.target_weights = TargetMarginWeightingService(storage=storage, digest_provider=digest_provider)
         self.one_way = OneWayStatisticsService(storage=storage, digest_provider=digest_provider)
         self.cross_tab = CrossTabStatisticsService(storage=storage, digest_provider=digest_provider)
         self.numeric = NumericStatisticsService(storage=storage, digest_provider=digest_provider)
@@ -132,7 +136,14 @@ class RealQuantitativeStageService:
 
     def _quant_weightset(self, project_id, run_id, state):
         dataset = self._load(state, "dataset_record_id", project_id, DatasetVersion)
-        weight_set = self.weights.from_separate_keyed_rows(dataset=dataset, source_bytes_checksum=self.plan.weight_source_checksum, parser_name="fixture-import", parser_version="1", key_specification="technical-id", rows=self.plan.imported_weight_rows)
+        if self.plan.weight_mode == "CONSTRUCT_FROM_TARGET_MARGINS":
+            codebook = self._load(state, "codebook_record_id", project_id, CodebookVersion)
+            if self.plan.weighting_target_plan is None: raise QuantitativeWorkflowError("target-margin mode requires WeightingTargetPlan")
+            weight_set = self.target_weights.construct(dataset=dataset, codebook=codebook, plan=self.plan.weighting_target_plan)
+        elif self.plan.weight_mode == "IMPORT_PRECOMPUTED_WEIGHTSET":
+            weight_set = self.weights.from_separate_keyed_rows(dataset=dataset, source_bytes_checksum=self.plan.weight_source_checksum, parser_name="fixture-import", parser_version="1", key_specification="technical-id", rows=self.plan.imported_weight_rows)
+        else:
+            raise QuantitativeWorkflowError("unsupported WeightSet construction mode")
         state["weight_set_record_id"] = self._persist(weight_set, "weightset", project_id, run_id, dataset_id=dataset.version_id)
         state["weight_set_id"], state["weight_set_fingerprint"] = weight_set.weight_set_id, weight_set.reproducibility_fingerprint
         return state

@@ -8,6 +8,61 @@ from enum import StrEnum
 class WeightSourceType(StrEnum):
     EMBEDDED_VARIABLE = "EMBEDDED_VARIABLE"
     SEPARATE_FILE = "SEPARATE_FILE"
+    TARGET_MARGINS = "TARGET_MARGINS"
+
+
+class WeightConstructionMethod(StrEnum):
+    RAKING = "RAKING"
+
+
+class WeightMissingPolicy(StrEnum):
+    FAIL = "FAIL"
+
+
+class WeightTrimmingPolicy(StrEnum):
+    NONE = "NONE"
+    CLIP = "CLIP"
+
+
+@dataclass(frozen=True)
+class WeightingTargetMargin:
+    variable_id: str
+    category_targets: tuple[tuple[object, Decimal], ...]
+
+
+@dataclass(frozen=True)
+class WeightingTargetPlan:
+    plan_id: str
+    dataset_version_id: str
+    dataset_fingerprint: str
+    margins: tuple[WeightingTargetMargin, ...]
+    target_source: str
+    target_total_tolerance: Decimal
+    method: WeightConstructionMethod
+    convergence_tolerance: Decimal
+    maximum_iterations: int
+    minimum_weight: Decimal
+    maximum_weight: Decimal
+    trimming_policy: WeightTrimmingPolicy
+    normalization_policy: str
+    missing_policy: WeightMissingPolicy
+    approved: bool
+    version: str
+    fingerprint: str
+
+
+@dataclass(frozen=True)
+class WeightingConvergenceDiagnostic:
+    plan_id: str
+    plan_fingerprint: str
+    iterations_used: int
+    maximum_absolute_margin_error: Decimal
+    achieved_margins: tuple[tuple[str, tuple[tuple[object, Decimal], ...]], ...]
+    converged: bool
+    trimming_applied: bool
+    clipped_weight_count: int
+    effective_sample_size: Decimal
+    fingerprint: str
 
 
 class WeightValidationStatus(StrEnum):
@@ -56,6 +111,10 @@ class WeightSet:
     source_variable_fingerprint: str | None = None
     parser_name: str | None = None
     parser_version: str | None = None
+    construction_plan_id: str | None = None
+    construction_plan_fingerprint: str | None = None
+    convergence_diagnostic: WeightingConvergenceDiagnostic | None = None
+    effective_sample_size: Decimal | None = None
 
 
 @dataclass(frozen=True)

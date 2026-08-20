@@ -127,6 +127,18 @@ class QuantitativeStateService:
         if authority_fingerprint(value) != record.authority_fingerprint: raise QuantitativePersistenceError("Quantitative authority fingerprint mismatch")
         return value
 
+    def list_for_run(self, run_id: str, *, project_id: str, expected_type: type | None = None) -> tuple[Any, ...]:
+        values = []
+        for record in self._repository.list_for_run(run_id, project_id=project_id):
+            try:
+                value = self.load(record.record_id, project_id=project_id, expected_type=expected_type)
+            except QuantitativePersistenceError:
+                if expected_type is None:
+                    raise
+                continue
+            values.append(value)
+        return tuple(values)
+
 
 def validate_recovered_dataset(*, dataset: DatasetVersion, codebook: CodebookVersion, storage, digest_provider: DeterministicDigestProvider) -> None:
     raw = storage.get_raw_file(dataset.source_file_id)
