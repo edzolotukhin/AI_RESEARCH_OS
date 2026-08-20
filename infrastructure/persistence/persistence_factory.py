@@ -53,6 +53,7 @@ from infrastructure.persistence.memory.in_memory_source_repository import (
 from infrastructure.persistence.memory.in_memory_workflow_template_repository import (
     InMemoryWorkflowTemplateRepository,
 )
+from infrastructure.persistence.memory.in_memory_quantitative_state_repository import InMemoryQuantitativeStateRepository
 from infrastructure.persistence.postgresql.config import PostgreSQLConfig
 from infrastructure.persistence.postgresql.database import create_database_engine
 from infrastructure.persistence.postgresql.repositories.postgresql_api_key_repository import (
@@ -100,6 +101,7 @@ from infrastructure.persistence.postgresql.repositories.postgresql_source_reposi
 from infrastructure.persistence.postgresql.repositories.postgresql_workflow_template_repository import (
     PostgreSQLWorkflowTemplateRepository,
 )
+from infrastructure.persistence.postgresql.repositories.postgresql_quantitative_state_repository import PostgreSQLQuantitativeStateRepository
 from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
 
 
@@ -120,6 +122,7 @@ class PersistenceBundle:
     report_repository: object
     review_repository: object
     execution_log_store: object
+    quantitative_state_repository: object | None = None
     engine: Engine | None = None
 
 
@@ -155,6 +158,7 @@ def build_persistence_bundle(
             report_repository=InMemoryReportRepository(),
             review_repository=InMemoryReviewRepository(),
             execution_log_store=InMemoryExecutionLogStore(),
+            quantitative_state_repository=InMemoryQuantitativeStateRepository(),
         )
 
     if backend == "file":
@@ -175,6 +179,7 @@ def build_persistence_bundle(
             report_repository=InMemoryReportRepository(),
             review_repository=InMemoryReviewRepository(),
             execution_log_store=InMemoryExecutionLogStore(),
+            quantitative_state_repository=None,
         )
 
     if backend == "postgresql":
@@ -205,6 +210,7 @@ def build_persistence_bundle(
             report_repository=PostgreSQLReportRepository(session_factory),
             review_repository=PostgreSQLReviewRepository(session_factory),
             execution_log_store=PostgreSQLExecutionLogStore(session_factory),
+            quantitative_state_repository=PostgreSQLQuantitativeStateRepository(session_factory),
             engine=engine,
         )
 
