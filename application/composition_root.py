@@ -28,6 +28,7 @@ from application.task_executor import TaskExecutor
 from application.task_lifecycle_manager import TaskLifecycleManager
 from application.task_scheduler import TaskScheduler
 from application.workflow_engine import WorkflowEngine
+from application.quantitative.workflow import QuantitativeStageExecutor
 
 from agency.agency import Agency
 
@@ -293,6 +294,11 @@ def create_application_container(
         human_registry=registry.human_executors,
         api_registry=registry.api_executors,
     )
+
+    # Q1-16 registers only the methodology bridge. Dataset/analysis services
+    # are supplied run-scoped and keep protected respondent data behind QL ports.
+    if not registry.tools.exists("quantitative-stage"):
+        registry.tools.register("quantitative-stage", QuantitativeStageExecutor())
 
     task_lifecycle_manager = TaskLifecycleManager()
     task_scheduler = TaskScheduler()

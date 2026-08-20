@@ -94,6 +94,9 @@ class WorkflowEngine:
                             first_execution_error = exc
                         continue
 
+                if workflow_run.status == WorkflowStatus.PAUSED:
+                    break
+
                 if progress.should_stop_iteration:
                     break
 

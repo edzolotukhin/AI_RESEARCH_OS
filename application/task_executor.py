@@ -8,6 +8,7 @@ from application.execution.execution_budget_context import (
 from application.ports.workflow_runtime_checkpoint import WorkflowRuntimeCheckpoint
 from application.runtime.checkpoint_context import CHECKPOINT_SERVICE_KEY
 from application.task_lifecycle_manager import TaskLifecycleManager
+from domain.value_objects.task_status import TaskStatus
 
 
 class TaskExecutor:
@@ -44,8 +45,10 @@ class TaskExecutor:
         try:
             set_execution_stage(stage_for_executor(task.executor_id))
             context = executor.run(context)
-
-            self._lifecycle.complete(task)
+            # A methodology checkpoint may deliberately pause a running task.
+            # Completion remains owned by the lifecycle only for non-paused work.
+            if task.status != TaskStatus.PAUSED:
+                self._lifecycle.complete(task)
 
             return context
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import fields, is_dataclass
 import base64
+from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum
 from typing import Any
@@ -20,9 +21,9 @@ class QuantitativePersistenceError(ValueError):
 
 
 def _classes() -> dict[str, type]:
-    from domain.quantitative import analysis, dataset, finding, insight, quality, report, weighting
+    from domain.quantitative import analysis, dataset, finding, insight, quality, report, weighting, workflow
     result = {}
-    for module in (analysis, dataset, finding, insight, quality, report, weighting):
+    for module in (analysis, dataset, finding, insight, quality, report, weighting, workflow):
         for value in vars(module).values():
             if isinstance(value, type) and (is_dataclass(value) or issubclass(value, Enum)):
                 result[f"{value.__module__}.{value.__qualname__}"] = value
@@ -43,6 +44,12 @@ def encode_quantitative(value: Any) -> Any:
         return {"$decimal": str(value)}
     if isinstance(value, bytes):
         return {"$bytes": base64.b64encode(value).decode("ascii")}
+    if isinstance(value, datetime):
+        return {"$datetime": value.isoformat()}
+    if isinstance(value, date):
+        return {"$date": value.isoformat()}
+    if isinstance(value, time):
+        return {"$time": value.isoformat()}
     if isinstance(value, Enum):
         return {"$enum": f"{type(value).__module__}.{type(value).__qualname__}", "value": value.value}
     if is_dataclass(value):
@@ -69,6 +76,9 @@ def decode_quantitative(value: Any) -> Any:
     if "$float" in value: return float(value["$float"])
     if "$decimal" in value: return Decimal(value["$decimal"])
     if "$bytes" in value: return base64.b64decode(value["$bytes"], validate=True)
+    if "$datetime" in value: return datetime.fromisoformat(value["$datetime"])
+    if "$date" in value: return date.fromisoformat(value["$date"])
+    if "$time" in value: return time.fromisoformat(value["$time"])
     if "$tuple" in value: return tuple(decode_quantitative(item) for item in value["$tuple"])
     if "$list" in value: return [decode_quantitative(item) for item in value["$list"]]
     if "$map" in value: return {key: decode_quantitative(item) for key, item in value["$map"].items()}
