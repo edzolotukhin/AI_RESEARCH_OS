@@ -131,7 +131,7 @@ class QuantitativeDatasetImportService:
         )
 
         technical_index = self._technical_id_index(variables)
-        analytical_ids, binding_supported = self._respondent_ids(
+        analytical_ids, binding_supported, protected_bindings = self._respondent_ids(
             dataset_id=dataset_id,
             file_checksum=file_checksum,
             rows=parsed.rows,
@@ -143,6 +143,7 @@ class QuantitativeDatasetImportService:
         raw_locator = self._storage.put_raw_file(source_file_id, data)
         self._storage.put_parsed_rows(version_id, parsed.rows)
         self._storage.put_respondent_lineage(version_id, analytical_ids)
+        self._storage.put_protected_respondent_bindings(version_id, protected_bindings)
         version = DatasetVersion(
             dataset_id=dataset_id,
             version_id=version_id,
@@ -271,7 +272,7 @@ class QuantitativeDatasetImportService:
         rows: tuple[tuple[Any, ...], ...],
         technical_index: int | None,
         digest_provider: DeterministicDigestProvider,
-    ) -> tuple[tuple[str, ...], bool]:
+    ) -> tuple[tuple[str, ...], bool, tuple[tuple[str, str], ...]]:
         if technical_index is None:
             return (
                 tuple(
@@ -282,6 +283,7 @@ class QuantitativeDatasetImportService:
                     for index in range(len(rows))
                 ),
                 False,
+                (),
             )
         raw_keys = [canonical_scalar(row[technical_index]) for row in rows]
         if any(item["type"] == "missing" or not item["value"] for item in raw_keys):
@@ -289,15 +291,17 @@ class QuantitativeDatasetImportService:
         rendered = [f"{item['type']}:{item['value']}" for item in raw_keys]
         if len(set(rendered)) != len(rendered):
             raise QuantitativeImportError("duplicate technical respondent IDs")
-        return (
-            tuple(
+        pseudonyms = tuple(
                 sha256_bytes(
                     f"{dataset_id}:{item}".encode("utf-8"),
                     digest_provider=digest_provider,
                 )
                 for item in rendered
-            ),
+            )
+        return (
+            pseudonyms,
             True,
+            tuple(sorted(zip(rendered, pseudonyms))),
         )
 
     @staticmethod

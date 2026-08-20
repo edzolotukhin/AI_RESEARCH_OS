@@ -269,6 +269,10 @@ class CleaningEngine:
         version_id = str(uuid5(NAMESPACE_URL, f"qb-cleaned:{dataset_fp}"))
         self._storage.put_parsed_rows(version_id, new_rows)
         self._storage.put_respondent_lineage(version_id, new_refs)
+        self._storage.put_protected_respondent_bindings(
+            version_id,
+            self._storage.get_protected_respondent_bindings(parent.version_id),
+        )
         child = replace(parent, version_id=version_id, version_kind=DatasetVersionKind.CLEANED, row_count=len(new_rows), data_fingerprint=data_fp, dataset_fingerprint=dataset_fp, storage_locator=f"memory-dataset://parsed/{version_id}", parent_version_id=parent.version_id, parent_dataset_fingerprint=parent.dataset_fingerprint, cleaning_decision_set_id=decision_set.decision_set_id, cleaning_decision_set_fingerprint=decision_set.fingerprint, cleaning_engine_version=ENGINE_VERSION, retained_respondent_set_fingerprint=retained_fp, excluded_respondent_set_fingerprint=excluded_fp)
         self._storage.put_manifest(child)
         return child

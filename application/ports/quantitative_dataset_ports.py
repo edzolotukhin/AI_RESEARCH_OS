@@ -63,6 +63,19 @@ class DatasetStorage(Protocol):
     def get_respondent_lineage(self, version_id: str) -> tuple[str, ...]:
         ...
 
+    def put_protected_respondent_bindings(
+        self,
+        version_id: str,
+        bindings: tuple[tuple[str, str], ...],
+    ) -> None:
+        ...
+
+    def get_protected_respondent_bindings(
+        self,
+        version_id: str,
+    ) -> tuple[tuple[str, str], ...]:
+        ...
+
     def put_manifest(self, version: DatasetVersion) -> None:
         ...
 

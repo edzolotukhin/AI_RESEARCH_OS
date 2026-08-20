@@ -32,6 +32,7 @@ class VariableRole(StrEnum):
     TECHNICAL_ID = "TECHNICAL_ID"
     PII = "PII"
     OTHER = "OTHER"
+    WEIGHT = "WEIGHT"
 
 
 class PiiClassification(StrEnum):
@@ -78,6 +79,7 @@ class VariableDefinition:
             self.validation_status is not ValidationStatus.BLOCKED
             and self.variable_type
             not in {VariableType.PII, VariableType.OPEN_TEXT, VariableType.UNSUPPORTED}
+            and self.role is not VariableRole.WEIGHT
             and self.pii_classification is not PiiClassification.PII_RESTRICTED
         )
 

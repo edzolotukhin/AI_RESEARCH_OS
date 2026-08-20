@@ -14,6 +14,7 @@ class InMemoryDatasetStorage(DatasetStorage):
         self._rows: dict[str, tuple[tuple[object, ...], ...]] = {}
         self._manifests: dict[str, DatasetVersion] = {}
         self._lineage: dict[str, tuple[str, ...]] = {}
+        self._protected_bindings: dict[str, tuple[tuple[str, str], ...]] = {}
 
     def put_raw_file(self, source_file_id: str, data: bytes) -> str:
         existing = self._raw_files.get(source_file_id)
@@ -49,6 +50,23 @@ class InMemoryDatasetStorage(DatasetStorage):
 
     def get_respondent_lineage(self, version_id: str) -> tuple[str, ...]:
         return tuple(self._lineage[version_id])
+
+    def put_protected_respondent_bindings(
+        self,
+        version_id: str,
+        bindings: tuple[tuple[str, str], ...],
+    ) -> None:
+        snapshot = tuple(bindings)
+        existing = self._protected_bindings.get(version_id)
+        if existing is not None and existing != snapshot:
+            raise ValueError("immutable protected respondent binding collision")
+        self._protected_bindings[version_id] = snapshot
+
+    def get_protected_respondent_bindings(
+        self,
+        version_id: str,
+    ) -> tuple[tuple[str, str], ...]:
+        return tuple(self._protected_bindings.get(version_id, ()))
 
     def put_manifest(self, version: DatasetVersion) -> None:
         existing = self._manifests.get(version.version_id)

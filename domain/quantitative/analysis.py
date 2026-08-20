@@ -40,3 +40,9 @@ class StatisticalResult:
     computation_version: str
     presentation_eligible: bool
     reproducibility_fingerprint: str
+    weight_set_id: str | None = None
+    weight_set_fingerprint: str | None = None
+    analytical_view_id: str | None = None
+    analytical_view_fingerprint: str | None = None
+    unweighted_n: int | None = None
+    weighted_base: Decimal | None = None
