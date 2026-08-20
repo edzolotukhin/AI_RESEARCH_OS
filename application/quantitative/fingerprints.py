@@ -199,9 +199,39 @@ def fingerprint_analysis_specification(
                 ],
             }
         )
-    elif specification.statistic_family == "NUMERIC_SUMMARY":
+    elif specification.statistic_family in {"NUMERIC_SUMMARY", "NPS"}:
         payload.update(
             {
+                "filter_variable_id": getattr(specification, "filter_variable_id", None),
+                "filter_category_value": canonical_scalar(
+                    getattr(specification, "filter_category_value", None),
+                ),
+            }
+        )
+        if specification.statistic_family == "NPS":
+            payload.update(
+                {
+                    "scale_minimum": getattr(specification, "scale_minimum", None),
+                    "scale_maximum": getattr(specification, "scale_maximum", None),
+                    "detractor_range": list(getattr(specification, "detractor_range", ())),
+                    "passive_range": list(getattr(specification, "passive_range", ())),
+                    "promoter_range": list(getattr(specification, "promoter_range", ())),
+                    "method_version": getattr(specification, "method_version", ""),
+                }
+            )
+    elif specification.statistic_family == "CUSTOM_INDEX":
+        payload.update(
+            {
+                "terms": [
+                    {
+                        "variable_id": item.variable_id,
+                        "coefficient": canonical_scalar(item.coefficient),
+                    }
+                    for item in getattr(specification, "terms", ())
+                ],
+                "intercept": canonical_scalar(getattr(specification, "intercept", None)),
+                "formula_method": getattr(specification, "formula_method", ""),
+                "formula_version": getattr(specification, "formula_version", ""),
                 "filter_variable_id": getattr(specification, "filter_variable_id", None),
                 "filter_category_value": canonical_scalar(
                     getattr(specification, "filter_category_value", None),

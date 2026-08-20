@@ -36,6 +36,34 @@ class NumericAnalysisSpecification(AnalysisSpecification):
 
 
 @dataclass(frozen=True)
+class NpsAnalysisSpecification(NumericAnalysisSpecification):
+    statistic_family: str = "NPS"
+    scale_minimum: int = 0
+    scale_maximum: int = 10
+    detractor_range: tuple[int, int] = (0, 6)
+    passive_range: tuple[int, int] = (7, 8)
+    promoter_range: tuple[int, int] = (9, 10)
+    method_version: str = "STANDARD_NPS_V1"
+
+
+@dataclass(frozen=True)
+class IndexTerm:
+    variable_id: str
+    coefficient: Decimal
+
+
+@dataclass(frozen=True)
+class CustomIndexAnalysisSpecification(AnalysisSpecification):
+    statistic_family: str = "CUSTOM_INDEX"
+    terms: tuple[IndexTerm, ...] = ()
+    intercept: Decimal = Decimal(0)
+    formula_method: str = "MEAN_OF_ROW_LINEAR_COMBINATION"
+    formula_version: str = "LINEAR_INDEX_V1"
+    filter_variable_id: str | None = None
+    filter_category_value: Any | None = None
+
+
+@dataclass(frozen=True)
 class StatisticalResult:
     result_id: str
     dataset_version_id: str
