@@ -12,6 +12,7 @@ class DatasetFormat(StrEnum):
 
 class DatasetVersionKind(StrEnum):
     RAW = "RAW"
+    CLEANED = "CLEANED"
 
 
 class VariableType(StrEnum):
@@ -121,3 +122,10 @@ class DatasetVersion:
     warnings: tuple[str, ...] = ()
     respondent_identity_kind: str = "generated_pseudonym"
     weight_set_binding_supported: bool = False
+    parent_version_id: str | None = None
+    parent_dataset_fingerprint: str | None = None
+    cleaning_decision_set_id: str | None = None
+    cleaning_decision_set_fingerprint: str | None = None
+    cleaning_engine_version: str | None = None
+    retained_respondent_set_fingerprint: str | None = None
+    excluded_respondent_set_fingerprint: str | None = None

@@ -13,6 +13,7 @@ class InMemoryDatasetStorage(DatasetStorage):
         self._raw_files: dict[str, bytes] = {}
         self._rows: dict[str, tuple[tuple[object, ...], ...]] = {}
         self._manifests: dict[str, DatasetVersion] = {}
+        self._lineage: dict[str, tuple[str, ...]] = {}
 
     def put_raw_file(self, source_file_id: str, data: bytes) -> str:
         existing = self._raw_files.get(source_file_id)
@@ -38,6 +39,16 @@ class InMemoryDatasetStorage(DatasetStorage):
 
     def get_parsed_rows(self, version_id: str) -> tuple[tuple[object, ...], ...]:
         return copy.deepcopy(self._rows[version_id])
+
+    def put_respondent_lineage(self, version_id: str, refs: tuple[str, ...]) -> None:
+        snapshot = tuple(refs)
+        existing = self._lineage.get(version_id)
+        if existing is not None and existing != snapshot:
+            raise ValueError("immutable respondent lineage collision")
+        self._lineage[version_id] = snapshot
+
+    def get_respondent_lineage(self, version_id: str) -> tuple[str, ...]:
+        return tuple(self._lineage[version_id])
 
     def put_manifest(self, version: DatasetVersion) -> None:
         existing = self._manifests.get(version.version_id)

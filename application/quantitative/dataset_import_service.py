@@ -142,6 +142,7 @@ class QuantitativeDatasetImportService:
         validation_status = self._validation_status(variables, parsed.warnings)
         raw_locator = self._storage.put_raw_file(source_file_id, data)
         self._storage.put_parsed_rows(version_id, parsed.rows)
+        self._storage.put_respondent_lineage(version_id, analytical_ids)
         version = DatasetVersion(
             dataset_id=dataset_id,
             version_id=version_id,
