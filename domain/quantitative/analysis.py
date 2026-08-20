@@ -118,3 +118,51 @@ class StatisticalTable:
     row_labels: tuple[tuple[str, str], ...]
     column_labels: tuple[tuple[str, str], ...]
     fingerprint: str
+
+
+@dataclass(frozen=True)
+class ComparisonSpecification:
+    comparison_id: str
+    method: str
+    variable_id: str
+    group_variable_id: str
+    group_a_category: Any
+    group_b_category: Any
+    outcome_category: Any | None = None
+    alpha: Decimal = Decimal("0.05")
+    sidedness: str = "TWO_SIDED"
+    minimum_group_base: int = 2
+    filter_definition: str = "ALL_ROWS"
+    base_definition: str = "VALID_RESPONSES_BY_INDEPENDENT_GROUP"
+    method_version: str = "QG_1"
+    fingerprint: str = ""
+
+
+@dataclass(frozen=True)
+class AnalyticalComparisonResult:
+    comparison_result_id: str
+    dataset_version_id: str
+    dataset_fingerprint: str
+    data_fingerprint: str
+    specification_id: str
+    specification_fingerprint: str
+    group_a_result_id: str
+    group_a_result_fingerprint: str
+    group_b_result_id: str
+    group_b_result_fingerprint: str
+    observed_difference: Decimal
+    test_statistic: Decimal
+    p_value: Decimal
+    alpha: Decimal
+    significant: bool
+    sidedness: str
+    minimum_group_base: int
+    group_a_base: int
+    group_b_base: int
+    method: str
+    method_version: str
+    reproducibility_fingerprint: str
+
+    @property
+    def supports_significance_wording(self) -> bool:
+        return self.significant
