@@ -29,6 +29,13 @@ class CrossTabAnalysisSpecification(AnalysisSpecification):
 
 
 @dataclass(frozen=True)
+class NumericAnalysisSpecification(AnalysisSpecification):
+    statistic_family: str = "NUMERIC_SUMMARY"
+    filter_variable_id: str | None = None
+    filter_category_value: Any | None = None
+
+
+@dataclass(frozen=True)
 class StatisticalResult:
     result_id: str
     dataset_version_id: str

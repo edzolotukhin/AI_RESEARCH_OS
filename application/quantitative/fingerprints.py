@@ -199,6 +199,15 @@ def fingerprint_analysis_specification(
                 ],
             }
         )
+    elif specification.statistic_family == "NUMERIC_SUMMARY":
+        payload.update(
+            {
+                "filter_variable_id": getattr(specification, "filter_variable_id", None),
+                "filter_category_value": canonical_scalar(
+                    getattr(specification, "filter_category_value", None),
+                ),
+            }
+        )
     return canonical_digest(payload, digest_provider=digest_provider)
 
 
