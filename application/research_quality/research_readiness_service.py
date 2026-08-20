@@ -24,8 +24,14 @@ from application.research_quality.sufficiency_assessment_cache import (
     persist_sufficiency_assessment_cache,
     reset_sufficiency_assessment_cache,
 )
+from application.research_quality.terminal_state_reconciliation import (
+    reconcile_terminal_readiness,
+)
 from domain.planning.research_design import ResearchDesign
 from domain.research_quality.research_readiness_result import ResearchReadinessResult
+from domain.research_quality.research_termination_reason import (
+    BUDGET_CONTROLLED_TERMINATION_REASONS,
+)
 
 from runtime.workflow_context import WorkflowContext
 
@@ -86,12 +92,8 @@ class ResearchReadinessService:
                 reason=exc.reason,
             )
             loop_state: ResearchLoopState | None = None
-            if not result.ready_for_analysis:
-                self._gate.apply_not_ready(context)
-            self._persist(context, result, loop_state)
-            return result
-
-        loop_state: ResearchLoopState | None = None
+        else:
+            loop_state = None
 
         if not result.ready_for_analysis and result.targeted_research_required:
             loop_state = self._restore_loop_state(context)
@@ -114,6 +116,8 @@ class ResearchReadinessService:
             else:
                 result = replace(result, termination_reason="max_research_rounds")
 
+        result = self._finalize_terminal_readiness(context, result)
+
         if not result.ready_for_analysis and not result.targeted_research_required:
             if not result.termination_reason:
                 result = replace(result, termination_reason="blocked_gaps")
@@ -124,6 +128,46 @@ class ResearchReadinessService:
         loop_state = self._resolve_loop_state(context, loop_state)
         self._persist(context, result, loop_state)
         return result
+
+    def _finalize_terminal_readiness(
+        self,
+        context: WorkflowContext,
+        candidate: ResearchReadinessResult,
+    ) -> ResearchReadinessResult:
+        """Establish one authoritative terminal per-IN Evidence snapshot.
+
+        A mid-Sufficiency budget stop may already have reconciled its partial
+        cache for remediation-history accuracy. Every other legitimate READY
+        or controlled-NOT_READY result reaches this boundary before gating or
+        persistence.
+        """
+        design = self._require_design(context)
+        cache_payload = context.read_shared(SHARED_SUFFICIENCY_CACHE_KEY)
+        reconciled = reconcile_terminal_readiness(
+            design=design,
+            evidence=self._evidence_repository.list_for_project(
+                context.project.id,
+                workflow_run_id=context.workflow_run.id,
+            ),
+            previous=candidate,
+            cache_payload=(cache_payload if isinstance(cache_payload, dict) else None),
+        )
+
+        termination_reason = candidate.termination_reason
+        if reconciled.ready_for_analysis:
+            termination_reason = "ready"
+        elif termination_reason == "ready":
+            termination_reason = ""
+
+        targeted_research_required = reconciled.targeted_research_required
+        if termination_reason in BUDGET_CONTROLLED_TERMINATION_REASONS:
+            targeted_research_required = False
+
+        return replace(
+            reconciled,
+            targeted_research_required=targeted_research_required,
+            termination_reason=termination_reason,
+        )
 
     @staticmethod
     def _resolve_loop_state(

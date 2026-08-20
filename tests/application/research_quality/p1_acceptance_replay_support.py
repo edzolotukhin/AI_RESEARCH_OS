@@ -68,6 +68,9 @@ from infrastructure.persistence.memory.in_memory_source_repository import (
 from runtime.workflow_context import WorkflowContext
 
 from tests.helpers.workflow_run_builder import make_task, make_workflow_run
+from tests.application.research_quality.test_targeted_research_loop import (
+    _store_completed_assessments,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -382,12 +385,14 @@ class EvidenceProgressionEvaluator:
         self.calls += 1
         assessments: list[InformationNeedAssessment] = []
         for need in design.information_needs:
-            has_evidence = any(
-                need.id in item.information_need_refs for item in evidence
+            has_targeted_evidence = any(
+                need.id in item.information_need_refs
+                and not item.id.startswith("initial-")
+                for item in evidence
             )
             if need.id in self._stuck_needs:
                 status = self._initial_statuses[need.id]
-            elif has_evidence and need.id in self._improvable_needs:
+            elif has_targeted_evidence and need.id in self._improvable_needs:
                 status = SufficiencyStatus.SUFFICIENT
             else:
                 status = self._initial_statuses.get(
@@ -401,7 +406,9 @@ class EvidenceProgressionEvaluator:
                     status=status,
                 ),
             )
-        return result_for_needs(*assessments)
+        result = result_for_needs(*assessments)
+        _store_completed_assessments(design, evidence, result)
+        return result
 
 
 class FakeSemanticSufficiencyAssessor:
@@ -565,6 +572,36 @@ def workflow_context_for_design(design: ResearchDesign) -> WorkflowContext:
         workflow_template=template,
         workflow_run=workflow_run,
     )
+
+
+def seed_initial_status_evidence(
+    repository: InMemoryEvidenceRepository,
+    context: WorkflowContext,
+    statuses: dict[str, SufficiencyStatus],
+) -> None:
+    """Make non-MISSING acceptance statuses honest durable assessments."""
+    design = context.workflow_template.research_design_snapshot
+    need_by_id = {need.id: need for need in design.information_needs}
+    for need_id, status in statuses.items():
+        if status == SufficiencyStatus.MISSING:
+            continue
+        need = need_by_id[need_id]
+        repository.create(
+            Evidence(
+                id=f"initial-{need_id}",
+                project_id=context.project.id,
+                source_id=f"initial-source-{need_id}",
+                source_content_checksum=f"initial-checksum-{need_id}",
+                workflow_run_id=context.workflow_run.id,
+                research_design_id=design.id,
+                statement=f"Initial support for {need_id}",
+                source_excerpt=f"Initial excerpt for {need_id}",
+                created_at="2026-01-01T00:00:00+00:00",
+                research_question_refs=(need.research_question_id,),
+                information_need_refs=(need_id,),
+                deduplication_key=f"initial-{need_id}",
+            ),
+        )
 
 
 def run_rqcl_workflow(

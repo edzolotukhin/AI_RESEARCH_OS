@@ -213,7 +213,7 @@ class P114ReadinessLoopTests(unittest.TestCase):
             sources_acquired=0,
             evidence_extracted=0,
         )
-        context = loop_context(design=_design_three_needs())
+        context = loop_context()
         context.execution_metadata["execution_budget"] = budget
         ensure_run_budget(context)
         evaluator = CachedMissingEvaluator(budget, _missing_result())
@@ -294,7 +294,7 @@ class P114ReadinessLoopTests(unittest.TestCase):
     def test_case6_cached_assessments_unchanged_on_graceful_stop(self) -> None:
         budget = _stock_budget()
         _fill_p1_10_like(budget)  # 58 — allow one more eval
-        context = loop_context(design=_design_three_needs())
+        context = loop_context()
         context.execution_metadata["execution_budget"] = budget
         ensure_run_budget(context)
         fixed = _missing_result()

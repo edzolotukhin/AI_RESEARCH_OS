@@ -58,7 +58,9 @@ from tests.application.research_quality.test_research_readiness_gate import (
 )
 from tests.application.research_quality.test_targeted_research_loop import (
     RecordingTargetedRunner,
+    SequentialSufficiencyEvaluator,
     _context as loop_context,
+    _design as _loop_design,
     _design_three_needs,
     _missing_result,
     _ready_result,
@@ -200,15 +202,14 @@ class LoopAndGateSnapshotTests(unittest.TestCase):
         _current_stage.set(None)
 
     def test_case_f_gaps_with_budget_attempt_targeted_round(self) -> None:
-        context = loop_context(design=_design_three_needs())
+        context = loop_context(design=_loop_design())
         source_repo = InMemorySourceRepository()
         evidence_repo = InMemoryEvidenceRepository()
         runner = RecordingTargetedRunner(
             source_repository=source_repo,
             evidence_repository=evidence_repo,
         )
-        evaluator = Mock()
-        evaluator.evaluate.side_effect = [_missing_result(), _ready_result()]
+        evaluator = SequentialSufficiencyEvaluator([_missing_result(), _ready_result()])
         service = ResearchReadinessService(
             evaluator=evaluator,
             evidence_repository=evidence_repo,

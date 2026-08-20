@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import unittest
 
 from application.execution.execution_budget_context import (
@@ -51,6 +53,7 @@ from tests.application.research_quality.p1_acceptance_replay_support import (
     ready_scenario_design,
     result_for_needs,
     run_rqcl_workflow,
+    seed_initial_status_evidence,
     serbia_microgreens_design,
     task_statuses,
     workflow_context_for_design,
@@ -98,6 +101,7 @@ class P1AcceptanceReplayTests(unittest.TestCase):
             max_attempts_per_gap=2,
         )
         context = workflow_context_for_design(design)
+        seed_initial_status_evidence(evidence_repo, context, initial_statuses)
         analysis, context = run_rqcl_workflow(context, readiness_service=service)
 
         scorecard = build_scorecard(
@@ -176,6 +180,7 @@ class P1AcceptanceReplayTests(unittest.TestCase):
             max_attempts_per_gap=2,
         )
         context = workflow_context_for_design(design)
+        seed_initial_status_evidence(evidence_repo, context, initial_statuses)
         analysis, context = run_rqcl_workflow(context, readiness_service=service)
         scorecard = build_scorecard(
             scenario="INSUFFICIENT_RESEARCH",
@@ -289,7 +294,20 @@ class P1AcceptanceReplayTests(unittest.TestCase):
         self.assertIn(IN_RQ2_BLOCKED, result.blocking_information_need_ids)
 
     def test_blocked_only_outcome_is_insufficient_not_technical_failure(self) -> None:
-        design = full_acceptance_design()
+        full_design = full_acceptance_design()
+        included_need_ids = {
+            IN_RQ1_SUFFICIENT,
+            IN_RQ2_BLOCKED,
+            IN_RQ2_SUFFICIENT,
+        }
+        design = replace(
+            full_design,
+            information_needs=tuple(
+                need
+                for need in full_design.information_needs
+                if need.id in included_need_ids
+            ),
+        )
         blocked_only = result_for_needs(
             need_assessment(
                 need_id=IN_RQ1_SUFFICIENT,
@@ -307,15 +325,28 @@ class P1AcceptanceReplayTests(unittest.TestCase):
                 status=SufficiencyStatus.SUFFICIENT,
             ),
         )
+        source_repo = InMemorySourceRepository()
+        evidence_repo = InMemoryEvidenceRepository()
         runner = RecordingTargetedRunner(
-            source_repository=InMemorySourceRepository(),
-            evidence_repository=InMemoryEvidenceRepository(),
+            source_repository=source_repo,
+            evidence_repository=evidence_repo,
         )
         service = build_readiness_service(
             StaticSufficiencyEvaluator(blocked_only),
+            source_repository=source_repo,
+            evidence_repository=evidence_repo,
             runner=runner,
         )
         context = workflow_context_for_design(design)
+        seed_initial_status_evidence(
+            evidence_repo,
+            context,
+            {
+                IN_RQ1_SUFFICIENT: SufficiencyStatus.SUFFICIENT,
+                IN_RQ2_BLOCKED: SufficiencyStatus.BLOCKED,
+                IN_RQ2_SUFFICIENT: SufficiencyStatus.SUFFICIENT,
+            },
+        )
         analysis, context = run_rqcl_workflow(context, readiness_service=service)
 
         self.assertEqual(runner.calls, 0)
@@ -485,6 +516,11 @@ class P1AcceptanceReplayTests(unittest.TestCase):
             runner=runner,
         )
         context = workflow_context_for_design(design)
+        seed_initial_status_evidence(
+            evidence_repo,
+            context,
+            progression._initial_statuses,
+        )
         ensure_run_budget(context)
         set_execution_stage("sufficiency")
         service.assess_and_apply(context)
@@ -542,6 +578,7 @@ class P1AcceptanceReplayTests(unittest.TestCase):
             runner=runner,
         )
         context = workflow_context_for_design(design)
+        seed_initial_status_evidence(evidence_repo, context, initial_statuses)
         run_rqcl_workflow(context, readiness_service=service)
 
         dto = capture_results_dto(context)
@@ -596,6 +633,7 @@ class P1AcceptanceReplayTests(unittest.TestCase):
             max_rounds=2,
         )
         context = workflow_context_for_design(design)
+        seed_initial_status_evidence(evidence_repo, context, SERBIA_INITIAL_STATUSES)
         analysis, context = run_rqcl_workflow(context, readiness_service=service)
         scorecard = build_scorecard(
             scenario="SERBIA_MICROGREENS_READY",
@@ -637,6 +675,7 @@ class P1AcceptanceReplayTests(unittest.TestCase):
             max_attempts_per_gap=1,
         )
         context = workflow_context_for_design(design)
+        seed_initial_status_evidence(evidence_repo, context, SERBIA_INITIAL_STATUSES)
         analysis, context = run_rqcl_workflow(context, readiness_service=service)
 
         readiness = context.read_shared("research_readiness")
@@ -673,6 +712,11 @@ class P1AcceptanceReplayTests(unittest.TestCase):
             ),
         )
         ready_context = workflow_context_for_design(design)
+        seed_initial_status_evidence(
+            evidence_repo,
+            ready_context,
+            ready_evaluator._initial_statuses,
+        )
         ready_analysis, ready_context = run_rqcl_workflow(
             ready_context,
             readiness_service=build_readiness_service(

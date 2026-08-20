@@ -34,6 +34,13 @@ from application.research_quality.targeted_research_runner import (
 from application.research_quality.targeted_search_query_builder import (
     TargetedSearchQueryBuilder,
 )
+from application.research_quality.sufficiency_assessment_cache import (
+    get_sufficiency_assessment_cache,
+)
+from application.research_quality.sufficiency_assessment_fingerprint import (
+    build_sufficiency_assessment_fingerprint,
+)
+from application.research_quality.evidence_payload import DEFAULT_MAX_EVIDENCE_ITEMS
 from application.runtime.workflow_completion_policy import WorkflowCompletionPolicy
 from application.task_executor import TaskExecutor
 from application.task_lifecycle_manager import TaskLifecycleManager
@@ -102,10 +109,13 @@ class SequentialSufficiencyEvaluator:
     ) -> ResearchReadinessResult:
         self.calls += 1
         if not self._results:
-            return _ready_result()
-        if len(self._results) == 1:
-            return self._results[0]
-        return self._results.pop(0)
+            result = _ready_result()
+        elif len(self._results) == 1:
+            result = self._results[0]
+        else:
+            result = self._results.pop(0)
+        _store_completed_assessments(design, evidence, result)
+        return result
 
 
 class RecordingTargetedRunner:
@@ -325,6 +335,32 @@ def _context(
     )
 
 
+def _seed_evidence(
+    repository: InMemoryEvidenceRepository,
+    context: WorkflowContext,
+    *,
+    need_id: str,
+    research_question_id: str,
+    evidence_id: str,
+) -> None:
+    repository.create(
+        Evidence(
+            id=evidence_id,
+            project_id=context.project.id,
+            source_id=f"source-{evidence_id}",
+            source_content_checksum=f"checksum-{evidence_id}",
+            workflow_run_id=context.workflow_run.id,
+            research_design_id=context.workflow_template.research_design_snapshot.id,
+            statement=f"Statement {evidence_id}",
+            source_excerpt=f"Excerpt {evidence_id}",
+            created_at="2026-01-01T00:00:00+00:00",
+            research_question_refs=(research_question_id,),
+            information_need_refs=(need_id,),
+            deduplication_key=f"dedup-{evidence_id}",
+        ),
+    )
+
+
 def _design_three_needs() -> ResearchDesign:
     return ResearchDesign(
         id="design-1",
@@ -365,7 +401,43 @@ class StaticSufficiencyEvaluator:
         evidence: Sequence[Evidence],
     ) -> ResearchReadinessResult:
         self.calls += 1
+        _store_completed_assessments(design, evidence, self.result)
         return self.result
+
+
+def _store_completed_assessments(
+    design: ResearchDesign,
+    evidence: Sequence[Evidence],
+    result: ResearchReadinessResult,
+) -> None:
+    cache = get_sufficiency_assessment_cache()
+    if cache is None:
+        return
+    need_by_id = {item.id: item for item in design.information_needs}
+    rq_by_id = {item.id: item for item in design.research_questions}
+    evidence_by_id = {item.id: item for item in evidence}
+    for rq_result in result.research_question_assessments:
+        for assessment in rq_result.information_need_assessments:
+            need = need_by_id.get(assessment.information_need_id)
+            research_question = rq_by_id.get(assessment.research_question_id)
+            if need is None or research_question is None:
+                continue
+            evidence_ids = tuple(
+                item.id
+                for item in evidence
+                if need.id in item.information_need_refs
+            )
+            cache.store(
+                information_need_id=need.id,
+                fingerprint=build_sufficiency_assessment_fingerprint(
+                    information_need=need,
+                    research_question=research_question,
+                    evidence_ids=evidence_ids,
+                    evidence_by_id=evidence_by_id,
+                    max_evidence_items=DEFAULT_MAX_EVIDENCE_ITEMS,
+                ),
+                assessment=assessment,
+            )
 
 
 class EvidenceAwareGapEvaluator:
@@ -458,11 +530,20 @@ class TargetedResearchLoopTests(unittest.TestCase):
             sources_acquired=0,
             evidence_extracted=0,
         )
+        context = _context()
+        evidence_repo = InMemoryEvidenceRepository()
+        _seed_evidence(
+            evidence_repo,
+            context,
+            need_id="in-1",
+            research_question_id="rq-1",
+            evidence_id="e-ready",
+        )
         service = _build_service(
             SequentialSufficiencyEvaluator([_ready_result()]),
             runner=runner,
+            evidence_repository=evidence_repo,
         )
-        context = _context()
         result = service.assess_and_apply(context)
         self.assertTrue(result.ready_for_analysis)
         runner.run.assert_not_called()
@@ -516,11 +597,20 @@ class TargetedResearchLoopTests(unittest.TestCase):
 
     def test_blocked_does_not_trigger_targeted_research(self) -> None:
         runner = Mock()
+        context = _context()
+        evidence_repo = InMemoryEvidenceRepository()
+        _seed_evidence(
+            evidence_repo,
+            context,
+            need_id="in-1",
+            research_question_id="rq-1",
+            evidence_id="e-blocked",
+        )
         service = _build_service(
             SequentialSufficiencyEvaluator([_blocked_result()]),
             runner=runner,
+            evidence_repository=evidence_repo,
         )
-        context = _context()
         result = service.assess_and_apply(context)
         runner.run.assert_not_called()
         self.assertFalse(result.targeted_research_required)
@@ -984,16 +1074,30 @@ class GapStarvationRegressionTests(unittest.TestCase):
             _need_assessment(need_id="in-1", rq_id="rq-1", status=SufficiencyStatus.MISSING),
             _need_assessment(need_id="in-2", rq_id="rq-2", status=SufficiencyStatus.MISSING),
         )
+        evidence_repo = InMemoryEvidenceRepository()
+        context = _context(design=design)
+        _seed_evidence(
+            evidence_repo,
+            context,
+            need_id="in-2",
+            research_question_id="rq-2",
+            evidence_id="e-in-2",
+        )
         runner = RecordingTargetedRunner(
             source_repository=InMemorySourceRepository(),
-            evidence_repository=InMemoryEvidenceRepository(),
+            evidence_repository=evidence_repo,
+        )
+        ready_both = _result_for_needs(
+            _need_assessment(need_id="in-1", rq_id="rq-1", status=SufficiencyStatus.SUFFICIENT),
+            _need_assessment(need_id="in-2", rq_id="rq-2", status=SufficiencyStatus.SUFFICIENT),
         )
         service = _build_service(
-            SequentialSufficiencyEvaluator([missing_both, _ready_result()]),
+            SequentialSufficiencyEvaluator([missing_both, ready_both]),
             runner=runner,
+            evidence_repository=evidence_repo,
             max_rounds=2,
         )
-        result = service.assess_and_apply(_context(design=design))
+        result = service.assess_and_apply(context)
         self.assertTrue(result.ready_for_analysis)
         self.assertEqual(runner.calls, 1)
 

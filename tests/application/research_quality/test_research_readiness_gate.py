@@ -37,6 +37,10 @@ from domain.workflow_template import WorkflowTemplate
 from runtime.workflow_context import WorkflowContext
 
 from tests.helpers.workflow_run_builder import make_task, make_workflow_run
+from tests.application.research_quality.test_targeted_research_loop import (
+    _seed_evidence,
+    _store_completed_assessments,
+)
 
 
 class PassThroughExecutor(BaseExecutor):
@@ -113,6 +117,7 @@ class StubSufficiencyEvaluator:
         evidence: Sequence[Evidence],
     ) -> ResearchReadinessResult:
         self.calls += 1
+        _store_completed_assessments(design, evidence, self.result)
         return self.result
 
 
@@ -287,10 +292,18 @@ class ResearchReadinessGateWorkflowTests(unittest.TestCase):
     def test_ready_path_runs_analysis(self) -> None:
         evaluator = StubSufficiencyEvaluator(_ready_result())
         context, analysis = _desk_research_context(evaluator=evaluator)
+        evidence_repository = StubEvidenceRepository()
+        _seed_evidence(
+            evidence_repository,
+            context,
+            need_id="in-1",
+            research_question_id="rq-1",
+            evidence_id="ev-ready",
+        )
         readiness = ResearchReadinessExecutor(
             research_readiness_service=ResearchReadinessService(
                 evaluator=evaluator,
-                evidence_repository=StubEvidenceRepository(),
+                evidence_repository=evidence_repository,
             ),
         )
         analysis_executor = AnalysisExecutor(analysis_service=analysis)
