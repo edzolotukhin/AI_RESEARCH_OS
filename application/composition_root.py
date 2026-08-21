@@ -381,7 +381,10 @@ def create_application_container(
             repository=persistence.quantitative_state_repository,
             digest_provider=digest_provider,
         )
-        protected_root = f"{config.projects_root}/.quantitative-protected"
+        protected_root = (
+            config.quantitative_protected_storage_root
+            or f"{config.projects_root}/.quantitative-protected"
+        )
         quantitative_storage_factory = lambda project_id, run_id: (
             ProtectedFileDatasetStorage(
                 root=protected_root,

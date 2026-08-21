@@ -55,6 +55,7 @@ services:
       PERSISTENCE_BACKEND: postgresql
       DATABASE_URL: postgresql+psycopg://ai_research_os:ai_research_os_dev@postgres:5432/ai_research_os
       PROJECTS_ROOT: /tmp/projects
+      QUANTITATIVE_PROTECTED_STORAGE_ROOT: /var/lib/ai_research_os/quantitative-protected
       <<: *live-research-env
       # Server-side Research UI credential. Prefer UI_INTERNAL_API_KEY; otherwise
       # the existing bootstrap key. Never rendered to the browser.
@@ -62,6 +63,8 @@ services:
       AI_RESEARCH_OS_API_KEY: ${AI_RESEARCH_OS_API_KEY:-}
     ports:
       - "8000:8000"
+    volumes:
+      - quantitative_protected_data:/var/lib/ai_research_os/quantitative-protected
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\""]
       interval: 10s
@@ -80,11 +83,14 @@ services:
       PERSISTENCE_BACKEND: postgresql
       DATABASE_URL: postgresql+psycopg://ai_research_os:ai_research_os_dev@postgres:5432/ai_research_os
       PROJECTS_ROOT: /tmp/projects
+      QUANTITATIVE_PROTECTED_STORAGE_ROOT: /var/lib/ai_research_os/quantitative-protected
       WORKER_LEASE_DURATION_SECONDS: "30"
       WORKER_HEARTBEAT_INTERVAL_SECONDS: "10"
       WORKER_POLL_INTERVAL_SECONDS: "1"
       <<: *live-research-env
     command: ["python", "-m", "worker.main"]
+    volumes:
+      - quantitative_protected_data:/var/lib/ai_research_os/quantitative-protected
     stop_grace_period: 30s
     healthcheck:
       test: ["CMD-SHELL", "python -m worker.healthcheck"]
@@ -95,3 +101,4 @@ services:
 
 volumes:
   postgres_data:
+  quantitative_protected_data:

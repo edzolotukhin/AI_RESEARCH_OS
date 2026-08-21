@@ -57,6 +57,7 @@ class ApplicationConfig:
     planner_reasoning_effort: str = "minimal"
     planner_max_output_tokens: int = 8192
     projects_root: str = "agency/projects"
+    quantitative_protected_storage_root: str | None = None
     persistence_backend: str = "file"
     database_url: str | None = None
     durable_workflow_execution: bool | None = None
@@ -145,6 +146,9 @@ class ApplicationConfig:
                 os.environ.get("PLANNER_MAX_OUTPUT_TOKENS", "8192"),
             ),
             projects_root=os.environ.get("PROJECTS_ROOT", "agency/projects"),
+            quantitative_protected_storage_root=os.environ.get(
+                "QUANTITATIVE_PROTECTED_STORAGE_ROOT",
+            ),
             persistence_backend=resolve_persistence_backend(),
             database_url=os.environ.get("DATABASE_URL"),
             background_execution_mode=os.environ.get("BACKGROUND_EXECUTION_MODE"),

@@ -8,6 +8,12 @@ WORKDIR /app
 
 RUN adduser --disabled-password --gecos "" appuser
 
+# Empty named volumes inherit this directory's ownership on first mount, so
+# both trusted runtime processes can use the shared protected-data root while
+# continuing to run as the unprivileged application user.
+RUN mkdir -p /var/lib/ai_research_os/quantitative-protected \
+    && chown -R appuser:appuser /var/lib/ai_research_os
+
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
