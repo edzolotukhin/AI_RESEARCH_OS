@@ -111,6 +111,12 @@ class ApplicationConfig:
     sufficiency_max_llm_calls: int = 20
     analysis_max_llm_calls: int = 14
     llm_max_calls_per_run: int = 100
+    quantitative_llm_timeout_seconds: float = 60.0
+    quantitative_max_output_tokens: int = 8192
+    quantitative_reasoning_effort: str = "minimal"
+    quant_findings_max_llm_calls: int = 1
+    quant_insights_max_llm_calls: int = 1
+    quant_report_max_llm_calls: int = 1
     evidence_max_items_per_run: int = 500
     evidence_max_items_per_source: int = 50
     analysis_max_findings: int = 100
@@ -330,6 +336,24 @@ class ApplicationConfig:
             ),
             analysis_max_llm_calls=int(os.environ.get("ANALYSIS_MAX_LLM_CALLS", "14")),
             llm_max_calls_per_run=int(os.environ.get("LLM_MAX_CALLS_PER_RUN", "100")),
+            quantitative_llm_timeout_seconds=float(
+                os.environ.get("QUANTITATIVE_LLM_TIMEOUT_SECONDS", "60")
+            ),
+            quantitative_max_output_tokens=int(
+                os.environ.get("QUANTITATIVE_MAX_OUTPUT_TOKENS", "8192")
+            ),
+            quantitative_reasoning_effort=os.environ.get(
+                "QUANTITATIVE_REASONING_EFFORT", "minimal"
+            ).strip().lower(),
+            quant_findings_max_llm_calls=int(
+                os.environ.get("QUANT_FINDINGS_MAX_LLM_CALLS", "1")
+            ),
+            quant_insights_max_llm_calls=int(
+                os.environ.get("QUANT_INSIGHTS_MAX_LLM_CALLS", "1")
+            ),
+            quant_report_max_llm_calls=int(
+                os.environ.get("QUANT_REPORT_MAX_LLM_CALLS", "1")
+            ),
             evidence_max_items_per_run=int(
                 os.environ.get("EVIDENCE_MAX_ITEMS_PER_RUN", "500"),
             ),
@@ -369,6 +393,7 @@ class ApplicationOverrides:
     report_llm_client: LLMClient | None = None
     review_llm_client: LLMClient | None = None
     evidence_llm_client: LLMClient | None = None
+    quantitative_llm_client: LLMClient | None = None
     project_repository: ProjectRepository | None = None
     project_service: ProjectService | None = None
     registry: Registry | None = None

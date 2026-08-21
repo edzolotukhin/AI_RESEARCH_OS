@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextvars import ContextVar
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 from application.execution.execution_budget import ExecutionBudget
@@ -47,6 +48,26 @@ def get_execution_stage() -> str | None:
 
 def set_execution_stage(stage: str | None) -> None:
     _current_stage.set(stage)
+
+
+@contextmanager
+def execution_stage_scope(stage: str):
+    """Temporarily attribute nested LLM work to one explicit stage."""
+    token = _current_stage.set(stage)
+    try:
+        yield
+    finally:
+        _current_stage.reset(token)
+
+
+@contextmanager
+def execution_budget_scope(budget: ExecutionBudget):
+    """Bind one explicit budget for isolated execution and adapter tests."""
+    token = _current_budget.set(budget)
+    try:
+        yield
+    finally:
+        _current_budget.reset(token)
 
 
 def get_evidence_call_purpose() -> str | None:

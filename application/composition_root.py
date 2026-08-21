@@ -390,6 +390,48 @@ def create_application_container(
 
     quantitative_ui_service = None
     if persistence.quantitative_state_repository is not None:
+        from application.structured_output.json_validator import JsonValidator
+        from application.llm.stage_llm_clients import create_quantitative_live_llm_client
+        use_offline_quantitative = (
+            overrides.deterministic_stage_executors
+            if overrides.deterministic_stage_executors is not None
+            else config.deterministic_stage_executors
+        )
+        if use_offline_quantitative:
+            from application.quantitative.offline_generators import (
+                OfflineFindingGenerator,
+                OfflineInsightGenerator,
+                OfflineReportGenerator,
+            )
+            quantitative_generators = (
+                OfflineFindingGenerator(),
+                OfflineInsightGenerator(),
+                OfflineReportGenerator(),
+            )
+            quantitative_generation_mode = "offline"
+        else:
+            from infrastructure.quantitative.llm_generators import (
+                LLMQuantitativeFindingGenerator,
+                LLMQuantitativeInsightGenerator,
+                LLMQuantitativeReportGenerator,
+            )
+            quantitative_client = create_quantitative_live_llm_client(
+                config,
+                overrides.quantitative_llm_client,
+            )
+            validator = JsonValidator()
+            generator_options = {
+                "llm_client": quantitative_client,
+                "json_validator": validator,
+                "max_output_tokens": config.quantitative_max_output_tokens,
+                "reasoning_effort": config.quantitative_reasoning_effort,
+            }
+            quantitative_generators = (
+                LLMQuantitativeFindingGenerator(**generator_options),
+                LLMQuantitativeInsightGenerator(**generator_options),
+                LLMQuantitativeReportGenerator(**generator_options),
+            )
+            quantitative_generation_mode = "production"
         digest_provider = Sha256DigestProvider()
         quantitative_state_service = QuantitativeStateService(
             repository=persistence.quantitative_state_repository,
@@ -408,7 +450,10 @@ def create_application_container(
                 digest_provider=digest_provider,
             ),
             importers=(SavPyreadstatAdapter(), XlsxOpenpyxlAdapter()),
-            offline_generation_enabled=config.deterministic_stage_executors,
+            finding_generator=quantitative_generators[0],
+            insight_generator=quantitative_generators[1],
+            report_generator=quantitative_generators[2],
+            generation_mode=quantitative_generation_mode,
         )
 
     return ApplicationContainer(

@@ -14,8 +14,13 @@ class OpenAIClient(LLMClient):
     def __init__(
         self,
         configuration: LLMConfiguration,
+        *,
+        max_retries: int | None = None,
+        timeout_seconds: float | None = None,
     ):
         self._configuration = configuration
+        self._max_retries = max_retries
+        self._timeout_seconds = timeout_seconds
         self._client = None
 
     def generate(
@@ -124,6 +129,11 @@ class OpenAIClient(LLMClient):
             from openai import OpenAI
 
             load_dotenv()
-            self._client = OpenAI()
+            kwargs = {}
+            if self._max_retries is not None:
+                kwargs["max_retries"] = self._max_retries
+            if self._timeout_seconds is not None:
+                kwargs["timeout"] = self._timeout_seconds
+            self._client = OpenAI(**kwargs)
 
         return self._client

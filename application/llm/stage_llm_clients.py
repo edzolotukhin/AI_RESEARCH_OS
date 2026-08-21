@@ -97,6 +97,27 @@ def create_live_llm_client(config: ApplicationConfig) -> LLMClient:
     return OpenAIClient(configuration=llm_configuration)
 
 
+def create_quantitative_live_llm_client(
+    config: ApplicationConfig,
+    override: LLMClient | None = None,
+) -> LLMClient:
+    """Build the Quantitative client with no ambiguous SDK transport retry."""
+    if override is not None:
+        return _budget_wrap(override)
+    from infrastructure.llm.llm_configuration import LLMConfiguration
+    from infrastructure.llm.openai_client import OpenAIClient
+
+    inner = OpenAIClient(
+        configuration=LLMConfiguration(
+            model=config.llm_model,
+            max_tokens=config.quantitative_max_output_tokens,
+        ),
+        max_retries=0,
+        timeout_seconds=config.quantitative_llm_timeout_seconds,
+    )
+    return _budget_wrap(inner)
+
+
 def create_deterministic_planner_llm_client() -> LLMClient:
     from infrastructure.llm.deterministic_llm_client import DeterministicLLMClient
 

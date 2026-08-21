@@ -24,5 +24,8 @@ def create_execution_budget(
         analysis_max_llm_calls=resolved.analysis_max_llm_calls,
         report_max_llm_calls=resolved.report_max_llm_calls,
         review_max_llm_calls=resolved.review_max_calls,
+        quant_findings_max_llm_calls=resolved.quant_findings_max_llm_calls,
+        quant_insights_max_llm_calls=resolved.quant_insights_max_llm_calls,
+        quant_report_max_llm_calls=resolved.quant_report_max_llm_calls,
         llm_max_calls_per_run=resolved.llm_max_calls_per_run,
     )

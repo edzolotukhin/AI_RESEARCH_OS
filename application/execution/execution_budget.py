@@ -18,6 +18,9 @@ _STAGE_LLM_CALL_LIMITS: dict[str, str] = {
     "analysis": "analysis_max_llm_calls",
     "report": "report_max_llm_calls",
     "review": "review_max_llm_calls",
+    "quant_findings": "quant_findings_max_llm_calls",
+    "quant_insights": "quant_insights_max_llm_calls",
+    "quant_report": "quant_report_max_llm_calls",
 }
 
 
@@ -58,6 +61,9 @@ class ExecutionBudget:
     analysis_max_llm_calls: int = 14
     report_max_llm_calls: int = 20
     review_max_llm_calls: int = 7
+    quant_findings_max_llm_calls: int = 1
+    quant_insights_max_llm_calls: int = 1
+    quant_report_max_llm_calls: int = 1
     llm_max_calls_per_run: int = 100
     max_input_tokens_per_run: int | None = None
     max_output_tokens_per_run: int | None = None
@@ -71,6 +77,16 @@ class ExecutionBudget:
     _exhausted: bool = False
     _exhaustion_reason: str | None = None
     _exhaustion_stage: str | None = None
+
+    def __post_init__(self) -> None:
+        for name in (
+            "quant_findings_max_llm_calls",
+            "quant_insights_max_llm_calls",
+            "quant_report_max_llm_calls",
+        ):
+            value = getattr(self, name)
+            if value not in {0, 1}:
+                raise ValueError(f"{name} must be zero or one")
 
     @property
     def evidence_remediation_reserved(self) -> int:
@@ -173,6 +189,12 @@ class ExecutionBudget:
             raise BudgetExhaustedError("report_max_llm_calls", stage=stage)
         if stage == "review" and stage_calls >= self.review_max_llm_calls:
             raise BudgetExhaustedError("review_max_llm_calls", stage=stage)
+        if stage == "quant_findings" and stage_calls >= self.quant_findings_max_llm_calls:
+            raise BudgetExhaustedError("quant_findings_max_llm_calls", stage=stage)
+        if stage == "quant_insights" and stage_calls >= self.quant_insights_max_llm_calls:
+            raise BudgetExhaustedError("quant_insights_max_llm_calls", stage=stage)
+        if stage == "quant_report" and stage_calls >= self.quant_report_max_llm_calls:
+            raise BudgetExhaustedError("quant_report_max_llm_calls", stage=stage)
 
     def _assert_can_call_evidence(self, *, purpose: str | None) -> None:
         resolved = purpose or EVIDENCE_PURPOSE_INITIAL

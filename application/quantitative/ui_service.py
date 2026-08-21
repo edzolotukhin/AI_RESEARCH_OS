@@ -29,6 +29,12 @@ class QuantitativeUiError(ValueError):
     """Safe, user-facing Quantitative operation failure."""
 
 
+class _QuantitativeWorkflowExecutionFailure(RuntimeError):
+    def __init__(self, context) -> None:
+        super().__init__("Quantitative workflow execution failed")
+        self.context = context
+
+
 class QuantitativeUiService:
     """Methodology-specific command/query boundary for the minimal QO UI.
 
@@ -40,14 +46,22 @@ class QuantitativeUiService:
 
     def __init__(self, *, project_service, workflow_service, state_service: QuantitativeStateService,
                  digest_provider, storage_factory, importers: tuple[Any, ...],
-                 offline_generation_enabled: bool = False) -> None:
+                 finding_generator, insight_generator, report_generator,
+                 generation_mode: str) -> None:
+        if generation_mode not in {"offline", "production"}:
+            raise ValueError("Quantitative generation mode is not configured")
+        if any(item is None for item in (finding_generator, insight_generator, report_generator)):
+            raise ValueError("Quantitative generators are not configured")
         self.projects = project_service
         self.workflows = workflow_service
         self.state = state_service
         self.digest = digest_provider
         self.storage_factory = storage_factory
         self.importers = importers
-        self.offline_generation_enabled = offline_generation_enabled
+        self.finding_generator = finding_generator
+        self.insight_generator = insight_generator
+        self.report_generator = report_generator
+        self.generation_mode = generation_mode
         self._studies: dict[str, QuantitativeStudyProjection] = {}
         self._submission_ids: dict[tuple[str, str], str] = {}
 
@@ -309,8 +323,6 @@ class QuantitativeUiService:
             return study
         if study.state != "READY_TO_ANALYZE" or not study.weight_approval_id:
             raise QuantitativeUiError("Current approved WeightSet is required before analysis")
-        if not self.offline_generation_enabled:
-            raise QuantitativeUiError("Local deterministic Quantitative generation is not enabled")
         dataset, codebook = self._dataset(study)
         qc = self.state.load(study.qc_record_id or "", project_id=study.project_id, expected_type=QualityControlRun)
         weights = self.state.load(study.weight_set_record_id or "", project_id=study.project_id, expected_type=WeightSet)
@@ -342,9 +354,29 @@ class QuantitativeUiService:
                 raise QuantitativeUiError("Quantitative workflow did not reach a terminal result")
             terminal_record_id = context.shared_state[QUANTITATIVE_SAFE_STATE_KEY]["terminal_result_record_id"]
             self.workflows.save_workflow_run(run, expected_version=self.workflows.get_workflow_run_version(run.id),
-                                             task_results={QUANTITATIVE_SAFE_STATE_KEY: context.shared_state[QUANTITATIVE_SAFE_STATE_KEY]})
+                                             task_results={
+                                                 QUANTITATIVE_SAFE_STATE_KEY: context.shared_state[QUANTITATIVE_SAFE_STATE_KEY],
+                                                 "_run_usage_summary": context.shared_state.get("run_usage_summary", {}),
+                                             })
         except QuantitativeUiError:
             raise
+        except _QuantitativeWorkflowExecutionFailure as exc:
+            failed_context = exc.context
+            safe_results = {
+                QUANTITATIVE_SAFE_STATE_KEY: failed_context.shared_state.get(
+                    QUANTITATIVE_SAFE_STATE_KEY, safe
+                ),
+                "_run_usage_summary": failed_context.shared_state.get(
+                    "run_usage_summary", {}
+                ),
+                "quantitative_generation_status": "GENERATION_FAILED",
+            }
+            self.workflows.save_workflow_run(
+                run,
+                expected_version=self.workflows.get_workflow_run_version(run.id),
+                task_results=safe_results,
+            )
+            raise QuantitativeUiError("Quantitative workflow failed safely") from None
         except Exception as exc:
             raise QuantitativeUiError("Quantitative workflow failed safely") from exc
         return self._save(replace(study, state="COMPLETED", terminal_result_record_id=terminal_record_id))
@@ -364,6 +396,7 @@ class QuantitativeUiService:
         findings = next(item for item in records if isinstance(item, QuantitativeFindingGenerationResult))
         insights = next(item for item in records if isinstance(item, QuantitativeInsightGenerationResult))
         report = next(item for item in records if isinstance(item, QuantitativeReportCompositionResult))
+        task_results = self.workflows.get_task_results(study.run_id)
         return {"study_id":study.study_id, "project_id":study.project_id, "run_id":study.run_id,
                 "terminal_result_id":terminal.result_id, "terminal_status":terminal.terminal_outcome.value,
                 "statistics":tuple({"result_id":item.result_id,"statistic_type":item.statistic_type,"value":str(item.value),
@@ -377,7 +410,8 @@ class QuantitativeUiService:
                             "rejected":tuple({"reason":item.reason} for item in insights.rejected_insights)},
                 "report":{"id":report.accepted_report.report_id,"title":report.accepted_report.title,
                           "sections":tuple({"title":item.title,"narrative":item.narrative} for item in report.accepted_report.sections)},
-                "limitations":terminal.limitations}
+                "limitations":terminal.limitations,
+                "llm_usage":task_results.get("_run_usage_summary", {})}
 
     def _vertical_plan(self, study, dataset, codebook):
         from application.quantitative.vertical_service import QuantitativeVerticalPlan
@@ -396,16 +430,16 @@ class QuantitativeUiService:
 
     def _vertical_service(self, study, plan, approvals):
         from application.quantitative.vertical_service import RealQuantitativeStageService
-        from application.quantitative.offline_generators import OfflineFindingGenerator, OfflineInsightGenerator, OfflineReportGenerator
         from application.quantitative.finding_generation import QuantitativeFindingGenerationService
         from application.quantitative.finding_support import QuantitativeFindingSupportValidator
         from application.quantitative.insight_synthesis import QuantitativeInsightSynthesisService, QuantitativeInsightValidator
         from application.quantitative.report_composition import QuantitativeReportCompositionService, QuantitativeReportValidator
         return RealQuantitativeStageService(plan=plan,storage=self.storage_factory(study.project_id,study.run_id),digest_provider=self.digest,
             state_service=self.state,approval_service=approvals,
-            finding_service=QuantitativeFindingGenerationService(generator=OfflineFindingGenerator(),support_validator=QuantitativeFindingSupportValidator(digest_provider=self.digest),digest_provider=self.digest),
-            insight_service=QuantitativeInsightSynthesisService(generator=OfflineInsightGenerator(),validator=QuantitativeInsightValidator(digest_provider=self.digest),digest_provider=self.digest),
-            report_service=QuantitativeReportCompositionService(generator=OfflineReportGenerator(),validator=QuantitativeReportValidator(digest_provider=self.digest),digest_provider=self.digest),importers=self.importers)
+            finding_service=QuantitativeFindingGenerationService(generator=self.finding_generator,support_validator=QuantitativeFindingSupportValidator(digest_provider=self.digest),digest_provider=self.digest),
+            insight_service=QuantitativeInsightSynthesisService(generator=self.insight_generator,validator=QuantitativeInsightValidator(digest_provider=self.digest),digest_provider=self.digest),
+            report_service=QuantitativeReportCompositionService(generator=self.report_generator,validator=QuantitativeReportValidator(digest_provider=self.digest),digest_provider=self.digest),importers=self.importers,
+            generation_mode=self.generation_mode)
 
     def _run_engine(self, study, run, service, safe):
         from application.workflow_engine import WorkflowEngine
@@ -417,7 +451,10 @@ class QuantitativeUiService:
         class Resolver:
             def resolve(self, task): return QuantitativeStageExecutor()
         context=WorkflowContext(project=self.projects.get_project(study.project_id),workflow_template=build_quantitative_workflow_template(),workflow_run=run,services={QUANTITATIVE_STAGE_SERVICE_KEY:service},shared_state={QUANTITATIVE_SAFE_STATE_KEY:safe})
-        return WorkflowEngine(TaskScheduler(),TaskExecutor(Resolver(),TaskLifecycleManager()),WorkflowCompletionPolicy()).run(context)
+        try:
+            return WorkflowEngine(TaskScheduler(),TaskExecutor(Resolver(),TaskLifecycleManager()),WorkflowCompletionPolicy()).run(context)
+        except Exception:
+            raise _QuantitativeWorkflowExecutionFailure(context) from None
 
     def _terminal_record_id(self, study):
         records=self.state.list_for_run(study.run_id,project_id=study.project_id,expected_type=QuantitativeTerminalResult)

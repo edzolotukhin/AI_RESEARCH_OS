@@ -65,10 +65,12 @@ class RealQuantitativeStageService:
         insight_service: QuantitativeInsightSynthesisService,
         report_service: QuantitativeReportCompositionService,
         importers: Sequence,
+        generation_mode: str = "offline",
     ) -> None:
         self.plan, self.storage, self.digest = plan, storage, digest_provider
         self.state, self.approvals = state_service, approval_service
         self.findings, self.insights, self.reports = finding_service, insight_service, report_service
+        self.generation_mode = generation_mode
         self.importer = QuantitativeDatasetImportService(importers=tuple(importers), storage=storage, digest_provider=digest_provider)
         self.qc = DataQualityService(storage=storage, digest_provider=digest_provider)
         self.cleaner = CleaningEngine(storage=storage, digest_provider=digest_provider)
@@ -212,7 +214,12 @@ class RealQuantitativeStageService:
         result_ids=tuple(self.state.load(record_id,project_id=project_id,expected_type=StatisticalResult).result_id for record_id in manifest.statistical_result_record_ids)
         payload={"run":run_id,"dataset":dataset.dataset_fingerprint,"qc":qc.fingerprint,"weights":weights.reproducibility_fingerprint,"results":result_ids,"findings":findings.generation_fingerprint,"insights":insights.generation_fingerprint,"report":report.composition_fingerprint}
         fp=canonical_digest(payload,digest_provider=self.digest)
-        terminal=QuantitativeTerminalResult(result_id=f"terminal-{fp}",project_id=project_id,run_id=run_id,methodology="QUANTITATIVE",dataset_version_id=dataset.version_id,dataset_fingerprint=dataset.dataset_fingerprint,qc_status="APPROVED",cleaning_lineage=tuple(item for item in (dataset.parent_version_id,dataset.version_id) if item),weight_set_id=weights.weight_set_id,weight_set_fingerprint=weights.reproducibility_fingerprint,weight_approval_id=state["weight_approval_id"],statistical_result_ids=result_ids,accepted_finding_count=len(findings.accepted_findings),rejected_finding_count=len(findings.rejected_findings),accepted_insight_count=len(insights.accepted_insights),rejected_insight_count=len(insights.rejected_insights),report_id=report.accepted_report.report_id,report_status=report.accepted_report.validation_status.value,limitations=("Synthetic offline vertical; no live LLM.",),execution_status="COMPLETED",terminal_outcome=QuantitativeTerminalOutcome.COMPLETED,fingerprint=fp)
+        limitation = (
+            "Synthetic offline vertical; no live LLM."
+            if self.generation_mode == "offline"
+            else "Synthetic dataset vertical with production Quantitative generation."
+        )
+        terminal=QuantitativeTerminalResult(result_id=f"terminal-{fp}",project_id=project_id,run_id=run_id,methodology="QUANTITATIVE",dataset_version_id=dataset.version_id,dataset_fingerprint=dataset.dataset_fingerprint,qc_status="APPROVED",cleaning_lineage=tuple(item for item in (dataset.parent_version_id,dataset.version_id) if item),weight_set_id=weights.weight_set_id,weight_set_fingerprint=weights.reproducibility_fingerprint,weight_approval_id=state["weight_approval_id"],statistical_result_ids=result_ids,accepted_finding_count=len(findings.accepted_findings),rejected_finding_count=len(findings.rejected_findings),accepted_insight_count=len(insights.accepted_insights),rejected_insight_count=len(insights.rejected_insights),report_id=report.accepted_report.report_id,report_status=report.accepted_report.validation_status.value,limitations=(limitation,),execution_status="COMPLETED",terminal_outcome=QuantitativeTerminalOutcome.COMPLETED,fingerprint=fp)
         state["terminal_result_record_id"]=self._persist(terminal,"terminal",project_id,run_id,dataset_id=dataset.version_id,accepted=True)
         state["terminal_authority_status"] = "COMPLETE"
         return state
