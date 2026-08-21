@@ -166,6 +166,19 @@ Agent registrations (`planner`, `search`, `analysis`, `report`, `proposal`) are 
 
 ---
 
+## Quantitative Research
+
+- **Accepted:** properties **QA–QV**, covering the implemented Quantitative path through shared protected dataset storage.
+- **Not accepted:** the production synthetic Quantitative E2E.
+- **Current first loss:** a Quantitative `WorkflowRun` that fails before the provider boundary cannot be rearmed into setup-gated `PAUSED`, so the same run cannot accept a replacement dataset and continue through fresh QC, weighting, and analysis.
+- **Next milestone — QW:** explicit, auditable rearm for an eligible failed pre-provider Quantitative run while preserving the same Project and WorkflowRun identity and invalidating obsolete execution authority.
+
+This is a narrow recovery milestone, not a general retry mechanism for terminal failed runs.
+
+See [Q1-18 Quantitative Production Synthetic E2E Status](docs/acceptance/Q1-18-Quantitative-Production-Synthetic-E2E-Status.md).
+
+---
+
 ## Future Platform Hardening
 
 Deferred until the desk research vertical validates the foundation:

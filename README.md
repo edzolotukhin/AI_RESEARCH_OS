@@ -21,9 +21,10 @@ architecture itself.
 | **Tests** | **528** discovered; **467** run by default (**61** PostgreSQL-gated skipped); **500+** with full PostgreSQL CI/local suites |
 | **Demo** | Deterministic offline demo (`examples/deterministic_research_demo.py`) |
 | **Architecture** | Layered runtime + HTTP/worker boundaries; PostgreSQL durable execution path |
+| **Quantitative Research** | Properties **QA–QV accepted**; production synthetic E2E **not yet accepted** — next milestone: **QW failed pre-provider run rearm** |
 | **License** | Source available · [All Rights Reserved](LICENSE) |
 
-**Not production-ready.** The platform foundation is advanced; the desk research product vertical is incomplete and not validated end-to-end.
+**Not production-ready.** The platform foundation is advanced; neither the desk research product vertical nor the production Quantitative synthetic E2E is accepted end-to-end.
 
 ---
 

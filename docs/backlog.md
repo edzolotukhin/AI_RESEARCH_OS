@@ -49,6 +49,16 @@ Primary product objective: execute one real desk research methodology end-to-end
 
 ---
 
+## Next — Quantitative Research
+
+- [x] **QA–QV** accepted
+- [ ] **QW** Failed pre-provider Quantitative run rearm into setup-gated `PAUSED` for same-run dataset replacement
+- [ ] Production synthetic Quantitative E2E acceptance after QW
+
+Current blocker: the existing failed run cannot return to the setup gate, so replacement upload is rejected before any provider call.
+
+---
+
 ## Later — Platform hardening
 
 - [ ] Production observability (logging, metrics, tracing)
