@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from typing import Mapping, Protocol
 
 from application.execution.exceptions import ClaimConflictError
 from application.execution.lease_config import LeaseConfig
@@ -26,6 +27,10 @@ from runtime.workflow_context import WorkflowContext
 from application.execution.heartbeat import LeaseGuard
 
 
+class WorkflowContextServiceResolver(Protocol):
+    def resolve(self, context: WorkflowContext) -> Mapping[str, object]: ...
+
+
 class DurableWorkflowService:
     """
     Coordinates durable workflow execution without owning domain transitions.
@@ -43,6 +48,7 @@ class DurableWorkflowService:
         execution_port: WorkflowRunExecutionPort | None = None,
         run_queue: RunQueue | None = None,
         lease_config: LeaseConfig | None = None,
+        context_service_resolver: WorkflowContextServiceResolver | None = None,
     ) -> None:
         self._workflow_service = workflow_service
         self._project_service = project_service
@@ -51,6 +57,42 @@ class DurableWorkflowService:
         self._execution_port = execution_port
         self._run_queue = run_queue
         self._lease_config = lease_config or LeaseConfig()
+        self._context_service_resolver = context_service_resolver
+
+    def activate_paused_run(
+        self,
+        run_id: str,
+        *,
+        shared_state: dict[str, object],
+        completed_task_definition_ids: tuple[str, ...] = (),
+    ) -> WorkflowContext:
+        """Persist one authorized PAUSED -> RUNNING transition for worker claim."""
+        workflow_run = self._workflow_service.get_workflow_run(run_id)
+        if workflow_run.is_terminal:
+            return self._load_context(run_id)
+        if workflow_run.status is not WorkflowStatus.PAUSED:
+            raise RuntimeError("WorkflowRun is not awaiting authorized activation.")
+        version = self._workflow_service.get_workflow_run_version(run_id)
+        completed = set(completed_task_definition_ids)
+        activation_results: dict[str, object] = {}
+        for task in workflow_run.tasks:
+            if task.definition_id in completed and not task.is_terminal:
+                task.ready()
+                task.start()
+                task.complete()
+                activation_results[task.id] = {
+                    "task_id": task.id,
+                    "definition_id": task.definition_id,
+                    "shared_state": shared_state,
+                }
+        workflow_run.resume()
+        self._workflow_service.save_workflow_run(
+            workflow_run,
+            expected_version=version,
+            task_results=activation_results,
+        )
+        self._notify_runnable(run_id)
+        return self._load_context(run_id)
 
     def submit_research(
         self,
@@ -205,6 +247,8 @@ class DurableWorkflowService:
             workflow_run=workflow_run,
         )
         restore_runtime_state(context, task_results)
+        if self._context_service_resolver is not None:
+            context.services.update(self._context_service_resolver.resolve(context))
         return context
 
     def _execute(

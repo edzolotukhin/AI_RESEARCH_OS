@@ -143,6 +143,19 @@ class QuantitativeStateService:
         if authority_fingerprint(value) != record.authority_fingerprint: raise QuantitativePersistenceError("Quantitative authority fingerprint mismatch")
         return value
 
+    def require_record_scope(
+        self,
+        record_id: str,
+        *,
+        project_id: str,
+        run_id: str,
+    ) -> None:
+        record = self._repository.get_for_project(record_id, project_id=project_id)
+        if record is None or record.run_id != run_id:
+            raise QuantitativePersistenceError(
+                "Quantitative record is unavailable for project/run"
+            )
+
     def list_for_run(self, run_id: str, *, project_id: str, expected_type: type | None = None) -> tuple[Any, ...]:
         values = []
         for record in self._repository.list_for_run(run_id, project_id=project_id):

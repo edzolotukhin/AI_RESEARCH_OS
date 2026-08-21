@@ -30,6 +30,10 @@ from application.task_scheduler import TaskScheduler
 from application.workflow_engine import WorkflowEngine
 from application.quantitative.workflow import QuantitativeStageExecutor
 from application.quantitative.state_persistence import QuantitativeStateService
+from application.quantitative.stage_service_factory import (
+    QuantitativeStageServiceFactory,
+    QuantitativeWorkflowContextServiceResolver,
+)
 from application.quantitative.ui_service import QuantitativeUiService
 
 from agency.agency import Agency
@@ -320,6 +324,84 @@ def create_application_container(
         completion_policy=completion_policy,
     )
 
+    quantitative_state_service = None
+    quantitative_stage_service_factory = None
+    quantitative_generators = None
+    quantitative_generation_mode = None
+    quantitative_storage_factory = None
+    quantitative_importers = None
+    if persistence.quantitative_state_repository is not None:
+        from application.structured_output.json_validator import JsonValidator
+        from application.llm.stage_llm_clients import create_quantitative_live_llm_client
+
+        use_offline_quantitative = (
+            overrides.deterministic_stage_executors
+            if overrides.deterministic_stage_executors is not None
+            else config.deterministic_stage_executors
+        )
+        if use_offline_quantitative:
+            from application.quantitative.offline_generators import (
+                OfflineFindingGenerator,
+                OfflineInsightGenerator,
+                OfflineReportGenerator,
+            )
+
+            quantitative_generators = (
+                OfflineFindingGenerator(),
+                OfflineInsightGenerator(),
+                OfflineReportGenerator(),
+            )
+            quantitative_generation_mode = "offline"
+        else:
+            from infrastructure.quantitative.llm_generators import (
+                LLMQuantitativeFindingGenerator,
+                LLMQuantitativeInsightGenerator,
+                LLMQuantitativeReportGenerator,
+            )
+
+            quantitative_client = create_quantitative_live_llm_client(
+                config,
+                overrides.quantitative_llm_client,
+            )
+            validator = JsonValidator()
+            generator_options = {
+                "llm_client": quantitative_client,
+                "json_validator": validator,
+                "max_output_tokens": config.quantitative_max_output_tokens,
+                "reasoning_effort": config.quantitative_reasoning_effort,
+            }
+            quantitative_generators = (
+                LLMQuantitativeFindingGenerator(**generator_options),
+                LLMQuantitativeInsightGenerator(**generator_options),
+                LLMQuantitativeReportGenerator(**generator_options),
+            )
+            quantitative_generation_mode = "production"
+        digest_provider = Sha256DigestProvider()
+        quantitative_state_service = QuantitativeStateService(
+            repository=persistence.quantitative_state_repository,
+            digest_provider=digest_provider,
+        )
+        protected_root = f"{config.projects_root}/.quantitative-protected"
+        quantitative_storage_factory = lambda project_id, run_id: (
+            ProtectedFileDatasetStorage(
+                root=protected_root,
+                project_id=project_id,
+                run_id=run_id,
+                digest_provider=digest_provider,
+            )
+        )
+        quantitative_importers = (SavPyreadstatAdapter(), XlsxOpenpyxlAdapter())
+        quantitative_stage_service_factory = QuantitativeStageServiceFactory(
+            state_service=quantitative_state_service,
+            digest_provider=digest_provider,
+            storage_factory=quantitative_storage_factory,
+            importers=quantitative_importers,
+            finding_generator=quantitative_generators[0],
+            insight_generator=quantitative_generators[1],
+            report_generator=quantitative_generators[2],
+            generation_mode=quantitative_generation_mode,
+        )
+
     durable_workflow_service: DurableWorkflowService | None = None
     worker_execution_service: WorkerExecutionService | None = None
     background_execution = resolve_background_execution_capability(
@@ -337,6 +419,13 @@ def create_application_container(
             execution_port=persistence.workflow_run_execution_repository,
             run_queue=NoOpRunQueue(),
             lease_config=lease_config,
+            context_service_resolver=(
+                QuantitativeWorkflowContextServiceResolver(
+                    quantitative_stage_service_factory
+                )
+                if quantitative_stage_service_factory is not None
+                else None
+            ),
         )
         if background_execution.in_process_worker:
             worker_execution_service = WorkerExecutionService(
@@ -389,71 +478,24 @@ def create_application_container(
     )
 
     quantitative_ui_service = None
-    if persistence.quantitative_state_repository is not None:
-        from application.structured_output.json_validator import JsonValidator
-        from application.llm.stage_llm_clients import create_quantitative_live_llm_client
-        use_offline_quantitative = (
-            overrides.deterministic_stage_executors
-            if overrides.deterministic_stage_executors is not None
-            else config.deterministic_stage_executors
-        )
-        if use_offline_quantitative:
-            from application.quantitative.offline_generators import (
-                OfflineFindingGenerator,
-                OfflineInsightGenerator,
-                OfflineReportGenerator,
-            )
-            quantitative_generators = (
-                OfflineFindingGenerator(),
-                OfflineInsightGenerator(),
-                OfflineReportGenerator(),
-            )
-            quantitative_generation_mode = "offline"
-        else:
-            from infrastructure.quantitative.llm_generators import (
-                LLMQuantitativeFindingGenerator,
-                LLMQuantitativeInsightGenerator,
-                LLMQuantitativeReportGenerator,
-            )
-            quantitative_client = create_quantitative_live_llm_client(
-                config,
-                overrides.quantitative_llm_client,
-            )
-            validator = JsonValidator()
-            generator_options = {
-                "llm_client": quantitative_client,
-                "json_validator": validator,
-                "max_output_tokens": config.quantitative_max_output_tokens,
-                "reasoning_effort": config.quantitative_reasoning_effort,
-            }
-            quantitative_generators = (
-                LLMQuantitativeFindingGenerator(**generator_options),
-                LLMQuantitativeInsightGenerator(**generator_options),
-                LLMQuantitativeReportGenerator(**generator_options),
-            )
-            quantitative_generation_mode = "production"
-        digest_provider = Sha256DigestProvider()
-        quantitative_state_service = QuantitativeStateService(
-            repository=persistence.quantitative_state_repository,
-            digest_provider=digest_provider,
-        )
-        protected_root = f"{config.projects_root}/.quantitative-protected"
+    if quantitative_stage_service_factory is not None:
         quantitative_ui_service = QuantitativeUiService(
             project_service=project_service,
             workflow_service=workflow_service,
             state_service=quantitative_state_service,
             digest_provider=digest_provider,
-            storage_factory=lambda project_id, run_id: ProtectedFileDatasetStorage(
-                root=protected_root,
-                project_id=project_id,
-                run_id=run_id,
-                digest_provider=digest_provider,
-            ),
-            importers=(SavPyreadstatAdapter(), XlsxOpenpyxlAdapter()),
+            storage_factory=quantitative_storage_factory,
+            importers=quantitative_importers,
             finding_generator=quantitative_generators[0],
             insight_generator=quantitative_generators[1],
             report_generator=quantitative_generators[2],
             generation_mode=quantitative_generation_mode,
+            stage_service_factory=quantitative_stage_service_factory,
+            durable_workflow_service=(
+                durable_workflow_service
+                if background_execution.multi_process_worker
+                else None
+            ),
         )
 
     return ApplicationContainer(

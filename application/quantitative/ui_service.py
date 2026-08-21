@@ -19,7 +19,7 @@ from application.quantitative.workflow import (
     QUANTITATIVE_SAFE_STATE_KEY, QUANTITATIVE_STAGE_SERVICE_KEY,
     QuantitativeStageExecutor, build_quantitative_workflow_template,
 )
-from domain.quantitative.dataset import CodebookVersion, DatasetFormat, DatasetVersion, VariableType
+from domain.quantitative.dataset import CodebookVersion, DatasetFormat, DatasetVersion
 from domain.quantitative.quality import ApprovalState, CleaningAction, QualityControlRun, QuestionnaireSnapshot
 from domain.quantitative.weighting import WeightSet, WeightingTargetMargin, WeightingTargetPlan, WeightTrimmingPolicy
 from domain.quantitative.workflow import QuantitativeApprovalDecision, QuantitativeStudyProjection, QuantitativeTerminalResult, QuantitativeAnalysisManifest
@@ -47,11 +47,14 @@ class QuantitativeUiService:
     def __init__(self, *, project_service, workflow_service, state_service: QuantitativeStateService,
                  digest_provider, storage_factory, importers: tuple[Any, ...],
                  finding_generator, insight_generator, report_generator,
-                 generation_mode: str) -> None:
+                 generation_mode: str, stage_service_factory=None,
+                 durable_workflow_service=None) -> None:
         if generation_mode not in {"offline", "production"}:
             raise ValueError("Quantitative generation mode is not configured")
         if any(item is None for item in (finding_generator, insight_generator, report_generator)):
             raise ValueError("Quantitative generators are not configured")
+        if stage_service_factory is None:
+            raise ValueError("Quantitative stage service factory is not configured")
         self.projects = project_service
         self.workflows = workflow_service
         self.state = state_service
@@ -62,6 +65,8 @@ class QuantitativeUiService:
         self.insight_generator = insight_generator
         self.report_generator = report_generator
         self.generation_mode = generation_mode
+        self.stage_service_factory = stage_service_factory
+        self.durable_workflow_service = durable_workflow_service
         self._studies: dict[str, QuantitativeStudyProjection] = {}
         self._submission_ids: dict[tuple[str, str], str] = {}
 
@@ -103,6 +108,20 @@ class QuantitativeUiService:
             if not snapshots:
                 raise QuantitativeUiError("Quantitative study not found")
             study = max(snapshots, key=lambda item: item.revision)
+            self._studies[study_id] = study
+        run = self.workflows.get_workflow_run(study.run_id)
+        if run.status.value == "completed" and not study.terminal_result_record_id:
+            try:
+                terminal_record_id = self._terminal_record_id(study)
+            except (ValueError, StopIteration):
+                raise QuantitativeUiError(
+                    "Completed Quantitative workflow has no terminal authority"
+                ) from None
+            study = replace(
+                study,
+                state="COMPLETED",
+                terminal_result_record_id=terminal_record_id,
+            )
             self._studies[study_id] = study
         return study
 
@@ -336,6 +355,10 @@ class QuantitativeUiService:
         study = self.get(study_id, owner_id=owner_id)
         if study.terminal_result_record_id:
             return study
+        if study.state == "ANALYZING":
+            run = self.workflows.get_workflow_run(study.run_id)
+            if run.status.value == "running":
+                return study
         if study.state != "READY_TO_ANALYZE" or not study.weight_approval_id:
             raise QuantitativeUiError("Current approved WeightSet is required before analysis")
         dataset, codebook = self._dataset(study)
@@ -344,8 +367,6 @@ class QuantitativeUiService:
         approvals = QuantitativeApprovalService(self.state, self.digest)
         approvals.require_current(study.qc_approval_id or "", project_id=study.project_id, subject_fingerprint=qc.fingerprint)
         approvals.require_current(study.weight_approval_id, project_id=study.project_id, subject_fingerprint=weights.reproducibility_fingerprint)
-        plan = self._vertical_plan(study, dataset, codebook)
-        service = self._vertical_service(study, plan, approvals)
         run = self.workflows.get_workflow_run(study.run_id)
         if run.is_terminal:
             snapshots = self.state.list_for_run(study.run_id, project_id=study.project_id, expected_type=QuantitativeTerminalResult)
@@ -354,10 +375,6 @@ class QuantitativeUiService:
             return self._save(replace(study, state="COMPLETED", terminal_result_record_id=record))
         if run.status.value != "paused":
             raise QuantitativeUiError("Quantitative workflow is not awaiting authorized activation")
-        run.resume()
-        for task in run.tasks[:5]:
-            if not task.is_terminal:
-                task.ready(); task.start(); task.complete()
         safe = {
             "dataset_record_id": study.dataset_record_id or "", "codebook_record_id": study.codebook_record_id or "",
             "dataset_version_id": dataset.version_id, "dataset_fingerprint": dataset.dataset_fingerprint,
@@ -366,6 +383,24 @@ class QuantitativeUiService:
             "weight_set_record_id": study.weight_set_record_id or "", "weight_set_id": weights.weight_set_id,
             "weight_set_fingerprint": weights.reproducibility_fingerprint, "weight_approval_id": study.weight_approval_id,
         }
+        if self.durable_workflow_service is not None:
+            self.durable_workflow_service.activate_paused_run(
+                study.run_id,
+                shared_state={QUANTITATIVE_SAFE_STATE_KEY: safe},
+                completed_task_definition_ids=tuple(
+                    task.definition_id for task in run.tasks[:5]
+                ),
+            )
+            return self._save(replace(study, state="ANALYZING"))
+        run.resume()
+        for task in run.tasks[:5]:
+            if not task.is_terminal:
+                task.ready(); task.start(); task.complete()
+        service = self.stage_service_factory.create(
+            project_id=study.project_id,
+            run_id=study.run_id,
+            safe_state=safe,
+        )
         try:
             context = self._run_engine(study, run, service, safe)
             if not run.is_terminal or run.status.value != "completed":
@@ -430,34 +465,6 @@ class QuantitativeUiService:
                           "sections":tuple({"title":item.title,"narrative":item.narrative} for item in report.accepted_report.sections)},
                 "limitations":terminal.limitations,
                 "llm_usage":task_results.get("_run_usage_summary", {})}
-
-    def _vertical_plan(self, study, dataset, codebook):
-        from application.quantitative.vertical_service import QuantitativeVerticalPlan
-        from domain.quantitative.analysis import AnalysisSpecification, CrossTabAnalysisSpecification, NumericAnalysisSpecification, NpsAnalysisSpecification
-        categoricals=[item for item in codebook.variables if item.variable_type is VariableType.CATEGORICAL and item.analytically_eligible]
-        numerics=[item for item in codebook.variables if item.variable_type is VariableType.NUMERIC and item.analytically_eligible]
-        if len(categoricals)<2 or not numerics: raise QuantitativeUiError("Dataset lacks the required deterministic analysis variables")
-        row=next((item for item in categoricals if item.name=="mylabl"),categoricals[0]); column=next((item for item in categoricals if item.name=="myord"),categoricals[1]); numeric=numerics[0]
-        questionnaire=build_questionnaire_snapshot(snapshot_id=f"questionnaire-{study.study_id}-terminal",version="QO-1",codebook_version_id=codebook.codebook_version_id,question_variable_bindings=tuple((item.name,item.variable_id) for item in codebook.variables),answer_domains=((numeric.variable_id,(0,7,8,9,10)),),digest_provider=self.digest)
-        return QuantitativeVerticalPlan(b"","already-imported.sav",dataset.dataset_id,{},questionnaire,(),"",
-             AnalysisSpecification("qo-one-way",row.variable_id),
-             CrossTabAnalysisSpecification("qo-cross-tab",row.variable_id,weighting_status="WEIGHTED",column_variable_id=column.variable_id),
-             NumericAnalysisSpecification("qo-numeric",numeric.variable_id,weighting_status="WEIGHTED"),
-             NpsAnalysisSpecification("qo-nps",numeric.variable_id,weighting_status="WEIGHTED"),
-             weight_mode="CONSTRUCT_FROM_TARGET_MARGINS")
-
-    def _vertical_service(self, study, plan, approvals):
-        from application.quantitative.vertical_service import RealQuantitativeStageService
-        from application.quantitative.finding_generation import QuantitativeFindingGenerationService
-        from application.quantitative.finding_support import QuantitativeFindingSupportValidator
-        from application.quantitative.insight_synthesis import QuantitativeInsightSynthesisService, QuantitativeInsightValidator
-        from application.quantitative.report_composition import QuantitativeReportCompositionService, QuantitativeReportValidator
-        return RealQuantitativeStageService(plan=plan,storage=self.storage_factory(study.project_id,study.run_id),digest_provider=self.digest,
-            state_service=self.state,approval_service=approvals,
-            finding_service=QuantitativeFindingGenerationService(generator=self.finding_generator,support_validator=QuantitativeFindingSupportValidator(digest_provider=self.digest),digest_provider=self.digest),
-            insight_service=QuantitativeInsightSynthesisService(generator=self.insight_generator,validator=QuantitativeInsightValidator(digest_provider=self.digest),digest_provider=self.digest),
-            report_service=QuantitativeReportCompositionService(generator=self.report_generator,validator=QuantitativeReportValidator(digest_provider=self.digest),digest_provider=self.digest),importers=self.importers,
-            generation_mode=self.generation_mode)
 
     def _run_engine(self, study, run, service, safe):
         from application.workflow_engine import WorkflowEngine
