@@ -28,6 +28,9 @@ class QuantitativeUiFacade:
     def import_review(self, study_id: str):
         return self.service.import_review(study_id, owner_id=self.owner_id)
 
+    def execution_status(self, study_id: str):
+        return self.service.execution_status(study_id, owner_id=self.owner_id)
+
     def diagnostics(self, study_id: str):
         return self.service.weighting_diagnostics(study_id, owner_id=self.owner_id)
 

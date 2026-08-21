@@ -79,7 +79,12 @@ class QuantitativeUiService:
         self.projects.create_project(title, owner_principal_id=owner_id, project_id=project_id)
         template = build_quantitative_workflow_template()
         self.workflows.publish_template_snapshot(template, project_id=project_id)
-        self.workflows.create_workflow_run(template, project_id=project_id, run_id=run_id)
+        self.workflows.create_workflow_run(
+            template,
+            project_id=project_id,
+            run_id=run_id,
+            initially_paused=True,
+        )
         study = QuantitativeStudyProjection(study_id, project_id, run_id, title, description.strip(), "WAITING_FOR_DATASET")
         self._studies[study_id] = study
         self._submission_ids[(owner_id, submission_key)] = study_id
@@ -104,6 +109,7 @@ class QuantitativeUiService:
     def upload(self, study_id: str, *, owner_id: str, filename: str, content: bytes,
                overrides: Mapping[str, Any] | None = None) -> QuantitativeStudyProjection:
         study = self.get(study_id, owner_id=owner_id)
+        self._require_setup_paused(study)
         suffix = Path(filename).suffix.casefold()
         formats = {".sav": DatasetFormat.SAV, ".xlsx": DatasetFormat.XLSX}
         if suffix not in formats:
@@ -144,8 +150,13 @@ class QuantitativeUiService:
                                 "pii": item.pii_classification.value} for item in codebook.variables),
         }
 
+    def execution_status(self, study_id: str, *, owner_id: str) -> str:
+        study = self.get(study_id, owner_id=owner_id)
+        return self.workflows.get_workflow_run(study.run_id).status.value
+
     def run_qc(self, study_id: str, *, owner_id: str, questionnaire: QuestionnaireSnapshot) -> QuantitativeStudyProjection:
         study = self.get(study_id, owner_id=owner_id)
+        self._require_setup_paused(study)
         dataset, codebook = self._dataset(study)
         storage = self.storage_factory(study.project_id, study.run_id)
         try:
@@ -174,6 +185,7 @@ class QuantitativeUiService:
     def approve_qc(self, study_id: str, *, owner_id: str, actor_id: str, fingerprint: str,
                    decision: str, rationale: str) -> QuantitativeStudyProjection:
         study = self.get(study_id, owner_id=owner_id)
+        self._require_setup_paused(study)
         qc = self.state.load(study.qc_record_id or "", project_id=study.project_id, expected_type=QualityControlRun)
         if qc.fingerprint != fingerprint:
             raise QuantitativeUiError("QC approval is stale")
@@ -188,6 +200,7 @@ class QuantitativeUiService:
     def apply_recode_cleaning(self, study_id: str, *, owner_id: str, actor_id: str,
                               variable_name: str, replacements: Mapping[str, Any]) -> QuantitativeStudyProjection:
         study = self.get(study_id, owner_id=owner_id)
+        self._require_setup_paused(study)
         if study.state != "AWAITING_QC_APPROVAL":
             raise QuantitativeUiError("Cleaning requires current QC review")
         dataset, codebook = self._dataset(study)
@@ -239,6 +252,7 @@ class QuantitativeUiService:
 
     def construct_weights(self, study_id: str, *, owner_id: str, plan: WeightingTargetPlan) -> QuantitativeStudyProjection:
         study = self.get(study_id, owner_id=owner_id)
+        self._require_setup_paused(study)
         if study.state != "WEIGHTING_REQUIRED" or not study.qc_approval_id:
             raise QuantitativeUiError("Current QC approval is required before weighting")
         dataset, codebook = self._dataset(study)
@@ -287,6 +301,7 @@ class QuantitativeUiService:
     def approve_weights(self, study_id: str, *, owner_id: str, actor_id: str,
                         fingerprint: str, decision: str, rationale: str) -> QuantitativeStudyProjection:
         study = self.get(study_id, owner_id=owner_id)
+        self._require_setup_paused(study)
         weights = self.state.load(study.weight_set_record_id or "", project_id=study.project_id, expected_type=WeightSet)
         if weights.reproducibility_fingerprint != fingerprint:
             raise QuantitativeUiError("WeightSet approval is stale")
@@ -337,6 +352,9 @@ class QuantitativeUiService:
             if not snapshots: raise QuantitativeUiError("Terminal workflow authority is missing")
             record = self._terminal_record_id(study)
             return self._save(replace(study, state="COMPLETED", terminal_result_record_id=record))
+        if run.status.value != "paused":
+            raise QuantitativeUiError("Quantitative workflow is not awaiting authorized activation")
+        run.resume()
         for task in run.tasks[:5]:
             if not task.is_terminal:
                 task.ready(); task.start(); task.complete()
@@ -461,6 +479,12 @@ class QuantitativeUiService:
         terminal=max(records,key=lambda item:item.result_id)
         all_records=self.state._repository.list_for_run(study.run_id,project_id=study.project_id)
         return next(item.record_id for item in all_records if item.authority_fingerprint==terminal.fingerprint)
+
+    def _require_setup_paused(self, study: QuantitativeStudyProjection) -> None:
+        if self.workflows.get_workflow_run(study.run_id).status.value != "paused":
+            raise QuantitativeUiError(
+                "Quantitative setup is unavailable for the current execution state"
+            )
 
     def _dataset(self, study: QuantitativeStudyProjection) -> tuple[DatasetVersion, CodebookVersion]:
         if not study.dataset_record_id or not study.codebook_record_id:

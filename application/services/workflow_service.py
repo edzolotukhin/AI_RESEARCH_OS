@@ -63,12 +63,20 @@ class WorkflowService:
         *,
         project_id: str,
         run_id: str | None = None,
+        initially_paused: bool = False,
     ) -> WorkflowRun:
         workflow_run = self._workflow_run_factory.create(
             template=template,
             run_id=run_id,
             project_id=project_id,
         )
+        if initially_paused:
+            # Persist the setup-gated state atomically.  A CREATED run is
+            # worker-claimable, so transitioning after create would leave a
+            # race in which an incomplete user-operated workflow could run.
+            workflow_run.ready()
+            workflow_run.start()
+            workflow_run.pause()
         self._workflow_run_repository.create(
             workflow_run,
             project_id=project_id,

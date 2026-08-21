@@ -45,11 +45,13 @@ def study_detail(request: Request, study_id: str):
     try:
         facade = build_quantitative_ui_facade(request.app.state.container)
         study = facade.get(study_id)
+        execution_status = facade.execution_status(study_id)
         review = facade.import_review(study_id) if study.dataset_record_id else None
         diagnostics = facade.diagnostics(study_id) if study.weight_set_record_id else None
         result = facade.result(study_id) if study.terminal_result_record_id else None
         return templates.TemplateResponse(request, "quantitative/detail.html", {
-            "request": request, "study": study, "review": review, "diagnostics": diagnostics, "result": result,
+            "request": request, "study": study, "execution_status": execution_status,
+            "review": review, "diagnostics": diagnostics, "result": result,
         })
     except QuantitativeUiError as exc:
         return _error(request, str(exc), 404)
@@ -73,8 +75,10 @@ def study_status(request: Request, study_id: str):
     try:
         facade = build_quantitative_ui_facade(request.app.state.container)
         study = facade.get(study_id)
+        execution_status = facade.execution_status(study_id)
         payload = {"study_id": study.study_id, "project_id": study.project_id,
                    "run_id": study.run_id, "state": study.state,
+                   "setup_state": study.state, "execution_status": execution_status,
                    "revision": study.revision, "dataset_available": bool(study.dataset_record_id),
                    "weight_set_available": bool(study.weight_set_record_id)}
         return JSONResponse(payload)

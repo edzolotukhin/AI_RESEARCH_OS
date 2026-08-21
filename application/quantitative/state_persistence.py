@@ -5,7 +5,7 @@ import base64
 from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum
-from typing import Any
+from typing import Any, get_type_hints
 
 from application.ports.deterministic_digest_provider import DeterministicDigestProvider
 from application.ports.quantitative_state_repository import QuantitativeStateRecord, QuantitativeStateRepository
@@ -34,6 +34,10 @@ _ALLOWED = _classes()
 
 
 def encode_quantitative(value: Any) -> Any:
+    # StrEnum is also a str.  Enum handling must precede primitive handling so
+    # persisted domain values reconstruct as their canonical enum classes.
+    if isinstance(value, Enum):
+        return {"$enum": f"{type(value).__module__}.{type(value).__qualname__}", "value": value.value}
     if value is None or isinstance(value, (str, int, bool)):
         return value
     if isinstance(value, float):
@@ -50,8 +54,6 @@ def encode_quantitative(value: Any) -> Any:
         return {"$date": value.isoformat()}
     if isinstance(value, time):
         return {"$time": value.isoformat()}
-    if isinstance(value, Enum):
-        return {"$enum": f"{type(value).__module__}.{type(value).__qualname__}", "value": value.value}
     if is_dataclass(value):
         name = f"{type(value).__module__}.{type(value).__qualname__}"
         if name not in _ALLOWED:
@@ -88,7 +90,21 @@ def decode_quantitative(value: Any) -> Any:
         return cls(value["value"])
     cls = _ALLOWED.get(value.get("$type"))
     if cls is None or not is_dataclass(cls): raise QuantitativePersistenceError("unapproved dataclass type")
-    return cls(**{key: decode_quantitative(item) for key, item in value["fields"].items()})
+    decoded_fields = {
+        key: decode_quantitative(item) for key, item in value["fields"].items()
+    }
+    # Codec ql-1 historically persisted StrEnum members as plain strings.
+    # Reconstruct direct enum-typed dataclass fields at this single boundary so
+    # old and new durable records expose the same domain representation.
+    for key, expected in get_type_hints(cls).items():
+        current = decoded_fields.get(key)
+        if (
+            isinstance(expected, type)
+            and issubclass(expected, Enum)
+            and isinstance(current, str)
+        ):
+            decoded_fields[key] = expected(current)
+    return cls(**decoded_fields)
 
 
 def authority_fingerprint(value: Any) -> str:
