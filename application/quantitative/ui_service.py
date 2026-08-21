@@ -5,7 +5,12 @@ from pathlib import Path
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Mapping
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
+
+from application.persistence.exceptions import (
+    DuplicateEntityError,
+    EntityNotFoundError,
+)
 
 from application.quantitative.dataset_import_service import QuantitativeDatasetImportService
 from application.quantitative.state_persistence import QuantitativeStateService
@@ -71,29 +76,123 @@ class QuantitativeUiService:
         self._submission_ids: dict[tuple[str, str], str] = {}
 
     def create_study(self, *, owner_id: str, title: str, description: str, submission_key: str) -> QuantitativeStudyProjection:
-        title, submission_key = title.strip(), submission_key.strip()
+        title, description, submission_key = (
+            title.strip(), description.strip(), submission_key.strip()
+        )
         if not title or not submission_key:
             raise QuantitativeUiError("title and submission_key are required")
-        existing = self._submission_ids.get((owner_id, submission_key))
-        if existing:
-            study = self._studies[existing]
-            if (study.title, study.description) != (title, description.strip()):
-                raise QuantitativeUiError("submission key was already used for different content")
-            return study
-        study_id = project_id = run_id = str(uuid4())
-        self.projects.create_project(title, owner_principal_id=owner_id, project_id=project_id)
-        template = build_quantitative_workflow_template()
-        self.workflows.publish_template_snapshot(template, project_id=project_id)
-        self.workflows.create_workflow_run(
-            template,
-            project_id=project_id,
-            run_id=run_id,
-            initially_paused=True,
+        study_id = project_id = run_id = str(
+            uuid5(NAMESPACE_URL, f"quantitative-study:{owner_id}:{submission_key}")
         )
-        study = QuantitativeStudyProjection(study_id, project_id, run_id, title, description.strip(), "WAITING_FOR_DATASET")
-        self._studies[study_id] = study
+        replay = self._existing_submission(
+            study_id=study_id,
+            owner_id=owner_id,
+            title=title,
+            description=description,
+        )
+        if replay is not None:
+            self._submission_ids[(owner_id, submission_key)] = study_id
+            return replay
+
+        expected_template = build_quantitative_workflow_template()
+        template = self._compatible_template(expected_template)
+        project_created = False
+        run_created = False
+        try:
+            self.projects.create_project(
+                title,
+                owner_principal_id=owner_id,
+                project_id=project_id,
+            )
+            project_created = True
+            if template is None:
+                try:
+                    self.workflows.publish_template_snapshot(
+                        expected_template,
+                        project_id=project_id,
+                    )
+                    template = expected_template
+                except DuplicateEntityError:
+                    # Another creator may have published the immutable shared
+                    # definition after our initial lookup. Reuse only if exact.
+                    template = self._compatible_template(expected_template)
+                    if template is None:  # pragma: no cover - defensive race
+                        raise
+            self.workflows.create_workflow_run(
+                template,
+                project_id=project_id,
+                run_id=run_id,
+                initially_paused=True,
+            )
+            run_created = True
+            study = QuantitativeStudyProjection(
+                study_id,
+                project_id,
+                run_id,
+                title,
+                description,
+                "WAITING_FOR_DATASET",
+            )
+            persisted = self._persist_study(study)
+        except Exception:
+            self._studies.pop(study_id, None)
+            self._submission_ids.pop((owner_id, submission_key), None)
+            if run_created:
+                self.workflows.delete_workflow_run(run_id)
+            if project_created:
+                self.projects.delete_project(project_id)
+            raise
         self._submission_ids[(owner_id, submission_key)] = study_id
-        return self._persist_study(study)
+        return persisted
+
+    def _compatible_template(self, expected):
+        try:
+            existing = self.workflows.get_template(expected.id)
+        except EntityNotFoundError:
+            return None
+        if existing != expected:
+            raise QuantitativeUiError(
+                "Existing Quantitative workflow definition is incompatible"
+            )
+        return existing
+
+    def _existing_submission(
+        self,
+        *,
+        study_id: str,
+        owner_id: str,
+        title: str,
+        description: str,
+    ) -> QuantitativeStudyProjection | None:
+        try:
+            project = self.projects.get_project(study_id)
+        except EntityNotFoundError:
+            return None
+        if project.owner_principal_id != owner_id:
+            raise QuantitativeUiError("Quantitative study not found")
+        snapshots = self.state.list_for_run(
+            study_id,
+            project_id=study_id,
+            expected_type=QuantitativeStudyProjection,
+        )
+        if not snapshots:
+            raise QuantitativeUiError(
+                "Previous Quantitative study creation is incomplete"
+            )
+        study = max(snapshots, key=lambda item: item.revision)
+        if (study.title, study.description) != (title, description):
+            raise QuantitativeUiError(
+                "submission key was already used for different content"
+            )
+        run = self.workflows.get_workflow_run(study.run_id)
+        expected = build_quantitative_workflow_template()
+        if run.workflow_template_id != expected.id:
+            raise QuantitativeUiError(
+                "Existing Quantitative workflow definition is incompatible"
+            )
+        self._compatible_template(expected)
+        self._studies[study_id] = study
+        return study
 
     def get(self, study_id: str, *, owner_id: str) -> QuantitativeStudyProjection:
         study = self._studies.get(study_id)

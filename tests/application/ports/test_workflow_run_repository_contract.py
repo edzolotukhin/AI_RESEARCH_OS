@@ -219,6 +219,21 @@ class WorkflowRunRepositoryContractTests:
         self.assertEqual(new_version, 1)
         self.assertEqual(self.repository.get_version("run-version"), 1)
 
+    def test_delete_removes_run_and_results(self) -> None:
+        workflow_run = self.workflow_run_factory.create(
+            _template("template-delete"),
+            run_id="run-delete",
+        )
+        self.prepare_project("project-delete")
+        self.repository.create(workflow_run, project_id="project-delete")
+        self.repository.delete("run-delete")
+        self.assertIsNone(self.repository.get_by_id("run-delete"))
+        self.assertEqual(self.repository.get_task_results("run-delete"), {})
+
+    def test_delete_rejects_missing_run(self) -> None:
+        with self.assertRaises(EntityNotFoundError):
+            self.repository.delete("missing-run")
+
 
 class InMemoryWorkflowRunRepositoryContractTests(
     WorkflowRunRepositoryContractTests,

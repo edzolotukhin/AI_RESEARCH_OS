@@ -48,6 +48,16 @@ class InMemoryWorkflowRunRepository:
             return None
         return copy.deepcopy(workflow_run)
 
+    def delete(self, run_id: str) -> None:
+        workflow_run = self._runs.pop(run_id, None)
+        if workflow_run is None:
+            raise EntityNotFoundError(f"WorkflowRun not found: {run_id}")
+        self._versions.pop(run_id, None)
+        self._task_results.pop(run_id, None)
+        project_runs = self._project_index.get(workflow_run.project_id, [])
+        if run_id in project_runs:
+            project_runs.remove(run_id)
+
     def save(
         self,
         workflow_run: WorkflowRun,

@@ -68,6 +68,13 @@ class PostgreSQLWorkflowRunRepository:
                 return None
             return workflow_run_from_model(model)
 
+    def delete(self, run_id: str) -> None:
+        with self._session_factory.session() as session:
+            model = session.get(WorkflowRunModel, run_id)
+            if model is None:
+                raise EntityNotFoundError(f"WorkflowRun not found: {run_id}")
+            session.delete(model)
+
     def save(
         self,
         workflow_run: WorkflowRun,

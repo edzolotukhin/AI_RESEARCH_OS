@@ -89,6 +89,10 @@ class WorkflowService:
             raise EntityNotFoundError(f"WorkflowRun not found: {run_id}")
         return workflow_run
 
+    def delete_workflow_run(self, run_id: str) -> None:
+        """Compensate a failed aggregate-creation boundary."""
+        self._workflow_run_repository.delete(run_id)
+
     def list_workflow_runs_for_project(
         self,
         project_id: str,

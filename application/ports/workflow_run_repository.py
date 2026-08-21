@@ -36,6 +36,10 @@ class WorkflowRunRepository(Protocol):
         """Load a workflow run aggregate by identifier."""
         ...
 
+    def delete(self, run_id: str) -> None:
+        """Delete one workflow run created by an incomplete atomic operation."""
+        ...
+
     def save(
         self,
         workflow_run: WorkflowRun,
