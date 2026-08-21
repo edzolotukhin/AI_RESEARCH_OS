@@ -13,6 +13,7 @@ from application.persistence.exceptions import (
 )
 
 from application.quantitative.dataset_import_service import QuantitativeDatasetImportService
+from application.quantitative.fingerprints import sha256_bytes
 from application.quantitative.state_persistence import QuantitativeStateService
 from application.quantitative.quality_control import (
     CleaningEngine, DataQualityService, build_cleaning_decision,
@@ -28,6 +29,7 @@ from domain.quantitative.dataset import CodebookVersion, DatasetFormat, DatasetV
 from domain.quantitative.quality import ApprovalState, CleaningAction, QualityControlRun, QuestionnaireSnapshot
 from domain.quantitative.weighting import WeightSet, WeightingTargetMargin, WeightingTargetPlan, WeightTrimmingPolicy
 from domain.quantitative.workflow import QuantitativeApprovalDecision, QuantitativeStudyProjection, QuantitativeTerminalResult, QuantitativeAnalysisManifest
+from domain.value_objects.task_status import TaskStatus
 
 
 class QuantitativeUiError(ValueError):
@@ -225,7 +227,8 @@ class QuantitativeUiService:
         return study
 
     def upload(self, study_id: str, *, owner_id: str, filename: str, content: bytes,
-               overrides: Mapping[str, Any] | None = None) -> QuantitativeStudyProjection:
+               overrides: Mapping[str, Any] | None = None,
+               replace_existing: bool = False) -> QuantitativeStudyProjection:
         study = self.get(study_id, owner_id=owner_id)
         self._require_setup_paused(study)
         suffix = Path(filename).suffix.casefold()
@@ -234,25 +237,69 @@ class QuantitativeUiService:
             raise QuantitativeUiError("Only SAV and XLSX datasets are supported")
         if not content or len(content) > self.MAX_UPLOAD_BYTES:
             raise QuantitativeUiError("Dataset is empty or exceeds the upload limit")
+        current_dataset = None
         if study.dataset_record_id:
-            return study
+            current_dataset = self.state.load(
+                study.dataset_record_id,
+                project_id=study.project_id,
+                expected_type=DatasetVersion,
+            )
+            if (
+                sha256_bytes(content, digest_provider=self.digest)
+                == current_dataset.file_checksum
+            ):
+                return study
+            if not replace_existing:
+                raise QuantitativeUiError(
+                    "Different dataset upload requires explicit replacement"
+                )
+            run = self.workflows.get_workflow_run(study.run_id)
+            if (
+                any(task.status is not TaskStatus.CREATED for task in run.tasks)
+                or self.workflows.get_task_results(study.run_id)
+            ):
+                raise QuantitativeUiError(
+                    "Dataset replacement is unavailable after workflow execution begins"
+                )
         storage = self.storage_factory(study.project_id, study.run_id)
         try:
             imported = QuantitativeDatasetImportService(
                 importers=self.importers, storage=storage, digest_provider=self.digest,
             ).import_bytes(content, filename=Path(filename).name, dataset_format=formats[suffix],
                            dataset_id=f"dataset-{study.study_id}", project_id=study.project_id,
-                           run_id=study.run_id, overrides=dict(overrides or {}))
+                           run_id=study.run_id, overrides=dict(overrides or {}),
+                           parent_dataset=current_dataset)
         except Exception as exc:
             raise QuantitativeUiError("Dataset could not be imported safely") from exc
         dataset_id = f"{study.run_id}:dataset:{imported.dataset_version.dataset_fingerprint}"
         codebook_id = f"{study.run_id}:codebook:{imported.codebook.fingerprint}"
-        self.state.persist(imported.dataset_version, record_id=dataset_id, project_id=study.project_id,
-                           run_id=study.run_id, dataset_version_id=imported.dataset_version.version_id)
-        self.state.persist(imported.codebook, record_id=codebook_id, project_id=study.project_id,
-                           run_id=study.run_id, dataset_version_id=imported.dataset_version.version_id)
-        return self._save(replace(study, state="IMPORTED", dataset_record_id=dataset_id,
-                                  codebook_record_id=codebook_id))
+        self._persist_import_record(
+            imported.dataset_version,
+            record_id=dataset_id,
+            project_id=study.project_id,
+            run_id=study.run_id,
+            dataset_version_id=imported.dataset_version.version_id,
+            parent_record_id=study.dataset_record_id,
+        )
+        self._persist_import_record(
+            imported.codebook,
+            record_id=codebook_id,
+            project_id=study.project_id,
+            run_id=study.run_id,
+            dataset_version_id=imported.dataset_version.version_id,
+        )
+        return self._save(replace(
+            study,
+            state="IMPORTED",
+            dataset_record_id=dataset_id,
+            codebook_record_id=codebook_id,
+            qc_record_id=None,
+            qc_approval_id=None,
+            target_plan_record_id=None,
+            weight_set_record_id=None,
+            weight_approval_id=None,
+            terminal_result_record_id=None,
+        ))
 
     def import_review(self, study_id: str, *, owner_id: str) -> dict[str, Any]:
         study = self.get(study_id, owner_id=owner_id)
@@ -598,16 +645,29 @@ class QuantitativeUiService:
         return (self.state.load(study.dataset_record_id, project_id=study.project_id, expected_type=DatasetVersion),
                 self.state.load(study.codebook_record_id, project_id=study.project_id, expected_type=CodebookVersion))
 
+    def _persist_import_record(self, value, **kwargs) -> None:
+        try:
+            self.state.persist(value, **kwargs)
+        except ValueError:
+            existing = self.state.load(
+                kwargs["record_id"],
+                project_id=kwargs["project_id"],
+                expected_type=type(value),
+            )
+            if existing != value:
+                raise QuantitativeUiError(
+                    "Immutable replacement authority conflicts with persisted state"
+                ) from None
+
     def _save(self, study: QuantitativeStudyProjection) -> QuantitativeStudyProjection:
         updated = replace(study, revision=study.revision + 1)
-        self._studies[study.study_id] = updated
         return self._persist_study(updated)
 
     def _persist_study(self, study: QuantitativeStudyProjection) -> QuantitativeStudyProjection:
         from application.quantitative.fingerprints import canonical_digest
         payload = {key: value for key, value in study.__dict__.items() if key != "fingerprint"}
         authoritative = replace(study, fingerprint=canonical_digest(payload, digest_provider=self.digest))
-        self._studies[study.study_id] = authoritative
         self.state.persist(authoritative, record_id=f"{study.run_id}:ui-study:{study.revision}:{authoritative.fingerprint}",
                            project_id=study.project_id, run_id=study.run_id)
+        self._studies[study.study_id] = authoritative
         return authoritative

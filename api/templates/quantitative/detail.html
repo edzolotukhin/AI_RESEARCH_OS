@@ -4,6 +4,8 @@
 <p>Run: {{ study.run_id }}</p>
 {% if execution_status == 'paused' and not study.dataset_record_id %}<form method="post" enctype="multipart/form-data" action="/ui/quantitative/studies/{{ study.study_id }}/dataset">
 <label>SAV or XLSX dataset <input type="file" name="dataset" accept=".sav,.xlsx" required></label><button>Upload</button></form>{% endif %}
+{% if execution_status == 'paused' and study.dataset_record_id %}<form method="post" enctype="multipart/form-data" action="/ui/quantitative/studies/{{ study.study_id }}/dataset">
+<input type="hidden" name="replace_existing" value="true"><label>Replacement SAV or XLSX dataset <input type="file" name="dataset" accept=".sav,.xlsx" required></label><button>Replace dataset</button></form>{% endif %}
 {% if review %}<h2>Safe import review</h2><p>{{ review.row_count }} rows; {{ review.variable_count }} variables; {{ review.format }}</p>
 <p>PII classification: {{ review.pii_classification }}</p><table><thead><tr><th>Variable</th><th>Label</th><th>Type</th><th>Missing status</th><th>PII class</th></tr></thead><tbody>
 {% for variable in review.variables %}<tr><td>{{ variable.name }}</td><td>{{ variable.label }}</td><td>{{ variable.analytical_type }}</td><td>{{ variable.missing_status }}</td><td>{{ variable.pii }}</td></tr>{% endfor %}</tbody></table>{% endif %}

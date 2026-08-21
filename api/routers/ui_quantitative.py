@@ -58,11 +58,20 @@ def study_detail(request: Request, study_id: str):
 
 
 @router.post("/studies/{study_id}/dataset", include_in_schema=False)
-async def upload_dataset(request: Request, study_id: str, dataset: UploadFile = File(...)):
+async def upload_dataset(
+    request: Request,
+    study_id: str,
+    dataset: UploadFile = File(...),
+    replace_existing: bool = Form(False),
+):
     try:
         content = await dataset.read(20 * 1024 * 1024 + 1)
         build_quantitative_ui_facade(request.app.state.container).upload(
-            study_id, filename=dataset.filename or "dataset", content=content)
+            study_id,
+            filename=dataset.filename or "dataset",
+            content=content,
+            replace_existing=replace_existing,
+        )
         return RedirectResponse(f"/ui/quantitative/studies/{study_id}", status_code=status.HTTP_303_SEE_OTHER)
     except QuantitativeUiError as exc:
         return _error(request, str(exc))

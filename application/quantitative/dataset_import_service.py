@@ -79,12 +79,21 @@ class QuantitativeDatasetImportService:
         run_id: str,
         data_sheet: str | None = None,
         overrides: dict[str, VariableOverride] | None = None,
+        parent_dataset: DatasetVersion | None = None,
     ) -> QuantitativeImportResult:
         if not data:
             raise QuantitativeImportError("dataset bytes are empty")
         importer = self._importers.get(dataset_format)
         if importer is None:
             raise QuantitativeImportError(f"no importer for {dataset_format.value}")
+        if parent_dataset is not None and (
+            parent_dataset.dataset_id != dataset_id
+            or parent_dataset.project_id != project_id
+            or parent_dataset.run_id != run_id
+        ):
+            raise QuantitativeImportError(
+                "replacement parent does not match dataset project/run authority"
+            )
         parsed = importer.parse(data, filename=filename, data_sheet=data_sheet)
         variables = self._build_variables(
             parsed,
@@ -171,6 +180,14 @@ class QuantitativeDatasetImportService:
                 "technical_id_pseudonym" if binding_supported else "generated_pseudonym"
             ),
             weight_set_binding_supported=binding_supported,
+            parent_version_id=(
+                parent_dataset.version_id if parent_dataset is not None else None
+            ),
+            parent_dataset_fingerprint=(
+                parent_dataset.dataset_fingerprint
+                if parent_dataset is not None
+                else None
+            ),
         )
         self._storage.put_manifest(version)
         return QuantitativeImportResult(version, codebook, analytical_ids)
