@@ -12,6 +12,7 @@ class QuantitativeApprovalDecision(StrEnum):
 
 class QuantitativeTerminalOutcome(StrEnum):
     COMPLETED = "COMPLETED"
+    COMPLETED_WITH_NO_SUPPORTED_FINDINGS = "COMPLETED_WITH_NO_SUPPORTED_FINDINGS"
     FAILED = "FAILED"
     AWAITING_APPROVAL = "AWAITING_APPROVAL"
 

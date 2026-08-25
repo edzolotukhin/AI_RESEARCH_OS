@@ -724,8 +724,14 @@ class QuantitativeUiService:
         stats = tuple(item for item in records if isinstance(item, StatisticalResult))
         tables = tuple(item for item in records if isinstance(item, StatisticalTable))
         findings = next(item for item in records if isinstance(item, QuantitativeFindingGenerationResult))
-        insights = next(item for item in records if isinstance(item, QuantitativeInsightGenerationResult))
-        report = next(item for item in records if isinstance(item, QuantitativeReportCompositionResult))
+        insights = next(
+            (item for item in records if isinstance(item, QuantitativeInsightGenerationResult)),
+            None,
+        )
+        report = next(
+            (item for item in records if isinstance(item, QuantitativeReportCompositionResult)),
+            None,
+        )
         task_results = self.workflows.get_task_results(study.run_id)
         return {"study_id":study.study_id, "project_id":study.project_id, "run_id":study.run_id,
                 "terminal_result_id":terminal.result_id, "terminal_status":terminal.terminal_outcome.value,
@@ -736,10 +742,12 @@ class QuantitativeUiService:
                                 "result_ids":item.ordered_result_ids} for item in tables),
                 "findings":{"accepted":tuple({"id":item.finding_id,"text":item.text} for item in findings.accepted_findings),
                             "rejected":tuple({"reason":item.reason} for item in findings.rejected_findings)},
-                "insights":{"accepted":tuple({"id":item.insight_id,"text":item.insight_text} for item in insights.accepted_insights),
-                            "rejected":tuple({"reason":item.reason} for item in insights.rejected_insights)},
-                "report":{"id":report.accepted_report.report_id,"title":report.accepted_report.title,
-                          "sections":tuple({"title":item.title,"narrative":item.narrative} for item in report.accepted_report.sections)},
+                "insights":{"accepted":tuple({"id":item.insight_id,"text":item.insight_text} for item in insights.accepted_insights) if insights else (),
+                            "rejected":tuple({"reason":item.reason} for item in insights.rejected_insights) if insights else ()},
+                "report":{"id":report.accepted_report.report_id if report and report.accepted_report else None,
+                          "title":report.accepted_report.title if report and report.accepted_report else None,
+                          "status":terminal.report_status,
+                          "sections":tuple({"title":item.title,"narrative":item.narrative} for item in report.accepted_report.sections) if report and report.accepted_report else ()},
                 "limitations":terminal.limitations,
                 "llm_usage":task_results.get("_run_usage_summary", {})}
 

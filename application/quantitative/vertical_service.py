@@ -191,21 +191,32 @@ class RealQuantitativeStageService:
     def _quant_findings(self, project_id, run_id, state):
         generated = self.findings.generate(statistical_results=self._results(state, project_id))
         state["finding_generation_record_id"] = self._persist(generated, "finding-generation", project_id, run_id)
+        if not generated.accepted_findings:
+            state["zero_supported_findings"] = "true"
         return state
 
     def _quant_insights(self, project_id, run_id, state):
         generated = self._load(state, "finding_generation_record_id", project_id, QuantitativeFindingGenerationResult)
+        if not generated.accepted_findings:
+            state["zero_supported_findings"] = "true"
+            state["insight_generation_status"] = "SKIPPED_NO_SUPPORTED_FINDINGS"
+            return state
         insights = self.insights.generate(findings=generated.accepted_findings)
         state["insight_generation_record_id"] = self._persist(insights, "insight-generation", project_id, run_id)
         return state
 
     def _quant_report(self, project_id, run_id, state):
+        if state.get("zero_supported_findings") == "true":
+            state["report_composition_status"] = "SKIPPED_NO_SUPPORTED_FINDINGS"
+            return state
         findings = self._load(state, "finding_generation_record_id", project_id, QuantitativeFindingGenerationResult); insights = self._load(state, "insight_generation_record_id", project_id, QuantitativeInsightGenerationResult)
         report = self.reports.compose(findings=findings.accepted_findings, insights=insights.accepted_insights)
         state["report_composition_record_id"] = self._persist(report, "report-composition", project_id, run_id)
         return state
 
     def _quant_complete(self, project_id, run_id, state):
+        if state.get("zero_supported_findings") == "true":
+            return self._complete_without_supported_findings(project_id, run_id, state)
         required = ("dataset_record_id", "qc_record_id", "weight_set_record_id", "analysis_manifest_record_id", "finding_generation_record_id", "insight_generation_record_id", "report_composition_record_id")
         if any(not state.get(key) for key in required): raise QuantitativeWorkflowError("terminal Quantitative authority is incomplete")
         dataset=self._load(state,"dataset_record_id",project_id,DatasetVersion); qc=self._load(state,"qc_record_id",project_id,QualityControlRun); weights=self._load(state,"weight_set_record_id",project_id,WeightSet)
@@ -222,4 +233,69 @@ class RealQuantitativeStageService:
         terminal=QuantitativeTerminalResult(result_id=f"terminal-{fp}",project_id=project_id,run_id=run_id,methodology="QUANTITATIVE",dataset_version_id=dataset.version_id,dataset_fingerprint=dataset.dataset_fingerprint,qc_status="APPROVED",cleaning_lineage=tuple(item for item in (dataset.parent_version_id,dataset.version_id) if item),weight_set_id=weights.weight_set_id,weight_set_fingerprint=weights.reproducibility_fingerprint,weight_approval_id=state["weight_approval_id"],statistical_result_ids=result_ids,accepted_finding_count=len(findings.accepted_findings),rejected_finding_count=len(findings.rejected_findings),accepted_insight_count=len(insights.accepted_insights),rejected_insight_count=len(insights.rejected_insights),report_id=report.accepted_report.report_id,report_status=report.accepted_report.validation_status.value,limitations=(limitation,),execution_status="COMPLETED",terminal_outcome=QuantitativeTerminalOutcome.COMPLETED,fingerprint=fp)
         state["terminal_result_record_id"]=self._persist(terminal,"terminal",project_id,run_id,dataset_id=dataset.version_id,accepted=True)
         state["terminal_authority_status"] = "COMPLETE"
+        return state
+
+    def _complete_without_supported_findings(self, project_id, run_id, state):
+        required = (
+            "dataset_record_id", "qc_record_id", "weight_set_record_id",
+            "analysis_manifest_record_id", "finding_generation_record_id",
+        )
+        if any(not state.get(key) for key in required):
+            raise QuantitativeWorkflowError("zero-Finding terminal authority is incomplete")
+        dataset = self._load(state, "dataset_record_id", project_id, DatasetVersion)
+        qc = self._load(state, "qc_record_id", project_id, QualityControlRun)
+        weights = self._load(state, "weight_set_record_id", project_id, WeightSet)
+        manifest = self._load(
+            state, "analysis_manifest_record_id", project_id, QuantitativeAnalysisManifest
+        )
+        findings = self._load(
+            state, "finding_generation_record_id", project_id,
+            QuantitativeFindingGenerationResult,
+        )
+        if findings.accepted_findings:
+            raise QuantitativeWorkflowError("zero-Finding terminal conflicts with accepted authority")
+        result_ids = tuple(
+            self.state.load(
+                record_id, project_id=project_id, expected_type=StatisticalResult
+            ).result_id
+            for record_id in manifest.statistical_result_record_ids
+        )
+        outcome = QuantitativeTerminalOutcome.COMPLETED_WITH_NO_SUPPORTED_FINDINGS
+        payload = {
+            "run": run_id,
+            "dataset": dataset.dataset_fingerprint,
+            "qc": qc.fingerprint,
+            "weights": weights.reproducibility_fingerprint,
+            "results": result_ids,
+            "findings": findings.generation_fingerprint,
+            "outcome": outcome.value,
+        }
+        fp = canonical_digest(payload, digest_provider=self.digest)
+        terminal = QuantitativeTerminalResult(
+            result_id=f"terminal-{fp}", project_id=project_id, run_id=run_id,
+            methodology="QUANTITATIVE", dataset_version_id=dataset.version_id,
+            dataset_fingerprint=dataset.dataset_fingerprint, qc_status="APPROVED",
+            cleaning_lineage=tuple(
+                item for item in (dataset.parent_version_id, dataset.version_id) if item
+            ),
+            weight_set_id=weights.weight_set_id,
+            weight_set_fingerprint=weights.reproducibility_fingerprint,
+            weight_approval_id=state["weight_approval_id"],
+            statistical_result_ids=result_ids,
+            accepted_finding_count=0,
+            rejected_finding_count=len(findings.rejected_findings),
+            accepted_insight_count=0, rejected_insight_count=0,
+            report_id="", report_status="NOT_GENERATED_NO_SUPPORTED_FINDINGS",
+            limitations=(
+                "Finding generation completed, but deterministic QH validation "
+                "accepted no supported Findings; Insight and Report generation were skipped.",
+            ),
+            execution_status="COMPLETED", terminal_outcome=outcome,
+            fingerprint=fp,
+        )
+        state["terminal_result_record_id"] = self._persist(
+            terminal, "terminal", project_id, run_id,
+            dataset_id=dataset.version_id, accepted=True,
+        )
+        state["terminal_authority_status"] = "COMPLETE_WITH_NO_SUPPORTED_FINDINGS"
         return state

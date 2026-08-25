@@ -86,18 +86,26 @@ class PropertyQILLMAssistedFindingGenerationTests(unittest.TestCase):
         self.assertTrue(all(item.support_validation_status is QuantitativeSupportStatus.SUPPORTED for item in generated.accepted_findings))
         self.assertEqual(generated.prompt_version, PROMPT_VERSION)
 
-    def test_invented_number_wrong_reference_and_stale_reference_are_rejected(self):
+    def test_invented_number_and_unknown_reference_are_rejected_while_model_fingerprint_is_ignored(self):
         authority = result("percentage", "42")
+        canonical = result("canonical", "42")
         proposals = [
             proposal(authority, "DESCRIPTIVE_VALUE", value="43", display="43.0"),
             proposal(authority, "DESCRIPTIVE_VALUE", refs=["unknown"]),
-            proposal(authority, "DESCRIPTIVE_VALUE", refs=["stale"], statistical_result_fingerprints={"stale": "old-fingerprint"}),
+            proposal(
+                canonical,
+                "DESCRIPTIVE_VALUE",
+                statistical_result_fingerprints={"canonical": "model-supplied-fingerprint"},
+            ),
         ]
-        stale = result("stale", "42", fingerprint="stale-authority")
         service, _ = self.service({"proposals": proposals})
-        generated = service.generate(statistical_results=(authority, stale))
-        self.assertEqual(generated.acceptance_summary["accepted"], 0)
-        self.assertEqual(generated.acceptance_summary["rejected"], 3)
+        generated = service.generate(statistical_results=(authority, canonical))
+        self.assertEqual(generated.acceptance_summary["accepted"], 1)
+        self.assertEqual(generated.acceptance_summary["rejected"], 2)
+        self.assertEqual(
+            generated.accepted_findings[0].statistical_result_refs[0].reproducibility_fingerprint,
+            canonical.reproducibility_fingerprint,
+        )
         self.assertTrue(all(item.reason for item in generated.rejected_findings))
 
     def test_significance_without_qg_and_non_significant_qg_are_rejected(self):

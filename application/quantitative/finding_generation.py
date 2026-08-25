@@ -22,7 +22,7 @@ from domain.quantitative.finding import (
 )
 
 
-PROMPT_VERSION = "QI_FINDING_GENERATION_V1"
+PROMPT_VERSION = "QI_FINDING_GENERATION_V2"
 MAX_RESULTS = 100
 MAX_PROMPT_CHARACTERS = 60_000
 MAX_PROPOSALS = 25
@@ -225,6 +225,8 @@ class QuantitativeFindingGenerationService:
     def _prompt(bundle):
         instructions = (
             "Generate structured Quantitative Finding proposals using only the supplied result IDs. "
+            "Return IDs only: never copy, reconstruct, abbreviate, or return authority fingerprints; "
+            "the application resolves canonical fingerprints from the exact supplied bundle. "
             "Do not calculate new values or introduce numbers absent from authoritative results. "
             "Do not infer significance from percentages alone: significance wording requires a supplied "
             "comparison result with supports_significance_wording=true. Distinguish observed differences "
@@ -235,13 +237,18 @@ class QuantitativeFindingGenerationService:
             "this context."
         )
         schema = {
+            "reference_contract": {
+                "DESCRIPTIVE_VALUE": {"statistical_result_refs": 1, "comparison_result_refs": 0},
+                "NUMERIC_SUMMARY": {"statistical_result_refs": 1, "comparison_result_refs": 0},
+                "KPI_VALUE": {"statistical_result_refs": 1, "comparison_result_refs": 0},
+                "DESCRIPTIVE_COMPARISON": {"statistical_result_refs": 2, "comparison_result_refs": 0},
+                "SIGNIFICANT_COMPARISON": {"statistical_result_refs": 2, "comparison_result_refs": 1},
+            },
             "proposals": [{
                 "claim_type": "DESCRIPTIVE_VALUE|NUMERIC_SUMMARY|KPI_VALUE|DESCRIPTIVE_COMPARISON|SIGNIFICANT_COMPARISON",
                 "finding_text": "string",
                 "statistical_result_refs": ["result-id"],
-                "statistical_result_fingerprints": {"result-id": "expected-fingerprint"},
                 "comparison_result_refs": ["comparison-id"],
-                "comparison_result_fingerprints": {"comparison-id": "expected-fingerprint"},
                 "value": "exact decimal or null",
                 "display_value": "deterministically rounded string or null",
                 "rounding_decimal_places": 1,
@@ -280,23 +287,18 @@ class QuantitativeFindingGenerationService:
             "comparison_result_refs",
             allow_empty=True,
         )
-        result_fingerprints = self._fingerprint_mapping(raw.get("statistical_result_fingerprints"))
-        comparison_fingerprints = self._fingerprint_mapping(raw.get("comparison_result_fingerprints"))
+        self._validate_reference_cardinality(claim_type, result_ids, comparison_ids)
+        if any(item not in available_results for item in result_ids):
+            raise QuantitativeAnalysisError("proposal references a result outside the authoritative bundle")
+        if any(item not in available_comparisons for item in comparison_ids):
+            raise QuantitativeAnalysisError("proposal references a comparison outside the authoritative bundle")
+        # The model selects bundle-bound IDs only. Canonical fingerprints are always
+        # recovered here and cannot be supplied or overridden by model output.
         result_refs = tuple(QuantitativeResultReference(
-            item,
-            result_fingerprints.get(
-                item,
-                available_results[item].reproducibility_fingerprint
-                if item in available_results else "UNAVAILABLE",
-            ),
+            item, available_results[item].reproducibility_fingerprint
         ) for item in result_ids)
         comparison_refs = tuple(QuantitativeComparisonReference(
-            item,
-            comparison_fingerprints.get(
-                item,
-                available_comparisons[item].reproducibility_fingerprint
-                if item in available_comparisons else "UNAVAILABLE",
-            ),
+            item, available_comparisons[item].reproducibility_fingerprint
         ) for item in comparison_ids)
         value = self._decimal_or_none(raw.get("value"))
         text = self._safe_text(str(raw["finding_text"]), "finding text")
@@ -304,8 +306,15 @@ class QuantitativeFindingGenerationService:
         if limitation is not None:
             self._safe_text(str(limitation), "limitation note")
         pii = self._pii_exposures(text)
+        identity_proposal = {
+            key: value for key, value in raw.items()
+            if key not in {
+                "statistical_result_fingerprints",
+                "comparison_result_fingerprints",
+            }
+        }
         proposal_identity = canonical_digest(
-            {"bundle": bundle_fingerprint, "ordinal": ordinal, "proposal": dict(raw)},
+            {"bundle": bundle_fingerprint, "ordinal": ordinal, "proposal": identity_proposal},
             digest_provider=self._digest,
         )
         return QuantitativeFinding(
@@ -339,15 +348,20 @@ class QuantitativeFindingGenerationService:
         return tuple(value)
 
     @staticmethod
-    def _fingerprint_mapping(value):
-        if value is None:
-            return {}
-        if not isinstance(value, Mapping) or any(
-            not isinstance(key, str) or not key or not isinstance(item, str) or not item
-            for key, item in value.items()
-        ):
-            raise QuantitativeAnalysisError("proposal fingerprint map must contain non-empty strings")
-        return dict(value)
+    def _validate_reference_cardinality(claim_type, result_ids, comparison_ids):
+        expected = {
+            QuantitativeClaimType.DESCRIPTIVE_VALUE: (1, 0),
+            QuantitativeClaimType.NUMERIC_SUMMARY: (1, 0),
+            QuantitativeClaimType.KPI_VALUE: (1, 0),
+            QuantitativeClaimType.DESCRIPTIVE_COMPARISON: (2, 0),
+            QuantitativeClaimType.SIGNIFICANT_COMPARISON: (2, 1),
+        }[claim_type]
+        actual = (len(result_ids), len(comparison_ids))
+        if actual != expected:
+            raise QuantitativeAnalysisError(
+                f"{claim_type.value} requires exactly {expected[0]} StatisticalResult "
+                f"reference(s) and {expected[1]} ComparisonResult reference(s)"
+            )
 
     @staticmethod
     def _decimal_or_none(value):
