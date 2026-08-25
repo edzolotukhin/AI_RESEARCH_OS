@@ -247,9 +247,16 @@ class QuantitativeDatasetImportService:
                 ),
                 missing_rules=imported_rules + codebook_rules,
                 pii_classification=pii,
+                multiple_response_set=(tuple(raw.metadata.get("multiple_response_sets", ())) or (None,))[0],
                 semantic_hooks=tuple(raw.metadata.get("semantic_hooks", ())),
                 validation_status=status,
                 validation_messages=tuple(messages),
+                metadata_provenance=((
+                    ("type", "EXPLICITLY_RESOLVED" if override.variable_type is not None else ("SOURCE_DECLARED" if raw.measurement_level.strip().casefold() in {"nominal", "ordinal", "scale"} else "HEURISTIC_INFERRED")),
+                    ("role", "EXPLICITLY_RESOLVED" if override.role is not None else "HEURISTIC_INFERRED"),
+                    ("pii", "EXPLICITLY_RESOLVED" if override.pii_classification is not None else "HEURISTIC_INFERRED"),
+                    ("mr", "SOURCE_DECLARED" if raw.metadata.get("multiple_response_sets") else "ABSENT"),
+                )),
             )
             variables.append(
                 replace(
@@ -346,11 +353,18 @@ class QuantitativeDatasetImportService:
 
 def _infer_type(raw: Any, rows: tuple[tuple[Any, ...], ...], ordinal: int) -> VariableType:
     measure = raw.measurement_level.strip().casefold()
-    if raw.value_labels or measure == "nominal":
+    if measure == "nominal":
         return VariableType.CATEGORICAL
     if measure == "ordinal":
         return VariableType.ORDINAL_SCALE
+    storage = raw.storage_type.strip().casefold()
     observed = [row[ordinal] for row in rows if not _system_missing(row[ordinal])]
+    numeric_observed = bool(observed) and all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in observed)
+    labeled_nps_domain = bool(raw.value_labels) and all(isinstance(code, (int, float)) and not isinstance(code, bool) for code, _ in raw.value_labels) and {float(code) for code, _ in raw.value_labels} == {float(code) for code in range(11)}
+    if measure == "scale" and storage in {"double", "float", "integer", "numeric", "number"} and numeric_observed and labeled_nps_domain:
+        return VariableType.NUMERIC
+    if raw.value_labels:
+        return VariableType.CATEGORICAL
     if observed and all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in observed):
         return VariableType.NUMERIC
     return VariableType.CATEGORICAL

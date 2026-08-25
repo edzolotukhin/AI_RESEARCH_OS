@@ -86,6 +86,7 @@ def variable_payload(variable: VariableDefinition) -> dict[str, Any]:
         "multiple_response_set": variable.multiple_response_set,
         "semantic_hooks": list(variable.semantic_hooks),
         "validation_status": variable.validation_status.value,
+        "metadata_provenance": list(variable.metadata_provenance),
     }
 
 

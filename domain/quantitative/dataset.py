@@ -72,6 +72,7 @@ class VariableDefinition:
     validation_status: ValidationStatus = ValidationStatus.VALID
     validation_messages: tuple[str, ...] = ()
     fingerprint: str = ""
+    metadata_provenance: tuple[tuple[str, str], ...] = ()
 
     @property
     def analytically_eligible(self) -> bool:

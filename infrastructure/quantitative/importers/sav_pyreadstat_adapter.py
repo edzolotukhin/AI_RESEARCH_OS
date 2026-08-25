@@ -33,6 +33,7 @@ class SavPyreadstatAdapter:
         missing_ranges = dict(metadata.missing_ranges or {})
         measures = dict(metadata.variable_measure or {})
         storage = dict(metadata.readstat_variable_types or {})
+        mr_by_variable = _mr_sets_by_variable(getattr(metadata, "mr_sets", None) or {})
         variables = tuple(
             ParsedVariable(
                 name=name,
@@ -46,6 +47,7 @@ class SavPyreadstatAdapter:
                     )
                 ),
                 user_missing=tuple(_normalize_missing(item) for item in missing_ranges.get(name, ())),
+                metadata={"multiple_response_sets": mr_by_variable.get(name, ())},
             )
             for name in names
         )
@@ -66,6 +68,16 @@ class SavPyreadstatAdapter:
             warnings=tuple(warnings),
         )
 
+
+def _mr_sets_by_variable(mr_sets: dict[str, Any]) -> dict[str, tuple[str, ...]]:
+    result: dict[str, list[str]] = {}
+    for set_name, definition in sorted(mr_sets.items()):
+        if not isinstance(definition, dict):
+            continue
+        variables = definition.get("variable_list") or definition.get("variables") or ()
+        for variable in variables:
+            result.setdefault(str(variable), []).append(str(set_name))
+    return {name: tuple(sorted(values)) for name, values in result.items()}
 
 def _normalize_missing(item: Any) -> dict[str, Any]:
     if isinstance(item, dict):
