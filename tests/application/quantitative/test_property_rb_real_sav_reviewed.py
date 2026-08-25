@@ -1,8 +1,4 @@
-import os
-import tempfile
-
-import pandas as pd
-import pyreadstat
+from pathlib import Path
 
 from application.quantitative.dataset_import_service import QuantitativeDatasetImportService
 from application.quantitative.measurement_reconciliation import QuantitativeMeasurementReconciliationService
@@ -19,15 +15,7 @@ from infrastructure.security.sha256_digest_provider import Sha256DigestProvider
 from tests.application.quantitative.test_property_ra_questionnaire_authority import PropertyRAQuestionnaireAuthorityTests
 
 
-def _sav_bytes():
-    frame=pd.DataFrame({"sex":[1,2,1,2],"age":[24,35,48,29],"region":[1,2,3,1],"categorical":[1,2,1,2],"numeric":[7.,8.,6.,9.],"nps":[8,9,6,10],"brand_preference":[1,2,1,2],"quality_check":[2,2,2,2],"routing_group":[1,2,1,2]})
-    labels={"sex":{1:"Group A",2:"Group B"},"region":{1:"West",2:"Center",3:"East"},"categorical":{1:"Yes",2:"No"},"nps":{i:str(i) for i in range(11)},"brand_preference":{1:"Brand A",2:"Brand B"},"quality_check":{1:"First",2:"Second"},"routing_group":{1:"A",2:"B"}}
-    measures={name:("nominal" if name in labels and name != "nps" else "scale") for name in frame.columns}
-    handle,path=tempfile.mkstemp(suffix=".sav"); os.close(handle)
-    try:
-        pyreadstat.write_sav(frame,path,column_labels={name:name for name in frame.columns},variable_value_labels=labels,variable_measure=measures,missing_ranges={"categorical":[{"lo":9,"hi":9}]})
-        with open(path,"rb") as stream: return stream.read()
-    finally: os.unlink(path)
+_SAV_BYTES = (Path(__file__).parents[2] / "fixtures" / "quantitative" / "rb_reconciliation.sav").read_bytes()
 
 
 class PropertyRBRealSavReviewedTests(PropertyRAQuestionnaireAuthorityTests):
@@ -35,7 +23,7 @@ class PropertyRBRealSavReviewedTests(PropertyRAQuestionnaireAuthorityTests):
         questionnaire=self.approve(self.create(version_id="real-sav-questionnaire",routes=()))
         digest=Sha256DigestProvider(); state=QuantitativeStateService(repository=self.backing,digest_provider=digest)
         repository=QLQuantitativeMeasurementReconciliationRepository(state)
-        imported=QuantitativeDatasetImportService(importers=(SavPyreadstatAdapter(),),storage=InMemoryDatasetStorage(),digest_provider=digest).import_bytes(_sav_bytes(),filename="synthetic.sav",dataset_format=DatasetFormat.SAV,dataset_id="real-sav",project_id=self.project,run_id=self.run)
+        imported=QuantitativeDatasetImportService(importers=(SavPyreadstatAdapter(),),storage=InMemoryDatasetStorage(),digest_provider=digest).import_bytes(_SAV_BYTES,filename="synthetic.sav",dataset_format=DatasetFormat.SAV,dataset_id="real-sav",project_id=self.project,run_id=self.run)
         self.assertEqual(next(v for v in imported.codebook.variables if v.name=="nps").variable_type,VariableType.NUMERIC)
         service=QuantitativeMeasurementReconciliationService(repository=repository,questionnaire_service=self.service,digest_provider=digest)
         candidate=service.create(reconciliation_id="real-sav-rb",version_id="real-sav-candidate",project_id=self.project,run_id=self.run,dataset=imported.dataset_version,codebook=imported.codebook,created_at="now",created_by="system")
