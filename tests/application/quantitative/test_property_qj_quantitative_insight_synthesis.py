@@ -39,8 +39,7 @@ def insight_proposal(kind, text, supports, *, values=(), direction=None, limitat
     return {
         "insight_type": kind,
         "insight_text": text,
-        "supporting_finding_refs": [item.finding_id for item in supports],
-        "supporting_finding_fingerprints": fingerprints or {},
+        "supporting_finding_ids": [item.finding_id for item in supports],
         "referenced_display_values": list(values),
         "direction": direction,
         "limitation_note": limitation,
@@ -156,8 +155,8 @@ class PropertyQJQuantitativeInsightSynthesisTests(unittest.TestCase):
         proposals = [
             insight_proposal("SYNTHESIS", "Preference drives adoption.", (accepted,)),
             insight_proposal("SYNTHESIS", "Contact alice@example.test for interpretation.", (accepted,)),
-            insight_proposal("SYNTHESIS", "Missing support.", (accepted,), fingerprints={accepted.finding_id: "stale"}),
-            {**insight_proposal("SYNTHESIS", "Unknown support.", (accepted,)), "supporting_finding_refs": ["missing"]},
+            {**insight_proposal("SYNTHESIS", "Missing support.", (accepted,)), "supporting_finding_ids": ["missing"]},
+            {**insight_proposal("SYNTHESIS", "Duplicate support.", (accepted,)), "supporting_finding_ids": [accepted.finding_id, accepted.finding_id]},
         ]
         service, _ = self.service({"proposals": proposals})
         generated = service.generate(findings=(accepted,))

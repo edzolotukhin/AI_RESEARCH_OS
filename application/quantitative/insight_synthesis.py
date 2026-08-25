@@ -24,7 +24,7 @@ from domain.quantitative.insight import (
 )
 
 
-PROMPT_VERSION = "QJ_INSIGHT_SYNTHESIS_V1"
+PROMPT_VERSION = "QJ_INSIGHT_SYNTHESIS_V2"
 VALIDATION_VERSION = "qj-1"
 MAX_FINDINGS = 50
 MAX_PROPOSALS = 20
@@ -274,14 +274,14 @@ class QuantitativeInsightSynthesisService:
     @staticmethod
     def _prompt(bundle):
         instructions = (
-            "Synthesize structured Quantitative Insights using only supplied accepted Finding IDs. "
+            "Synthesize structured Quantitative Insights using only supplied accepted Finding IDs. Select IDs only; never copy, reconstruct, abbreviate, or supply Finding fingerprints. "
             "Do not invent or recalculate numbers; every number must exactly match a supplied display_value "
             "and be listed in referenced_display_values. Do not upgrade observed differences to significance; "
             "significance wording requires an accepted SIGNIFICANT_COMPARISON Finding. Preserve weighting, "
             "filters, bases, populations, and direction. Do not infer causality or introduce unsupported "
             "segments. Use one of SYNTHESIS, SEGMENT_CONTRAST, KPI_INTERPRETATION, LIMITATION."
         )
-        schema = {"proposals": [{"insight_type": "SYNTHESIS|SEGMENT_CONTRAST|KPI_INTERPRETATION|LIMITATION", "insight_text": "string", "supporting_finding_refs": ["finding-id"], "supporting_finding_fingerprints": {"finding-id": "expected-fingerprint"}, "referenced_display_values": ["exact display value"], "direction": "HIGHER|LOWER|EQUAL|null", "limitation_note": "string or null"}]}
+        schema = {"proposals": [{"insight_type": "SYNTHESIS|SEGMENT_CONTRAST|KPI_INTERPRETATION|LIMITATION", "insight_text": "string", "supporting_finding_ids": ["finding-id"], "referenced_display_values": ["exact display value"], "direction": "HIGHER|LOWER|EQUAL|null", "limitation_note": "string or null"}]}
         prompt = instructions + "\nOUTPUT_SCHEMA=" + json.dumps(schema, sort_keys=True, separators=(",", ":")) + "\nACCEPTED_FINDINGS=" + json.dumps(bundle, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         if len(prompt) > MAX_PROMPT_CHARACTERS:
             raise QuantitativeAnalysisError("Quantitative Insight prompt exceeds bounded size")
@@ -296,13 +296,10 @@ class QuantitativeInsightSynthesisService:
     def _parse(self, raw, ordinal, bundle_fingerprint, available):
         if not isinstance(raw, Mapping):
             raise QuantitativeAnalysisError("Insight proposal must be an object")
-        finding_ids = self._strings(raw.get("supporting_finding_refs"), "supporting_finding_refs")
-        expected = raw.get("supporting_finding_fingerprints") or {}
-        if not isinstance(expected, Mapping):
-            raise QuantitativeAnalysisError("supporting Finding fingerprints must be an object")
+        finding_ids = self._strings(raw.get("supporting_finding_ids"), "supporting_finding_ids")
         refs = tuple(QuantitativeFindingReference(
             item,
-            str(expected.get(item) or (available[item].support_validation_fingerprint if item in available else "UNAVAILABLE")),
+            available[item].support_validation_fingerprint if item in available else "UNAVAILABLE",
         ) for item in finding_ids)
         display_values = self._strings(raw.get("referenced_display_values", []), "referenced_display_values", allow_empty=True)
         text = self._bounded_text(raw["insight_text"], "insight_text")

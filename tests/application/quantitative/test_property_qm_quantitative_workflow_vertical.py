@@ -139,7 +139,7 @@ class _InsightGenerator:
     def generate(self, prompt):
         findings = _bundle(prompt, "ACCEPTED_FINDINGS=")
         first=findings[0]
-        base={"insight_type":"SYNTHESIS", "supporting_finding_refs":[first["finding_id"]], "supporting_finding_fingerprints":{first["finding_id"]:first["support_validation_fingerprint"]}, "direction":None, "limitation_note":"Synthetic aggregate."}
+        base={"insight_type":"SYNTHESIS", "supporting_finding_ids":[first["finding_id"]], "direction":None, "limitation_note":"Synthetic aggregate."}
         valid=dict(base, insight_text=f"Supported result was {first['display_value']}.", referenced_display_values=[first["display_value"]])
         invalid=dict(base, insight_text="Unsupported result was 999.0.", referenced_display_values=["999.0"])
         return {"proposals":[valid, invalid]}
