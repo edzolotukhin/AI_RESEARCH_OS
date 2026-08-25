@@ -21,9 +21,9 @@ class QuantitativePersistenceError(ValueError):
 
 
 def _classes() -> dict[str, type]:
-    from domain.quantitative import analysis, dataset, finding, insight, measurement_reconciliation, quality, questionnaire_authority, report, research_design_authority, weighting, workflow
+    from domain.quantitative import analysis, analysis_plan, dataset, finding, insight, measurement_reconciliation, quality, questionnaire_authority, report, research_design_authority, weighting, workflow
     result = {}
-    for module in (analysis, dataset, finding, insight, measurement_reconciliation, quality, questionnaire_authority, report, research_design_authority, weighting, workflow):
+    for module in (analysis, analysis_plan, dataset, finding, insight, measurement_reconciliation, quality, questionnaire_authority, report, research_design_authority, weighting, workflow):
         for value in vars(module).values():
             if isinstance(value, type) and (is_dataclass(value) or issubclass(value, Enum)):
                 result[f"{value.__module__}.{value.__qualname__}"] = value
