@@ -84,3 +84,18 @@ class QuantitativeStudyProjection:
     terminal_result_record_id: str | None = None
     revision: int = 0
     fingerprint: str = ""
+
+
+@dataclass(frozen=True)
+class QuantitativeRunRearmEvent:
+    event_id: str
+    project_id: str
+    run_id: str
+    actor_id: str
+    previous_status: str
+    previous_version: int
+    previous_task_statuses: tuple[tuple[str, str], ...]
+    previous_task_results_fingerprint: str
+    reason: str
+    rearmed_at: str
+    fingerprint: str

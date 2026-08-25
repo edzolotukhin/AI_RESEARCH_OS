@@ -28,8 +28,9 @@ from application.quantitative.workflow import (
 from domain.quantitative.dataset import CodebookVersion, DatasetFormat, DatasetVersion
 from domain.quantitative.quality import ApprovalState, CleaningAction, QualityControlRun, QuestionnaireSnapshot
 from domain.quantitative.weighting import WeightSet, WeightingTargetMargin, WeightingTargetPlan, WeightTrimmingPolicy
-from domain.quantitative.workflow import QuantitativeApprovalDecision, QuantitativeStudyProjection, QuantitativeTerminalResult, QuantitativeAnalysisManifest
+from domain.quantitative.workflow import QuantitativeApprovalDecision, QuantitativeStudyProjection, QuantitativeTerminalResult, QuantitativeAnalysisManifest, QuantitativeRunRearmEvent
 from domain.value_objects.task_status import TaskStatus
+from domain.workflow_status import WorkflowStatus
 
 
 class QuantitativeUiError(ValueError):
@@ -579,6 +580,136 @@ class QuantitativeUiService:
         except Exception as exc:
             raise QuantitativeUiError("Quantitative workflow failed safely") from exc
         return self._save(replace(study, state="COMPLETED", terminal_result_record_id=terminal_record_id))
+
+    def rearm_failed_run(
+        self,
+        study_id: str,
+        *,
+        owner_id: str,
+        actor_id: str,
+        reason: str,
+    ) -> QuantitativeStudyProjection:
+        """Explicitly rearm one failed pre-provider Quantitative run for setup."""
+        study = self.get(study_id, owner_id=owner_id)
+        run = self.workflows.get_workflow_run(study.run_id)
+        event_id = f"{run.id}:quantitative-rearm:pre-provider"
+        existing_events = self.state.list_for_run(
+            run.id,
+            project_id=study.project_id,
+            expected_type=QuantitativeRunRearmEvent,
+        )
+        if run.status is WorkflowStatus.PAUSED:
+            if any(item.event_id == event_id for item in existing_events):
+                return study
+            raise QuantitativeUiError("Quantitative run is not eligible for rearm")
+        if existing_events:
+            raise QuantitativeUiError("Quantitative rearm authority was already consumed")
+        if run.project_id != study.project_id or run.id != study.run_id:
+            raise QuantitativeUiError("Quantitative run is not eligible for rearm")
+        if run.workflow_template_id != build_quantitative_workflow_template().id:
+            raise QuantitativeUiError("Quantitative run is not eligible for rearm")
+        if run.status is not WorkflowStatus.FAILED:
+            raise QuantitativeUiError("Quantitative run is not eligible for rearm")
+        if study.terminal_result_record_id:
+            raise QuantitativeUiError("Accepted terminal authority prevents rearm")
+
+        task_results = self.workflows.get_task_results(run.id)
+        usage = task_results.get("_run_usage_summary", {})
+        if self._quantitative_generation_was_used(usage):
+            raise QuantitativeUiError("Quantitative generation usage prevents rearm")
+
+        from domain.quantitative.finding import QuantitativeFindingGenerationResult
+        from domain.quantitative.insight import QuantitativeInsightGenerationResult
+        from domain.quantitative.report import QuantitativeReportCompositionResult
+
+        authority = self.state.list_for_run(run.id, project_id=study.project_id)
+        forbidden_authority = (
+            QuantitativeAnalysisManifest,
+            QuantitativeFindingGenerationResult,
+            QuantitativeInsightGenerationResult,
+            QuantitativeReportCompositionResult,
+            QuantitativeTerminalResult,
+        )
+        if any(isinstance(item, forbidden_authority) for item in authority):
+            raise QuantitativeUiError("Downstream Quantitative authority prevents rearm")
+
+        reason = reason.strip()
+        if not reason:
+            raise QuantitativeUiError("Explicit rearm reason is required")
+        version = self.workflows.get_workflow_run_version(run.id)
+        previous_task_statuses = tuple(
+            (task.definition_id, task.status.value) for task in run.tasks
+        )
+        rearmed = replace(
+            run,
+            status=WorkflowStatus.PAUSED,
+            tasks=[replace(task, status=TaskStatus.CREATED) for task in run.tasks],
+        )
+        self.workflows.save_workflow_run(
+            rearmed,
+            expected_version=version,
+            task_results={},
+        )
+
+        from application.quantitative.fingerprints import canonical_digest
+
+        event_payload = {
+            "event_id": event_id,
+            "project_id": study.project_id,
+            "run_id": run.id,
+            "actor_id": actor_id,
+            "previous_status": run.status.value,
+            "previous_version": version,
+            "previous_task_statuses": previous_task_statuses,
+            "previous_task_results_fingerprint": canonical_digest(
+                task_results,
+                digest_provider=self.digest,
+            ),
+            "reason": reason,
+            "rearmed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        event = QuantitativeRunRearmEvent(
+            **event_payload,
+            fingerprint=canonical_digest(event_payload, digest_provider=self.digest),
+        )
+        self.state.persist(
+            event,
+            record_id=event_id,
+            project_id=study.project_id,
+            run_id=run.id,
+            accepted=True,
+        )
+        return self._save(
+            replace(
+                study,
+                state="IMPORTED" if study.dataset_record_id else "WAITING_FOR_DATASET",
+                qc_record_id=None,
+                qc_approval_id=None,
+                target_plan_record_id=None,
+                weight_set_record_id=None,
+                weight_approval_id=None,
+                terminal_result_record_id=None,
+            )
+        )
+
+    @staticmethod
+    def _quantitative_generation_was_used(usage: object) -> bool:
+        if not isinstance(usage, Mapping):
+            return bool(usage)
+        total = usage.get("total_llm_calls", 0)
+        if not isinstance(total, int) or isinstance(total, bool) or total != 0:
+            return True
+        stages = usage.get("stages", {})
+        if not isinstance(stages, Mapping):
+            return bool(stages)
+        for stage in ("quant_findings", "quant_insights", "quant_report"):
+            value = stages.get(stage, {})
+            if not isinstance(value, Mapping):
+                return bool(value)
+            calls = value.get("llm_calls", 0)
+            if not isinstance(calls, int) or isinstance(calls, bool) or calls != 0:
+                return True
+        return False
 
     def result_projection(self, study_id: str, *, owner_id: str) -> dict[str, Any]:
         study = self.get(study_id, owner_id=owner_id)

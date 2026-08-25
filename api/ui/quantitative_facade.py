@@ -52,6 +52,14 @@ class QuantitativeUiFacade:
     def resume(self, study_id: str):
         return self.service.resume_workflow(study_id, owner_id=self.owner_id)
 
+    def rearm(self, study_id: str, **values):
+        return self.service.rearm_failed_run(
+            study_id,
+            owner_id=self.owner_id,
+            actor_id=self.owner_id,
+            **values,
+        )
+
     def result(self, study_id: str):
         return self.service.result_projection(study_id, owner_id=self.owner_id)
 

@@ -156,6 +156,25 @@ def resume_quantitative(request: Request, study_id: str):
     except QuantitativeUiError as exc: return _error(request,str(exc))
 
 
+@router.post("/studies/{study_id}/rearm", include_in_schema=False)
+def rearm_quantitative(
+    request: Request,
+    study_id: str,
+    reason: str = Form(...),
+):
+    try:
+        build_quantitative_ui_facade(request.app.state.container).rearm(
+            study_id,
+            reason=reason,
+        )
+        return RedirectResponse(
+            f"/ui/quantitative/studies/{study_id}",
+            status_code=303,
+        )
+    except QuantitativeUiError as exc:
+        return _error(request, str(exc))
+
+
 @router.get("/studies/{study_id}/result.json", include_in_schema=False)
 def quantitative_result(request: Request, study_id: str):
     try: return JSONResponse(build_quantitative_ui_facade(request.app.state.container).result(study_id))
