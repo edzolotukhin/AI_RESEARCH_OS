@@ -12,6 +12,7 @@ from application.quantitative.finding_support import QuantitativeFindingSupportV
 from application.quantitative.finding_lineage import QuantitativeFindingLineageService
 from application.quantitative.insight_lineage import QuantitativeInsightLineageService
 from application.quantitative.report_lineage import QuantitativeReportLineageService
+from application.quantitative.research_question_coverage import QuantitativeResearchQuestionCoverageService
 from application.quantitative.insight_synthesis import (
     QuantitativeInsightSynthesisService,
     QuantitativeInsightValidator,
@@ -64,6 +65,7 @@ class QuantitativeStageServiceFactory:
     finding_lineage_repository_factory: Callable[[], Any] | None = None
     insight_lineage_repository_factory: Callable[[], Any] | None = None
     report_lineage_repository_factory: Callable[[], Any] | None = None
+    research_question_coverage_repository_factory: Callable[[], Any] | None = None
 
     def create(
         self,
@@ -104,6 +106,7 @@ class QuantitativeStageServiceFactory:
         )
         mode=state.get("analysis_execution_mode","DATASET_ONLY_EXPLORATORY_EXECUTION")
         storage=self.storage_factory(project_id,run_id)
+        current_plan=None
         execution_service=None; projection=None; execution_weights={}
         if self.analysis_execution_repository_factory is not None:
             execution_service=QuantitativeAnalysisExecutionService(repository=self.analysis_execution_repository_factory(),state_service=self.state_service,storage=storage,digest_provider=self.digest_provider)
@@ -116,6 +119,16 @@ class QuantitativeStageServiceFactory:
         report_lineage_service=None
         if self.report_lineage_repository_factory is not None:
             report_lineage_service=QuantitativeReportLineageService(repository=self.report_lineage_repository_factory(),digest_provider=self.digest_provider)
+        research_question_coverage_service=None
+        if self.research_question_coverage_repository_factory is not None:
+            research_question_coverage_service=QuantitativeResearchQuestionCoverageService(
+                repository=self.research_question_coverage_repository_factory(), digest_provider=self.digest_provider,
+                state_service=self.state_service, analysis_plan_service=self.analysis_plan_service,
+                analysis_execution_repository=getattr(execution_service,"repository",None),
+                finding_lineage_repository=getattr(finding_lineage_service,"repository",None),
+                insight_lineage_repository=getattr(insight_lineage_service,"repository",None),
+                report_lineage_repository=getattr(report_lineage_service,"repository",None),
+            )
         if mode=="DESIGN_AWARE_EXECUTION":
             if self.analysis_plan_service is None or execution_service is None: raise QuantitativeWorkflowError("design-aware Quantitative execution composition is unavailable")
             qc=self.state_service.load(state.get("qc_record_id",""),project_id=project_id,expected_type=QualityControlRun)
@@ -126,6 +139,7 @@ class QuantitativeStageServiceFactory:
             plans=self.analysis_plan_service._repository.list_plans(project_id=project_id,run_id=run_id)
             if not plans: raise QuantitativeWorkflowError("approved Analysis Plan is unavailable")
             current=plans[-1]
+            current_plan=current
             weight_sets={x.weight_set_id:x for x in self.state_service.list_for_run(run_id,project_id=project_id,expected_type=WeightSet)}
             weight_approvals={x.weight_set_id:x for x in self.state_service.list_for_run(run_id,project_id=project_id,expected_type=WeightSetApproval) if x.state.value=="APPROVED"}
             for item in current.planned_analyses:
@@ -171,6 +185,8 @@ class QuantitativeStageServiceFactory:
             finding_lineage_service=finding_lineage_service,
             insight_lineage_service=insight_lineage_service,
             report_lineage_service=report_lineage_service,
+            research_question_coverage_service=research_question_coverage_service,
+            analysis_plan_authority=current_plan,
         )
 
     def _build_design_plan(self,*,run_id,dataset,codebook):

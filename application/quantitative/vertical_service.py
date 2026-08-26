@@ -76,6 +76,8 @@ class RealQuantitativeStageService:
         finding_lineage_service=None,
         insight_lineage_service=None,
         report_lineage_service=None,
+        research_question_coverage_service=None,
+        analysis_plan_authority=None,
     ) -> None:
         self.plan, self.storage, self.digest = plan, storage, digest_provider
         self.state, self.approvals = state_service, approval_service
@@ -87,6 +89,8 @@ class RealQuantitativeStageService:
         self.finding_lineage = finding_lineage_service
         self.insight_lineage = insight_lineage_service
         self.report_lineage = report_lineage_service
+        self.research_question_coverage = research_question_coverage_service
+        self.analysis_plan_authority = analysis_plan_authority
         self.supports_progress_checkpoint = analysis_execution_service is not None
         self.importer = QuantitativeDatasetImportService(importers=tuple(importers), storage=storage, digest_provider=digest_provider)
         self.qc = DataQualityService(storage=storage, digest_provider=digest_provider)
@@ -476,6 +480,24 @@ class RealQuantitativeStageService:
         state["report_coverage_manifest_record_id"] = coverage.coverage_id
         if manifest is not None:
             state["report_lineage_manifest_record_id"] = manifest.manifest_id
+        return state
+    def _quant_rq_coverage(self, project_id, run_id, state):
+        mode = state.get("analysis_execution_mode", "DATASET_ONLY_EXPLORATORY_EXECUTION")
+        if mode == "DATASET_ONLY_EXPLORATORY_EXECUTION":
+            if self.research_question_coverage is None:
+                state["rq_coverage_status"] = "NO_DESIGN_AWARE_RQ_COVERAGE"
+                return state
+            absence = self.research_question_coverage.dataset_only_absence(project_id=project_id, run_id=run_id)
+            state["rq_coverage_absence_record_id"] = absence.absence_id
+            return state
+        if mode != "DESIGN_AWARE_EXECUTION" or self.analysis_plan_authority is None or self.research_question_coverage is None:
+            raise QuantitativeWorkflowError("design-aware RH authority cannot fall back to dataset-only")
+        manifest = self.research_question_coverage.assess_current(
+            project_id=project_id, run_id=run_id, state=state,
+            plan=self.analysis_plan_authority,
+        )
+        state["rq_coverage_manifest_record_id"] = manifest.manifest_id
+        state["rq_coverage_status"] = "IN_REVIEW"
         return state
     def _quant_complete(self, project_id, run_id, state):
         if state.get("zero_supported_findings") == "true":

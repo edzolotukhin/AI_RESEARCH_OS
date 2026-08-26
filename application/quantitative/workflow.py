@@ -35,6 +35,7 @@ STAGES = (
     ("quant_findings", "Quantitative Findings"),
     ("quant_insights", "Quantitative Insights"),
     ("quant_report", "Quantitative Report"),
+    ("quant_rq_coverage", "RQ coverage"),
     ("quant_complete", "Quantitative completion"),
 )
 
