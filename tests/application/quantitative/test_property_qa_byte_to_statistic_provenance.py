@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import inspect
 import io
+import re
 import unittest
+import zipfile
 from dataclasses import replace
+from datetime import datetime
 from decimal import Decimal
 
 from openpyxl import Workbook
@@ -44,6 +47,8 @@ class StubImporter:
 
 def xlsx_bytes(headers: list[str], rows: list[list[object]], *, formula: bool = False) -> bytes:
     workbook = Workbook()
+    workbook.properties.created = datetime(2000, 1, 1)
+    workbook.properties.modified = datetime(2000, 1, 1)
     sheet = workbook.active
     sheet.title = "Data"
     sheet.append(headers)
@@ -54,7 +59,26 @@ def xlsx_bytes(headers: list[str], rows: list[list[object]], *, formula: bool = 
     output = io.BytesIO()
     workbook.save(output)
     workbook.close()
-    return output.getvalue()
+    source = zipfile.ZipFile(io.BytesIO(output.getvalue()), "r")
+    canonical = io.BytesIO()
+    with source, zipfile.ZipFile(canonical, "w") as target:
+        for member in sorted(source.infolist(), key=lambda item: item.filename):
+            info = zipfile.ZipInfo(member.filename, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = member.compress_type
+            info.comment = member.comment
+            info.extra = member.extra
+            info.internal_attr = member.internal_attr
+            info.external_attr = member.external_attr
+            info.create_system = member.create_system
+            payload = source.read(member.filename)
+            if member.filename == "docProps/core.xml":
+                payload = re.sub(
+                    rb"(<dcterms:(?:created|modified)\b[^>]*>)[^<]*(</dcterms:(?:created|modified)>)",
+                    rb"\g<1>2000-01-01T00:00:00Z\g<2>",
+                    payload,
+                )
+            target.writestr(info, payload)
+    return canonical.getvalue()
 
 
 class PropertyQAByteToStatisticProvenanceTests(unittest.TestCase):
