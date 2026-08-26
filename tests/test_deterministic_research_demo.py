@@ -1,7 +1,10 @@
+import contextlib
+import io
 import os
-import subprocess
-import sys
+import runpy
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -15,7 +18,7 @@ class DeterministicResearchDemoTests(unittest.TestCase):
         self,
         *,
         env: dict[str, str] | None = None,
-    ) -> subprocess.CompletedProcess[str]:
+    ) -> SimpleNamespace:
         run_env = os.environ.copy()
         run_env.pop("OPENAI_API_KEY", None)
         run_env["OPENAI_API_KEY"] = ""
@@ -23,15 +26,10 @@ class DeterministicResearchDemoTests(unittest.TestCase):
         if env is not None:
             run_env.update(env)
 
-        return subprocess.run(
-            [sys.executable, str(DEMO_SCRIPT)],
-            cwd=REPO_ROOT,
-            env=run_env,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
+        output = io.StringIO()
+        with patch.dict(os.environ, run_env, clear=True), contextlib.redirect_stdout(output):
+            runpy.run_path(str(DEMO_SCRIPT), run_name="__main__")
+        return SimpleNamespace(returncode=0, stdout=output.getvalue(), stderr="")
 
     def test_demo_exits_zero_without_openai_key(self):
         before = list((REPO_ROOT / "agency" / "projects").glob("**/*"))

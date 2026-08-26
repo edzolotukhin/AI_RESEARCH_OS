@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import replace
-from typing import Any, Mapping, Protocol, Sequence
+from typing import Any, Callable, Mapping, Protocol, Sequence
 from uuid import NAMESPACE_URL, uuid5
 
 from application.ports.deterministic_digest_provider import DeterministicDigestProvider
@@ -181,7 +181,12 @@ class QuantitativeInsightSynthesisService:
         self._validator = validator
         self._digest = digest_provider
 
-    def generate(self, *, findings: Sequence[QuantitativeFinding]) -> QuantitativeInsightGenerationResult:
+    def generate(
+        self,
+        *,
+        findings: Sequence[QuantitativeFinding],
+        post_validator: Callable[[QuantitativeInsight], QuantitativeInsight] | None = None,
+    ) -> QuantitativeInsightGenerationResult:
         accepted = self._accepted_findings(findings)
         available = {item.finding_id: item for item in accepted}
         bundle = tuple(self._finding_projection(item) for item in accepted)
@@ -201,7 +206,10 @@ class QuantitativeInsightSynthesisService:
             try:
                 insight = self._parse(proposal, ordinal, bundle_fingerprint, available)
                 parsed.append(insight)
-                validated.append(self._validator.validate(insight, findings=available))
+                validated_insight = self._validator.validate(insight, findings=available)
+                if post_validator is not None:
+                    validated_insight = post_validator(validated_insight)
+                validated.append(validated_insight)
             except (QuantitativeAnalysisError, ValueError, TypeError, KeyError) as exc:
                 reason = f"{type(exc).__name__}: {exc}"
                 rejected.append(QuantitativeInsightRejection(
@@ -296,6 +304,13 @@ class QuantitativeInsightSynthesisService:
     def _parse(self, raw, ordinal, bundle_fingerprint, available):
         if not isinstance(raw, Mapping):
             raise QuantitativeAnalysisError("Insight proposal must be an object")
+        forbidden_design_fields = {
+            "objective_ids", "research_question_ids", "analytical_requirement_ids",
+            "planned_analysis_ids", "planned_comparison_ids", "rd_outcome_ids",
+            "re_lineage_ids", "lineage_fingerprints", "coverage_status",
+        }
+        if forbidden_design_fields.intersection(raw):
+            raise QuantitativeAnalysisError("Insight proposal contains model-authored design authority")
         finding_ids = self._strings(raw.get("supporting_finding_ids"), "supporting_finding_ids")
         refs = tuple(QuantitativeFindingReference(
             item,

@@ -72,17 +72,14 @@ class ValidateFetchUrlTests(unittest.TestCase):
         self.assertEqual(ctx.exception.category, "unsafe_address")
 
     def test_dns_resolution_timeout_uses_dns_resolution_failed_category(self) -> None:
-        import time
+        from concurrent.futures import TimeoutError as FuturesTimeoutError
         from unittest.mock import patch
 
-        def slow_resolve(_host: str) -> list[str]:
-            time.sleep(0.05)
-            return ["93.184.216.34"]
-
         with patch(
-            "infrastructure.retrieval.network_safety._default_resolve_host_addresses",
-            side_effect=slow_resolve,
-        ):
+            "infrastructure.retrieval.network_safety.ThreadPoolExecutor"
+        ) as executor_cls:
+            future = executor_cls.return_value.__enter__.return_value.submit.return_value
+            future.result.side_effect = FuturesTimeoutError
             with self.assertRaises(UnsafeUrlError) as ctx:
                 validate_fetch_url(
                     "https://slow.example/report",

@@ -10,6 +10,7 @@ from application.quantitative.finding_generation import (
 )
 from application.quantitative.finding_support import QuantitativeFindingSupportValidator
 from application.quantitative.finding_lineage import QuantitativeFindingLineageService
+from application.quantitative.insight_lineage import QuantitativeInsightLineageService
 from application.quantitative.insight_synthesis import (
     QuantitativeInsightSynthesisService,
     QuantitativeInsightValidator,
@@ -60,6 +61,7 @@ class QuantitativeStageServiceFactory:
     analysis_plan_service: Any | None = None
     analysis_execution_repository_factory: Callable[[], Any] | None = None
     finding_lineage_repository_factory: Callable[[], Any] | None = None
+    insight_lineage_repository_factory: Callable[[], Any] | None = None
 
     def create(
         self,
@@ -106,6 +108,9 @@ class QuantitativeStageServiceFactory:
         finding_lineage_service=None
         if self.finding_lineage_repository_factory is not None and execution_service is not None:
             finding_lineage_service=QuantitativeFindingLineageService(repository=self.finding_lineage_repository_factory(),analysis_execution_repository=execution_service.repository,state_service=self.state_service,digest_provider=self.digest_provider)
+        insight_lineage_service=None
+        if self.insight_lineage_repository_factory is not None:
+            insight_lineage_service=QuantitativeInsightLineageService(repository=self.insight_lineage_repository_factory(),digest_provider=self.digest_provider)
         if mode=="DESIGN_AWARE_EXECUTION":
             if self.analysis_plan_service is None or execution_service is None: raise QuantitativeWorkflowError("design-aware Quantitative execution composition is unavailable")
             qc=self.state_service.load(state.get("qc_record_id",""),project_id=project_id,expected_type=QualityControlRun)
@@ -159,6 +164,7 @@ class QuantitativeStageServiceFactory:
             analysis_execution_projection=projection,
             analysis_execution_weights=execution_weights,
             finding_lineage_service=finding_lineage_service,
+            insight_lineage_service=insight_lineage_service,
         )
 
     def _build_design_plan(self,*,run_id,dataset,codebook):

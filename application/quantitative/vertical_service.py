@@ -28,6 +28,8 @@ from domain.quantitative.analysis import (
 from domain.quantitative.dataset import CodebookVersion, DatasetFormat, DatasetVersion
 from domain.quantitative.finding import QuantitativeFindingGenerationResult
 from domain.quantitative.insight import QuantitativeInsightGenerationResult
+from domain.quantitative.analysis_execution import QuantitativeAnalysisExecutionManifest
+from domain.quantitative.finding_lineage import DesignAwareFindingInputAuthority, QuantitativeFindingCoverageManifest, QuantitativeFindingDesignLineageManifest
 from domain.quantitative.quality import (
     CleaningDecisionSet, DatasetQualityState, QualityControlRun, QuestionnaireSnapshot,
 )
@@ -70,6 +72,7 @@ class RealQuantitativeStageService:
         analysis_execution_projection=None,
         analysis_execution_weights=None,
         finding_lineage_service=None,
+        insight_lineage_service=None,
     ) -> None:
         self.plan, self.storage, self.digest = plan, storage, digest_provider
         self.state, self.approvals = state_service, approval_service
@@ -79,6 +82,7 @@ class RealQuantitativeStageService:
         self.analysis_execution_projection = analysis_execution_projection
         self.analysis_execution_weights = dict(analysis_execution_weights or {})
         self.finding_lineage = finding_lineage_service
+        self.insight_lineage = insight_lineage_service
         self.supports_progress_checkpoint = analysis_execution_service is not None
         self.importer = QuantitativeDatasetImportService(importers=tuple(importers), storage=storage, digest_provider=digest_provider)
         self.qc = DataQualityService(storage=storage, digest_provider=digest_provider)
@@ -300,12 +304,71 @@ class RealQuantitativeStageService:
             state["zero_supported_findings"] = "true"
             state["insight_generation_status"] = "SKIPPED_NO_SUPPORTED_FINDINGS"
             return state
+        mode = state.get("analysis_execution_mode", "DATASET_ONLY_EXPLORATORY_EXECUTION")
+        if mode == "DESIGN_AWARE_EXECUTION":
+            return self._design_aware_insights(project_id, run_id, state, generated)
+        if mode != "DATASET_ONLY_EXPLORATORY_EXECUTION":
+            raise QuantitativeWorkflowError("unknown Quantitative analysis execution mode")
         insights = self.insights.generate(findings=generated.accepted_findings)
-        state["insight_generation_record_id"] = self._persist(insights, "insight-generation", project_id, run_id)
+        generation_record_id = self._persist(insights, "insight-generation", project_id, run_id)
+        state["insight_generation_record_id"] = generation_record_id
+        if self.insight_lineage is not None:
+            absence = self.insight_lineage.dataset_only_absence(project_id=project_id, run_id=run_id, generation_record_id=generation_record_id, generation=insights)
+            state["insight_lineage_absence_record_id"] = absence.absence_id
         if not insights.accepted_insights:
             state["zero_supported_insights"] = "true"
         return state
 
+    def _design_aware_insights(self, project_id, run_id, state, generated):
+        if self.insight_lineage is None or self.finding_lineage is None or self.analysis_execution_projection is None:
+            raise QuantitativeWorkflowError("design-aware RF authority composition is unavailable")
+        dataset = self._load(state, "dataset_record_id", project_id, DatasetVersion)
+        codebook = self._load(state, "codebook_record_id", project_id, CodebookVersion)
+        rd = self._load(state, "analysis_execution_manifest_record_id", project_id, QuantitativeAnalysisExecutionManifest)
+        re_input = self._load(state, "finding_input_authority_record_id", project_id, DesignAwareFindingInputAuthority)
+        re_manifest = self._load(state, "finding_lineage_manifest_record_id", project_id, QuantitativeFindingDesignLineageManifest)
+        re_coverage = self._load(state, "finding_coverage_manifest_record_id", project_id, QuantitativeFindingCoverageManifest)
+        current_re = self.finding_lineage.build_input_authority(project_id=project_id, run_id=run_id, manifest=rd, projection=self.analysis_execution_projection, dataset=dataset, codebook=codebook)
+        if current_re != re_input:
+            raise QuantitativeWorkflowError("stale historical RE authority cannot feed current QJ")
+        candidate = self.insight_lineage.build_input_authority(
+            project_id=project_id, run_id=run_id,
+            generation_record_id=state["finding_generation_record_id"], generation=generated,
+            re_input=re_input, re_manifest=re_manifest, re_coverage=re_coverage,
+        )
+        existing = self.insight_lineage.repository.get_input_authority(candidate.authority_id, project_id=project_id)
+        if existing is not None:
+            if existing != candidate:
+                raise QuantitativeWorkflowError("conflicting RF input authority")
+            completed = self.insight_lineage.repository.find_manifest_for_input(candidate.authority_id, project_id=project_id, run_id=run_id)
+            if completed is not None:
+                insights = self.state.load(completed.insight_generation_record_id, project_id=project_id, expected_type=QuantitativeInsightGenerationResult)
+                state["insight_generation_record_id"] = completed.insight_generation_record_id
+                state["insight_input_authority_record_id"] = candidate.authority_id
+                state["insight_lineage_manifest_record_id"] = completed.manifest_id
+                state["insight_coverage_manifest_record_id"] = completed.coverage_manifest_id
+                if not insights.accepted_insights: state["zero_supported_insights"] = "true"
+                return state
+            matching = tuple(item for item in self.state.list_for_run(run_id, project_id=project_id, expected_type=QuantitativeInsightGenerationResult) if item.input_finding_bundle_fingerprint == self.insight_lineage.expected_generation_bundle_fingerprint(candidate))
+            if len(matching) > 1:
+                raise QuantitativeWorkflowError("ambiguous persisted Insight generation")
+            if not matching:
+                raise QuantitativeWorkflowError("indeterminate QJ provider boundary; retry prohibited")
+            insights = matching[0]
+            generation_record_id = f"{run_id}:insight-generation:{authority_fingerprint(insights)}"
+            lineage, coverage = self.insight_lineage.finalize(authority=candidate, generation_record_id=generation_record_id, generation=insights)
+        else:
+            authority = self.insight_lineage.repository.save_input_authority(candidate)
+            insights = self.insights.generate(findings=generated.accepted_findings, post_validator=self.insight_lineage.compatibility_validator(authority))
+            generation_record_id = self._persist(insights, "insight-generation", project_id, run_id)
+            lineage, coverage = self.insight_lineage.finalize(authority=authority, generation_record_id=generation_record_id, generation=insights)
+        state["insight_generation_record_id"] = generation_record_id
+        state["insight_input_authority_record_id"] = candidate.authority_id
+        state["insight_lineage_manifest_record_id"] = lineage.manifest_id
+        state["insight_coverage_manifest_record_id"] = coverage.coverage_id
+        if not insights.accepted_insights:
+            state["zero_supported_insights"] = "true"
+        return state
     def _quant_report(self, project_id, run_id, state):
         if state.get("zero_supported_findings") == "true":
             state["report_composition_status"] = "SKIPPED_NO_SUPPORTED_FINDINGS"
