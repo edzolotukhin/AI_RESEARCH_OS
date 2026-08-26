@@ -89,7 +89,7 @@ class QuantitativeAnalysisExecutionService:
             item=self.repository.get_analysis_outcome(oid,project_id=project_id)
             results=tuple((x.authority_id,x.authority_fingerprint) for x in item.artifacts if x.artifact_type=="STATISTICAL_RESULT")
             entries.append(QuantitativeExecutionLineageEntry(item.planned_analysis_id,item.specification_id,item.specification_fingerprint,item.objective_ids,item.research_question_ids,item.analytical_requirement_ids,results,item.status))
-        return QuantitativeExecutionLineageProjection(manifest.manifest_id,manifest.fingerprint,manifest.coverage_manifest_id,tuple(entries),manifest.status is AnalysisExecutionManifestStatus.COMPLETED)
+        return QuantitativeExecutionLineageProjection(manifest.manifest_id,manifest.fingerprint,manifest.coverage_manifest_id,tuple(entries),manifest.status in {AnalysisExecutionManifestStatus.COMPLETED,AnalysisExecutionManifestStatus.COMPLETED_WITH_OPTIONAL_FAILURES})
 
     def _preflight(self,project_id,run_id,p,d,c,q,qc_id,qc_fp,weights):
         if d.project_id!=project_id or d.run_id!=run_id: raise QuantitativeAnalysisExecutionError("Dataset project/run authority mismatch")

@@ -69,6 +69,7 @@ class RealQuantitativeStageService:
         analysis_execution_service=None,
         analysis_execution_projection=None,
         analysis_execution_weights=None,
+        finding_lineage_service=None,
     ) -> None:
         self.plan, self.storage, self.digest = plan, storage, digest_provider
         self.state, self.approvals = state_service, approval_service
@@ -77,6 +78,7 @@ class RealQuantitativeStageService:
         self.analysis_execution_service = analysis_execution_service
         self.analysis_execution_projection = analysis_execution_projection
         self.analysis_execution_weights = dict(analysis_execution_weights or {})
+        self.finding_lineage = finding_lineage_service
         self.supports_progress_checkpoint = analysis_execution_service is not None
         self.importer = QuantitativeDatasetImportService(importers=tuple(importers), storage=storage, digest_provider=digest_provider)
         self.qc = DataQualityService(storage=storage, digest_provider=digest_provider)
@@ -219,12 +221,79 @@ class RealQuantitativeStageService:
         return tuple(self.state.load(item, project_id=project_id, expected_type=StatisticalResult) for item in manifest.statistical_result_record_ids)
 
     def _quant_findings(self, project_id, run_id, state):
-        generated = self.findings.generate(statistical_results=self._results(state, project_id))
-        state["finding_generation_record_id"] = self._persist(generated, "finding-generation", project_id, run_id)
+        mode = state.get("analysis_execution_mode", "DATASET_ONLY_EXPLORATORY_EXECUTION")
+        if mode == "DESIGN_AWARE_EXECUTION":
+            if self.finding_lineage is None or self.analysis_execution_projection is None:
+                raise QuantitativeWorkflowError("design-aware Finding lineage composition is unavailable")
+            manifest_id = state.get("analysis_execution_manifest_record_id")
+            if not manifest_id:
+                raise QuantitativeWorkflowError("design-aware RD manifest is unavailable")
+            manifest = self.analysis_execution_service.repository.get_manifest(manifest_id, project_id=project_id)
+            if manifest is None:
+                raise QuantitativeWorkflowError("design-aware RD manifest is unavailable")
+            dataset = self._load(state, "dataset_record_id", project_id, DatasetVersion)
+            codebook = self._load(state, "codebook_record_id", project_id, CodebookVersion)
+            candidate = self.finding_lineage.build_input_authority(
+                project_id=project_id, run_id=run_id, manifest=manifest,
+                projection=self.analysis_execution_projection, dataset=dataset, codebook=codebook,
+            )
+            existing = self.finding_lineage.repository.get_input_authority(candidate.authority_id, project_id=project_id)
+            if existing is not None and existing != candidate:
+                raise QuantitativeWorkflowError("conflicting design-aware QI input authority")
+            if existing is not None:
+                completed = self.finding_lineage.repository.find_manifest_for_input(candidate.authority_id, project_id=project_id, run_id=run_id)
+                if completed is not None:
+                    generated = self.state.load(completed.finding_generation_record_id, project_id=project_id, expected_type=QuantitativeFindingGenerationResult)
+                    if generated.generation_fingerprint != completed.finding_generation_fingerprint:
+                        raise QuantitativeWorkflowError("stale completed Finding lineage authority")
+                    state["finding_generation_record_id"] = completed.finding_generation_record_id
+                    state["finding_input_authority_record_id"] = candidate.authority_id
+                    state["finding_lineage_manifest_record_id"] = completed.manifest_id
+                    state["finding_coverage_manifest_record_id"] = completed.coverage_manifest_id
+                    if not generated.accepted_findings:
+                        state["zero_supported_findings"] = "true"
+                    return state
+                expected_bundle = self.finding_lineage.expected_generation_bundle_fingerprint(candidate)
+                recovered = tuple(item for item in self.state.list_for_run(run_id, project_id=project_id, expected_type=QuantitativeFindingGenerationResult) if item.input_result_bundle_fingerprint == expected_bundle)
+                if len(recovered) > 1:
+                    raise QuantitativeWorkflowError("ambiguous persisted Finding generation authority")
+                if recovered:
+                    generated = recovered[0]
+                    generation_record_id = f"{run_id}:finding-generation:{generated.generation_fingerprint}"
+                    lineage, coverage = self.finding_lineage.finalize(authority=candidate, generation_record_id=generation_record_id, generation=generated)
+                    state["finding_generation_record_id"] = generation_record_id
+                    state["finding_input_authority_record_id"] = candidate.authority_id
+                    state["finding_lineage_manifest_record_id"] = lineage.manifest_id
+                    state["finding_coverage_manifest_record_id"] = coverage.coverage_id
+                    if not generated.accepted_findings:
+                        state["zero_supported_findings"] = "true"
+                    return state
+                raise QuantitativeWorkflowError("indeterminate design-aware QI provider boundary; semantic retry forbidden")
+            authority = self.finding_lineage.repository.save_input_authority(candidate)
+            results, comparisons = self.finding_lineage.load_results(authority)
+            generated = self.findings.generate(
+                statistical_results=results,
+                comparison_results=comparisons,
+                limitations=self.finding_lineage.generation_limitations(authority),
+            )
+            generation_record_id = self._persist(generated, "finding-generation", project_id, run_id)
+            lineage, coverage = self.finding_lineage.finalize(authority=authority, generation_record_id=generation_record_id, generation=generated)
+            state["finding_generation_record_id"] = generation_record_id
+            state["finding_input_authority_record_id"] = authority.authority_id
+            state["finding_lineage_manifest_record_id"] = lineage.manifest_id
+            state["finding_coverage_manifest_record_id"] = coverage.coverage_id
+        elif mode == "DATASET_ONLY_EXPLORATORY_EXECUTION":
+            generated = self.findings.generate(statistical_results=self._results(state, project_id))
+            generation_record_id = self._persist(generated, "finding-generation", project_id, run_id)
+            state["finding_generation_record_id"] = generation_record_id
+            if self.finding_lineage is not None:
+                absence = self.finding_lineage.dataset_only_absence(project_id=project_id, run_id=run_id, generation_record_id=generation_record_id, generation=generated)
+                state["finding_lineage_absence_record_id"] = absence.absence_id
+        else:
+            raise QuantitativeWorkflowError("unknown Quantitative analysis execution mode")
         if not generated.accepted_findings:
             state["zero_supported_findings"] = "true"
         return state
-
     def _quant_insights(self, project_id, run_id, state):
         generated = self._load(state, "finding_generation_record_id", project_id, QuantitativeFindingGenerationResult)
         if not generated.accepted_findings:

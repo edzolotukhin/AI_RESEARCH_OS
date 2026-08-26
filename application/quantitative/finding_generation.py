@@ -280,6 +280,12 @@ class QuantitativeFindingGenerationService:
     def _parse_proposal(self, raw, *, ordinal, bundle_fingerprint, available_results, available_comparisons):
         if not isinstance(raw, Mapping):
             raise QuantitativeAnalysisError("proposal must be an object")
+        forbidden_design_fields = {
+            "planned_analysis_id", "planned_comparison_id", "objective_ids",
+            "research_question_ids", "analytical_requirement_ids",
+        }
+        if forbidden_design_fields.intersection(raw):
+            raise QuantitativeAnalysisError("proposal must not supply design lineage")
         claim_type = QuantitativeClaimType(str(raw["claim_type"]))
         result_ids = self._string_list(raw.get("statistical_result_refs"), "statistical_result_refs")
         comparison_ids = self._string_list(
