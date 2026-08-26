@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
+from application.quantitative.analysis_execution import QuantitativeAnalysisExecutionService
+from application.quantitative.quality_control import assess_dataset_quality
 from application.quantitative.finding_generation import (
     QuantitativeFindingGenerationService,
 )
@@ -36,6 +38,8 @@ from domain.quantitative.analysis import (
     NumericAnalysisSpecification,
 )
 from domain.quantitative.dataset import CodebookVersion, DatasetVersion, VariableType
+from domain.quantitative.quality import QualityControlRun
+from domain.quantitative.weighting import WeightSet, WeightSetApproval
 from domain.workflow_status import WorkflowStatus
 from runtime.workflow_context import WorkflowContext
 
@@ -52,6 +56,8 @@ class QuantitativeStageServiceFactory:
     insight_generator: Any
     report_generator: Any
     generation_mode: str
+    analysis_plan_service: Any | None = None
+    analysis_execution_repository_factory: Callable[[], Any] | None = None
 
     def create(
         self,
@@ -90,11 +96,34 @@ class QuantitativeStageServiceFactory:
             project_id=project_id,
             expected_type=CodebookVersion,
         )
-        plan = self._build_plan(run_id=run_id, dataset=dataset, codebook=codebook)
-        approvals = QuantitativeApprovalService(self.state_service, self.digest_provider)
+        mode=state.get("analysis_execution_mode","DATASET_ONLY_EXPLORATORY_EXECUTION")
+        storage=self.storage_factory(project_id,run_id)
+        execution_service=None; projection=None; execution_weights={}
+        if self.analysis_execution_repository_factory is not None:
+            execution_service=QuantitativeAnalysisExecutionService(repository=self.analysis_execution_repository_factory(),state_service=self.state_service,storage=storage,digest_provider=self.digest_provider)
+        if mode=="DESIGN_AWARE_EXECUTION":
+            if self.analysis_plan_service is None or execution_service is None: raise QuantitativeWorkflowError("design-aware Quantitative execution composition is unavailable")
+            qc=self.state_service.load(state.get("qc_record_id",""),project_id=project_id,expected_type=QualityControlRun)
+            approvals=QuantitativeApprovalService(self.state_service,self.digest_provider)
+            qc_approval_id=state.get("cleaned_qc_approval_id") or state.get("qc_approval_id","")
+            qc_approval=approvals.require_current(qc_approval_id,project_id=project_id,subject_fingerprint=qc.fingerprint)
+            quality=assess_dataset_quality(dataset=dataset,qc_run=qc,manager_approved=True,approval_fingerprint=qc_approval.fingerprint,digest_provider=self.digest_provider)
+            plans=self.analysis_plan_service._repository.list_plans(project_id=project_id,run_id=run_id)
+            if not plans: raise QuantitativeWorkflowError("approved Analysis Plan is unavailable")
+            current=plans[-1]
+            weight_sets={x.weight_set_id:x for x in self.state_service.list_for_run(run_id,project_id=project_id,expected_type=WeightSet)}
+            weight_approvals={x.weight_set_id:x for x in self.state_service.list_for_run(run_id,project_id=project_id,expected_type=WeightSetApproval) if x.state.value=="APPROVED"}
+            for item in current.planned_analyses:
+                binding=item.weight_set_binding
+                if binding is not None and binding.weight_set_id in weight_sets and binding.weight_set_id in weight_approvals: execution_weights[item.planned_analysis_id]=(weight_sets[binding.weight_set_id],weight_approvals[binding.weight_set_id])
+            projection=self.analysis_plan_service.execution_projection(project_id=project_id,run_id=run_id,dataset=dataset,codebook=codebook,quality_assessment=quality,weight_sets=execution_weights)
+            plan=self._build_design_plan(run_id=run_id,dataset=dataset,codebook=codebook)
+        elif mode=="DATASET_ONLY_EXPLORATORY_EXECUTION": plan=self._build_plan(run_id=run_id,dataset=dataset,codebook=codebook)
+        else: raise QuantitativeWorkflowError("unknown Quantitative analysis execution mode")
+        approvals=QuantitativeApprovalService(self.state_service,self.digest_provider)
         return RealQuantitativeStageService(
             plan=plan,
-            storage=self.storage_factory(project_id, run_id),
+            storage=storage,
             digest_provider=self.digest_provider,
             state_service=self.state_service,
             approval_service=approvals,
@@ -121,7 +150,14 @@ class QuantitativeStageServiceFactory:
             ),
             importers=self.importers,
             generation_mode=self.generation_mode,
+            analysis_execution_service=execution_service,
+            analysis_execution_projection=projection,
+            analysis_execution_weights=execution_weights,
         )
+
+    def _build_design_plan(self,*,run_id,dataset,codebook):
+        questionnaire=build_questionnaire_snapshot(snapshot_id=f"questionnaire-{run_id}-rd",version="RD-1",codebook_version_id=codebook.codebook_version_id,question_variable_bindings=(),digest_provider=self.digest_provider)
+        return QuantitativeVerticalPlan(b"","already-imported.sav",dataset.dataset_id,{},questionnaire,(),"",None,None,None,None,weight_mode="CONSTRUCT_FROM_TARGET_MARGINS")
 
     def _build_plan(
         self,

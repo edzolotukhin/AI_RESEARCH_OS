@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Mapping, Protocol
 
 from application.contracts.base_executor import BaseExecutor
+from application.runtime.checkpoint_context import CHECKPOINT_SERVICE_KEY
 from application.ports.deterministic_digest_provider import DeterministicDigestProvider
 from application.quantitative.fingerprints import canonical_digest
 from application.quantitative.state_persistence import QuantitativeStateService
@@ -100,12 +101,20 @@ class QuantitativeStageExecutor(BaseExecutor):
             context.shared_state.get(QUANTITATIVE_SAFE_STATE_KEY, {})
         )
         try:
-            updated = service.execute_stage(
-                task.definition_id,
-                project_id=context.project.id,
-                run_id=context.workflow_run.id,
-                safe_state=state,
-            )
+            if task.definition_id == "quant_analysis" and getattr(service,"supports_progress_checkpoint",False):
+                checkpoint=context.services.get(CHECKPOINT_SERVICE_KEY)
+                def progress(manifest_id):
+                    state["analysis_execution_progress_manifest_id"]=manifest_id
+                    context.shared_state[QUANTITATIVE_SAFE_STATE_KEY]=validate_safe_workflow_state(state)
+                    if checkpoint is not None: checkpoint.on_task_progress(context)
+                updated=service.execute_stage(task.definition_id,project_id=context.project.id,run_id=context.workflow_run.id,safe_state=state,progress_callback=progress)
+            else:
+                updated = service.execute_stage(
+                    task.definition_id,
+                    project_id=context.project.id,
+                    run_id=context.workflow_run.id,
+                    safe_state=state,
+                )
         except QuantitativeApprovalRequired as required:
             state.update(required.state_updates)
             state.update(

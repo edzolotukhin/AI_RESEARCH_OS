@@ -47,11 +47,18 @@ class PlannedAnalysis:
     execution_support: AnalysisExecutionSupport=AnalysisExecutionSupport.SUPPORTED
 
 @dataclass(frozen=True)
+class ComparisonResultRoleSelector:
+    role: str; precursor_analysis_id: str; statistic_type: str; variable_id: str; group_variable_id: str; outcome_category: Any | None; group_category: Any | None; filter_definition: str
+
+@dataclass(frozen=True)
 class PlannedComparison:
     planned_comparison_id: str; specification: ComparisonSpecification; specification_fingerprint: str
-    precursor_analysis_ids: tuple[str,str]; research_question_ids: tuple[str,...]
+    precursor_analysis_ids: tuple[str,...]; research_question_ids: tuple[str,...]
     analytical_requirement_ids: tuple[str,...]; expected_result_family: str
     assumptions: tuple[str,...]=(); limitations: tuple[str,...]=()
+    result_role_selectors: tuple[ComparisonResultRoleSelector,...]=()
+    objective_ids: tuple[str,...]=()
+    obligation: str="MANDATORY"
 
 @dataclass(frozen=True)
 class AnalysisPlanCoverageDeclaration:
@@ -97,7 +104,7 @@ class ApprovedAnalysisPlanProjection:
 
 @dataclass(frozen=True)
 class AnalysisExecutionProjection:
-    plan_version_id: str; plan_fingerprint: str; quality_assessment_fingerprint: str; specifications: tuple[AnalysisSpecification,...]; comparisons: tuple[ComparisonSpecification,...]; fingerprint: str
+    plan_id: str; plan_version_id: str; plan_fingerprint: str; quality_assessment_fingerprint: str; coverage_manifest_id: str; coverage_manifest_fingerprint: str; planned_analyses: tuple[PlannedAnalysis,...]; planned_comparisons: tuple[PlannedComparison,...]; specifications: tuple[AnalysisSpecification,...]; comparisons: tuple[ComparisonSpecification,...]; fingerprint: str
 
 @dataclass(frozen=True)
 class DatasetOnlyAnalysisPlanAuthority:

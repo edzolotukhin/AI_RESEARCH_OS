@@ -46,10 +46,10 @@ class QuantitativeVerticalPlan:
     questionnaire: QuestionnaireSnapshot
     imported_weight_rows: tuple[tuple[object, object], ...]
     weight_source_checksum: str
-    one_way: AnalysisSpecification
-    cross_tab: CrossTabAnalysisSpecification
-    numeric: NumericAnalysisSpecification
-    nps: NpsAnalysisSpecification
+    one_way: AnalysisSpecification | None
+    cross_tab: CrossTabAnalysisSpecification | None
+    numeric: NumericAnalysisSpecification | None
+    nps: NpsAnalysisSpecification | None
     cleaning_decision_set: CleaningDecisionSet | None = None
     weight_mode: str = "IMPORT_PRECOMPUTED_WEIGHTSET"
     weighting_target_plan: WeightingTargetPlan | None = None
@@ -66,11 +66,18 @@ class RealQuantitativeStageService:
         report_service: QuantitativeReportCompositionService,
         importers: Sequence,
         generation_mode: str = "offline",
+        analysis_execution_service=None,
+        analysis_execution_projection=None,
+        analysis_execution_weights=None,
     ) -> None:
         self.plan, self.storage, self.digest = plan, storage, digest_provider
         self.state, self.approvals = state_service, approval_service
         self.findings, self.insights, self.reports = finding_service, insight_service, report_service
         self.generation_mode = generation_mode
+        self.analysis_execution_service = analysis_execution_service
+        self.analysis_execution_projection = analysis_execution_projection
+        self.analysis_execution_weights = dict(analysis_execution_weights or {})
+        self.supports_progress_checkpoint = analysis_execution_service is not None
         self.importer = QuantitativeDatasetImportService(importers=tuple(importers), storage=storage, digest_provider=digest_provider)
         self.qc = DataQualityService(storage=storage, digest_provider=digest_provider)
         self.cleaner = CleaningEngine(storage=storage, digest_provider=digest_provider)
@@ -81,9 +88,10 @@ class RealQuantitativeStageService:
         self.numeric = NumericStatisticsService(storage=storage, digest_provider=digest_provider)
         self.kpi = KpiStatisticsService(storage=storage, digest_provider=digest_provider)
 
-    def execute_stage(self, stage_id: str, *, project_id: str, run_id: str, safe_state: Mapping[str, str]) -> Mapping[str, str]:
+    def execute_stage(self, stage_id: str, *, project_id: str, run_id: str, safe_state: Mapping[str, str], progress_callback=None) -> Mapping[str, str]:
         handler = getattr(self, f"_{stage_id}", None)
         if handler is None: raise QuantitativeWorkflowError(f"unsupported Quantitative stage: {stage_id}")
+        if stage_id == "quant_analysis": return handler(project_id, run_id, dict(safe_state), progress_callback=progress_callback)
         return handler(project_id, run_id, dict(safe_state))
 
     def _persist(self, value, kind, project_id, run_id, *, dataset_id=None, accepted=None):
@@ -165,25 +173,47 @@ class RealQuantitativeStageService:
         refs = self.cross_tab.eligible_respondent_refs(dataset=dataset, codebook=codebook, specification=spec) if isinstance(spec, CrossTabAnalysisSpecification) else self.numeric.eligible_respondent_refs(dataset=dataset, codebook=codebook, specification=spec)
         return build_analytical_view(dataset=dataset, quality=quality, specification=spec, mode=WeightingMode.WEIGHTED if spec.weighting_status == "WEIGHTED" else WeightingMode.UNWEIGHTED, respondent_refs=refs, digest_provider=self.digest, weight_set=weight_set if spec.weighting_status == "WEIGHTED" else None, approval=approval if spec.weighting_status == "WEIGHTED" else None)
 
-    def _quant_analysis(self, project_id, run_id, state):
+    def _quant_analysis(self, project_id, run_id, state, progress_callback=None):
         dataset = self._load(state, "dataset_record_id", project_id, DatasetVersion); codebook = self._load(state, "codebook_record_id", project_id, CodebookVersion); qc = self._load(state, "qc_record_id", project_id, QualityControlRun); weights = self._load(state, "weight_set_record_id", project_id, WeightSet)
         qc_approval_id = state.get("cleaned_qc_approval_id") or state["qc_approval_id"]
         qc_approval = self.approvals.require_current(qc_approval_id, project_id=project_id, subject_fingerprint=qc.fingerprint)
         self.approvals.require_current(state["weight_approval_id"], project_id=project_id, subject_fingerprint=weights.reproducibility_fingerprint)
         weight_approval = self._load(state, "analytical_weight_approval_record_id", project_id, WeightSetApproval)
+        quality = assess_dataset_quality(dataset=dataset, qc_run=qc, manager_approved=True, approval_fingerprint=qc_approval.fingerprint, digest_provider=self.digest)
+        if self.analysis_execution_projection is not None:
+            if self.analysis_execution_service is None: raise QuantitativeWorkflowError("design-aware analysis execution service is unavailable")
+            manifest=self.analysis_execution_service.execute(project_id=project_id,run_id=run_id,projection=self.analysis_execution_projection,dataset=dataset,codebook=codebook,quality=quality,qc_approval_id=qc_approval_id,qc_approval_fingerprint=qc_approval.fingerprint,weight_authorities=self.analysis_execution_weights,progress_callback=progress_callback)
+            result_ids=[]; table_ids=[]; comparison_ids=[]
+            for outcome_id in manifest.analysis_outcome_ids:
+                outcome=self.analysis_execution_service.repository.get_analysis_outcome(outcome_id,project_id=project_id)
+                for artifact in outcome.artifacts:
+                    if artifact.artifact_type=="STATISTICAL_RESULT": result_ids.append(artifact.record_id)
+                    elif artifact.artifact_type=="STATISTICAL_TABLE": table_ids.append(artifact.record_id)
+            for outcome_id in manifest.comparison_outcome_ids:
+                outcome=self.analysis_execution_service.repository.get_comparison_outcome(outcome_id,project_id=project_id)
+                comparison_ids.extend(x.record_id for x in outcome.artifacts if x.artifact_type=="COMPARISON_RESULT")
+            manifest_fp=canonical_digest({"dataset":dataset.dataset_fingerprint,"results":tuple(result_ids),"tables":tuple(table_ids),"comparisons":tuple(comparison_ids),"rd":manifest.fingerprint},digest_provider=self.digest)
+            legacy=QuantitativeAnalysisManifest(f"analysis-{manifest_fp}",dataset.version_id,tuple(result_ids),tuple(table_ids),tuple(comparison_ids),manifest_fp)
+            state["analysis_manifest_record_id"]=self._persist(legacy,"analysis-manifest",project_id,run_id,dataset_id=dataset.version_id)
+            state["analysis_execution_manifest_record_id"]=manifest.manifest_id
+            state["analysis_execution_mode"]="DESIGN_AWARE_EXECUTION"
+            return state
+        if any(value is None for value in (self.plan.one_way,self.plan.cross_tab,self.plan.numeric,self.plan.nps)): raise QuantitativeWorkflowError("dataset-only analysis plan is incomplete")
         results = list(self.one_way.compute(dataset=dataset, codebook=codebook, specification=self.plan.one_way))
         cross_view = self._view(dataset, qc, weights, weight_approval, self.plan.cross_tab, codebook)
         table, cross_results = self.cross_tab.compute(dataset=dataset, codebook=codebook, specification=self.plan.cross_tab, view=cross_view, weight_set=weights); results.extend(cross_results)
         numeric_view = self._view(dataset, qc, weights, weight_approval, self.plan.numeric, codebook); results.extend(self.numeric.compute(dataset=dataset, codebook=codebook, specification=self.plan.numeric, view=numeric_view, weight_set=weights if self.plan.numeric.weighting_status == "WEIGHTED" else None))
         nps_view = self._view(dataset, qc, weights, weight_approval, self.plan.nps, codebook); results.extend(self.kpi.compute_nps(dataset=dataset, codebook=codebook, specification=self.plan.nps, view=nps_view, weight_set=weights if self.plan.nps.weighting_status == "WEIGHTED" else None))
-        ids=[]
-        for result in results: ids.append(self._persist(result, "stat", project_id, run_id, dataset_id=dataset.version_id))
-        table_id = self._persist(table, "table", project_id, run_id, dataset_id=dataset.version_id)
-        manifest_fp = canonical_digest({"dataset":dataset.dataset_fingerprint,"results":ids,"tables":[table_id]}, digest_provider=self.digest)
-        manifest = QuantitativeAnalysisManifest(f"analysis-{manifest_fp}", dataset.version_id, tuple(ids), (table_id,), (), manifest_fp)
-        state["analysis_manifest_record_id"] = self._persist(manifest, "analysis-manifest", project_id, run_id, dataset_id=dataset.version_id)
+        ids=[self._persist(result,"stat",project_id,run_id,dataset_id=dataset.version_id) for result in results]
+        table_id=self._persist(table,"table",project_id,run_id,dataset_id=dataset.version_id)
+        manifest_fp=canonical_digest({"dataset":dataset.dataset_fingerprint,"results":ids,"tables":[table_id]},digest_provider=self.digest)
+        manifest=QuantitativeAnalysisManifest(f"analysis-{manifest_fp}",dataset.version_id,tuple(ids),(table_id,),(),manifest_fp)
+        state["analysis_manifest_record_id"]=self._persist(manifest,"analysis-manifest",project_id,run_id,dataset_id=dataset.version_id)
+        state["analysis_execution_mode"]="DATASET_ONLY_EXPLORATORY_EXECUTION"
+        if self.analysis_execution_service is not None:
+            rd=self.analysis_execution_service.record_dataset_only(project_id=project_id,run_id=run_id,dataset=dataset,codebook=codebook,quality=quality,qc_approval_id=qc_approval_id,qc_approval_fingerprint=qc_approval.fingerprint,legacy_manifest_record_id=state["analysis_manifest_record_id"])
+            state["analysis_execution_manifest_record_id"]=rd.manifest_id
         return state
-
     def _results(self, state, project_id):
         manifest = self._load(state, "analysis_manifest_record_id", project_id, QuantitativeAnalysisManifest)
         return tuple(self.state.load(item, project_id=project_id, expected_type=StatisticalResult) for item in manifest.statistical_result_record_ids)
