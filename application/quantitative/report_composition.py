@@ -23,6 +23,7 @@ from domain.quantitative.report import (
 
 
 PROMPT_VERSION = "QK_REPORT_COMPOSITION_V1"
+DESIGN_AWARE_PROMPT_VERSION = "QK_REPORT_COMPOSITION_V2"
 VALIDATION_VERSION = "qk-1"
 MAX_FINDINGS = 75
 MAX_INSIGHTS = 50
@@ -228,6 +229,38 @@ class QuantitativeReportCompositionService:
         composition_fp = canonical_digest({"bundle": bundle_fp, "generator": self._generator.identity, "prompt": prompt_fp, "accepted": accepted.validation_fingerprint if accepted else None, "rejected": tuple(item.rejection_fingerprint for item in rejected), "version": PROMPT_VERSION}, digest_provider=self._digest)
         return QuantitativeReportCompositionResult(str(uuid5(NAMESPACE_URL, f"qk-composition:{composition_fp}")), bundle_fp, self._generator.identity, PROMPT_VERSION, prompt_fp, proposed, accepted, tuple(rejected), {"generation_passes": 1, "repair_attempts": 0}, composition_fp)
 
+    def compose_design_aware(
+        self,
+        *,
+        findings: Sequence[QuantitativeFinding],
+        insights: Sequence[QuantitativeInsight],
+        bundle: Mapping[str, Any],
+        post_validator=None,
+    ) -> QuantitativeReportCompositionResult:
+        finding_map, insight_map = self._accepted_support(findings, insights)
+        if tuple(item.get("finding_id") for item in bundle.get("findings", ())) != tuple(sorted(finding_map)):
+            raise QuantitativeAnalysisError("design-aware Report Finding bundle mismatch")
+        if tuple(item.get("insight_id") for item in bundle.get("insights", ())) != tuple(sorted(insight_map)):
+            raise QuantitativeAnalysisError("design-aware Report Insight bundle mismatch")
+        bundle_fp = canonical_digest(bundle, digest_provider=self._digest)
+        prompt = self._prompt_v2(bundle)
+        prompt_fp = canonical_digest({"version": DESIGN_AWARE_PROMPT_VERSION, "prompt": prompt}, digest_provider=self._digest)
+        raw = self._generator.generate(prompt)
+        proposed = None
+        accepted = None
+        rejected = []
+        try:
+            proposed = self._parse_v2(raw, bundle_fp, finding_map, insight_map)
+            accepted = self._validator.validate(proposed, findings=finding_map, insights=insight_map)
+            if post_validator is not None:
+                accepted = post_validator(accepted)
+        except (QuantitativeAnalysisError, ValueError, TypeError, KeyError) as exc:
+            accepted = None
+            payload = dict(raw) if isinstance(raw, Mapping) else {"raw_type": type(raw).__name__}
+            reason = f"{type(exc).__name__}: {exc}"
+            rejected.append(QuantitativeReportRejection(payload, reason, canonical_digest({"bundle": bundle_fp, "proposal": payload, "reason": reason, "version": DESIGN_AWARE_PROMPT_VERSION}, digest_provider=self._digest)))
+        composition_fp = canonical_digest({"bundle": bundle_fp, "generator": self._generator.identity, "prompt": prompt_fp, "accepted": accepted.validation_fingerprint if accepted else None, "rejected": tuple(item.rejection_fingerprint for item in rejected), "version": DESIGN_AWARE_PROMPT_VERSION}, digest_provider=self._digest)
+        return QuantitativeReportCompositionResult(str(uuid5(NAMESPACE_URL, f"qk-composition:{composition_fp}")), bundle_fp, self._generator.identity, DESIGN_AWARE_PROMPT_VERSION, prompt_fp, proposed, accepted, tuple(rejected), {"generation_passes": 1, "repair_attempts": 0}, composition_fp)
     @staticmethod
     def _accepted_support(findings, insights):
         if not findings or len(findings) > MAX_FINDINGS or len(insights) > MAX_INSIGHTS:
@@ -268,6 +301,36 @@ class QuantitativeReportCompositionService:
             raise QuantitativeAnalysisError("Quantitative Report prompt exceeds bounded size")
         return prompt
 
+    @staticmethod
+    def _prompt_v2(bundle):
+        instructions = "Compose one structured Quantitative Report using only supplied accepted Finding and Insight IDs. Do not return fingerprints, design IDs, lineage IDs, coverage states, answered flags, or objective-completion fields. Do not calculate or invent numbers; every narrative number must exactly match an approved display value and be listed explicitly. Preserve significance, direction, weighting, filters, bases, and populations. Do not infer causality or cite unsupported authority. Return a title and ordered sections only."
+        schema = {"title": "string", "finding_refs": ["id"], "insight_refs": ["id"], "sections": [{"section_id": "id", "section_type": "EXECUTIVE_SUMMARY|KEY_FINDINGS|SEGMENT_RESULTS|KPI_RESULTS|LIMITATIONS", "title": "string", "narrative": "string", "finding_refs": ["id"], "insight_refs": ["id"], "referenced_display_values": ["value"], "authoritative_result_refs": ["id"], "authoritative_table_refs": [], "weighting_status": "UNWEIGHTED|WEIGHTED", "filter_definition": "string", "base_definition": "string", "direction": "HIGHER|LOWER|EQUAL|null"}]}
+        prompt = instructions + "\nOUTPUT_SCHEMA=" + json.dumps(schema, sort_keys=True, separators=(",", ":")) + "\nAPPROVED_SUPPORT=" + json.dumps(bundle, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        if len(prompt) > MAX_PROMPT_CHARACTERS:
+            raise QuantitativeAnalysisError("Quantitative Report prompt exceeds bounded size")
+        return prompt
+
+    def _parse_v2(self, raw, bundle_fp, findings, insights):
+        forbidden = {"finding_fingerprints", "insight_fingerprints", "objective_ids", "research_question_ids", "analytical_requirement_ids", "re_lineage_ids", "rf_lineage_ids", "rd_ids", "rc_ids", "coverage_status", "rq_answered", "objective_complete", "support_validation_fingerprints"}
+        if not isinstance(raw, Mapping):
+            raise QuantitativeAnalysisError("structured Report proposal must be an object")
+        if forbidden.intersection(raw):
+            raise QuantitativeAnalysisError("model-authored Report authority is forbidden")
+        sections = raw.get("sections")
+        if isinstance(sections, list) and any(isinstance(item, Mapping) and forbidden.intersection(item) for item in sections):
+            raise QuantitativeAnalysisError("model-authored section authority is forbidden")
+        canonical = dict(raw)
+        canonical["finding_fingerprints"] = {key: value.support_validation_fingerprint for key, value in findings.items()}
+        canonical["insight_fingerprints"] = {key: value.validation_fingerprint for key, value in insights.items()}
+        canonical_sections = []
+        for section in sections or ():
+            value = dict(section)
+            value["finding_fingerprints"] = {key: findings[key].support_validation_fingerprint for key in value.get("finding_refs", ()) if key in findings}
+            value["insight_fingerprints"] = {key: insights[key].validation_fingerprint for key in value.get("insight_refs", ()) if key in insights}
+            canonical_sections.append(value)
+        canonical["sections"] = canonical_sections
+        parsed = self._parse(canonical, bundle_fp, findings, insights)
+        return replace(parsed, generation_metadata={"prompt_version": DESIGN_AWARE_PROMPT_VERSION, "generator": self._generator.identity})
     def _parse(self, raw, bundle_fp, findings, insights):
         if not isinstance(raw, Mapping) or not isinstance(raw.get("sections"), list) or not raw["sections"] or len(raw["sections"]) > MAX_SECTIONS:
             raise QuantitativeAnalysisError("structured Report proposal requires bounded sections")

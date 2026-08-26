@@ -392,6 +392,7 @@ def create_application_container(
         from infrastructure.persistence.quantitative_analysis_execution_repository import QLQuantitativeAnalysisExecutionRepository
         from infrastructure.persistence.quantitative_finding_lineage_repository import QLQuantitativeFindingLineageRepository
         from infrastructure.persistence.quantitative_insight_lineage_repository import QLQuantitativeInsightLineageRepository
+        from infrastructure.persistence.quantitative_report_lineage_repository import QLQuantitativeReportLineageRepository
         quantitative_design_service=QuantitativeResearchDesignService(repository=QLQuantitativeResearchDesignRepository(quantitative_state_service),digest_provider=digest_provider)
         quantitative_questionnaire_service=QuantitativeQuestionnaireService(repository=QLQuantitativeQuestionnaireRepository(quantitative_state_service),research_design_service=quantitative_design_service,digest_provider=digest_provider)
         quantitative_reconciliation_service=QuantitativeMeasurementReconciliationService(repository=QLQuantitativeMeasurementReconciliationRepository(quantitative_state_service),questionnaire_service=quantitative_questionnaire_service,digest_provider=digest_provider)
@@ -422,6 +423,7 @@ def create_application_container(
             analysis_execution_repository_factory=lambda: QLQuantitativeAnalysisExecutionRepository(quantitative_state_service),
             finding_lineage_repository_factory=lambda: QLQuantitativeFindingLineageRepository(quantitative_state_service),
             insight_lineage_repository_factory=lambda: QLQuantitativeInsightLineageRepository(quantitative_state_service),
+            report_lineage_repository_factory=lambda: QLQuantitativeReportLineageRepository(quantitative_state_service),
         )
 
     durable_workflow_service: DurableWorkflowService | None = None

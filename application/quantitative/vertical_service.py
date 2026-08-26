@@ -30,6 +30,8 @@ from domain.quantitative.finding import QuantitativeFindingGenerationResult
 from domain.quantitative.insight import QuantitativeInsightGenerationResult
 from domain.quantitative.analysis_execution import QuantitativeAnalysisExecutionManifest
 from domain.quantitative.finding_lineage import DesignAwareFindingInputAuthority, QuantitativeFindingCoverageManifest, QuantitativeFindingDesignLineageManifest
+from domain.quantitative.insight_lineage import DesignAwareInsightInputAuthority, QuantitativeInsightCoverageManifest, QuantitativeInsightDesignLineageManifest
+from domain.quantitative.report_lineage import DesignAwareReportInputAuthority
 from domain.quantitative.quality import (
     CleaningDecisionSet, DatasetQualityState, QualityControlRun, QuestionnaireSnapshot,
 )
@@ -73,6 +75,7 @@ class RealQuantitativeStageService:
         analysis_execution_weights=None,
         finding_lineage_service=None,
         insight_lineage_service=None,
+        report_lineage_service=None,
     ) -> None:
         self.plan, self.storage, self.digest = plan, storage, digest_provider
         self.state, self.approvals = state_service, approval_service
@@ -83,6 +86,7 @@ class RealQuantitativeStageService:
         self.analysis_execution_weights = dict(analysis_execution_weights or {})
         self.finding_lineage = finding_lineage_service
         self.insight_lineage = insight_lineage_service
+        self.report_lineage = report_lineage_service
         self.supports_progress_checkpoint = analysis_execution_service is not None
         self.importer = QuantitativeDatasetImportService(importers=tuple(importers), storage=storage, digest_provider=digest_provider)
         self.qc = DataQualityService(storage=storage, digest_provider=digest_provider)
@@ -376,11 +380,103 @@ class RealQuantitativeStageService:
         if state.get("zero_supported_insights") == "true":
             state["report_composition_status"] = "SKIPPED_NO_SUPPORTED_INSIGHTS"
             return state
-        findings = self._load(state, "finding_generation_record_id", project_id, QuantitativeFindingGenerationResult); insights = self._load(state, "insight_generation_record_id", project_id, QuantitativeInsightGenerationResult)
+        findings = self._load(state, "finding_generation_record_id", project_id, QuantitativeFindingGenerationResult)
+        insights = self._load(state, "insight_generation_record_id", project_id, QuantitativeInsightGenerationResult)
+        mode = state.get("analysis_execution_mode", "DATASET_ONLY_EXPLORATORY_EXECUTION")
+        if mode == "DESIGN_AWARE_EXECUTION":
+            return self._design_aware_report(project_id, run_id, state, findings, insights)
+        if mode != "DATASET_ONLY_EXPLORATORY_EXECUTION":
+            raise QuantitativeWorkflowError("unknown Quantitative analysis execution mode")
         report = self.reports.compose(findings=findings.accepted_findings, insights=insights.accepted_insights)
-        state["report_composition_record_id"] = self._persist(report, "report-composition", project_id, run_id)
+        record_id = self._persist(report, "report-composition", project_id, run_id)
+        state["report_composition_record_id"] = record_id
+        if self.report_lineage is not None:
+            absence = self.report_lineage.dataset_only_absence(
+                project_id=project_id, run_id=run_id,
+                report_composition_record_id=record_id, composition=report,
+            )
+            state["report_lineage_absence_record_id"] = absence.absence_id
         return state
 
+    def _design_aware_report(self, project_id, run_id, state, findings, insights):
+        if self.report_lineage is None or self.insight_lineage is None or self.finding_lineage is None or self.analysis_execution_projection is None:
+            raise QuantitativeWorkflowError("design-aware RG authority composition is unavailable")
+        dataset = self._load(state, "dataset_record_id", project_id, DatasetVersion)
+        codebook = self._load(state, "codebook_record_id", project_id, CodebookVersion)
+        rd = self._load(state, "analysis_execution_manifest_record_id", project_id, QuantitativeAnalysisExecutionManifest)
+        re_input = self._load(state, "finding_input_authority_record_id", project_id, DesignAwareFindingInputAuthority)
+        re_manifest = self._load(state, "finding_lineage_manifest_record_id", project_id, QuantitativeFindingDesignLineageManifest)
+        re_coverage = self._load(state, "finding_coverage_manifest_record_id", project_id, QuantitativeFindingCoverageManifest)
+        rf_input = self._load(state, "insight_input_authority_record_id", project_id, DesignAwareInsightInputAuthority)
+        rf_manifest = self._load(state, "insight_lineage_manifest_record_id", project_id, QuantitativeInsightDesignLineageManifest)
+        rf_coverage = self._load(state, "insight_coverage_manifest_record_id", project_id, QuantitativeInsightCoverageManifest)
+        current_re = self.finding_lineage.build_input_authority(
+            project_id=project_id, run_id=run_id, manifest=rd,
+            projection=self.analysis_execution_projection, dataset=dataset, codebook=codebook,
+        )
+        if current_re != re_input:
+            raise QuantitativeWorkflowError("stale historical RE authority cannot feed current QK")
+        current_rf = self.insight_lineage.build_input_authority(
+            project_id=project_id, run_id=run_id,
+            generation_record_id=state["finding_generation_record_id"], generation=findings,
+            re_input=re_input, re_manifest=re_manifest, re_coverage=re_coverage,
+        )
+        if current_rf != rf_input:
+            raise QuantitativeWorkflowError("stale historical RF authority cannot feed current QK")
+        candidate = self.report_lineage.build_input_authority(
+            project_id=project_id, run_id=run_id,
+            finding_generation_record_id=state["finding_generation_record_id"], findings=findings,
+            insight_generation_record_id=state["insight_generation_record_id"], insights=insights,
+            re_input=re_input, re_manifest=re_manifest, re_coverage=re_coverage,
+            rf_input=rf_input, rf_manifest=rf_manifest, rf_coverage=rf_coverage,
+        )
+        existing = self.report_lineage.repository.get_input_authority(candidate.authority_id, project_id=project_id)
+        if existing is not None:
+            if existing != candidate:
+                raise QuantitativeWorkflowError("conflicting RG input authority")
+            manifest = self.report_lineage.repository.find_manifest_for_input(candidate.authority_id, project_id=project_id, run_id=run_id)
+            coverage = self.report_lineage.repository.find_coverage_for_input(candidate.authority_id, project_id=project_id, run_id=run_id)
+            if manifest is not None:
+                report = self.state.load(manifest.report_composition_record_id, project_id=project_id, expected_type=QuantitativeReportCompositionResult)
+                if report.composition_fingerprint != manifest.report_composition_fingerprint or coverage is None or coverage.coverage_id != manifest.coverage_manifest_id:
+                    raise QuantitativeWorkflowError("stale completed RG authority")
+                state["report_composition_record_id"] = manifest.report_composition_record_id
+                state["report_input_authority_record_id"] = candidate.authority_id
+                state["report_lineage_manifest_record_id"] = manifest.manifest_id
+                state["report_coverage_manifest_record_id"] = coverage.coverage_id
+                return state
+            if coverage is not None:
+                report = self.state.load(coverage.report_composition_record_id, project_id=project_id, expected_type=QuantitativeReportCompositionResult)
+                if report.composition_fingerprint != coverage.report_composition_fingerprint or report.accepted_report is not None:
+                    raise QuantitativeWorkflowError("conflicting rejected RG authority")
+                state["report_composition_record_id"] = coverage.report_composition_record_id
+                state["report_input_authority_record_id"] = candidate.authority_id
+                state["report_coverage_manifest_record_id"] = coverage.coverage_id
+                return state
+            matches = tuple(item for item in self.state.list_for_run(run_id, project_id=project_id, expected_type=QuantitativeReportCompositionResult) if item.input_support_bundle_fingerprint == self.report_lineage.expected_report_bundle_fingerprint(candidate))
+            if len(matches) > 1:
+                raise QuantitativeWorkflowError("ambiguous persisted Report composition")
+            if not matches:
+                raise QuantitativeWorkflowError("indeterminate QK provider boundary; retry prohibited")
+            report = matches[0]
+            record_id = f"{run_id}:report-composition:{report.composition_fingerprint}"
+            manifest, coverage = self.report_lineage.finalize(authority=candidate, report_composition_record_id=record_id, composition=report)
+        else:
+            authority = self.report_lineage.repository.save_input_authority(candidate)
+            report = self.reports.compose_design_aware(
+                findings=findings.accepted_findings,
+                insights=insights.accepted_insights,
+                bundle=self.report_lineage.report_bundle(authority),
+                post_validator=self.report_lineage.compatibility_validator(authority),
+            )
+            record_id = self._persist(report, "report-composition", project_id, run_id)
+            manifest, coverage = self.report_lineage.finalize(authority=authority, report_composition_record_id=record_id, composition=report)
+        state["report_composition_record_id"] = record_id
+        state["report_input_authority_record_id"] = candidate.authority_id
+        state["report_coverage_manifest_record_id"] = coverage.coverage_id
+        if manifest is not None:
+            state["report_lineage_manifest_record_id"] = manifest.manifest_id
+        return state
     def _quant_complete(self, project_id, run_id, state):
         if state.get("zero_supported_findings") == "true":
             return self._complete_without_supported_findings(project_id, run_id, state)
