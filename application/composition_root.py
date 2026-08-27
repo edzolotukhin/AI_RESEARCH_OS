@@ -441,6 +441,12 @@ def create_application_container(
             state_service=quantitative_state_service,
             authority_chain_service=quantitative_authority_chain_service,
             authority_chain_selection_service=quantitative_authority_chain_selection_service,
+            research_design_service=quantitative_design_service,
+            questionnaire_service=quantitative_questionnaire_service,
+            reconciliation_service=quantitative_reconciliation_service,
+            analysis_plan_service=quantitative_analysis_plan_service,
+            research_question_coverage_service=quantitative_rh_resolution_service,
+            objective_coverage_service=quantitative_objective_coverage_service,
             digest_provider=digest_provider,
         )
         protected_root = (

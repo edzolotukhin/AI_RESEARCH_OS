@@ -39,6 +39,7 @@ class PropertyRLTests(unittest.TestCase):
         self.run = NS(id="r", project_id="p", status=WorkflowStatus.COMPLETED)
         self.projects = NS(get_project=lambda project_id: self.project if project_id == "p" else (_ for _ in ()).throw(ValueError("missing project")))
         self.workflows = NS(get_workflow_run=lambda run_id: self.run if run_id == "r" else (_ for _ in ()).throw(ValueError("missing run")))
+        self.current_ids = {"qz": "qz", "ra": "ra", "rb": "rb", "rc": "rc"}
         self.service = self._service()
         self.refs = {name: self._ref(kind, name) for name, kind in (
             ("brief", "QZ_BRIEF"), ("qz", "QZ_DESIGN"),
@@ -56,7 +57,14 @@ class PropertyRLTests(unittest.TestCase):
         return QuantitativeAuthorityFinalizationService(
             project_service=self.projects, workflow_service=self.workflows,
             state_service=self.state, authority_chain_service=self.chain,
-            authority_chain_selection_service=self.selection, digest_provider=self.digest,
+            authority_chain_selection_service=self.selection,
+            research_design_service=NS(resolve_current_approved=lambda **_: self._load(self.current_ids["qz"], project_id="p")),
+            questionnaire_service=NS(resolve_current_approved=lambda **_: self._load(self.current_ids["ra"], project_id="p")),
+            reconciliation_service=NS(resolve_current_accepted=lambda **_: self._load(self.current_ids["rb"], project_id="p")),
+            analysis_plan_service=NS(resolve_current_approved=lambda **_: self._load(self.current_ids["rc"], project_id="p")),
+            research_question_coverage_service=NS(resolve_current_approved=lambda **_: None),
+            objective_coverage_service=NS(get_approved_projection=lambda **_: None),
+            digest_provider=self.digest,
         )
 
     def _load(self, record_id, *, project_id):
@@ -150,12 +158,32 @@ class PropertyRLTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "checksum"):
             self.service.resolve_current(project_id="p", run_id="r")
 
+    def test_historical_qz_ra_rb_rc_fail_before_manifest_or_rk_activation(self):
+        for key, kind in (("qz", "QZ_DESIGN"), ("ra", "RA_QUESTIONNAIRE"),
+                          ("rb", "RB_RECONCILIATION"), ("rc", "RC_PLAN")):
+            with self.subTest(authority=key):
+                current = self._ref(kind, f"{key}-current")
+                self.current_ids[key] = current.authority_id
+                before_manifests = self.chain_repo.list_manifests(project_id="p", run_id="r")
+                before_selections = self.selection_repo.list_selections(project_id="p", run_id="r")
+                with self.assertRaisesRegex(QuantitativeAuthorityFinalizationError, f"stale {key.upper()}"):
+                    self.service.finalize(self.request(), created_at="t", created_by="system")
+                self.assertEqual(before_manifests, self.chain_repo.list_manifests(project_id="p", run_id="r"))
+                self.assertEqual(before_selections, self.selection_repo.list_selections(project_id="p", run_id="r"))
+                self.assertIsNotNone(self._load(self.refs[key].authority_id, project_id="p"))
+                self.current_ids[key] = key
     def test_production_composition_exposes_rl_ri_and_rj(self):
         from tests.api.helpers import build_test_container
         with tempfile.TemporaryDirectory() as root:
             container = build_test_container(temp_dir=root)
             try:
                 self.assertIsNotNone(container.quantitative_authority_finalization_service)
+                rl = container.quantitative_authority_finalization_service
+                self.assertEqual("QuantitativeResearchDesignService", type(rl._designs).__name__)
+                self.assertEqual("QuantitativeQuestionnaireService", type(rl._questionnaires).__name__)
+                self.assertEqual("QuantitativeMeasurementReconciliationService", type(rl._reconciliations).__name__)
+                self.assertEqual("QuantitativeAnalysisPlanService", type(rl._plans).__name__)
+                self.assertIs(rl._objectives, container.quantitative_objective_coverage_service)
                 self.assertIsNotNone(container.quantitative_objective_coverage_service)
                 self.assertIsNotNone(container.quantitative_study_sufficiency_service)
             finally:

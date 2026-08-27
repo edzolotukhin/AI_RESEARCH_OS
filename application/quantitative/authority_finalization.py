@@ -8,6 +8,7 @@ from domain.quantitative.authority_finalization import (
     AUTHORITY_FINALIZATION_METHOD_VERSION,
     QuantitativeFinalizedStudyProjection,
 )
+from domain.quantitative.dataset import CodebookVersion, DatasetVersion
 from domain.quantitative.research_question_coverage import QuantitativeAuthorityReference
 from domain.quantitative.workflow import QuantitativeTerminalOutcome, QuantitativeTerminalResult
 from domain.workflow_status import WorkflowStatus
@@ -53,12 +54,21 @@ class QuantitativeAuthorityFinalizationService:
 
     def __init__(self, *, project_service, workflow_service, state_service,
                  authority_chain_service, authority_chain_selection_service,
+                 research_design_service, questionnaire_service,
+                 reconciliation_service, analysis_plan_service,
+                 research_question_coverage_service, objective_coverage_service,
                  digest_provider):
         self._projects = project_service
         self._workflows = workflow_service
         self._state = state_service
         self._chains = authority_chain_service
         self._selections = authority_chain_selection_service
+        self._designs = research_design_service
+        self._questionnaires = questionnaire_service
+        self._reconciliations = reconciliation_service
+        self._plans = analysis_plan_service
+        self._questions = research_question_coverage_service
+        self._objectives = objective_coverage_service
         self._digest = digest_provider
 
     def finalize(self, request: QuantitativeAuthorityFinalizationInput, *,
@@ -148,8 +158,124 @@ class QuantitativeAuthorityFinalizationService:
         if not request.analysis_execution or not request.research_question_authorities:
             raise QuantitativeAuthorityFinalizationError("required RD/RH authority is missing")
         self._validate_controlled_downstream(request, terminal)
+        self._validate_current_upstream(request, terminal, dataset)
         return terminal
 
+    def _validate_current_upstream(self, request, terminal, dataset):
+        codebook = self._state.load(request.codebook.authority_id, project_id=request.project_id)
+        datasets = self._state.list_for_run(request.run_id, project_id=request.project_id, expected_type=DatasetVersion)
+        if datasets:
+            parents = {item.parent_version_id for item in datasets if item.parent_version_id}
+            heads = tuple(item for item in datasets if item.version_id not in parents)
+            if len(heads) != 1 or heads[0] != dataset:
+                raise QuantitativeAuthorityFinalizationError("historical or ambiguous Dataset authority cannot be finalized")
+            codebooks = tuple(item for item in self._state.list_for_run(request.run_id, project_id=request.project_id, expected_type=CodebookVersion) if item.codebook_version_id == dataset.codebook_version_id)
+            if len(codebooks) != 1 or codebooks[0] != codebook:
+                raise QuantitativeAuthorityFinalizationError("historical or ambiguous Codebook authority cannot be finalized")
+        current_design = self._designs.resolve_current_approved(
+            project_id=request.project_id, run_id=request.run_id,
+        )
+        self._require_current_reference(request.research_design, current_design, "QZ")
+        source_version_id = getattr(current_design, "source_brief_version_id", None)
+        source_fingerprint = getattr(current_design, "source_brief_fingerprint", None)
+        if source_version_id is not None:
+            source = self._state.load(request.source_brief.authority_id, project_id=request.project_id)
+            if (getattr(source, "version_id", request.source_brief.authority_id), authority_fingerprint(source)) != (source_version_id, source_fingerprint):
+                raise QuantitativeAuthorityFinalizationError("current QZ source Brief authority mismatch")
+        current_questionnaire = self._questionnaires.resolve_current_approved(
+            project_id=request.project_id, run_id=request.run_id,
+        )
+        self._require_current_reference(request.questionnaire, current_questionnaire, "RA")
+        current_reconciliation = self._reconciliations.resolve_current_accepted(
+            project_id=request.project_id, run_id=request.run_id,
+            dataset=dataset, codebook=codebook,
+        )
+        self._require_current_reference(request.reconciliation, current_reconciliation, "RB")
+        weight_values = tuple(
+            self._state.load(ref.authority_id, project_id=request.project_id)
+            for ref in request.weight_set_authorities
+        )
+        approvals = tuple(
+            item for item in self._state.list_for_run(request.run_id, project_id=request.project_id)
+            if getattr(getattr(item, "state", None), "value", None) == "APPROVED"
+            and hasattr(item, "weight_set_id")
+        )
+        candidate_plan = self._state.load(request.analysis_plan.authority_id, project_id=request.project_id)
+        weight_pairs = []
+        for planned in getattr(candidate_plan, "planned_analyses", ()):
+            binding = getattr(planned, "weight_set_binding", None)
+            if binding is None:
+                continue
+            weight = next((item for item in weight_values if getattr(item, "weight_set_id", None) == binding.weight_set_id), None)
+            approval = next((item for item in approvals if getattr(item, "weight_set_id", None) == binding.weight_set_id), None)
+            if weight is not None and approval is not None:
+                weight_pairs.append((planned.planned_analysis_id, (weight, approval)))
+        current_plan = self._plans.resolve_current_approved(
+            project_id=request.project_id, run_id=request.run_id,
+            dataset=dataset, codebook=codebook, weight_sets=tuple(weight_pairs),
+        )
+        self._require_current_reference(request.analysis_plan, current_plan, "RC")
+        self._validate_current_downstream(request, current_design, current_plan, dataset, codebook)
+        if getattr(current_plan, "dataset_fingerprint", terminal.dataset_fingerprint) != terminal.dataset_fingerprint:
+            raise QuantitativeAuthorityFinalizationError("current RC Dataset authority mismatch")
+
+    def _validate_current_downstream(self, request, design, plan, dataset, codebook):
+        rd_values = tuple(self._state.load(ref.authority_id, project_id=request.project_id) for ref in request.analysis_execution)
+        rd_manifests = tuple(
+            item for item in rd_values
+            if hasattr(item, "execution_mode") and hasattr(item, "manifest_id")
+        )
+        rd_fingerprints = {authority_fingerprint(item) for item in rd_manifests}
+        rd_parents = {
+            item.parent_manifest_id for item in rd_manifests
+            if getattr(item, "parent_manifest_id", None)
+        }
+        rd_heads = tuple(item for item in rd_manifests if item.manifest_id not in rd_parents)
+        if rd_manifests:
+            if len(rd_heads) != 1:
+                raise QuantitativeAuthorityFinalizationError("historical or ambiguous RD authority cannot be finalized")
+            rd = rd_heads[0]
+            if (rd.plan_version_id, rd.plan_fingerprint, rd.dataset_version_id, rd.dataset_fingerprint,
+                rd.codebook_version_id, rd.codebook_fingerprint) != (
+                plan.version_id, plan.fingerprint, dataset.version_id, dataset.dataset_fingerprint,
+                codebook.codebook_version_id, codebook.fingerprint):
+                raise QuantitativeAuthorityFinalizationError("stale RD authority cannot be finalized")
+        for label, refs in (("RE", request.finding_authority), ("RF", request.insight_authority),
+                            ("RG", request.report_authority), ("CONTROLLED_ABSENCE", request.controlled_absences)):
+            for ref in refs:
+                value = self._state.load(ref.authority_id, project_id=request.project_id)
+                rc_fingerprint = getattr(value, "rc_plan_fingerprint", None)
+                rd_fingerprint = getattr(value, "rd_execution_manifest_fingerprint", None)
+                if rc_fingerprint is not None and rc_fingerprint != plan.fingerprint:
+                    raise QuantitativeAuthorityFinalizationError(f"stale {label} RC binding cannot be finalized")
+                if rd_fingerprint is not None and rd_fingerprint not in rd_fingerprints:
+                    raise QuantitativeAuthorityFinalizationError(f"stale {label} RD binding cannot be finalized")
+        for ref in request.research_question_authorities:
+            value = self._state.load(ref.authority_id, project_id=request.project_id)
+            research_question_id = getattr(value, "research_question_id", None)
+            if research_question_id is None:
+                continue
+            projection = self._questions.resolve_current_approved(
+                project_id=request.project_id, run_id=request.run_id,
+                research_question_id=research_question_id,
+                upstream_authority_fingerprints=value.upstream_authority_fingerprints,
+            )
+            if projection.assessment_fingerprint != authority_fingerprint(value):
+                raise QuantitativeAuthorityFinalizationError("historical or stale RH authority cannot be finalized")
+        for ref in request.objective_authorities:
+            value = self._state.load(ref.authority_id, project_id=request.project_id)
+            objective_id = getattr(value, "objective_id", None)
+            if objective_id is None:
+                continue
+            projection = self._objectives.get_approved_projection(
+                project_id=request.project_id, run_id=request.run_id, objective_id=objective_id,
+            )
+            if projection.assessment_fingerprint != authority_fingerprint(value):
+                raise QuantitativeAuthorityFinalizationError("historical or stale RI authority cannot be finalized")
+    def _require_current_reference(self, ref, current, label):
+        exact = self._state.load(ref.authority_id, project_id=getattr(current, "project_id", ""))
+        if exact != current or authority_fingerprint(exact) != ref.authority_fingerprint:
+            raise QuantitativeAuthorityFinalizationError(f"historical or stale {label} authority cannot be finalized")
     def _scope(self, project_id, run_id):
         self._projects.get_project(project_id)
         run = self._workflows.get_workflow_run(run_id)
