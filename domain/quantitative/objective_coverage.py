@@ -140,6 +140,30 @@ class QuantitativeObjectiveCoverageApproval:
     decided_at: str
     rationale: str
     fingerprint: str
+    policy_approval_id: str = ""
+    policy_approval_fingerprint: str = ""
+
+@dataclass(frozen=True)
+class ApprovedObjectiveCoverageProjection:
+    project_id: str
+    run_id: str
+    objective_id: str
+    research_design_version_id: str
+    research_design_fingerprint: str
+    assessment_version_id: str
+    assessment_fingerprint: str
+    approval_id: str
+    approval_fingerprint: str
+    decision: ObjectiveCoverageDecision
+    deterministic_status: ObjectiveAssessmentStatus
+    policy_version_id: str
+    policy_fingerprint: str
+    policy_approval_id: str
+    policy_approval_fingerprint: str
+    research_question_assessment_references: tuple[ObjectiveResearchQuestionAssessmentReference, ...]
+    blockers: tuple[str, ...]
+    limitations: tuple[str, ...]
+    fingerprint: str
 
 @dataclass(frozen=True)
 class QuantitativeObjectiveCoverageRunManifest:

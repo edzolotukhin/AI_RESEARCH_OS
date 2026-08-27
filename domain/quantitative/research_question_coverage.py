@@ -7,6 +7,26 @@ from enum import StrEnum
 RH_METHOD_VERSION = "rh-1"
 
 
+@dataclass(frozen=True)
+class QuantitativeAuthorityReference:
+    authority_kind: str
+    authority_id: str
+    authority_fingerprint: str
+
+
+@dataclass(frozen=True)
+class RequirementExecutionBranchReference:
+    planned_item_id: str
+    planned_item_kind: str
+    rd_outcome_id: str
+    rd_outcome_fingerprint: str
+    finding_ids_and_qh_fingerprints: tuple[tuple[str, str], ...] = ()
+    re_lineage_entry_fingerprints: tuple[str, ...] = ()
+    insight_ids_and_qj_fingerprints: tuple[tuple[str, str], ...] = ()
+    rf_lineage_entry_fingerprints: tuple[str, ...] = ()
+    report_section_ids_and_lineage_fingerprints: tuple[tuple[str, str], ...] = ()
+
+
 class ResearchQuestionAssessmentStatus(StrEnum):
     READY_FOR_SUFFICIENCY_REVIEW = "READY_FOR_SUFFICIENCY_REVIEW"
     PARTIALLY_SUPPORTED = "PARTIALLY_SUPPORTED"
@@ -50,6 +70,7 @@ class AnalyticalRequirementEvidenceAssessment:
     reason_codes: tuple[str, ...]
     limitations: tuple[str, ...]
     fingerprint: str
+    branch_references: tuple[RequirementExecutionBranchReference, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -79,6 +100,7 @@ class QuantitativeResearchQuestionCoverageAssessmentVersion:
     fingerprint: str
     created_at: str
     created_by: str
+    upstream_authority_references: tuple[QuantitativeAuthorityReference, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -106,6 +128,7 @@ class QuantitativeResearchQuestionCoverageApproval:
     decided_at: str
     rationale: str
     fingerprint: str
+    upstream_authority_references: tuple[QuantitativeAuthorityReference, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -126,6 +149,7 @@ class ApprovedResearchQuestionCoverageProjection:
     mandatory_requirement_ids: tuple[str, ...] = ()
     optional_requirement_ids: tuple[str, ...] = ()
     upstream_authority_fingerprints: tuple[tuple[str, str], ...] = ()
+    upstream_authority_references: tuple[QuantitativeAuthorityReference, ...] = ()
 
 
 @dataclass(frozen=True)

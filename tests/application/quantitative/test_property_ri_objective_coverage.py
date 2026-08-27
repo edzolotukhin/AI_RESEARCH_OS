@@ -144,6 +144,19 @@ class PropertyRITests(unittest.TestCase):
         self.assertIsNotNone(self.repo.get_assessment(value.version_id,project_id="p"))
         with self.assertRaisesRegex(QuantitativeObjectiveCoverageError,"missing or stale"):
             self.service.resolve_current_approved_objective(project_id="p",run_id="r",objective_id="o1",design=self.design,policy=policy,research_question_authorities=(replace(rh,approval_fingerprint="new"),))
+
+    def test_independent_current_resolution_and_approved_projection(self):
+        policy,policy_approval=self.approved_policy(); rh=self.rh("rq1")
+        value=self.assess(rhs=(rh,),policy=policy,approval=policy_approval)
+        self.service.approve_objective(value.version_id,project_id="p",run_id="r",new_version_id="objective-current",approval_id="objective-current-approval",expected_fingerprint=value.fingerprint,decision="OBJECTIVE_SATISFIED",actor_id="human",decided_at="t",rationale="Reviewed",current_design=self.design)
+        designs=NS(resolve_current_approved=lambda **_: self.design)
+        questions=NS(resolve_current_approved=lambda **_: rh)
+        service=QuantitativeObjectiveCoverageService(repository=self.repo,digest_provider=Sha256DigestProvider(),research_design_service=designs,research_question_coverage_service=questions)
+        current,approval=service.resolve_current_approved_objective(project_id="p",run_id="r",objective_id="o1")
+        projection=service.get_approved_projection(project_id="p",run_id="r",objective_id="o1")
+        self.assertEqual(current.fingerprint,projection.assessment_fingerprint)
+        self.assertEqual(approval.fingerprint,projection.approval_fingerprint)
+        self.assertEqual(policy_approval.fingerprint,projection.policy_approval_fingerprint)
     def test_dataset_only_has_explicit_absence(self):
         value=self.service.dataset_only_absence(project_id="p",run_id="r")
         self.assertEqual("NO_DESIGN_AWARE_OBJECTIVE_COVERAGE",value.status)

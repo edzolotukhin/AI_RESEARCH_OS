@@ -5,6 +5,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from application.quantitative.fingerprints import canonical_digest
 from domain.quantitative.objective_coverage import (
+    ApprovedObjectiveCoverageProjection,
     RI_METHOD_VERSION, DatasetOnlyObjectiveCoverageAbsence,
     ObjectiveAssessmentStatus, ObjectiveCoverageDecision, ObjectiveCoverageLifecycle,
     ObjectivePolicyDecision, ObjectiveResearchQuestionAssessmentReference,
@@ -215,19 +216,36 @@ class QuantitativeObjectiveCoverageService:
         rh_assessments=tuple(x.assessment_fingerprint for x in value.research_question_assessments)
         rh_approvals=tuple(x.approval_fingerprint for x in value.research_question_assessments)
         payload={"contract":"RI_OBJECTIVE_APPROVAL_V1","assessment":value.fingerprint,"decision":decision.value,
-                 "policy":value.policy_fingerprint,"rh_assessments":rh_assessments,"rh_approvals":rh_approvals,
+                 "policy":value.policy_fingerprint,"policy_approval":value.policy_approval_fingerprint,
+                 "rh_assessments":rh_assessments,"rh_approvals":rh_approvals,
                  "actor":actor_id,"time":decided_at,"rationale":rationale}
         approved=replace(value,version_id=new_version_id,version_sequence=value.version_sequence+1,
             parent_version_id=value.version_id,lifecycle_status=ObjectiveCoverageLifecycle.APPROVED,
             approval_reference=approval_id,created_at=decided_at,created_by=actor_id)
         approval=QuantitativeObjectiveCoverageApproval(approval_id,project_id,run_id,QUANTITATIVE,value.objective_id,
             approved.version_id,approved.fingerprint,value.research_design_fingerprint,value.policy_fingerprint,rh_assessments,
-            rh_approvals,decision,actor_id,decided_at,rationale,canonical_digest(payload,digest_provider=self._digest))
+            rh_approvals,decision,actor_id,decided_at,rationale,canonical_digest(payload,digest_provider=self._digest),
+            value.policy_approval_id,value.policy_approval_fingerprint)
         self.repository.save_approval(approval)
         self.repository.save_assessment(approved)
         return approval
 
-    def resolve_current_approved_objective(self, *, project_id, run_id, objective_id, design, policy, research_question_authorities):
+    def resolve_current_approved_objective(self, *, project_id, run_id, objective_id, design=None, policy=None, research_question_authorities=None):
+        if self._designs is not None and self._questions is not None:
+            design = self._current_design(project_id, run_id)
+            policy, policy_approval = self.resolve_current_approved_policy(project_id=project_id, run_id=run_id, design=design)
+            edges = tuple(x for x in policy.edges if x.objective_id == objective_id and x.obligation is ObjectiveResearchQuestionObligation.MANDATORY)
+            research_question_authorities = tuple(
+                self._questions.resolve_current_approved(
+                    project_id=project_id, run_id=run_id,
+                    research_question_id=edge.research_question_id,
+                ) for edge in edges
+            )
+        else:
+            if design is None or policy is None or research_question_authorities is None:
+                raise QuantitativeObjectiveCoverageError("independent RI current-authority composition is unavailable")
+            policy_approval = self.repository.get_policy_approval(policy.approval_reference or "", project_id=project_id)
+        self._validate_policy_authority(project_id, run_id, design, policy, policy_approval)
         values = tuple(x for x in self.repository.list_assessments(project_id=project_id, run_id=run_id) if x.objective_id == objective_id)
         if not values:
             raise QuantitativeObjectiveCoverageError("no Objective coverage assessment")
@@ -239,9 +257,27 @@ class QuantitativeObjectiveCoverageService:
             raise QuantitativeObjectiveCoverageError("Objective coverage authority is unapproved")
         if (value.research_design_version_id, value.research_design_fingerprint) != (design.version_id, design.fingerprint) or value.policy_fingerprint != policy.fingerprint:
             raise QuantitativeObjectiveCoverageError("Objective coverage authority is stale")
-        if approval is None or approval.assessment_fingerprint != value.fingerprint or tuple(sorted(approval.research_question_assessment_fingerprints)) != expected_rh or tuple(sorted(approval.research_question_approval_fingerprints)) != expected_approvals:
+        if approval is None or approval.assessment_fingerprint != value.fingerprint or tuple(sorted(approval.research_question_assessment_fingerprints)) != expected_rh or tuple(sorted(approval.research_question_approval_fingerprints)) != expected_approvals or approval.policy_approval_id != policy_approval.approval_id or approval.policy_approval_fingerprint != policy_approval.fingerprint:
             raise QuantitativeObjectiveCoverageError("Objective coverage approval is missing or stale")
         return value, approval
+
+    def get_approved_projection(self, *, project_id, run_id, objective_id):
+        value, approval = self.resolve_current_approved_objective(
+            project_id=project_id, run_id=run_id, objective_id=objective_id,
+        )
+        policy_approval = self.repository.get_policy_approval(value.policy_approval_id, project_id=project_id)
+        payload = {"contract":"RI_APPROVED_PROJECTION_V1","assessment":value.fingerprint,
+                   "approval":approval.fingerprint,"policy_approval":policy_approval.fingerprint,
+                   "rq":tuple(x.fingerprint for x in value.research_question_assessments)}
+        return ApprovedObjectiveCoverageProjection(
+            project_id, run_id, objective_id, value.research_design_version_id,
+            value.research_design_fingerprint, value.version_id, value.fingerprint,
+            approval.approval_id, approval.fingerprint, approval.decision, value.status,
+            value.policy_version_id, value.policy_fingerprint, policy_approval.approval_id,
+            policy_approval.fingerprint, value.research_question_assessments,
+            value.blockers, value.limitations,
+            canonical_digest(payload, digest_provider=self._digest),
+        )
     def build_run_manifest(self, *, project_id, run_id, design, assessments):
         refs=[]; approvals=[]; unresolved=[]
         for item in sorted(assessments,key=lambda x:x.objective_id):

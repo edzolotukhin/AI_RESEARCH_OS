@@ -13,6 +13,8 @@ from domain.quantitative.research_question_coverage import (
     QuantitativeResearchQuestionCoverageApproval,
     QuantitativeResearchQuestionCoverageAssessmentVersion,
     QuantitativeResearchQuestionCoverageRunManifest,
+    QuantitativeAuthorityReference,
+    RequirementExecutionBranchReference,
     ResearchQuestionAssessmentStatus,
     ResearchQuestionCoverageDecision,
     ResearchQuestionCoverageLifecycle,
@@ -26,7 +28,7 @@ class QuantitativeResearchQuestionCoverageError(ValueError):
 class QuantitativeResearchQuestionCoverageService:
     """Provider-free aggregation of the immutable QZ..RG authority chain."""
 
-    def __init__(self, *, repository, digest_provider, state_service=None, analysis_plan_service=None, analysis_execution_repository=None, finding_lineage_repository=None, insight_lineage_repository=None, report_lineage_repository=None):
+    def __init__(self, *, repository, digest_provider, state_service=None, analysis_plan_service=None, analysis_execution_repository=None, finding_lineage_repository=None, insight_lineage_repository=None, report_lineage_repository=None, current_authority_resolver=None):
         self.repository = repository
         self._digest = digest_provider
         self._state = state_service
@@ -35,6 +37,7 @@ class QuantitativeResearchQuestionCoverageService:
         self._findings = finding_lineage_repository
         self._insights = insight_lineage_repository
         self._reports = report_lineage_repository
+        self._current_authority_resolver = current_authority_resolver
 
     def assess_current(self, *, project_id, run_id, state, plan, created_at="WORKFLOW", created_by="SYSTEM"):
         if any(x is None for x in (self._state, self._plans, self._execution, self._findings)):
@@ -50,12 +53,16 @@ class QuantitativeResearchQuestionCoverageService:
         re = self._findings.get_coverage(state.get("finding_coverage_manifest_record_id", ""), project_id=project_id)
         rf = self._insights.get_coverage(state.get("insight_coverage_manifest_record_id", ""), project_id=project_id) if self._insights and state.get("insight_coverage_manifest_record_id") else None
         rg = self._reports.get_coverage(state.get("report_coverage_manifest_record_id", ""), project_id=project_id) if self._reports and state.get("report_coverage_manifest_record_id") else None
+        re_lineage = self._findings.get_manifest(state.get("finding_lineage_manifest_record_id", ""), project_id=project_id) if state.get("finding_lineage_manifest_record_id") else None
+        rf_lineage = self._insights.get_manifest(state.get("insight_lineage_manifest_record_id", ""), project_id=project_id) if self._insights and state.get("insight_lineage_manifest_record_id") else None
+        rg_lineage = self._reports.get_manifest(state.get("report_lineage_manifest_record_id", ""), project_id=project_id) if self._reports and state.get("report_lineage_manifest_record_id") else None
         if any(x is None for x in (ra, rb, rc, rd, rd_coverage, re)):
             raise QuantitativeResearchQuestionCoverageError("mandatory QZ-RG authority is unavailable")
         assessments = self.assess(project_id=project_id, run_id=run_id, design=design,
             questionnaire_coverage=ra, data_availability=rb, plan=plan,
             plan_coverage=rc, execution_manifest=rd, execution_coverage=rd_coverage,
             finding_coverage=re, insight_coverage=rf, report_coverage=rg,
+            finding_lineage=re_lineage, insight_lineage=rf_lineage, report_lineage=rg_lineage,
             created_at=created_at, created_by=created_by)
         entries = tuple((item.version_id, item.fingerprint) for item in assessments)
         fingerprint = canonical_digest({"contract":"RH_RUN_MANIFEST_V1","project":project_id,"run":run_id,"design":design.fingerprint,"assessments":entries,"method":RH_METHOD_VERSION}, digest_provider=self._digest)
@@ -71,6 +78,7 @@ class QuantitativeResearchQuestionCoverageService:
         execution_coverage, finding_coverage, insight_coverage=None,
         report_coverage=None, created_at, created_by,
         non_significant_outcome_ids=(), contradictory_requirement_ids=(), version_sequence=1,
+        finding_lineage=None, insight_lineage=None, report_lineage=None,
         parent_version_id=None,
     ):
         self._preflight(
@@ -95,6 +103,11 @@ class QuantitativeResearchQuestionCoverageService:
             execution_manifest, execution_coverage, finding_coverage,
             insight_coverage, report_coverage,
         )
+        upstream_references = self._upstream_references(
+            design, questionnaire_coverage, data_availability, plan, plan_coverage,
+            execution_manifest, execution_coverage, finding_coverage,
+            insight_coverage, report_coverage,
+        )
         values = []
         for question in sorted(design.research_questions, key=lambda x: x.question_id):
             linked = sorted(
@@ -107,6 +120,7 @@ class QuantitativeResearchQuestionCoverageService:
                     rc.get(item.requirement_id), tuple(rd_by_requirement.get(item.requirement_id, ())),
                     re.get(item.requirement_id), rf.get(item.requirement_id), rg.get(item.requirement_id),
                     set(non_significant_outcome_ids), set(contradictory_requirement_ids),
+                    project_id, finding_lineage, insight_lineage, report_lineage,
                 )
                 for item in linked
             )
@@ -123,6 +137,7 @@ class QuantitativeResearchQuestionCoverageService:
                 "statement": question.statement, "objectives": tuple(sorted(question.objective_ids)),
                 "mandatory": mandatory, "optional": optional,
                 "requirements": tuple(asdict(x) for x in entries), "upstream": upstream,
+                "upstream_references": tuple(asdict(x) for x in upstream_references),
                 "status": status.value, "blockers": blockers, "limitations": limitations,
                 "method": RH_METHOD_VERSION,
             }
@@ -133,6 +148,7 @@ class QuantitativeResearchQuestionCoverageService:
                 mandatory, optional, entries, upstream, status, blockers, limitations,
                 RH_METHOD_VERSION, parent_version_id, ResearchQuestionCoverageLifecycle.IN_REVIEW,
                 None, canonical_digest(payload, digest_provider=self._digest), created_at, created_by,
+                upstream_references,
             )
             values.append(self.repository.save_assessment(value))
         return tuple(values)
@@ -160,6 +176,7 @@ class QuantitativeResearchQuestionCoverageService:
         payload = {
             "contract": "RH_RQ_APPROVAL_V1", "project": project_id, "run": run_id,
             "assessment": value.fingerprint, "upstream": value.upstream_authority_fingerprints,
+            "upstream_references": tuple(asdict(x) for x in value.upstream_authority_references),
             "decision": decision.value, "actor": actor_id, "time": decided_at,
             "rationale": rationale,
         }
@@ -173,6 +190,7 @@ class QuantitativeResearchQuestionCoverageService:
             approval_id, project_id, run_id, approved.version_id, approved.fingerprint,
             value.upstream_authority_fingerprints, decision, actor_id, decided_at,
             rationale, canonical_digest(payload, digest_provider=self._digest),
+            value.upstream_authority_references,
         )
         self.repository.save_approval(approval)
         self.repository.save_assessment(approved)
@@ -195,15 +213,23 @@ class QuantitativeResearchQuestionCoverageService:
             parent_version_id=value.version_id, lifecycle_status=ResearchQuestionCoverageLifecycle.SUPERSEDED,
             approval_reference=None, created_at=changed_at, created_by=actor_id)
         return self.repository.save_assessment(superseded)
-    def resolve_current_approved(self, *, project_id, run_id, research_question_id, upstream_authority_fingerprints):
+    def resolve_current_approved(self, *, project_id, run_id, research_question_id, upstream_authority_fingerprints=None):
         matches = tuple(x for x in self.repository.list_assessments(project_id=project_id, run_id=run_id) if x.research_question_id == research_question_id)
         if not matches:
             raise QuantitativeResearchQuestionCoverageError("no ResearchQuestion coverage assessment")
         value = matches[-1]
-        if value.lifecycle_status is not ResearchQuestionCoverageLifecycle.APPROVED or value.upstream_authority_fingerprints != tuple(upstream_authority_fingerprints):
+        if self._current_authority_resolver is not None:
+            current = tuple(self._current_authority_resolver(project_id=project_id, run_id=run_id))
+            if not value.upstream_authority_references or value.upstream_authority_references != current:
+                raise QuantitativeResearchQuestionCoverageError("ResearchQuestion coverage authority is stale or unapproved")
+        elif upstream_authority_fingerprints is None:
+            raise QuantitativeResearchQuestionCoverageError("independent RH current-authority resolver is unavailable")
+        elif value.upstream_authority_fingerprints != tuple(upstream_authority_fingerprints):
+            raise QuantitativeResearchQuestionCoverageError("ResearchQuestion coverage authority is stale or unapproved")
+        if value.lifecycle_status is not ResearchQuestionCoverageLifecycle.APPROVED:
             raise QuantitativeResearchQuestionCoverageError("ResearchQuestion coverage authority is stale or unapproved")
         approval = self.repository.get_approval(value.approval_reference or "", project_id=project_id)
-        if approval is None or approval.assessment_fingerprint != value.fingerprint or approval.upstream_authority_fingerprints != value.upstream_authority_fingerprints:
+        if approval is None or approval.assessment_fingerprint != value.fingerprint or approval.upstream_authority_fingerprints != value.upstream_authority_fingerprints or approval.upstream_authority_references != value.upstream_authority_references:
             raise QuantitativeResearchQuestionCoverageError("ResearchQuestion coverage approval is missing or stale")
         return ApprovedResearchQuestionCoverageProjection(
             value.assessment_id, value.version_id, value.fingerprint,
@@ -212,7 +238,7 @@ class QuantitativeResearchQuestionCoverageService:
             value.blockers, value.limitations, approval.approval_id, approval.fingerprint,
             value.research_design_version_id, value.research_design_fingerprint,
             value.mandatory_requirement_ids, value.optional_requirement_ids,
-            value.upstream_authority_fingerprints,
+            value.upstream_authority_fingerprints, value.upstream_authority_references,
         )
 
     def dataset_only_absence(self, *, project_id, run_id):
@@ -225,7 +251,8 @@ class QuantitativeResearchQuestionCoverageService:
         )
         return self.repository.save_dataset_only_absence(value)
 
-    def _requirement_entry(self, requirement, ra, rb, rc, rd, re, rf, rg, non_significant, contradictory):
+    def _requirement_entry(self, requirement, ra, rb, rc, rd, re, rf, rg, non_significant, contradictory,
+                           project_id, finding_lineage, insight_lineage, report_lineage):
         reasons = []
         status = ResearchQuestionAssessmentStatus.READY_FOR_SUFFICIENCY_REVIEW
         ra_status = getattr(getattr(ra, "status", None), "value", "MISSING")
@@ -262,6 +289,8 @@ class QuantitativeResearchQuestionCoverageService:
             status = ResearchQuestionAssessmentStatus.NOT_ANSWERED
         else:
             status = ResearchQuestionAssessmentStatus.REQUIRES_METHODOLOGICAL_REVIEW
+        branches = self._branch_references(requirement.requirement_id, rd, project_id,
+            finding_lineage, insight_lineage, report_lineage)
         payload = {
             "contract": "RH_REQUIREMENT_V1", "id": requirement.requirement_id,
             "obligation": requirement.obligation.value, "ra": ra_status, "rb": rb_status,
@@ -272,14 +301,37 @@ class QuantitativeResearchQuestionCoverageService:
             "rg": getattr(getattr(rg, "status", None), "value", None),
             "sections": tuple(getattr(rg, "section_ids", ())),
             "status": status.value, "reasons": tuple(sorted(set(reasons))),
+            "branches": tuple(asdict(x) for x in branches),
         }
         return AnalyticalRequirementEvidenceAssessment(
             requirement.requirement_id, requirement.obligation.value, ra_status, rb_status,
             rc_status, rd_values, re_status, tuple(getattr(re, "finding_ids", ())),
             getattr(getattr(rf, "status", None), "value", None), tuple(getattr(rf, "insight_ids", ())),
             getattr(getattr(rg, "status", None), "value", None), tuple(getattr(rg, "section_ids", ())),
-            status, tuple(sorted(set(reasons))), (), canonical_digest(payload, digest_provider=self._digest),
+            status, tuple(sorted(set(reasons))), (), canonical_digest(payload, digest_provider=self._digest), branches,
         )
+
+    def _branch_references(self, requirement_id, rd_entries, project_id, re_manifest, rf_manifest, rg_manifest):
+        re_entries = tuple(x for x in getattr(re_manifest, "entries", ()) if requirement_id in x.analytical_requirement_ids)
+        rf_entries = tuple(x for x in getattr(rf_manifest, "entries", ()) if requirement_id in x.common_analytical_requirement_ids)
+        rg_entries = tuple(x for x in getattr(rg_manifest, "entries", ()) if requirement_id in x.common_analytical_requirement_ids)
+        values = []
+        for item in rd_entries:
+            item_kind = getattr(item, "item_kind", "ANALYSIS")
+            outcome = None
+            if self._execution is not None and item.outcome_id:
+                getter = self._execution.get_comparison_outcome if item_kind == "COMPARISON" else self._execution.get_analysis_outcome
+                outcome = getter(item.outcome_id, project_id=project_id)
+            values.append(RequirementExecutionBranchReference(
+                item.planned_item_id, item_kind, item.outcome_id or "",
+                getattr(outcome, "fingerprint", ""),
+                tuple(sorted((x.finding_id, x.qh_validation_fingerprint) for x in re_entries)),
+                tuple(sorted(x.fingerprint for x in re_entries)),
+                tuple(sorted((x.insight_id, x.qj_validation_fingerprint) for x in rf_entries)),
+                tuple(sorted(x.fingerprint for x in rf_entries)),
+                tuple(sorted((x.section_id, x.fingerprint) for x in rg_entries)),
+            ))
+        return tuple(values)
 
     @staticmethod
     def _question_status(entries, mandatory_ids):
@@ -311,6 +363,27 @@ class QuantitativeResearchQuestionCoverageService:
         ]
         if rf is not None: values.append(("rf", rf.fingerprint))
         if rg is not None: values.append(("rg", rg.fingerprint))
+        return tuple(values)
+
+    @staticmethod
+    def _upstream_references(design, ra, rb, plan, rc, rd, rd_coverage, re, rf, rg):
+        def ref(kind, value, *ids):
+            authority_id = next((getattr(value, name, None) for name in ids if getattr(value, name, None)), None)
+            if authority_id is None:
+                raise QuantitativeResearchQuestionCoverageError(f"{kind} has no exact authority ID")
+            return QuantitativeAuthorityReference(kind, authority_id, value.fingerprint)
+        values = [
+            ref("QZ_DESIGN", design, "version_id"),
+            ref("RA_COVERAGE", ra, "manifest_id"),
+            ref("RB_AVAILABILITY", rb, "manifest_id"),
+            ref("RC_PLAN", plan, "version_id"),
+            ref("RC_COVERAGE", rc, "manifest_id"),
+            ref("RD_MANIFEST", rd, "manifest_id"),
+            ref("RD_COVERAGE", rd_coverage, "coverage_id"),
+            ref("RE_COVERAGE", re, "coverage_id"),
+        ]
+        if rf is not None: values.append(ref("RF_COVERAGE", rf, "coverage_id"))
+        if rg is not None: values.append(ref("RG_COVERAGE", rg, "coverage_id"))
         return tuple(values)
 
     @staticmethod
