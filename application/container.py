@@ -63,6 +63,7 @@ class ApplicationContainer:
     background_execution: BackgroundExecutionCapability | None = None
     readiness_check: ReadinessCheck | None = None
     quantitative_ui_service: Any | None = None
+    quantitative_objective_coverage_service: Any | None = None
     _shutdown_callbacks: list[ShutdownCallback] = field(default_factory=list)
 
     @property

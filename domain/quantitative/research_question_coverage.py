@@ -119,6 +119,13 @@ class ApprovedResearchQuestionCoverageProjection:
     requirement_statuses: tuple[tuple[str, str], ...]
     blockers: tuple[str, ...]
     limitations: tuple[str, ...]
+    approval_id: str = ""
+    approval_fingerprint: str = ""
+    research_design_version_id: str = ""
+    research_design_fingerprint: str = ""
+    mandatory_requirement_ids: tuple[str, ...] = ()
+    optional_requirement_ids: tuple[str, ...] = ()
+    upstream_authority_fingerprints: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)

@@ -209,7 +209,10 @@ class QuantitativeResearchQuestionCoverageService:
             value.assessment_id, value.version_id, value.fingerprint,
             value.research_question_id, value.objective_ids, approval.decision,
             tuple((x.analytical_requirement_id, x.status.value) for x in value.requirement_assessments),
-            value.blockers, value.limitations,
+            value.blockers, value.limitations, approval.approval_id, approval.fingerprint,
+            value.research_design_version_id, value.research_design_fingerprint,
+            value.mandatory_requirement_ids, value.optional_requirement_ids,
+            value.upstream_authority_fingerprints,
         )
 
     def dataset_only_absence(self, *, project_id, run_id):

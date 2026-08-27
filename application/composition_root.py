@@ -330,6 +330,7 @@ def create_application_container(
     quantitative_generation_mode = None
     quantitative_storage_factory = None
     quantitative_importers = None
+    quantitative_objective_coverage_service = None
     if persistence.quantitative_state_repository is not None:
         from application.structured_output.json_validator import JsonValidator
         from application.llm.stage_llm_clients import create_quantitative_live_llm_client
@@ -394,10 +395,15 @@ def create_application_container(
         from infrastructure.persistence.quantitative_insight_lineage_repository import QLQuantitativeInsightLineageRepository
         from infrastructure.persistence.quantitative_report_lineage_repository import QLQuantitativeReportLineageRepository
         from infrastructure.persistence.quantitative_research_question_coverage_repository import QLQuantitativeResearchQuestionCoverageRepository
+        from infrastructure.persistence.quantitative_objective_coverage_repository import QLQuantitativeObjectiveCoverageRepository
+        from application.quantitative.research_question_coverage import QuantitativeResearchQuestionCoverageService
+        from application.quantitative.objective_coverage import QuantitativeObjectiveCoverageService
         quantitative_design_service=QuantitativeResearchDesignService(repository=QLQuantitativeResearchDesignRepository(quantitative_state_service),digest_provider=digest_provider)
         quantitative_questionnaire_service=QuantitativeQuestionnaireService(repository=QLQuantitativeQuestionnaireRepository(quantitative_state_service),research_design_service=quantitative_design_service,digest_provider=digest_provider)
         quantitative_reconciliation_service=QuantitativeMeasurementReconciliationService(repository=QLQuantitativeMeasurementReconciliationRepository(quantitative_state_service),questionnaire_service=quantitative_questionnaire_service,digest_provider=digest_provider)
         quantitative_analysis_plan_service=QuantitativeAnalysisPlanService(repository=QLQuantitativeAnalysisPlanRepository(quantitative_state_service),research_design_service=quantitative_design_service,questionnaire_service=quantitative_questionnaire_service,reconciliation_service=quantitative_reconciliation_service,digest_provider=digest_provider)
+        quantitative_rh_resolution_service=QuantitativeResearchQuestionCoverageService(repository=QLQuantitativeResearchQuestionCoverageRepository(quantitative_state_service),digest_provider=digest_provider)
+        quantitative_objective_coverage_service=QuantitativeObjectiveCoverageService(repository=QLQuantitativeObjectiveCoverageRepository(quantitative_state_service),digest_provider=digest_provider,research_design_service=quantitative_design_service,research_question_coverage_service=quantitative_rh_resolution_service)
         protected_root = (
             config.quantitative_protected_storage_root
             or f"{config.projects_root}/.quantitative-protected"
@@ -548,6 +554,7 @@ def create_application_container(
         background_execution=background_execution,
         readiness_check=readiness_check,
         quantitative_ui_service=quantitative_ui_service,
+        quantitative_objective_coverage_service=quantitative_objective_coverage_service,
         _shutdown_callbacks=shutdown_callbacks,
     )
 
