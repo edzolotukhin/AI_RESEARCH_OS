@@ -121,9 +121,47 @@ class QuantitativeAuthorityFinalizationService:
             raise QuantitativeAuthorityFinalizationError(
                 "finalized current chain has missing or ambiguous terminal authority"
             )
-        return self._projection(terminals[0], selection, chain)
+        request = self._request_from_chain(chain, terminal_result_record_id=terminals[0].result_id)
+        terminal = self._preflight(request)
+        return self._projection(terminal, selection, chain)
+
+    def _request_from_chain(self, chain, *, terminal_result_record_id):
+        refs = chain.ordered_authorities
+        controlled = {
+            (item.authority_kind, item.authority_id) for item in chain.controlled_absences
+        }
+
+        def group(prefix):
+            return tuple(
+                item for item in refs
+                if item.authority_kind.startswith(prefix)
+                and (item.authority_kind, item.authority_id) not in controlled
+            )
+
+        return QuantitativeAuthorityFinalizationInput(
+            project_id=chain.project_id,
+            run_id=chain.run_id,
+            terminal_result_record_id=terminal_result_record_id,
+            source_brief=self._one(refs, "QZ_BRIEF"),
+            research_design=self._one(refs, "QZ_DESIGN"),
+            questionnaire=self._one(refs, "RA_QUESTIONNAIRE"),
+            reconciliation=self._one(refs, "RB_RECONCILIATION"),
+            analysis_plan=self._one(refs, "RC_PLAN"),
+            analysis_execution=group("RD_"),
+            finding_authority=group("RE_"),
+            insight_authority=group("RF_"),
+            report_authority=group("RG_"),
+            research_question_authorities=chain.research_question_authorities,
+            objective_authorities=chain.objective_authorities,
+            dataset=self._one(refs, "DATASET"),
+            codebook=self._one(refs, "CODEBOOK"),
+            qc_authority=self._one(refs, "QC_APPROVAL"),
+            weight_set_authorities=group("WEIGHT_SET"),
+            controlled_absences=chain.controlled_absences,
+        )
 
     def reconstruct_backward(self, *, project_id: str, run_id: str, objective_authority_id: str):
+        self.resolve_current(project_id=project_id, run_id=run_id)
         selection, chain = self._selections.resolve_current_selection(project_id=project_id, run_id=run_id)
         if not any(x.authority_id == objective_authority_id for x in chain.objective_authorities):
             raise QuantitativeAuthorityFinalizationError("Objective authority is not bound to the finalized current chain")

@@ -113,6 +113,33 @@ class PropertyRLTests(unittest.TestCase):
         self.assertEqual(first.manifest_fingerprint, backward.manifest_fingerprint)
         self.assertEqual((("ri", "fp-ri"),), first.approved_objective_authorities)
 
+    def test_resolve_current_revalidates_qz_ra_rb_rc_and_preserves_history(self):
+        finalized = self.service.finalize(self.request(), created_at="t", created_by="system")
+        selection, exact_chain = self.selection.resolve_current_selection(project_id="p", run_id="r")
+        self.assertEqual(finalized, self.service.resolve_current(project_id="p", run_id="r"))
+        self.assertEqual(finalized, self.service.resolve_current(project_id="p", run_id="r"))
+
+        for key, kind in (("qz", "QZ_DESIGN"), ("ra", "RA_QUESTIONNAIRE"),
+                          ("rb", "RB_RECONCILIATION"), ("rc", "RC_PLAN")):
+            with self.subTest(authority=key):
+                historical = self._load(self.refs[key].authority_id, project_id="p")
+                self.current_ids[key] = self._ref(kind, f"{key}-v2").authority_id
+                with self.assertRaisesRegex(QuantitativeAuthorityFinalizationError, f"stale {key.upper()}"):
+                    self.service.resolve_current(project_id="p", run_id="r")
+                with self.assertRaisesRegex(QuantitativeAuthorityFinalizationError, f"stale {key.upper()}"):
+                    self.service.reconstruct_backward(project_id="p", run_id="r", objective_authority_id="ri")
+                restarted = self._service()
+                with self.assertRaisesRegex(QuantitativeAuthorityFinalizationError, f"stale {key.upper()}"):
+                    restarted.resolve_current(project_id="p", run_id="r")
+                self.assertEqual(selection, self.selection.load_historical(
+                    selection_id=selection.selection_id, project_id="p", run_id="r",
+                ))
+                self.assertEqual(exact_chain, self.chain.resolve_exact(
+                    manifest_id=finalized.manifest_id, project_id="p", run_id="r",
+                ))
+                self.assertEqual(historical, self._load(self.refs[key].authority_id, project_id="p"))
+                self.current_ids[key] = key
+                self.assertEqual(finalized, self.service.resolve_current(project_id="p", run_id="r"))
     def test_controlled_no_report_finalizes_without_fabricating_report(self):
         self.backing._records.pop("terminal")
         self.terminal = self._terminal(QuantitativeTerminalOutcome.COMPLETED_WITH_NO_SUPPORTED_REPORT)
