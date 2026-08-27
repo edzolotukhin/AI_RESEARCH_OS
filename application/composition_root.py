@@ -430,9 +430,25 @@ def create_application_container(
                 if "unavailable for project" in str(exc):
                     return None
                 raise
+        quantitative_authority_finalization_service = None
+
+        def resolve_current_quantitative_authority_references(*, project_id, run_id):
+            if quantitative_authority_finalization_service is None:
+                raise QuantitativePersistenceError(
+                    "Quantitative current-authority validation is unavailable"
+                )
+            quantitative_authority_finalization_service.resolve_current(
+                project_id=project_id, run_id=run_id,
+            )
+            current_chain = quantitative_authority_chain_selection_service.resolve_current_authority_chain(
+                project_id=project_id, run_id=run_id,
+            )
+            return current_chain.ordered_authorities
+
         quantitative_authority_chain_service=QuantitativeAuthorityChainService(
             repository=QLQuantitativeAuthorityChainRepository(quantitative_state_service),
             digest_provider=digest_provider, authority_loaders={"*": load_quantitative_authority},
+            current_reference_resolver=resolve_current_quantitative_authority_references,
         )
         quantitative_authority_chain_selection_service=QuantitativeAuthorityChainSelectionService(
             repository=QLQuantitativeAuthorityChainSelectionRepository(quantitative_state_service),
