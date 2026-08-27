@@ -6,6 +6,7 @@ from domain.quantitative.research_question_coverage import QuantitativeAuthority
 
 
 AUTHORITY_CHAIN_METHOD_VERSION = "q2-10.2-1"
+AUTHORITY_CHAIN_SELECTION_METHOD_VERSION = "rk-1"
 
 
 @dataclass(frozen=True)
@@ -45,3 +46,21 @@ class QuantitativeDesignAwareAuthorityChainProjection:
     research_question_authorities: tuple[QuantitativeAuthorityReference, ...]
     objective_authorities: tuple[QuantitativeAuthorityReference, ...]
     controlled_absences: tuple[QuantitativeAuthorityReference, ...]
+@dataclass(frozen=True)
+class QuantitativeCurrentAuthorityChainSelection:
+    selection_id: str
+    project_id: str
+    run_id: str
+    methodology: str
+    execution_mode: str
+    manifest_id: str
+    manifest_fingerprint: str
+    research_design_id: str
+    research_design_fingerprint: str
+    analysis_plan_id: str
+    analysis_plan_fingerprint: str
+    supersedes_selection_id: str | None
+    created_at: str
+    created_by: str
+    method_version: str
+    fingerprint: str

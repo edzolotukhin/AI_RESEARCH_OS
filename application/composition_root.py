@@ -331,6 +331,8 @@ def create_application_container(
     quantitative_storage_factory = None
     quantitative_importers = None
     quantitative_objective_coverage_service = None
+    quantitative_authority_chain_service = None
+    quantitative_authority_chain_selection_service = None
     if persistence.quantitative_state_repository is not None:
         from application.structured_output.json_validator import JsonValidator
         from application.llm.stage_llm_clients import create_quantitative_live_llm_client
@@ -404,6 +406,26 @@ def create_application_container(
         quantitative_analysis_plan_service=QuantitativeAnalysisPlanService(repository=QLQuantitativeAnalysisPlanRepository(quantitative_state_service),research_design_service=quantitative_design_service,questionnaire_service=quantitative_questionnaire_service,reconciliation_service=quantitative_reconciliation_service,digest_provider=digest_provider)
         quantitative_rh_resolution_service=QuantitativeResearchQuestionCoverageService(repository=QLQuantitativeResearchQuestionCoverageRepository(quantitative_state_service),digest_provider=digest_provider)
         quantitative_objective_coverage_service=QuantitativeObjectiveCoverageService(repository=QLQuantitativeObjectiveCoverageRepository(quantitative_state_service),digest_provider=digest_provider,research_design_service=quantitative_design_service,research_question_coverage_service=quantitative_rh_resolution_service)
+        from application.quantitative.authority_chain import QuantitativeAuthorityChainService
+        from application.quantitative.authority_chain_selection import QuantitativeAuthorityChainSelectionService
+        from application.quantitative.state_persistence import QuantitativePersistenceError
+        from infrastructure.persistence.quantitative_authority_chain_repository import QLQuantitativeAuthorityChainRepository
+        from infrastructure.persistence.quantitative_authority_chain_selection_repository import QLQuantitativeAuthorityChainSelectionRepository
+        def load_quantitative_authority(record_id, *, project_id):
+            try:
+                return quantitative_state_service.load(record_id, project_id=project_id)
+            except QuantitativePersistenceError as exc:
+                if "unavailable for project" in str(exc):
+                    return None
+                raise
+        quantitative_authority_chain_service=QuantitativeAuthorityChainService(
+            repository=QLQuantitativeAuthorityChainRepository(quantitative_state_service),
+            digest_provider=digest_provider, authority_loaders={"*": load_quantitative_authority},
+        )
+        quantitative_authority_chain_selection_service=QuantitativeAuthorityChainSelectionService(
+            repository=QLQuantitativeAuthorityChainSelectionRepository(quantitative_state_service),
+            authority_chain_service=quantitative_authority_chain_service, digest_provider=digest_provider,
+        )
         protected_root = (
             config.quantitative_protected_storage_root
             or f"{config.projects_root}/.quantitative-protected"
@@ -555,6 +577,8 @@ def create_application_container(
         readiness_check=readiness_check,
         quantitative_ui_service=quantitative_ui_service,
         quantitative_objective_coverage_service=quantitative_objective_coverage_service,
+        quantitative_authority_chain_service=quantitative_authority_chain_service,
+        quantitative_authority_chain_selection_service=quantitative_authority_chain_selection_service,
         _shutdown_callbacks=shutdown_callbacks,
     )
 

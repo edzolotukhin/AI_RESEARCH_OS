@@ -19,7 +19,7 @@ class QuantitativeAuthorityChainError(ValueError):
 class QuantitativeAuthorityChainService:
     """Exact-reference integration over existing immutable Quantitative authority."""
 
-    def __init__(self, *, repository, digest_provider, authority_loaders, current_reference_resolver):
+    def __init__(self, *, repository, digest_provider, authority_loaders, current_reference_resolver=None):
         self.repository = repository
         self._digest = digest_provider
         self._loaders = dict(authority_loaders)
@@ -70,12 +70,20 @@ class QuantitativeAuthorityChainService:
         )
         return self.repository.save_manifest(manifest)
 
+    def resolve_exact(self, *, manifest_id, project_id, run_id):
+        manifest = self.repository.get_manifest(manifest_id, project_id=project_id)
+        if manifest is None or manifest.run_id != run_id or manifest.execution_mode != "DESIGN_AWARE_EXECUTION":
+            raise QuantitativeAuthorityChainError("authority-chain manifest unavailable for project/run/mode")
+        self._validate_reference_set(self.references(manifest), project_id=project_id, run_id=run_id)
+        return self._projection(manifest)
     def resolve_current(self, *, manifest_id, project_id, run_id):
         manifest = self.repository.get_manifest(manifest_id, project_id=project_id)
         if manifest is None or manifest.run_id != run_id or manifest.execution_mode != "DESIGN_AWARE_EXECUTION":
             raise QuantitativeAuthorityChainError("authority-chain manifest unavailable for project/run/mode")
         refs = self.references(manifest)
         self._validate_reference_set(refs, project_id=project_id, run_id=run_id)
+        if self._current is None:
+            raise QuantitativeAuthorityChainError("current-reference resolver is unavailable")
         expected = tuple(self._current(project_id=project_id, run_id=run_id))
         if tuple(refs) != expected:
             raise QuantitativeAuthorityChainError("authority-chain manifest is not current")
@@ -99,7 +107,7 @@ class QuantitativeAuthorityChainService:
             if identity in identities:
                 raise QuantitativeAuthorityChainError("duplicate authority reference")
             identities.add(identity)
-            loader = self._loaders.get(ref.authority_kind)
+            loader = self._loaders.get(ref.authority_kind) or self._loaders.get("*")
             if loader is None:
                 raise QuantitativeAuthorityChainError(f"unsupported authority kind: {ref.authority_kind}")
             value = loader(ref.authority_id, project_id=project_id)
