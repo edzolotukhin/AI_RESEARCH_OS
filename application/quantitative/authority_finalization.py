@@ -1,0 +1,223 @@
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+
+from application.quantitative.fingerprints import canonical_digest
+from application.quantitative.state_persistence import authority_fingerprint
+from domain.quantitative.authority_finalization import (
+    AUTHORITY_FINALIZATION_METHOD_VERSION,
+    QuantitativeFinalizedStudyProjection,
+)
+from domain.quantitative.research_question_coverage import QuantitativeAuthorityReference
+from domain.quantitative.workflow import QuantitativeTerminalOutcome, QuantitativeTerminalResult
+from domain.workflow_status import WorkflowStatus
+
+
+class QuantitativeAuthorityFinalizationError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class QuantitativeAuthorityFinalizationInput:
+    project_id: str
+    run_id: str
+    terminal_result_record_id: str
+    source_brief: QuantitativeAuthorityReference
+    research_design: QuantitativeAuthorityReference
+    questionnaire: QuantitativeAuthorityReference
+    reconciliation: QuantitativeAuthorityReference
+    analysis_plan: QuantitativeAuthorityReference
+    analysis_execution: tuple[QuantitativeAuthorityReference, ...]
+    finding_authority: tuple[QuantitativeAuthorityReference, ...]
+    insight_authority: tuple[QuantitativeAuthorityReference, ...]
+    report_authority: tuple[QuantitativeAuthorityReference, ...]
+    research_question_authorities: tuple[QuantitativeAuthorityReference, ...]
+    objective_authorities: tuple[QuantitativeAuthorityReference, ...]
+    dataset: QuantitativeAuthorityReference
+    codebook: QuantitativeAuthorityReference
+    qc_authority: QuantitativeAuthorityReference
+    weight_set_authorities: tuple[QuantitativeAuthorityReference, ...] = ()
+    controlled_absences: tuple[QuantitativeAuthorityReference, ...] = ()
+    execution_mode: str = "DESIGN_AWARE_EXECUTION"
+
+
+class QuantitativeAuthorityFinalizationService:
+    """Provider-free production transition from terminal workflow to Q2 authority."""
+
+    _TERMINAL_OUTCOMES = {
+        QuantitativeTerminalOutcome.COMPLETED,
+        QuantitativeTerminalOutcome.COMPLETED_WITH_NO_SUPPORTED_FINDINGS,
+        QuantitativeTerminalOutcome.COMPLETED_WITH_NO_SUPPORTED_INSIGHTS,
+        QuantitativeTerminalOutcome.COMPLETED_WITH_NO_SUPPORTED_REPORT,
+    }
+
+    def __init__(self, *, project_service, workflow_service, state_service,
+                 authority_chain_service, authority_chain_selection_service,
+                 digest_provider):
+        self._projects = project_service
+        self._workflows = workflow_service
+        self._state = state_service
+        self._chains = authority_chain_service
+        self._selections = authority_chain_selection_service
+        self._digest = digest_provider
+
+    def finalize(self, request: QuantitativeAuthorityFinalizationInput, *,
+                 created_at: str, created_by: str,
+                 supersedes_selection_id: str | None = None):
+        terminal = self._preflight(request)
+        manifest = self._chains.create_manifest(
+            project_id=request.project_id, run_id=request.run_id,
+            source_brief=request.source_brief, research_design=request.research_design,
+            questionnaire=request.questionnaire, reconciliation=request.reconciliation,
+            analysis_plan=request.analysis_plan, analysis_execution=request.analysis_execution,
+            finding_authority=request.finding_authority,
+            insight_authority=request.insight_authority,
+            report_authority=request.report_authority,
+            research_question_authorities=request.research_question_authorities,
+            objective_authorities=request.objective_authorities,
+            dataset=request.dataset, codebook=request.codebook,
+            qc_authority=request.qc_authority,
+            weight_set_authorities=request.weight_set_authorities,
+            controlled_absences=request.controlled_absences,
+        )
+        selection = self._selections.activate(
+            project_id=request.project_id, run_id=request.run_id,
+            manifest_id=manifest.manifest_id, created_at=created_at,
+            created_by=created_by, supersedes_selection_id=supersedes_selection_id,
+        )
+        chain = self._selections.resolve_current_authority_chain(
+            project_id=request.project_id, run_id=request.run_id,
+        )
+        return self._projection(terminal, selection, chain)
+
+    def resolve_current(self, *, project_id: str, run_id: str):
+        self._scope(project_id, run_id)
+        selection, chain = self._selections.resolve_current_selection(
+            project_id=project_id, run_id=run_id,
+        )
+        dataset_ref = self._one(chain.ordered_authorities, "DATASET")
+        dataset = self._state.load(dataset_ref.authority_id, project_id=project_id)
+        dataset_version_id = getattr(dataset, "version_id", dataset_ref.authority_id)
+        terminals = tuple(
+            item for item in self._state.list_for_run(
+                run_id, project_id=project_id, expected_type=QuantitativeTerminalResult
+            )
+            if item.terminal_outcome in self._TERMINAL_OUTCOMES
+            and item.execution_status == "COMPLETED"
+            and item.dataset_version_id == dataset_version_id
+            and item.dataset_fingerprint == dataset_ref.authority_fingerprint
+        )
+        if len(terminals) != 1:
+            raise QuantitativeAuthorityFinalizationError(
+                "finalized current chain has missing or ambiguous terminal authority"
+            )
+        return self._projection(terminals[0], selection, chain)
+
+    def reconstruct_backward(self, *, project_id: str, run_id: str, objective_authority_id: str):
+        selection, chain = self._selections.resolve_current_selection(project_id=project_id, run_id=run_id)
+        if not any(x.authority_id == objective_authority_id for x in chain.objective_authorities):
+            raise QuantitativeAuthorityFinalizationError("Objective authority is not bound to the finalized current chain")
+        return chain
+    def _preflight(self, request):
+        if request.execution_mode != "DESIGN_AWARE_EXECUTION":
+            raise QuantitativeAuthorityFinalizationError(
+                "dataset-only execution is not design-aware finalization"
+            )
+        self._scope(request.project_id, request.run_id)
+        terminal = self._state.load(
+            request.terminal_result_record_id, project_id=request.project_id,
+            expected_type=QuantitativeTerminalResult,
+        )
+        if terminal.project_id != request.project_id or terminal.run_id != request.run_id:
+            raise QuantitativeAuthorityFinalizationError("terminal authority has wrong project/run")
+        if terminal.execution_status != "COMPLETED" or terminal.terminal_outcome not in self._TERMINAL_OUTCOMES:
+            raise QuantitativeAuthorityFinalizationError("workflow terminal outcome is not finalizable")
+        dataset = self._state.load(request.dataset.authority_id, project_id=request.project_id)
+        dataset_version_id = getattr(dataset, "version_id", request.dataset.authority_id)
+        if (dataset_version_id, request.dataset.authority_fingerprint) != (
+            terminal.dataset_version_id, terminal.dataset_fingerprint
+        ):
+            raise QuantitativeAuthorityFinalizationError("terminal Dataset authority mismatch")
+        if request.weight_set_authorities:
+            matches = []
+            for ref in request.weight_set_authorities:
+                weight = self._state.load(ref.authority_id, project_id=request.project_id)
+                matches.append((getattr(weight, "weight_set_id", ref.authority_id), ref.authority_fingerprint))
+            if (terminal.weight_set_id, terminal.weight_set_fingerprint) not in matches:
+                raise QuantitativeAuthorityFinalizationError("terminal WeightSet authority mismatch")
+        if not request.analysis_execution or not request.research_question_authorities:
+            raise QuantitativeAuthorityFinalizationError("required RD/RH authority is missing")
+        self._validate_controlled_downstream(request, terminal)
+        return terminal
+
+    def _scope(self, project_id, run_id):
+        self._projects.get_project(project_id)
+        run = self._workflows.get_workflow_run(run_id)
+        if run.project_id != project_id:
+            raise QuantitativeAuthorityFinalizationError("WorkflowRun has wrong Project")
+        if run.status is not WorkflowStatus.COMPLETED:
+            raise QuantitativeAuthorityFinalizationError("WorkflowRun is not successfully terminal")
+
+    @staticmethod
+    def _validate_controlled_downstream(request, terminal):
+        absence_kinds = {item.authority_kind for item in request.controlled_absences}
+        has_rf_absence = any(kind.startswith("RF_") for kind in absence_kinds)
+        has_rg_absence = any(kind.startswith("RG_") for kind in absence_kinds)
+        if not request.finding_authority:
+            raise QuantitativeAuthorityFinalizationError("required RE authority is missing")
+        if terminal.terminal_outcome is QuantitativeTerminalOutcome.COMPLETED:
+            if not request.insight_authority or not request.report_authority:
+                raise QuantitativeAuthorityFinalizationError("completed run lacks RF/RG authority")
+        elif terminal.terminal_outcome is QuantitativeTerminalOutcome.COMPLETED_WITH_NO_SUPPORTED_FINDINGS:
+            if request.insight_authority or request.report_authority or not (has_rf_absence and has_rg_absence):
+                raise QuantitativeAuthorityFinalizationError("invalid controlled no-Finding authority")
+        elif terminal.terminal_outcome is QuantitativeTerminalOutcome.COMPLETED_WITH_NO_SUPPORTED_INSIGHTS:
+            if request.report_authority or not (request.insight_authority or has_rf_absence) or not has_rg_absence:
+                raise QuantitativeAuthorityFinalizationError("invalid controlled no-Insight authority")
+        elif terminal.terminal_outcome is QuantitativeTerminalOutcome.COMPLETED_WITH_NO_SUPPORTED_REPORT:
+            if not request.insight_authority or (not request.report_authority and not has_rg_absence):
+                raise QuantitativeAuthorityFinalizationError("invalid controlled no-Report authority")
+
+    def _projection(self, terminal, selection, chain):
+        qz = self._one(chain.ordered_authorities, "QZ_DESIGN")
+        brief = self._one(chain.ordered_authorities, "QZ_BRIEF")
+        rh = tuple(sorted((x.authority_id, x.authority_fingerprint, self._status(x, chain.project_id))
+                          for x in chain.research_question_authorities))
+        ri = tuple(sorted((x.authority_id, x.authority_fingerprint)
+                          for x in chain.objective_authorities))
+        absences = tuple(sorted((x.authority_kind, x.authority_id, x.authority_fingerprint)
+                                for x in chain.controlled_absences))
+        limitations = tuple(sorted(set(terminal.limitations)))
+        payload = {
+            "contract": "RL_FINALIZED_STUDY_PROJECTION_V1",
+            "project": chain.project_id, "run": chain.run_id,
+            "terminal": terminal.result_id, "terminal_fingerprint": authority_fingerprint(terminal),
+            "terminal_outcome": terminal.terminal_outcome.value,
+            "manifest": chain.manifest_id, "manifest_fingerprint": chain.manifest_fingerprint,
+            "selection": selection.selection_id, "selection_fingerprint": selection.fingerprint,
+            "qz": asdict(qz), "brief": asdict(brief), "rh": rh, "ri": ri,
+            "absences": absences, "limitations": limitations,
+            "method": AUTHORITY_FINALIZATION_METHOD_VERSION,
+        }
+        fingerprint = canonical_digest(payload, digest_provider=self._digest)
+        return QuantitativeFinalizedStudyProjection(
+            chain.project_id, chain.run_id, WorkflowStatus.COMPLETED.value,
+            terminal.result_id, authority_fingerprint(terminal), terminal.terminal_outcome.value,
+            qz.authority_id, qz.authority_fingerprint,
+            brief.authority_id, brief.authority_fingerprint,
+            chain.manifest_id, chain.manifest_fingerprint,
+            selection.selection_id, selection.fingerprint, rh, ri, absences, (), limitations,
+            AUTHORITY_FINALIZATION_METHOD_VERSION, fingerprint,
+        )
+
+    def _status(self, ref, project_id):
+        value = self._state.load(ref.authority_id, project_id=project_id)
+        status = getattr(value, "decision", None) or getattr(value, "status", None)
+        return getattr(status, "value", status) or "BOUND"
+
+    @staticmethod
+    def _one(refs, kind):
+        values = tuple(x for x in refs if x.authority_kind == kind)
+        if len(values) != 1:
+            raise QuantitativeAuthorityFinalizationError(f"exact {kind} authority is missing or ambiguous")
+        return values[0]

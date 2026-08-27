@@ -334,6 +334,7 @@ def create_application_container(
     quantitative_authority_chain_service = None
     quantitative_authority_chain_selection_service = None
     quantitative_study_sufficiency_service = None
+    quantitative_authority_finalization_service = None
     if persistence.quantitative_state_repository is not None:
         from application.structured_output.json_validator import JsonValidator
         from application.llm.stage_llm_clients import create_quantitative_live_llm_client
@@ -433,6 +434,14 @@ def create_application_container(
             repository=QLQuantitativeStudySufficiencyRepository(quantitative_state_service), digest_provider=digest_provider,
             authority_chain_selection_service=quantitative_authority_chain_selection_service,
             research_design_service=quantitative_design_service, objective_coverage_service=quantitative_objective_coverage_service,
+        )
+        from application.quantitative.authority_finalization import QuantitativeAuthorityFinalizationService
+        quantitative_authority_finalization_service=QuantitativeAuthorityFinalizationService(
+            project_service=project_service, workflow_service=workflow_service,
+            state_service=quantitative_state_service,
+            authority_chain_service=quantitative_authority_chain_service,
+            authority_chain_selection_service=quantitative_authority_chain_selection_service,
+            digest_provider=digest_provider,
         )
         protected_root = (
             config.quantitative_protected_storage_root
@@ -588,6 +597,7 @@ def create_application_container(
         quantitative_authority_chain_service=quantitative_authority_chain_service,
         quantitative_authority_chain_selection_service=quantitative_authority_chain_selection_service,
         quantitative_study_sufficiency_service=quantitative_study_sufficiency_service,
+        quantitative_authority_finalization_service=quantitative_authority_finalization_service,
         _shutdown_callbacks=shutdown_callbacks,
     )
 
