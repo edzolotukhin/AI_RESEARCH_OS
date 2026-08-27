@@ -12,6 +12,10 @@ from domain.ai.llm_response import LLMResponse
 from tests.fixtures.research_brief import sample_research_brief
 
 from application.ports.project_repository import ProjectRepository
+from application.persistence.exceptions import EntityNotFoundError
+from domain.workflow_template import WorkflowTemplate
+from infrastructure.persistence.memory.in_memory_project_repository import InMemoryProjectRepository
+from infrastructure.persistence.memory.in_memory_workflow_run_repository import InMemoryWorkflowRunRepository
 from application.services.project_service import ProjectService
 from application.quantitative.state_persistence import QuantitativePersistenceError
 from infrastructure.persistence.memory.in_memory_quantitative_state_repository import (
@@ -150,6 +154,87 @@ class CompositionRootTests(unittest.TestCase):
                     brief.version_id, project_id="restart-project",
                 )
             corrupt.shutdown()
+    def test_scope_repository_overrides_survive_production_container_reconstruction(self):
+        projects = InMemoryProjectRepository()
+        runs = InMemoryWorkflowRunRepository()
+        quantitative = InMemoryQuantitativeStateRepository()
+        mock_llm = Mock()
+        mock_llm.generate.return_value = LLMResponse(content=VALID_PLANNER_JSON)
+
+        with tempfile.TemporaryDirectory() as root:
+            def build(project_repository, workflow_run_repository, quantitative_repository):
+                return create_application_container(
+                    config=ApplicationConfig(
+                        projects_root=root, persistence_backend="memory",
+                        deterministic_stage_executors=True, search_provider="deterministic",
+                    ),
+                    overrides=ApplicationOverrides(
+                        llm_client=mock_llm,
+                        project_repository=project_repository,
+                        workflow_run_repository=workflow_run_repository,
+                        quantitative_state_repository=quantitative_repository,
+                    ),
+                )
+
+            first = build(projects, runs, quantitative)
+            project = first.project_service.create_project("Restart scope")
+            run = first.workflow_service.create_workflow_run(
+                WorkflowTemplate(id="restart-template", name="Restart"),
+                project_id=project.id, run_id="restart-run",
+            )
+            run.ready()
+            run.start()
+            run.complete()
+            first.workflow_service.save_workflow_run(run, expected_version=0)
+            brief = first.quantitative_authority_finalization_service._designs.create_brief(
+                brief_id="scope-brief", version_id="scope-brief-v1",
+                project_id=project.id, run_id=run.id,
+                title="Scope restart", business_context="Synthetic context.",
+                business_problem="Persist the complete authority scope.",
+                decision_context="Accept restart composition.",
+                research_purpose="Verify Project, run, and Quantitative reload.",
+                intended_audience=("Engineering",), target_deliverables=("Acceptance",),
+                constraints=("Offline",), provenance="TEST_AUTHORED",
+                created_at="2026-08-27T00:00:00Z", created_by="tester",
+            )
+            first_project_service = first.project_service
+            first_workflow_service = first.workflow_service
+            first_rl = first.quantitative_authority_finalization_service
+            first.shutdown()
+
+            second = build(projects, runs, quantitative)
+            reloaded_project = second.project_service.get_project(project.id)
+            reloaded_run = second.workflow_service.get_workflow_run(run.id)
+            reloaded_brief = second.quantitative_authority_finalization_service._designs._repository.get_brief(
+                brief.version_id, project_id=project.id,
+            )
+            second.quantitative_authority_finalization_service._scope(project.id, run.id)
+            self.assertIsNot(first, second)
+            self.assertIsNot(first_project_service, second.project_service)
+            self.assertIsNot(first_workflow_service, second.workflow_service)
+            self.assertIsNot(first_rl, second.quantitative_authority_finalization_service)
+            self.assertEqual(project.id, reloaded_project.id)
+            self.assertEqual((run.id, project.id), (reloaded_run.id, reloaded_run.project_id))
+            self.assertEqual((brief.version_id, brief.fingerprint),
+                             (reloaded_brief.version_id, reloaded_brief.fingerprint))
+            self.assertEqual([], second.workflow_service.list_workflow_runs_for_project("wrong-project"))
+            self.assertIsNone(second.quantitative_authority_finalization_service._designs._repository.get_brief(
+                brief.version_id, project_id="wrong-project",
+            ))
+            second.shutdown()
+
+            fresh = build(
+                InMemoryProjectRepository(), InMemoryWorkflowRunRepository(),
+                InMemoryQuantitativeStateRepository(),
+            )
+            with self.assertRaises(EntityNotFoundError):
+                fresh.project_service.get_project(project.id)
+            with self.assertRaises(EntityNotFoundError):
+                fresh.workflow_service.get_workflow_run(run.id)
+            self.assertIsNone(fresh.quantitative_authority_finalization_service._designs._repository.get_brief(
+                brief.version_id, project_id=project.id,
+            ))
+            fresh.shutdown()
     def test_create_application_uses_project_repository_override(self):
         custom_repository = Mock(spec=ProjectRepository)
 

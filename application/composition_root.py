@@ -147,6 +147,11 @@ def create_application_container(
     )
 
     project_repository = overrides.project_repository or persistence.project_repository
+    workflow_run_repository = (
+        overrides.workflow_run_repository
+        if overrides.workflow_run_repository is not None
+        else persistence.workflow_run_repository
+    )
 
     project_factory = ProjectFactory()
 
@@ -161,7 +166,7 @@ def create_application_container(
 
     workflow_service = WorkflowService(
         workflow_template_repository=persistence.workflow_template_repository,
-        workflow_run_repository=persistence.workflow_run_repository,
+        workflow_run_repository=workflow_run_repository,
         workflow_run_factory=workflow_run_factory,
     )
 
@@ -196,7 +201,7 @@ def create_application_container(
     report_query_service = ReportQueryService(report_repository=report_repository)
     review_query_service = ReviewQueryService(review_repository=review_repository)
     research_run_result_query_service = ResearchRunResultQueryService(
-        workflow_run_repository=persistence.workflow_run_repository,
+        workflow_run_repository=workflow_run_repository,
         source_repository=source_repository,
         evidence_repository=evidence_repository,
         finding_repository=finding_repository,
@@ -206,7 +211,7 @@ def create_application_container(
         artifact_repository=persistence.artifact_repository,
     )
     research_status_query_service = ResearchStatusQueryService(
-        workflow_run_repository=persistence.workflow_run_repository,
+        workflow_run_repository=workflow_run_repository,
         research_run_result_query_service=research_run_result_query_service,
     )
 

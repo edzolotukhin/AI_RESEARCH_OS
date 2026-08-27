@@ -6,6 +6,7 @@ from typing import Any
 
 from application.ports.project_repository import ProjectRepository
 from application.ports.quantitative_state_repository import QuantitativeStateRepository
+from application.ports.workflow_run_repository import WorkflowRunRepository
 from application.ports.analysis_ports import AnalysisEngine, FindingRepository, InsightRepository
 from application.analysis.finding_entailment import FindingEntailmentValidator
 from application.ports.evidence_ports import EvidenceExtractor, EvidenceRepository
@@ -400,6 +401,7 @@ class ApplicationOverrides:
     evidence_llm_client: LLMClient | None = None
     quantitative_llm_client: LLMClient | None = None
     quantitative_state_repository: QuantitativeStateRepository | None = None
+    workflow_run_repository: WorkflowRunRepository | None = None
     project_repository: ProjectRepository | None = None
     project_service: ProjectService | None = None
     registry: Registry | None = None
