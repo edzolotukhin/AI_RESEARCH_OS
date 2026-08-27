@@ -324,6 +324,11 @@ def create_application_container(
         completion_policy=completion_policy,
     )
 
+    quantitative_state_repository = (
+        overrides.quantitative_state_repository
+        if overrides.quantitative_state_repository is not None
+        else persistence.quantitative_state_repository
+    )
     quantitative_state_service = None
     quantitative_stage_service_factory = None
     quantitative_generators = None
@@ -335,7 +340,7 @@ def create_application_container(
     quantitative_authority_chain_selection_service = None
     quantitative_study_sufficiency_service = None
     quantitative_authority_finalization_service = None
-    if persistence.quantitative_state_repository is not None:
+    if quantitative_state_repository is not None:
         from application.structured_output.json_validator import JsonValidator
         from application.llm.stage_llm_clients import create_quantitative_live_llm_client
 
@@ -383,7 +388,7 @@ def create_application_container(
             quantitative_generation_mode = "production"
         digest_provider = Sha256DigestProvider()
         quantitative_state_service = QuantitativeStateService(
-            repository=persistence.quantitative_state_repository,
+            repository=quantitative_state_repository,
             digest_provider=digest_provider,
         )
         from application.quantitative.research_design_authority import QuantitativeResearchDesignService

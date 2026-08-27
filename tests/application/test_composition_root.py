@@ -1,10 +1,11 @@
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock
 
 from agency.agency import Agency
-from application.composition_root import create_application
+from application.composition_root import create_application, create_application_container
 from application.config import ApplicationConfig, ApplicationOverrides
 
 from domain.ai.llm_response import LLMResponse
@@ -12,6 +13,10 @@ from tests.fixtures.research_brief import sample_research_brief
 
 from application.ports.project_repository import ProjectRepository
 from application.services.project_service import ProjectService
+from application.quantitative.state_persistence import QuantitativePersistenceError
+from infrastructure.persistence.memory.in_memory_quantitative_state_repository import (
+    InMemoryQuantitativeStateRepository,
+)
 
 from runtime.workflow_context import WorkflowContext
 
@@ -62,6 +67,89 @@ class CompositionRootTests(unittest.TestCase):
             mock_llm.generate.assert_called()
             self.assertTrue(any(Path(temp_dir).iterdir()))
 
+    def test_quantitative_repository_override_survives_production_container_reconstruction(self):
+        shared = InMemoryQuantitativeStateRepository()
+        mock_llm = Mock()
+        mock_llm.generate.return_value = LLMResponse(content=VALID_PLANNER_JSON)
+
+        def container(repository=None, *, backend="memory"):
+            return create_application_container(
+                config=ApplicationConfig(
+                    projects_root=self._temp_dir,
+                    persistence_backend=backend,
+                    deterministic_stage_executors=True,
+                    search_provider="deterministic",
+                ),
+                overrides=ApplicationOverrides(
+                    llm_client=mock_llm,
+                    quantitative_state_repository=repository,
+                ),
+            )
+
+        with tempfile.TemporaryDirectory() as root:
+            self._temp_dir = root
+            first = container(shared)
+            first_designs = first.quantitative_authority_finalization_service._designs
+            brief = first_designs.create_brief(
+                brief_id="restart-brief", version_id="restart-brief-v1",
+                project_id="restart-project", run_id="restart-run",
+                title="Offline restart study", business_context="Synthetic context.",
+                business_problem="Prove production composition restart.",
+                decision_context="Accept the composition boundary.",
+                research_purpose="Verify exact typed authority reload.",
+                intended_audience=("Engineering",), target_deliverables=("Acceptance",),
+                constraints=("No external persistence",), provenance="TEST_AUTHORED",
+                created_at="2026-08-27T00:00:00Z", created_by="tester",
+            )
+            first.shutdown()
+
+            second = container(shared)
+            second_designs = second.quantitative_authority_finalization_service._designs
+            reloaded = second_designs._repository.get_brief(
+                brief.version_id, project_id="restart-project",
+            )
+            self.assertIsNot(first, second)
+            self.assertIsNot(first_designs, second_designs)
+            self.assertEqual(brief, reloaded)
+            self.assertEqual(brief.fingerprint, reloaded.fingerprint)
+            self.assertIsNone(second_designs._repository.get_brief(
+                brief.version_id, project_id="wrong-project",
+            ))
+            second.shutdown()
+
+            fresh = container(InMemoryQuantitativeStateRepository())
+            self.assertIsNone(fresh.quantitative_authority_finalization_service._designs._repository.get_brief(
+                brief.version_id, project_id="restart-project",
+            ))
+            fresh.shutdown()
+
+            default_a = container()
+            default_a.quantitative_authority_finalization_service._designs.create_brief(
+                brief_id="default", version_id="default-v1", project_id="p", run_id="r",
+                title="Default memory", business_context="Context.", business_problem="Problem.",
+                decision_context="Decision.", research_purpose="Purpose.",
+                intended_audience=("Audience",), target_deliverables=("Report",),
+                constraints=(), provenance="TEST_AUTHORED", created_at="t", created_by="tester",
+            )
+            default_a.shutdown()
+            default_b = container()
+            self.assertIsNone(default_b.quantitative_authority_finalization_service._designs._repository.get_brief(
+                "default-v1", project_id="p",
+            ))
+            default_b.shutdown()
+
+            file_default = container(backend="file")
+            self.assertIsNone(file_default.quantitative_authority_finalization_service)
+            file_default.shutdown()
+
+            record = shared._records[brief.version_id]
+            shared._records[brief.version_id] = replace(record, payload_checksum="corrupt")
+            corrupt = container(shared)
+            with self.assertRaises(QuantitativePersistenceError):
+                corrupt.quantitative_authority_finalization_service._designs._repository.get_brief(
+                    brief.version_id, project_id="restart-project",
+                )
+            corrupt.shutdown()
     def test_create_application_uses_project_repository_override(self):
         custom_repository = Mock(spec=ProjectRepository)
 
