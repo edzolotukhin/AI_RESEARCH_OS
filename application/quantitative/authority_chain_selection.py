@@ -24,6 +24,12 @@ class QuantitativeAuthorityChainSelectionService:
         fingerprint=canonical_digest(payload,digest_provider=self._digest)
         value=QuantitativeCurrentAuthorityChainSelection(str(uuid5(NAMESPACE_URL,f"rk:{project_id}:{run_id}:{fingerprint}")),project_id,run_id,"QUANTITATIVE",projection.execution_mode,projection.manifest_id,projection.manifest_fingerprint,qz.authority_id,qz.authority_fingerprint,rc.authority_id,rc.authority_fingerprint,supersedes_selection_id,created_at,created_by,AUTHORITY_CHAIN_SELECTION_METHOD_VERSION,fingerprint)
         return self.repository.save_selection(value)
+    def resolve_current_selection(self, *, project_id, run_id, execution_mode="DESIGN_AWARE_EXECUTION"):
+        if execution_mode != "DESIGN_AWARE_EXECUTION":
+            raise QuantitativeAuthorityChainSelectionError("no design-aware authority-chain selection for dataset-only mode")
+        selection=self._current_head(project_id=project_id,run_id=run_id)
+        projection=self.resolve_current_authority_chain(project_id=project_id,run_id=run_id,execution_mode=execution_mode)
+        return selection,projection
     def resolve_current_authority_chain(self, *, project_id, run_id, execution_mode="DESIGN_AWARE_EXECUTION"):
         if execution_mode!="DESIGN_AWARE_EXECUTION": raise QuantitativeAuthorityChainSelectionError("no design-aware authority-chain selection for dataset-only mode")
         selection=self._current_head(project_id=project_id,run_id=run_id)
