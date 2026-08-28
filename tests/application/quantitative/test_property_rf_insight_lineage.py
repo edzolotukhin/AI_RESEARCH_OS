@@ -127,6 +127,72 @@ class PropertyRFInsightLineageTests(unittest.TestCase):
         self.assertIn(InsightCoverageStatus.INSIGHT_SUPPORTED, {item.status for item in coverage.entries})
         self.assertFalse(hasattr(entry, "objective_answered"))
 
+    def test_qj_rf_bundle_fingerprint_is_order_invariant_and_content_bound(self):
+        findings = tuple(self.findings.accepted_findings)
+        first = replace(
+            findings[0],
+            finding_id="ffffffff-ffff-ffff-ffff-ffffffffffff",
+        )
+        second = replace(
+            findings[0],
+            finding_id="00000000-0000-0000-0000-000000000001",
+            support_validation_fingerprint="qh-second-fixed-authority",
+        )
+        service = self.insight_service(RecordingInsightGenerator(empty=True))
+        generation_order = service.generate(findings=(first, second))
+        lexical_order = service.generate(findings=(second, first))
+        self.assertEqual(
+            generation_order.input_finding_bundle_fingerprint,
+            lexical_order.input_finding_bundle_fingerprint,
+        )
+
+        authority = self.authority()
+        entry_first = replace(
+            authority.finding_entries[0],
+            finding_id=first.finding_id,
+            qh_validation_fingerprint=first.support_validation_fingerprint,
+            safe_finding_projection=self.rf._finding_projection(first),
+        )
+        entry_second = replace(
+            authority.finding_entries[0],
+            finding_id=second.finding_id,
+            qh_validation_fingerprint=second.support_validation_fingerprint,
+            safe_finding_projection=self.rf._finding_projection(second),
+        )
+        rf_generation_order = self.rf.expected_generation_bundle_fingerprint(
+            replace(authority, finding_entries=(entry_first, entry_second)),
+        )
+        rf_lexical_order = self.rf.expected_generation_bundle_fingerprint(
+            replace(authority, finding_entries=(entry_second, entry_first)),
+        )
+        self.assertEqual(rf_generation_order, rf_lexical_order)
+        self.assertEqual(
+            generation_order.input_finding_bundle_fingerprint,
+            rf_generation_order,
+        )
+
+        removed = service.generate(findings=(first,))
+        changed_id = service.generate(
+            findings=(first, replace(second, finding_id="11111111-1111-1111-1111-111111111111")),
+        )
+        changed_validation = service.generate(
+            findings=(first, replace(second, support_validation_fingerprint="changed-qh-authority")),
+        )
+        added = service.generate(
+            findings=(
+                first,
+                second,
+                replace(first, finding_id="22222222-2222-2222-2222-222222222222"),
+            ),
+        )
+        for semantically_different in (removed, changed_id, changed_validation, added):
+            self.assertNotEqual(
+                generation_order.input_finding_bundle_fingerprint,
+                semantically_different.input_finding_bundle_fingerprint,
+            )
+        with self.assertRaisesRegex(Exception, "duplicate"):
+            service.generate(findings=(first, first))
+
     def test_same_rq_different_requirements_compatible_but_common_objective_only_rejected(self):
         base = self.authority().finding_entries[0]
         branch = base.branches[0]

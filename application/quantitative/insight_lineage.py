@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from application.quantitative.fingerprints import canonical_digest
+from application.quantitative.insight_support_canonicalization import (
+    canonical_finding_support_bundle,
+    finding_support_projection,
+)
 from application.quantitative.one_way_statistics import QuantitativeAnalysisError
 from domain.quantitative.finding import QuantitativeSupportStatus
 from domain.quantitative.insight import QuantitativeInsightGenerationResult
@@ -110,7 +114,10 @@ class QuantitativeInsightLineageService:
         return validate
 
     def expected_generation_bundle_fingerprint(self, authority):
-        bundle = tuple(item.safe_finding_projection for item in authority.finding_entries)
+        bundle = canonical_finding_support_bundle(
+            authority.finding_entries,
+            projection=lambda item: item.safe_finding_projection,
+        )
         return canonical_digest(bundle, digest_provider=self.digest)
 
     def finalize(self, *, authority, generation_record_id, generation: QuantitativeInsightGenerationResult):
@@ -188,15 +195,7 @@ class QuantitativeInsightLineageService:
 
     @staticmethod
     def _finding_projection(item):
-        return {
-            "finding_id": item.finding_id,
-            "support_validation_fingerprint": item.support_validation_fingerprint,
-            "analytical_context_fingerprint": item.analytical_context_fingerprint,
-            "claim_type": item.claim.claim_type.value, "finding_text": item.text,
-            "display_value": item.claim.display_value, "direction": item.claim.direction,
-            "filter_definition": item.claim.filter_definition, "base_definition": item.claim.base_definition,
-            "weighting_status": item.claim.weighting_status, "weight_set_fingerprint": item.claim.weight_set_fingerprint,
-        }
+        return finding_support_projection(item)
 
     @staticmethod
     def _branch_payload(item):

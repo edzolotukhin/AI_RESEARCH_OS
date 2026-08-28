@@ -55,7 +55,9 @@ class OfflineInsightGenerator:
 class OfflineReportGenerator:
     identity = "qo-offline-report-v1"
     def generate(self, prompt):
-        support=_bundle(prompt, "APPROVED_SUPPORT="); finding=support["findings"][0]; insight=support["insights"][0]
+        support=_bundle(prompt, "APPROVED_SUPPORT="); insight=support["insights"][0]
+        finding_by_id={item["finding_id"]:item for item in support["findings"]}
+        finding=finding_by_id[insight["finding_refs"][0]]
         value=finding["display_value"]
         section={"section_id":"section-1", "section_type":"KEY_FINDINGS", "title":"Results",
                  "narrative":f"Supported result was {value}.", "finding_refs":[finding["finding_id"]],

@@ -8,6 +8,10 @@ from uuid import NAMESPACE_URL, uuid5
 
 from application.ports.deterministic_digest_provider import DeterministicDigestProvider
 from application.quantitative.fingerprints import canonical_digest
+from application.quantitative.insight_support_canonicalization import (
+    canonical_finding_support_bundle,
+    finding_support_projection,
+)
 from application.quantitative.one_way_statistics import QuantitativeAnalysisError
 from domain.quantitative.finding import (
     QuantitativeClaimType,
@@ -189,7 +193,7 @@ class QuantitativeInsightSynthesisService:
     ) -> QuantitativeInsightGenerationResult:
         accepted = self._accepted_findings(findings)
         available = {item.finding_id: item for item in accepted}
-        bundle = tuple(self._finding_projection(item) for item in accepted)
+        bundle = canonical_finding_support_bundle(accepted)
         bundle_fingerprint = canonical_digest(bundle, digest_provider=self._digest)
         prompt = self._prompt(bundle)
         prompt_fingerprint = canonical_digest(
@@ -265,19 +269,7 @@ class QuantitativeInsightSynthesisService:
 
     @staticmethod
     def _finding_projection(item):
-        return {
-            "finding_id": item.finding_id,
-            "support_validation_fingerprint": item.support_validation_fingerprint,
-            "analytical_context_fingerprint": item.analytical_context_fingerprint,
-            "claim_type": item.claim.claim_type.value,
-            "finding_text": item.text,
-            "display_value": item.claim.display_value,
-            "direction": item.claim.direction,
-            "filter_definition": item.claim.filter_definition,
-            "base_definition": item.claim.base_definition,
-            "weighting_status": item.claim.weighting_status,
-            "weight_set_fingerprint": item.claim.weight_set_fingerprint,
-        }
+        return finding_support_projection(item)
 
     @staticmethod
     def _prompt(bundle):
