@@ -12,6 +12,7 @@ from domain.quantitative.questionnaire_authority import RoutingActionType, Routi
 from domain.quantitative.quality import QuestionnaireSnapshot, RoutingConsequence, RoutingRule
 
 METHOD = "RB_EXACT_V1"
+SEMANTIC_HOOK_REVIEW_METHOD = "RB_SEMANTIC_HOOK_EQUIVALENCE_V1"
 DATASET_ONLY_LIMITATION = "No approved Questionnaire-Codebook reconciliation authority is present."
 _BLOCKED = {ReconciliationMatchStatus.MISSING_IN_DATA, ReconciliationMatchStatus.INCOMPATIBLE_IN_DATA, ReconciliationMatchStatus.TRANSFORMATION_REQUIRED}
 
@@ -20,7 +21,7 @@ class QuantitativeMeasurementReconciliationError(ValueError): pass
 def _text(value): return " ".join(unicodedata.normalize("NFKC", str(value)).strip().split()).casefold()
 def _code(value):
     text=str(value).strip()
-    if re.fullmatch(r"[+-]?(?:0|[1-9]\\d*)(?:\\.\\d+)?",text):
+    if re.fullmatch(r"[+-]?(?:0|[1-9]\d*)(?:\.\d+)?",text):
         try:
             number=Decimal(text)
             if number.is_finite():
@@ -42,6 +43,7 @@ class QuantitativeMeasurementReconciliationService:
             raise QuantitativeMeasurementReconciliationError("Dataset/Codebook is unavailable for project/run")
         if (dataset.codebook_fingerprint != codebook.fingerprint or questionnaire.expected_measurement_schema_fingerprint != schema.fingerprint):
             raise QuantitativeMeasurementReconciliationError("Questionnaire, Dataset, or Codebook authority is stale")
+        parent = self._require(parent_version_id, project_id) if parent_version_id else None
         decisions = {item.expected_variable_id: item for item in reviewed_mappings}
         if len(decisions) != len(tuple(reviewed_mappings)): raise QuantitativeMeasurementReconciliationError("duplicate reviewed mapping decision")
         actual_by_name = {}
@@ -53,7 +55,7 @@ class QuantitativeMeasurementReconciliationService:
             actual = None
             if decision:
                 actual = next((item for item in codebook.variables if item.variable_id == decision.actual_variable_id), None)
-                self._validate_decision(decision, expected, actual)
+                self._validate_decision(decision, expected, actual, parent=parent, project_id=project_id, run_id=run_id, codebook=codebook)
             elif len(candidates) == 1: actual = candidates[0]
             elif len(candidates) > 1: raise QuantitativeMeasurementReconciliationError("ambiguous variable mapping")
             outcome = self._match(expected, actual, decision)
@@ -68,7 +70,6 @@ class QuantitativeMeasurementReconciliationService:
         lifecycle = ReconciliationLifecycle.DRAFT if review or blocked else ReconciliationLifecycle.APPROVED
         sequence = 1
         if parent_version_id:
-            parent = self._require(parent_version_id, project_id)
             sequence = parent.version_sequence + 1
         base = dict(reconciliation_id=reconciliation_id, version_id=version_id, version_sequence=sequence, project_id=project_id, methodology="QUANTITATIVE",
             questionnaire_id=questionnaire.questionnaire_id, questionnaire_version_id=questionnaire.version_id, questionnaire_fingerprint=questionnaire.fingerprint,
@@ -125,6 +126,16 @@ class QuantitativeMeasurementReconciliationService:
         if questionnaire.version_id != value.questionnaire_version_id or questionnaire.fingerprint != value.questionnaire_fingerprint: raise QuantitativeMeasurementReconciliationError("reconciliation is stale")
         if value.lifecycle_status is not ReconciliationLifecycle.APPROVED: raise QuantitativeMeasurementReconciliationError("reconciliation is not approved")
         if (value.dataset_version_id,value.dataset_fingerprint,value.data_fingerprint,value.schema_fingerprint,value.codebook_version_id,value.codebook_fingerprint)!=(dataset.version_id,dataset.dataset_fingerprint,dataset.data_fingerprint,dataset.schema_fingerprint,codebook.codebook_version_id,codebook.fingerprint): raise QuantitativeMeasurementReconciliationError("reconciliation is stale")
+        schema=self._questionnaires.derive_expected_measurement_schema(questionnaire.version_id,project_id=project_id)
+        expected={item.expected_variable_id:item for item in schema.variables}; actual={item.variable_id:item for item in codebook.variables}
+        for outcome in value.variable_outcomes:
+            if "semantic hook equivalence explicitly reviewed" not in outcome.reasons: continue
+            mapping=self._repository.get_mapping_decision(outcome.reviewer_decision_reference or "",project_id=project_id)
+            if mapping is None or mapping.decision_id not in value.reviewed_mapping_decision_ids: raise QuantitativeMeasurementReconciliationError("semantic-hook reviewed mapping authority is missing")
+            hooks=[item for item in mapping.semantic_hook_equivalences if item.decision is SemanticHookEquivalenceDecision.APPROVE_EQUIVALENCE]
+            if not hooks: raise QuantitativeMeasurementReconciliationError("semantic-hook reviewed mapping authority is missing")
+            candidate=self._require(hooks[0].reconciliation_version_id,project_id)
+            self._validate_decision(mapping,expected.get(outcome.expected_variable_id),actual.get(outcome.actual_variable_id),parent=candidate,project_id=project_id,run_id=run_id,codebook=codebook)
         if value.approval_reference:
             approval=self._repository.get_approval(value.approval_reference,project_id=project_id)
             if approval is None or approval.reconciliation_fingerprint != value.fingerprint: raise QuantitativeMeasurementReconciliationError("reconciliation approval is stale")
@@ -141,32 +152,133 @@ class QuantitativeMeasurementReconciliationService:
         payload={"contract":"RB_DATASET_ONLY_V1","authority_id":authority_id,"project_id":project_id,"run_id":run_id,"status":"NO_QUESTIONNAIRE_RECONCILIATION_AUTHORITY"}
         value=DatasetOnlyReconciliationAuthority(authority_id,project_id,run_id,"NO_QUESTIONNAIRE_RECONCILIATION_AUTHORITY",DATASET_ONLY_LIMITATION,canonical_digest(payload,digest_provider=self._digest)); self._repository.save_dataset_only(value); return value
 
-    def _validate_decision(self, decision, expected, actual):
+    def review_semantic_hook_equivalence(self, *, candidate_version_id, project_id, run_id, dataset, codebook,
+                                         expected_variable_id, actual_variable_id, expected_semantic_hook,
+                                         decision, actor_id, decided_at, rationale, decision_id,
+                                         base_mapping=None):
+        candidate = self._require(candidate_version_id, project_id)
+        if candidate.lifecycle_status is not ReconciliationLifecycle.DRAFT:
+            raise QuantitativeMeasurementReconciliationError("semantic-hook review candidate is unavailable")
+        if dataset.project_id != project_id or dataset.run_id != run_id or not any(item.version_id == candidate.version_id for item in self._repository.list_reconciliations(project_id=project_id, run_id=run_id)):
+            raise QuantitativeMeasurementReconciliationError("semantic-hook review candidate is unavailable for project/run")
+        if (candidate.dataset_version_id, candidate.dataset_fingerprint, candidate.codebook_version_id, candidate.codebook_fingerprint) != (dataset.version_id, dataset.dataset_fingerprint, codebook.codebook_version_id, codebook.fingerprint):
+            raise QuantitativeMeasurementReconciliationError("semantic-hook review Dataset/Codebook is stale")
+        questionnaire = self._questionnaires.resolve_current_approved(project_id=project_id, run_id=run_id)
+        schema = self._questionnaires.derive_expected_measurement_schema(questionnaire.version_id, project_id=project_id)
+        expected = next((item for item in schema.variables if item.expected_variable_id == expected_variable_id), None)
+        actual = next((item for item in codebook.variables if item.variable_id == actual_variable_id), None)
+        if expected is None or actual is None:
+            raise QuantitativeMeasurementReconciliationError("semantic-hook review references unknown variable")
+        if expected_semantic_hook not in expected.semantic_hooks:
+            raise QuantitativeMeasurementReconciliationError("semantic-hook review references unknown expected hook")
+        if not isinstance(decision, SemanticHookEquivalenceDecision):
+            raise QuantitativeMeasurementReconciliationError("semantic-hook review decision is invalid")
+        if decision is SemanticHookEquivalenceDecision.APPROVE_EQUIVALENCE and not self._semantic_hook_structurally_eligible(expected, actual, expected_semantic_hook):
+            raise QuantitativeMeasurementReconciliationError("semantic-hook equivalence cannot override structural incompatibility")
+        rationale = " ".join(rationale.split())
+        if not rationale:
+            raise QuantitativeMeasurementReconciliationError("semantic-hook review rationale is required")
+        if base_mapping is not None and (base_mapping.expected_variable_id != expected_variable_id or base_mapping.actual_variable_id != actual_variable_id or base_mapping.expected_variable_fingerprint != expected.fingerprint or base_mapping.actual_variable_fingerprint != actual.fingerprint):
+            raise QuantitativeMeasurementReconciliationError("base reviewed mapping is stale or references another variable")
+        payload = {"contract": SEMANTIC_HOOK_REVIEW_METHOD, "decision_id": decision_id, "project": project_id,
+            "run": run_id, "candidate": (candidate.version_id, candidate.fingerprint),
+            "expected": (expected.expected_variable_id, expected.fingerprint, expected_semantic_hook),
+            "actual": (actual.variable_id, actual.fingerprint, codebook.fingerprint), "decision": decision.value,
+            "actor": actor_id, "time": decided_at, "rationale": rationale}
+        equivalence = ReviewedSemanticHookEquivalence(decision_id, project_id, run_id, candidate.version_id,
+            candidate.fingerprint, expected.expected_variable_id, expected.fingerprint, expected_semantic_hook,
+            actual.variable_id, actual.fingerprint, codebook.fingerprint, decision, actor_id, rationale,
+            decided_at, SEMANTIC_HOOK_REVIEW_METHOD, canonical_digest(payload, digest_provider=self._digest))
+        existing = () if base_mapping is None else base_mapping.semantic_hook_equivalences
+        if any(item.expected_semantic_hook == expected_semantic_hook for item in existing):
+            raise QuantitativeMeasurementReconciliationError("conflicting semantic-hook reviewed decisions")
+        mapping_payload = {"contract": "RB_REVIEWED_MAPPING_V2", "expected": expected.fingerprint,
+            "actual": actual.fingerprint, "category": getattr(base_mapping, "category_code_mapping", ()),
+            "missing": getattr(base_mapping, "missing_semantic_mapping", ()), "scale": getattr(base_mapping, "scale_mapping", ()),
+            "mr_matrix": getattr(base_mapping, "mr_matrix_mapping", ()),
+            "semantic_hook_equivalences": tuple(item.fingerprint for item in existing + (equivalence,)),
+            "actor": actor_id, "time": decided_at, "rationale": rationale}
+        return ReviewedMeasurementMapping(decision_id, expected.expected_variable_id, expected.fingerprint,
+            actual.variable_id, actual.fingerprint, getattr(base_mapping, "category_code_mapping", ()),
+            getattr(base_mapping, "missing_semantic_mapping", ()), getattr(base_mapping, "scale_mapping", ()),
+            getattr(base_mapping, "mr_matrix_mapping", ()), actor_id, rationale, decided_at,
+            canonical_digest(mapping_payload, digest_provider=self._digest), existing + (equivalence,))
+
+    @staticmethod
+    def _semantic_hook_structurally_eligible(expected, actual, semantic_hook):
+        if actual.pii_classification is not expected.pii_expectation or actual.variable_type is not expected.variable_type:
+            return False
+        if _text(actual.measurement_level) != _text(expected.measurement_level):
+            return False
+        if semantic_hook == "NPS_SOURCE_0_10":
+            if actual.variable_type is not VariableType.NUMERIC:
+                return False
+            expected_domain = {_code(value) for value, _ in expected.value_labels}
+            actual_domain = {_code(value) for value, _ in actual.value_labels}
+            return expected_domain == {str(value) for value in range(11)} and actual_domain == expected_domain
+        return True
+
+    def _validate_decision(self, decision, expected, actual, *, parent, project_id, run_id, codebook):
         if actual is None or decision.expected_variable_fingerprint != expected.fingerprint or decision.actual_variable_fingerprint != actual.fingerprint: raise QuantitativeMeasurementReconciliationError("reviewed mapping is stale or references unknown variable")
         if not " ".join(decision.rationale.split()): raise QuantitativeMeasurementReconciliationError("reviewed mapping rationale is required")
+        seen_hooks = set()
+        for item in decision.semantic_hook_equivalences:
+            if item.expected_semantic_hook in seen_hooks: raise QuantitativeMeasurementReconciliationError("conflicting semantic-hook reviewed decisions")
+            seen_hooks.add(item.expected_semantic_hook)
+            if parent is None or (item.project_id, item.run_id, item.reconciliation_version_id, item.reconciliation_fingerprint) != (project_id, run_id, parent.version_id, parent.fingerprint): raise QuantitativeMeasurementReconciliationError("semantic-hook review is stale")
+            if (item.expected_variable_id, item.expected_variable_fingerprint, item.actual_variable_id, item.actual_variable_fingerprint, item.codebook_fingerprint) != (expected.expected_variable_id, expected.fingerprint, actual.variable_id, actual.fingerprint, codebook.fingerprint): raise QuantitativeMeasurementReconciliationError("semantic-hook review variable authority is stale")
+            if item.expected_semantic_hook not in expected.semantic_hooks or item.method_version != SEMANTIC_HOOK_REVIEW_METHOD: raise QuantitativeMeasurementReconciliationError("semantic-hook review authority is invalid")
+            payload = {"contract": SEMANTIC_HOOK_REVIEW_METHOD, "decision_id": item.decision_id, "project": item.project_id,
+                "run": item.run_id, "candidate": (item.reconciliation_version_id, item.reconciliation_fingerprint),
+                "expected": (item.expected_variable_id, item.expected_variable_fingerprint, item.expected_semantic_hook),
+                "actual": (item.actual_variable_id, item.actual_variable_fingerprint, item.codebook_fingerprint),
+                "decision": item.decision.value, "actor": item.actor_id, "time": item.decided_at, "rationale": item.rationale}
+            if item.fingerprint != canonical_digest(payload, digest_provider=self._digest): raise QuantitativeMeasurementReconciliationError("semantic-hook review fingerprint is stale")
 
     def _match(self, expected, actual, decision):
         status=ReconciliationMatchStatus.EXACT_MATCH; reasons=[]
         if actual is None: status=ReconciliationMatchStatus.MISSING_IN_DATA; reasons=["expected variable is absent"]
         elif expected.pii_expectation is PiiClassification.NONE and actual.pii_classification is not PiiClassification.NONE: status=ReconciliationMatchStatus.INCOMPATIBLE_IN_DATA; reasons=["PII classification cannot be downgraded"]
         elif actual.variable_type != expected.variable_type: status=ReconciliationMatchStatus.INCOMPATIBLE_IN_DATA; reasons=["variable type differs"]
-        elif actual.role != expected.analytical_role: status=ReconciliationMatchStatus.COMPATIBLE_MATCH if decision else ReconciliationMatchStatus.REQUIRES_REVIEW; reasons=["variable role requires reviewed authority"]
         elif _text(actual.measurement_level) != _text(expected.measurement_level): status=ReconciliationMatchStatus.INCOMPATIBLE_IN_DATA; reasons=["measurement level differs"]
         else:
+            review_required=False; compatible=actual.role != expected.analytical_role
+            if compatible: reasons.append("variable role requires reviewed authority")
             expected_codes={_code(k):_text(v) for k,v in expected.value_labels}; actual_codes={_code(k):_text(v) for k,v in actual.value_labels}
             if expected_codes != actual_codes:
                 reversed_scale = expected.ordinal_ordering and set(expected_codes)==set(actual_codes) and [actual_codes.get(x) for x in expected.ordinal_ordering] == list(reversed([expected_codes.get(x) for x in expected.ordinal_ordering]))
-                status=ReconciliationMatchStatus.TRANSFORMATION_REQUIRED if reversed_scale else (ReconciliationMatchStatus.COMPATIBLE_MATCH if decision and decision.category_code_mapping else ReconciliationMatchStatus.REQUIRES_REVIEW); reasons=["category/code semantics differ"]
+                if reversed_scale: status=ReconciliationMatchStatus.TRANSFORMATION_REQUIRED
+                elif decision and decision.category_code_mapping: compatible=True
+                else: review_required=True
+                reasons.append("category/code semantics differ")
             expected_missing={_code(x.code):_text(x.semantic) for x in expected.missing_value_rules}; actual_missing={_code(x.value if x.value is not None else (x.low if x.low == x.high else f"{x.low}:{x.high}")):_text(x.kind) for x in actual.missing_rules}
-            if expected_missing != actual_missing: status=ReconciliationMatchStatus.COMPATIBLE_MATCH if decision and decision.missing_semantic_mapping else ReconciliationMatchStatus.REQUIRES_REVIEW; reasons.append("missing-value semantics differ")
-            if expected.multiple_response_set_id and actual.multiple_response_set != expected.multiple_response_set_id: status=ReconciliationMatchStatus.REQUIRES_REVIEW; reasons.append("multiple-response identity unavailable")
-            if expected.matrix_group_id and not decision: status=ReconciliationMatchStatus.REQUIRES_REVIEW; reasons.append("matrix identity unavailable")
-            if expected.semantic_hooks and tuple(sorted(expected.semantic_hooks)) != tuple(sorted(actual.semantic_hooks)): status=ReconciliationMatchStatus.REQUIRES_REVIEW; reasons.append("semantic hook differs")
-            if _text(actual.name) != _text(expected.variable_name): status=ReconciliationMatchStatus.COMPATIBLE_MATCH if decision else ReconciliationMatchStatus.REQUIRES_REVIEW; reasons.append("variable rename requires review")
+            if expected_missing != actual_missing:
+                if decision and decision.missing_semantic_mapping: compatible=True
+                else: review_required=True
+                reasons.append("missing-value semantics differ")
+            if expected.multiple_response_set_id and actual.multiple_response_set != expected.multiple_response_set_id: review_required=True; reasons.append("multiple-response identity unavailable")
+            if expected.matrix_group_id and not decision: review_required=True; reasons.append("matrix identity unavailable")
+            if _text(actual.name) != _text(expected.variable_name):
+                if decision: compatible=True
+                else: review_required=True
+                reasons.append("variable rename requires review")
             provenance=dict(actual.metadata_provenance)
-            if provenance.get("role") == "HEURISTIC_INFERRED" or provenance.get("pii") == "HEURISTIC_INFERRED": status=ReconciliationMatchStatus.COMPATIBLE_MATCH if decision else ReconciliationMatchStatus.REQUIRES_REVIEW; reasons.append("identity-critical metadata is heuristic")
-            if expected.weighting_control_eligible and provenance.get("role") not in {"SOURCE_DECLARED", "EXPLICITLY_RESOLVED"}: status=ReconciliationMatchStatus.COMPATIBLE_MATCH if decision else ReconciliationMatchStatus.REQUIRES_REVIEW; reasons.append("weighting eligibility is unproven")
-            if (expected.ordinal_ordering or expected.analytical_scoring) and not (decision and decision.scale_mapping): status=ReconciliationMatchStatus.REQUIRES_REVIEW; reasons.append("ordinal order or analytical scoring is unproven")
+            if provenance.get("role") == "HEURISTIC_INFERRED" or provenance.get("pii") == "HEURISTIC_INFERRED":
+                if decision: compatible=True
+                else: review_required=True
+                reasons.append("identity-critical metadata is heuristic")
+            if expected.weighting_control_eligible and provenance.get("role") not in {"SOURCE_DECLARED", "EXPLICITLY_RESOLVED"}:
+                if decision: compatible=True
+                else: review_required=True
+                reasons.append("weighting eligibility is unproven")
+            if (expected.ordinal_ordering or expected.analytical_scoring) and not (decision and decision.scale_mapping): review_required=True; reasons.append("ordinal order or analytical scoring is unproven")
+            expected_hooks=set(expected.semantic_hooks); actual_hooks=set(actual.semantic_hooks)
+            missing_hooks=expected_hooks-actual_hooks
+            approved_hooks={item.expected_semantic_hook for item in getattr(decision,"semantic_hook_equivalences",()) if item.decision is SemanticHookEquivalenceDecision.APPROVE_EQUIVALENCE}
+            if missing_hooks-approved_hooks: review_required=True; reasons.append("semantic hook differs")
+            elif missing_hooks: compatible=True; reasons.append("semantic hook equivalence explicitly reviewed")
+            if status is not ReconciliationMatchStatus.TRANSFORMATION_REQUIRED:
+                status=ReconciliationMatchStatus.REQUIRES_REVIEW if review_required else (ReconciliationMatchStatus.COMPATIBLE_MATCH if compatible else ReconciliationMatchStatus.EXACT_MATCH)
         payload={"contract":"RB_MAPPING_V1","expected":expected.fingerprint,"actual":getattr(actual,"fingerprint",None),"status":status.value,"decision":getattr(decision,"fingerprint",None),"reasons":sorted(set(reasons))}
         return MeasurementVariableReconciliation(f"map:{expected.expected_variable_id}",expected.expected_variable_id,expected.fingerprint,expected.source_question_id,expected.source_option_id,expected.matrix_row_id,getattr(actual,"variable_id",None),getattr(actual,"fingerprint",None),status,getattr(decision,"category_code_mapping",()),getattr(decision,"missing_semantic_mapping",()),getattr(decision,"scale_mapping",()),getattr(decision,"mr_matrix_mapping",()),None,getattr(decision,"decision_id",None),tuple(sorted(set(reasons))),canonical_digest(payload,digest_provider=self._digest))
 

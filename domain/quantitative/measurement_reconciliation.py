@@ -47,6 +47,19 @@ class ReconciliationApprovalDecision(StrEnum):
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
 
+class SemanticHookEquivalenceDecision(StrEnum):
+    APPROVE_EQUIVALENCE = "APPROVE_EQUIVALENCE"
+    REJECT_EQUIVALENCE = "REJECT_EQUIVALENCE"
+
+@dataclass(frozen=True)
+class ReviewedSemanticHookEquivalence:
+    decision_id: str; project_id: str; run_id: str
+    reconciliation_version_id: str; reconciliation_fingerprint: str
+    expected_variable_id: str; expected_variable_fingerprint: str; expected_semantic_hook: str
+    actual_variable_id: str; actual_variable_fingerprint: str; codebook_fingerprint: str
+    decision: SemanticHookEquivalenceDecision; actor_id: str; rationale: str; decided_at: str
+    method_version: str; fingerprint: str
+
 @dataclass(frozen=True)
 class ReviewedMeasurementMapping:
     decision_id: str; expected_variable_id: str; expected_variable_fingerprint: str
@@ -54,6 +67,7 @@ class ReviewedMeasurementMapping:
     category_code_mapping: tuple[tuple[str, str], ...]; missing_semantic_mapping: tuple[tuple[str, str], ...]
     scale_mapping: tuple[tuple[str, str], ...]; mr_matrix_mapping: tuple[tuple[str, str], ...]
     actor_id: str; rationale: str; decided_at: str; fingerprint: str
+    semantic_hook_equivalences: tuple[ReviewedSemanticHookEquivalence, ...] = ()
 
 @dataclass(frozen=True)
 class MeasurementVariableReconciliation:
