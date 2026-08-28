@@ -39,6 +39,53 @@ class QuantitativeResearchQuestionCoverageService:
         self._reports = report_lineage_repository
         self._current_authority_resolver = current_authority_resolver
 
+    def resolve_current_upstream_authority_references(
+        self, *, project_id, run_id, state, plan, dataset, codebook
+    ):
+        """Reconstruct the exact current QZ..RG authority without caller claims."""
+        if any(x is None for x in (self._plans, self._execution, self._findings)):
+            raise QuantitativeResearchQuestionCoverageError("RH production authority composition is unavailable")
+        design = self._plans._designs.resolve_current_approved(project_id=project_id, run_id=run_id)
+        questionnaire = self._plans._questionnaires.resolve_current_approved(project_id=project_id, run_id=run_id)
+        ra = self._plans._questionnaires.derive_coverage_manifest(questionnaire.version_id, project_id=project_id)
+        reconciliation = self._plans._reconciliations.resolve_current_accepted(project_id=project_id, run_id=run_id, dataset=dataset, codebook=codebook)
+        rb = self._plans._reconciliations._repository.get_availability(reconciliation.data_availability_manifest_id, project_id=project_id)
+        rc = self._plans._repository.get_coverage(plan.coverage_manifest_id, project_id=project_id)
+        rd = self._execution.get_manifest(state.get("analysis_execution_manifest_record_id", ""), project_id=project_id)
+        rd_coverage = self._execution.get_coverage(rd.coverage_manifest_id, project_id=project_id) if rd else None
+        re = self._findings.get_coverage(state.get("finding_coverage_manifest_record_id", ""), project_id=project_id)
+        rf = self._insights.get_coverage(state.get("insight_coverage_manifest_record_id", ""), project_id=project_id) if self._insights and state.get("insight_coverage_manifest_record_id") else None
+        rg = self._reports.get_coverage(state.get("report_coverage_manifest_record_id", ""), project_id=project_id) if self._reports and state.get("report_coverage_manifest_record_id") else None
+        if any(x is None for x in (ra, rb, rc, rd, rd_coverage, re)):
+            raise QuantitativeResearchQuestionCoverageError("mandatory current QZ-RG authority is unavailable")
+        if reconciliation.version_id != plan.reconciliation_version_id or reconciliation.fingerprint != plan.reconciliation_fingerprint:
+            raise QuantitativeResearchQuestionCoverageError("stale RB/RC authority")
+        self._preflight(project_id, run_id, design, ra, rb, plan, rc, rd, rd_coverage, re, rf, rg)
+        self._validate_downstream_current_chain(project_id=project_id, state=state, rd=rd, rd_coverage=rd_coverage, re=re, rf=rf, rg=rg)
+        return self._upstream_references(design, ra, rb, plan, rc, rd, rd_coverage, re, rf, rg)
+
+    def _validate_downstream_current_chain(self, *, project_id, state, rd, rd_coverage, re, rf, rg):
+        re_input = self._findings.get_input_authority(state.get("finding_input_authority_record_id", ""), project_id=project_id)
+        re_lineage = self._findings.get_manifest(state.get("finding_lineage_manifest_record_id", ""), project_id=project_id) if state.get("finding_lineage_manifest_record_id") else None
+        if (re_input is None or re.input_authority_id != re_input.authority_id or re.input_authority_fingerprint != re_input.fingerprint or re_input.rd_execution_manifest_id != rd.manifest_id or re_input.rd_execution_manifest_fingerprint != rd.fingerprint or re_input.rd_coverage_manifest_id != rd_coverage.coverage_id or re_input.rd_coverage_manifest_fingerprint != rd_coverage.fingerprint):
+            raise QuantitativeResearchQuestionCoverageError("stale RD/RE authority")
+        if re_lineage is not None and (re_lineage.input_authority_id != re_input.authority_id or re_lineage.input_authority_fingerprint != re_input.fingerprint or re_lineage.coverage_manifest_id != re.coverage_id or re_lineage.coverage_manifest_fingerprint != re.fingerprint):
+            raise QuantitativeResearchQuestionCoverageError("stale RE lineage authority")
+        rf_input = None
+        if rf is not None:
+            rf_input = self._insights.get_input_authority(state.get("insight_input_authority_record_id", ""), project_id=project_id)
+            rf_lineage = self._insights.get_manifest(state.get("insight_lineage_manifest_record_id", ""), project_id=project_id) if state.get("insight_lineage_manifest_record_id") else None
+            if (rf_input is None or rf.input_authority_id != rf_input.authority_id or rf.input_authority_fingerprint != rf_input.fingerprint or rf_input.re_coverage_id != re.coverage_id or rf_input.re_coverage_fingerprint != re.fingerprint or rf_input.rd_execution_manifest_id != rd.manifest_id or rf_input.rd_execution_manifest_fingerprint != rd.fingerprint):
+                raise QuantitativeResearchQuestionCoverageError("stale RE/RF authority")
+            if rf_lineage is not None and (rf_lineage.input_authority_id != rf_input.authority_id or rf_lineage.input_authority_fingerprint != rf_input.fingerprint or rf_lineage.coverage_manifest_id != rf.coverage_id or rf_lineage.coverage_manifest_fingerprint != rf.fingerprint):
+                raise QuantitativeResearchQuestionCoverageError("stale RF lineage authority")
+        if rg is not None:
+            rg_input = self._reports.get_input_authority(state.get("report_input_authority_record_id", ""), project_id=project_id)
+            rg_lineage = self._reports.get_manifest(state.get("report_lineage_manifest_record_id", ""), project_id=project_id) if state.get("report_lineage_manifest_record_id") else None
+            if (rg_input is None or rf_input is None or rg.input_authority_id != rg_input.authority_id or rg.input_authority_fingerprint != rg_input.fingerprint or rg_input.re_coverage_id != re.coverage_id or rg_input.re_coverage_fingerprint != re.fingerprint or rg_input.rf_coverage_id != rf.coverage_id or rg_input.rf_coverage_fingerprint != rf.fingerprint or rg_input.rd_execution_manifest_id != rd.manifest_id or rg_input.rd_execution_manifest_fingerprint != rd.fingerprint):
+                raise QuantitativeResearchQuestionCoverageError("stale RF/RG authority")
+            if rg_lineage is not None and (rg_lineage.input_authority_id != rg_input.authority_id or rg_lineage.input_authority_fingerprint != rg_input.fingerprint or rg_lineage.coverage_manifest_id != rg.coverage_id or rg_lineage.coverage_manifest_fingerprint != rg.fingerprint):
+                raise QuantitativeResearchQuestionCoverageError("stale RG lineage authority")
     def assess_current(self, *, project_id, run_id, state, plan, created_at="WORKFLOW", created_by="SYSTEM"):
         if any(x is None for x in (self._state, self._plans, self._execution, self._findings)):
             raise QuantitativeResearchQuestionCoverageError("RH production authority composition is unavailable")

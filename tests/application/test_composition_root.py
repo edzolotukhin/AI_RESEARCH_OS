@@ -93,6 +93,17 @@ class CompositionRootTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             self._temp_dir = root
             first = container(shared)
+            production_rh = first.quantitative_authority_finalization_service._questions
+            self.assertIs(
+                production_rh,
+                first.quantitative_objective_coverage_service._questions,
+            )
+            self.assertTrue(callable(production_rh._current_authority_resolver))
+            self.assertIsNotNone(production_rh._plans)
+            self.assertIsNotNone(production_rh._execution)
+            self.assertIsNotNone(production_rh._findings)
+            self.assertIsNotNone(production_rh._insights)
+            self.assertIsNotNone(production_rh._reports)
             first_designs = first.quantitative_authority_finalization_service._designs
             brief = first_designs.create_brief(
                 brief_id="restart-brief", version_id="restart-brief-v1",

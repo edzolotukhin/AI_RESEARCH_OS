@@ -416,7 +416,46 @@ def create_application_container(
         quantitative_questionnaire_service=QuantitativeQuestionnaireService(repository=QLQuantitativeQuestionnaireRepository(quantitative_state_service),research_design_service=quantitative_design_service,digest_provider=digest_provider)
         quantitative_reconciliation_service=QuantitativeMeasurementReconciliationService(repository=QLQuantitativeMeasurementReconciliationRepository(quantitative_state_service),questionnaire_service=quantitative_questionnaire_service,digest_provider=digest_provider)
         quantitative_analysis_plan_service=QuantitativeAnalysisPlanService(repository=QLQuantitativeAnalysisPlanRepository(quantitative_state_service),research_design_service=quantitative_design_service,questionnaire_service=quantitative_questionnaire_service,reconciliation_service=quantitative_reconciliation_service,digest_provider=digest_provider)
-        quantitative_rh_resolution_service=QuantitativeResearchQuestionCoverageService(repository=QLQuantitativeResearchQuestionCoverageRepository(quantitative_state_service),digest_provider=digest_provider)
+        quantitative_execution_repository = QLQuantitativeAnalysisExecutionRepository(quantitative_state_service)
+        quantitative_finding_lineage_repository = QLQuantitativeFindingLineageRepository(quantitative_state_service)
+        quantitative_insight_lineage_repository = QLQuantitativeInsightLineageRepository(quantitative_state_service)
+        quantitative_report_lineage_repository = QLQuantitativeReportLineageRepository(quantitative_state_service)
+        quantitative_rh_resolution_service = None
+
+        def resolve_current_rh_authority(project_id, run_id):
+            from application.quantitative.workflow import QUANTITATIVE_SAFE_STATE_KEY, validate_safe_workflow_state
+            from domain.quantitative.dataset import CodebookVersion, DatasetVersion
+            from domain.quantitative.weighting import WeightSet, WeightSetApproval
+
+            results = workflow_service.get_task_results(run_id)
+            state = validate_safe_workflow_state(results.get(QUANTITATIVE_SAFE_STATE_KEY, {}))
+            if state.get("analysis_execution_mode") != "DESIGN_AWARE_EXECUTION":
+                raise QuantitativePersistenceError("RH current authority requires design-aware execution")
+            dataset = quantitative_state_service.load(state.get("dataset_record_id", ""), project_id=project_id, expected_type=DatasetVersion)
+            codebook = quantitative_state_service.load(state.get("codebook_record_id", ""), project_id=project_id, expected_type=CodebookVersion)
+            weight_sets = {item.weight_set_id: item for item in quantitative_state_service.list_for_run(run_id, project_id=project_id, expected_type=WeightSet)}
+            weight_approvals = {item.weight_set_id: item for item in quantitative_state_service.list_for_run(run_id, project_id=project_id, expected_type=WeightSetApproval) if item.state.value == "APPROVED"}
+            plan, _ = quantitative_analysis_plan_service.resolve_current_execution_authority(
+                project_id=project_id, run_id=run_id, dataset=dataset, codebook=codebook,
+                weight_authorities={key: (value, weight_approvals[key]) for key, value in weight_sets.items() if key in weight_approvals},
+            )
+            if state.get("analysis_plan_version_id") != plan.version_id or state.get("analysis_plan_fingerprint") != plan.fingerprint:
+                raise QuantitativePersistenceError("bound Analysis Plan is stale or no longer current")
+            return quantitative_rh_resolution_service.resolve_current_upstream_authority_references(
+                project_id=project_id, run_id=run_id, state=state, plan=plan,
+                dataset=dataset, codebook=codebook,
+            )
+
+        quantitative_rh_resolution_service=QuantitativeResearchQuestionCoverageService(
+            repository=QLQuantitativeResearchQuestionCoverageRepository(quantitative_state_service),
+            digest_provider=digest_provider, state_service=quantitative_state_service,
+            analysis_plan_service=quantitative_analysis_plan_service,
+            analysis_execution_repository=quantitative_execution_repository,
+            finding_lineage_repository=quantitative_finding_lineage_repository,
+            insight_lineage_repository=quantitative_insight_lineage_repository,
+            report_lineage_repository=quantitative_report_lineage_repository,
+            current_authority_resolver=resolve_current_rh_authority,
+        )
         quantitative_objective_coverage_service=QuantitativeObjectiveCoverageService(repository=QLQuantitativeObjectiveCoverageRepository(quantitative_state_service),digest_provider=digest_provider,research_design_service=quantitative_design_service,research_question_coverage_service=quantitative_rh_resolution_service)
         from application.quantitative.authority_chain import QuantitativeAuthorityChainService
         from application.quantitative.authority_chain_selection import QuantitativeAuthorityChainSelectionService
