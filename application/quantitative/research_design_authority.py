@@ -12,7 +12,8 @@ from domain.quantitative.research_design_authority import (
     DatasetOnlyResearchAuthority, DeliverableRequirement, Hypothesis,
     MethodologyIntent, ObjectiveCoverageAuthority, ObjectiveCoverageStatus,
     QuantitativeResearchDesignApproval, QuantitativeResearchDesignVersion,
-    QuantitativeResearchQuestion, QuantitativeStudyBriefVersion,
+    QuantitativeResearchQuestion, QuantitativeStudyBriefApproval,
+    QuantitativeStudyBriefVersion,
     QuantitativeStudyMode, QuantitativeTraceabilityManifest,
     ResearchDesignApprovalDecision, ResearchDesignLifecycle,
     ResearchObjective, TargetPopulation,
@@ -104,10 +105,57 @@ class QuantitativeResearchDesignService:
         normalized = {key: (_texts(value) if key in {"intended_audience", "target_deliverables", "constraints"} else _text(value)) for key, value in changes.items()}
         value = replace(current, version_id=version_id, version_sequence=current.version_sequence + 1,
                         parent_version_id=current.version_id, created_at=created_at, created_by=created_by,
-                        lifecycle_status=ResearchDesignLifecycle.DRAFT, fingerprint="", **normalized)
+                        lifecycle_status=ResearchDesignLifecycle.DRAFT, fingerprint="", approval_reference=None, **normalized)
         value = replace(value, fingerprint=canonical_digest(_brief_payload(value), digest_provider=self._digest))
         self._repository.save_brief(value, run_id=run_id)
         return value
+
+    def submit_brief_for_review(self, version_id: str, *, project_id: str, run_id: str,
+                                new_version_id: str, actor_id: str, changed_at: str) -> QuantitativeStudyBriefVersion:
+        current = self._require_brief(version_id, project_id)
+        if current.lifecycle_status is not ResearchDesignLifecycle.DRAFT:
+            raise QuantitativeResearchDesignError("only a Draft Brief can be submitted for review")
+        value = replace(current, version_id=new_version_id, version_sequence=current.version_sequence + 1,
+                        parent_version_id=current.version_id, created_at=changed_at, created_by=actor_id,
+                        lifecycle_status=ResearchDesignLifecycle.IN_REVIEW, approval_reference=None)
+        self._repository.save_brief(value, run_id=run_id)
+        return value
+
+    def approve_brief(self, version_id: str, *, project_id: str, run_id: str,
+                      new_version_id: str, approval_id: str, expected_fingerprint: str,
+                      actor_id: str, decided_at: str, rationale: str) -> QuantitativeStudyBriefVersion:
+        return self._decide_brief(version_id, project_id=project_id, run_id=run_id,
+            new_version_id=new_version_id, approval_id=approval_id,
+            expected_fingerprint=expected_fingerprint, actor_id=actor_id,
+            decided_at=decided_at, rationale=rationale,
+            decision=ResearchDesignApprovalDecision.APPROVED)
+
+    def reject_brief(self, version_id: str, *, project_id: str, run_id: str,
+                     new_version_id: str, approval_id: str, expected_fingerprint: str,
+                     actor_id: str, decided_at: str, rationale: str) -> QuantitativeStudyBriefVersion:
+        return self._decide_brief(version_id, project_id=project_id, run_id=run_id,
+            new_version_id=new_version_id, approval_id=approval_id,
+            expected_fingerprint=expected_fingerprint, actor_id=actor_id,
+            decided_at=decided_at, rationale=rationale,
+            decision=ResearchDesignApprovalDecision.REJECTED)
+
+    def resolve_approved_brief(self, version_id: str, *, project_id: str) -> QuantitativeStudyBriefVersion:
+        value = self._require_brief(version_id, project_id)
+        approval = self._repository.get_brief_approval(value.approval_reference or "", project_id=project_id)
+        if (value.lifecycle_status is not ResearchDesignLifecycle.APPROVED or approval is None
+                or approval.decision is not ResearchDesignApprovalDecision.APPROVED
+                or approval.brief_version_id != value.version_id
+                or approval.brief_fingerprint != value.fingerprint):
+            raise QuantitativeResearchDesignError("Study Brief approval is missing, rejected, or stale")
+        return value
+
+    def resolve_current_approved_brief(self, *, project_id: str, run_id: str) -> QuantitativeStudyBriefVersion:
+        briefs = self._repository.list_briefs(project_id=project_id, run_id=run_id)
+        parent_ids = {item.parent_version_id for item in briefs if item.parent_version_id}
+        heads = tuple(item for item in briefs if item.version_id not in parent_ids)
+        if len(heads) != 1:
+            raise QuantitativeResearchDesignError("no unique current Quantitative Study Brief")
+        return self.resolve_approved_brief(heads[0].version_id, project_id=project_id)
 
     def create_design(self, *, design_id: str, version_id: str, project_id: str, run_id: str,
                       source_brief_version_id: str, source_brief_fingerprint: str,
@@ -155,6 +203,9 @@ class QuantitativeResearchDesignService:
             raise QuantitativeResearchDesignError("only an in-review Design can be approved")
         if current.fingerprint != expected_fingerprint:
             raise QuantitativeResearchDesignError("approval fingerprint is stale")
+        source_brief = self.resolve_current_approved_brief(project_id=project_id, run_id=run_id)
+        if (source_brief.version_id, source_brief.fingerprint) != (current.source_brief_version_id, current.source_brief_fingerprint):
+            raise QuantitativeResearchDesignError("Design source Brief is not current approved authority")
         value = replace(current, version_id=new_version_id, version_sequence=current.version_sequence + 1,
                         parent_version_id=current.version_id, created_at=decided_at, created_by=actor_id,
                         lifecycle_status=ResearchDesignLifecycle.APPROVED, approval_reference=approval_id)
@@ -205,6 +256,28 @@ class QuantitativeResearchDesignService:
         payload = {"contract": "QZ_DATASET_ONLY_V1", "authority_id": authority_id, "project_id": project_id, "run_id": run_id, "mode": QuantitativeStudyMode.DATASET_ONLY_EXPLORATORY.value, "coverage": ObjectiveCoverageStatus.NOT_ASSESSED_NO_RESEARCH_DESIGN.value, "limitation": DATASET_ONLY_LIMITATION}
         value = DatasetOnlyResearchAuthority(authority_id, project_id, run_id, QuantitativeStudyMode.DATASET_ONLY_EXPLORATORY, ObjectiveCoverageAuthority.ABSENT, ObjectiveCoverageStatus.NOT_ASSESSED_NO_RESEARCH_DESIGN, DATASET_ONLY_LIMITATION, canonical_digest(payload, digest_provider=self._digest))
         self._repository.save_dataset_only(value)
+        return value
+
+    def _decide_brief(self, version_id, *, project_id, run_id, new_version_id, approval_id,
+                      expected_fingerprint, actor_id, decided_at, rationale, decision):
+        current = self._require_brief(version_id, project_id)
+        if current.lifecycle_status is not ResearchDesignLifecycle.IN_REVIEW:
+            raise QuantitativeResearchDesignError("only an in-review Brief can be decided")
+        if current.fingerprint != expected_fingerprint:
+            raise QuantitativeResearchDesignError("Brief decision fingerprint is stale")
+        status = ResearchDesignLifecycle.APPROVED if decision is ResearchDesignApprovalDecision.APPROVED else ResearchDesignLifecycle.REJECTED
+        value = replace(current, version_id=new_version_id, version_sequence=current.version_sequence + 1,
+                        parent_version_id=current.version_id, created_at=decided_at, created_by=actor_id,
+                        lifecycle_status=status, approval_reference=approval_id)
+        payload = {"approval_id": approval_id, "project_id": project_id, "methodology": QUANTITATIVE,
+                   "brief_version_id": new_version_id, "brief_fingerprint": value.fingerprint,
+                   "actor_id": actor_id, "decided_at": decided_at, "decision": decision.value,
+                   "rationale": _text(rationale)}
+        approval = QuantitativeStudyBriefApproval(approval_id, project_id, QUANTITATIVE,
+            new_version_id, value.fingerprint, actor_id, decided_at, decision, payload["rationale"],
+            canonical_digest(payload, digest_provider=self._digest))
+        self._repository.save_brief(value, run_id=run_id)
+        self._repository.save_brief_approval(approval, run_id=run_id)
         return value
 
     def _transition(self, version_id, *, project_id, run_id, new_version_id, actor_id, changed_at, status):

@@ -66,8 +66,22 @@ class PropertyQZResearchDesignAuthorityTests(unittest.TestCase):
         values.update(overrides)
         return self.service.create_design(**values)
 
+    def approve_brief(self, brief=None, suffix=""):
+        brief = brief or self.brief()
+        review = self.service.submit_brief_for_review(
+            brief.version_id, project_id=self.project, run_id=self.run,
+            new_version_id=f"brief-v2-review{suffix}", actor_id="researcher",
+            changed_at="2026-08-25T10:00:30Z",
+        )
+        return self.service.approve_brief(
+            review.version_id, project_id=self.project, run_id=self.run,
+            new_version_id=f"brief-v3-approved{suffix}", approval_id=f"brief-approval{suffix}",
+            expected_fingerprint=review.fingerprint, actor_id="owner",
+            decided_at="2026-08-25T10:00:45Z", rationale="Approved source Brief",
+        )
+
     def approve(self, design=None):
-        design = design or self.design()
+        design = design or self.design(self.approve_brief())
         review = self.service.submit_for_review(design.version_id, project_id=self.project, run_id=self.run, new_version_id="design-v2-review", actor_id="researcher", changed_at="2026-08-25T10:02:00Z")
         return self.service.approve(review.version_id, project_id=self.project, run_id=self.run, new_version_id="design-v3-approved", approval_id="approval-v3", expected_fingerprint=review.fingerprint, actor_id="owner", decided_at="2026-08-25T10:03:00Z", rationale="Approved for downstream use")
 

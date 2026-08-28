@@ -3,7 +3,8 @@ from __future__ import annotations
 from application.quantitative.state_persistence import QuantitativePersistenceError, QuantitativeStateService
 from domain.quantitative.research_design_authority import (
     DatasetOnlyResearchAuthority, QuantitativeResearchDesignApproval,
-    QuantitativeResearchDesignVersion, QuantitativeStudyBriefVersion,
+    QuantitativeResearchDesignVersion, QuantitativeStudyBriefApproval,
+    QuantitativeStudyBriefVersion,
     QuantitativeTraceabilityManifest,
 )
 
@@ -15,7 +16,10 @@ class QLQuantitativeResearchDesignRepository:
         self._state = state_service
 
     def save_brief(self, value, *, run_id):
-        self._state.persist(value, record_id=value.version_id, project_id=value.project_id, run_id=run_id, parent_record_id=value.parent_version_id)
+        self._state.persist(value, record_id=value.version_id, project_id=value.project_id, run_id=run_id, parent_record_id=value.parent_version_id, accepted=value.lifecycle_status.value == "APPROVED")
+
+    def save_brief_approval(self, value, *, run_id):
+        self._state.persist(value, record_id=value.approval_id, project_id=value.project_id, run_id=run_id, parent_record_id=value.brief_version_id, accepted=value.decision.value == "APPROVED")
 
     def save_design(self, value, *, run_id):
         self._state.persist(value, record_id=value.version_id, project_id=value.project_id, run_id=run_id, parent_record_id=value.parent_version_id, accepted=value.lifecycle_status.value == "APPROVED")
@@ -37,6 +41,7 @@ class QLQuantitativeResearchDesignRepository:
             raise
 
     def get_brief(self, version_id, *, project_id): return self._load(version_id, project_id, QuantitativeStudyBriefVersion)
+    def get_brief_approval(self, approval_id, *, project_id): return self._load(approval_id, project_id, QuantitativeStudyBriefApproval)
     def get_design(self, version_id, *, project_id): return self._load(version_id, project_id, QuantitativeResearchDesignVersion)
     def get_approval(self, approval_id, *, project_id): return self._load(approval_id, project_id, QuantitativeResearchDesignApproval)
     def get_manifest(self, manifest_id, *, project_id): return self._load(manifest_id, project_id, QuantitativeTraceabilityManifest)

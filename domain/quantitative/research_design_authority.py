@@ -117,6 +117,20 @@ class QuantitativeStudyBriefVersion:
     lifecycle_status: ResearchDesignLifecycle
     fingerprint: str
     fingerprint_method_version: str = FINGERPRINT_METHOD_VERSION
+    approval_reference: str | None = None
+
+@dataclass(frozen=True)
+class QuantitativeStudyBriefApproval:
+    approval_id: str
+    project_id: str
+    methodology: str
+    brief_version_id: str
+    brief_fingerprint: str
+    actor_id: str
+    decided_at: str
+    decision: ResearchDesignApprovalDecision
+    rationale: str
+    fingerprint: str
 
 @dataclass(frozen=True)
 class QuantitativeResearchDesignVersion:
