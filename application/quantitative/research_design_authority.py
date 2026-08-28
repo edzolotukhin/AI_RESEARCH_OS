@@ -234,10 +234,20 @@ class QuantitativeResearchDesignService:
         return self._transition(version_id, project_id=project_id, run_id=run_id, new_version_id=new_version_id, actor_id=actor_id, changed_at=changed_at, status=ResearchDesignLifecycle.SUPERSEDED)
 
     def resolve_current_approved(self, *, project_id: str, run_id: str) -> QuantitativeResearchDesignVersion:
-        designs = self._repository.list_designs(project_id=project_id, run_id=run_id)
-        if not designs or designs[-1].lifecycle_status is not ResearchDesignLifecycle.APPROVED:
+        source_brief = self.resolve_current_approved_brief(project_id=project_id, run_id=run_id)
+        designs = tuple(
+            item
+            for item in self._repository.list_designs(project_id=project_id, run_id=run_id)
+            if (item.source_brief_version_id, item.source_brief_fingerprint)
+            == (source_brief.version_id, source_brief.fingerprint)
+        )
+        if not designs:
             raise QuantitativeResearchDesignError("no current approved Quantitative Research Design")
-        value = designs[-1]
+        current_sequence = max(item.version_sequence for item in designs)
+        candidates = tuple(item for item in designs if item.version_sequence == current_sequence)
+        if len(candidates) != 1 or candidates[0].lifecycle_status is not ResearchDesignLifecycle.APPROVED:
+            raise QuantitativeResearchDesignError("no current approved Quantitative Research Design: authority is ambiguous or not approved")
+        value = candidates[0]
         approval = self._repository.get_approval(value.approval_reference or "", project_id=project_id)
         if approval is None or approval.decision is not ResearchDesignApprovalDecision.APPROVED or approval.design_version_id != value.version_id or approval.design_fingerprint != value.fingerprint:
             raise QuantitativeResearchDesignError("Research Design approval is missing, rejected, or stale")

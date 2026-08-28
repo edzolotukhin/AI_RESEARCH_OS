@@ -140,5 +140,54 @@ class Q2127StudyBriefApprovalTests(unittest.TestCase):
                 service.resolve_current_approved_brief(project_id="p", run_id="r")
             container.shutdown()
 
+    def test_current_design_tracks_current_approved_brief_across_restart(self):
+        projects, runs, quantitative = InMemoryProjectRepository(), InMemoryWorkflowRunRepository(), InMemoryQuantitativeStateRepository()
+        with tempfile.TemporaryDirectory() as root:
+            first = self._container(root, projects, runs, quantitative)
+            service = first.quantitative_authority_finalization_service._designs
+            brief_v1 = self._approve_brief(service, self._brief(service))
+            draft_v1 = self._design(service, brief_v1)
+            review_v1 = service.submit_for_review(draft_v1.version_id, project_id="p", run_id="r", new_version_id="design-v1-review", actor_id="reviewer", changed_at="t5")
+            design_v1 = service.approve(review_v1.version_id, project_id="p", run_id="r", new_version_id="design-v1-approved", approval_id="design-v1-approval", expected_fingerprint=review_v1.fingerprint, actor_id="owner", decided_at="t6", rationale="Approved")
+            self.assertEqual(design_v1, service.resolve_current_approved(project_id="p", run_id="r"))
+            brief_v2_draft = service.revise_brief(brief_v1.version_id, project_id="p", run_id="r", version_id="brief-v2", created_at="t7", created_by="author", research_purpose="Measure advocacy.")
+            with self.assertRaises(QuantitativeResearchDesignError):
+                service.resolve_current_approved(project_id="p", run_id="r")
+            brief_v2_review = service.submit_brief_for_review(brief_v2_draft.version_id, project_id="p", run_id="r", new_version_id="brief-v2-review", actor_id="reviewer", changed_at="t8")
+            brief_v2 = service.approve_brief(brief_v2_review.version_id, project_id="p", run_id="r", new_version_id="brief-v2-approved", approval_id="brief-v2-approval", expected_fingerprint=brief_v2_review.fingerprint, actor_id="owner", decided_at="t9", rationale="Approved v2")
+            self.assertEqual(brief_v2, service.resolve_current_approved_brief(project_id="p", run_id="r"))
+            self.assertEqual(design_v1, service._repository.get_design(design_v1.version_id, project_id="p"))
+            with self.assertRaises(QuantitativeResearchDesignError):
+                service.resolve_current_approved(project_id="p", run_id="r")
+            first.shutdown()
+            second = self._container(root, projects, runs, quantitative)
+            restarted = second.quantitative_authority_finalization_service._designs
+            self.assertEqual(brief_v2, restarted.resolve_current_approved_brief(project_id="p", run_id="r"))
+            self.assertEqual(design_v1, restarted._repository.get_design(design_v1.version_id, project_id="p"))
+            with self.assertRaises(QuantitativeResearchDesignError):
+                restarted.resolve_current_approved(project_id="p", run_id="r")
+            draft_v2 = self._design(restarted, brief_v2, "design-v2")
+            with self.assertRaises(QuantitativeResearchDesignError):
+                restarted.resolve_current_approved(project_id="p", run_id="r")
+            review_v2 = restarted.submit_for_review(draft_v2.version_id, project_id="p", run_id="r", new_version_id="design-v2-review", actor_id="reviewer", changed_at="t10")
+            design_v2 = restarted.approve(review_v2.version_id, project_id="p", run_id="r", new_version_id="design-v2-approved", approval_id="design-v2-approval", expected_fingerprint=review_v2.fingerprint, actor_id="owner", decided_at="t11", rationale="Approved v2")
+            self.assertEqual(design_v2, restarted.resolve_current_approved(project_id="p", run_id="r"))
+            self.assertEqual((brief_v1.version_id, brief_v1.fingerprint), (design_v1.source_brief_version_id, design_v1.source_brief_fingerprint))
+            with self.assertRaises(QuantitativeResearchDesignError):
+                restarted.resolve_current_approved(project_id="wrong", run_id="r")
+            second.shutdown()
+    def test_ambiguous_approved_design_candidates_fail_closed(self):
+        projects, runs, quantitative = InMemoryProjectRepository(), InMemoryWorkflowRunRepository(), InMemoryQuantitativeStateRepository()
+        with tempfile.TemporaryDirectory() as root:
+            container = self._container(root, projects, runs, quantitative)
+            service = container.quantitative_authority_finalization_service._designs
+            brief = self._approve_brief(service, self._brief(service))
+            for suffix in ("a", "b"):
+                draft = self._design(service, brief, f"design-{suffix}")
+                review = service.submit_for_review(draft.version_id, project_id="p", run_id="r", new_version_id=f"design-{suffix}-review", actor_id="reviewer", changed_at="t5")
+                service.approve(review.version_id, project_id="p", run_id="r", new_version_id=f"design-{suffix}-approved", approval_id=f"design-{suffix}-approval", expected_fingerprint=review.fingerprint, actor_id="owner", decided_at="t6", rationale="Approved")
+            with self.assertRaisesRegex(QuantitativeResearchDesignError, "ambiguous"):
+                service.resolve_current_approved(project_id="p", run_id="r")
+            container.shutdown()
 if __name__ == "__main__":
     unittest.main()
