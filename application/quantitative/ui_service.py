@@ -522,14 +522,26 @@ class QuantitativeUiService:
             return self._save(replace(study, state="COMPLETED", terminal_result_record_id=record))
         if run.status.value != "paused":
             raise QuantitativeUiError("Quantitative workflow is not awaiting authorized activation")
-        safe = {
-            "dataset_record_id": study.dataset_record_id or "", "codebook_record_id": study.codebook_record_id or "",
-            "dataset_version_id": dataset.version_id, "dataset_fingerprint": dataset.dataset_fingerprint,
-            "qc_record_id": study.qc_record_id or "", "qc_fingerprint": qc.fingerprint,
-            "qc_approval_id": study.qc_approval_id or "", "cleaning_status": "CLEANED" if dataset.parent_version_id else "NOT_REQUIRED",
-            "weight_set_record_id": study.weight_set_record_id or "", "weight_set_id": weights.weight_set_id,
-            "weight_set_fingerprint": weights.reproducibility_fingerprint, "weight_approval_id": study.weight_approval_id,
-        }
+        safe = self._analysis_safe_state(study, dataset, qc, weights)
+        persisted = self.workflows.get_task_results(study.run_id).get(
+            QUANTITATIVE_SAFE_STATE_KEY, {}
+        )
+        if isinstance(persisted, Mapping):
+            mode = persisted.get("analysis_execution_mode")
+            if mode == "DESIGN_AWARE_EXECUTION":
+                for key in (
+                    "analysis_execution_mode",
+                    "analysis_plan_version_id",
+                    "analysis_plan_fingerprint",
+                ):
+                    value = persisted.get(key)
+                    if isinstance(value, str):
+                        safe[key] = value
+            elif mode == "DATASET_ONLY_EXPLORATORY_EXECUTION":
+                safe["analysis_execution_mode"] = mode
+        if "analysis_execution_mode" not in safe:
+            safe["analysis_execution_mode"] = "DATASET_ONLY_EXPLORATORY_EXECUTION"
+        safe = self._persist_activation_state(run, safe)
         if self.durable_workflow_service is not None:
             self.durable_workflow_service.activate_paused_run(
                 study.run_id,
@@ -580,6 +592,75 @@ class QuantitativeUiService:
         except Exception as exc:
             raise QuantitativeUiError("Quantitative workflow failed safely") from exc
         return self._save(replace(study, state="COMPLETED", terminal_result_record_id=terminal_record_id))
+
+    def activate_design_aware_workflow(
+        self, study_id: str, *, owner_id: str
+    ) -> QuantitativeStudyProjection:
+        """Activate against the exact current approved RC authority."""
+        study = self.get(study_id, owner_id=owner_id)
+        if study.state != "READY_TO_ANALYZE" or not study.weight_approval_id:
+            raise QuantitativeUiError(
+                "Current approved WeightSet is required before analysis"
+            )
+        run = self.workflows.get_workflow_run(study.run_id)
+        if run.status.value != "paused":
+            raise QuantitativeUiError(
+                "Quantitative workflow is not awaiting authorized activation"
+            )
+        dataset, codebook = self._dataset(study)
+        qc = self.state.load(
+            study.qc_record_id or "",
+            project_id=study.project_id,
+            expected_type=QualityControlRun,
+        )
+        weights = self.state.load(
+            study.weight_set_record_id or "",
+            project_id=study.project_id,
+            expected_type=WeightSet,
+        )
+        safe = self._analysis_safe_state(study, dataset, qc, weights)
+        try:
+            safe = self.stage_service_factory.prepare_design_aware_activation(
+                project_id=study.project_id,
+                run_id=study.run_id,
+                safe_state=safe,
+            )
+        except Exception as exc:
+            raise QuantitativeUiError(
+                "Current approved Analysis Plan is required for design-aware analysis"
+            ) from exc
+        self._persist_activation_state(run, safe)
+        return self.resume_workflow(study_id, owner_id=owner_id)
+
+    @staticmethod
+    def _analysis_safe_state(study, dataset, qc, weights) -> dict[str, str]:
+        return {
+            "dataset_record_id": study.dataset_record_id or "",
+            "codebook_record_id": study.codebook_record_id or "",
+            "dataset_version_id": dataset.version_id,
+            "dataset_fingerprint": dataset.dataset_fingerprint,
+            "qc_record_id": study.qc_record_id or "",
+            "qc_fingerprint": qc.fingerprint,
+            "qc_approval_id": study.qc_approval_id or "",
+            "cleaning_status": (
+                "CLEANED" if dataset.parent_version_id else "NOT_REQUIRED"
+            ),
+            "weight_set_record_id": study.weight_set_record_id or "",
+            "weight_set_id": weights.weight_set_id,
+            "weight_set_fingerprint": weights.reproducibility_fingerprint,
+            "weight_approval_id": study.weight_approval_id,
+        }
+
+    def _persist_activation_state(self, run, safe) -> dict[str, str]:
+        safe = dict(safe)
+        task_results = self.workflows.get_task_results(run.id)
+        task_results[QUANTITATIVE_SAFE_STATE_KEY] = safe
+        self.workflows.save_workflow_run(
+            run,
+            expected_version=self.workflows.get_workflow_run_version(run.id),
+            task_results=task_results,
+        )
+        return safe
 
     def rearm_failed_run(
         self,

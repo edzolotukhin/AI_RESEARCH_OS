@@ -67,6 +67,32 @@ class QuantitativeStageServiceFactory:
     report_lineage_repository_factory: Callable[[], Any] | None = None
     research_question_coverage_repository_factory: Callable[[], Any] | None = None
 
+    def prepare_design_aware_activation(
+        self,
+        *,
+        project_id: str,
+        run_id: str,
+        safe_state: Mapping[str, object],
+    ) -> dict[str, str]:
+        """Resolve and bind the exact current RC authority before execution."""
+        state = validate_safe_workflow_state(safe_state)
+        dataset, codebook = self._load_dataset_authority(
+            project_id=project_id, run_id=run_id, state=state
+        )
+        plan, _, _ = self._resolve_design_aware_execution(
+            project_id=project_id,
+            run_id=run_id,
+            state=state,
+            dataset=dataset,
+            codebook=codebook,
+        )
+        state.update(
+            analysis_execution_mode="DESIGN_AWARE_EXECUTION",
+            analysis_plan_version_id=plan.version_id,
+            analysis_plan_fingerprint=plan.fingerprint,
+        )
+        return validate_safe_workflow_state(state)
+
     def create(
         self,
         *,
@@ -77,32 +103,8 @@ class QuantitativeStageServiceFactory:
         if not project_id or not run_id:
             raise QuantitativeWorkflowError("Quantitative project/run identity is required")
         state = validate_safe_workflow_state(safe_state)
-        scoped_record_ids = {
-            value
-            for key, value in state.items()
-            if key.endswith("_record_id") or key.endswith("_approval_id")
-        }
-        for record_id in scoped_record_ids:
-            self.state_service.require_record_scope(
-                record_id,
-                project_id=project_id,
-                run_id=run_id,
-            )
-        dataset_record_id = state.get("dataset_record_id")
-        codebook_record_id = state.get("codebook_record_id")
-        if not dataset_record_id or not codebook_record_id:
-            raise QuantitativeWorkflowError(
-                "Durable Quantitative dataset authority is unavailable"
-            )
-        dataset = self.state_service.load(
-            dataset_record_id,
-            project_id=project_id,
-            expected_type=DatasetVersion,
-        )
-        codebook = self.state_service.load(
-            codebook_record_id,
-            project_id=project_id,
-            expected_type=CodebookVersion,
+        dataset, codebook = self._load_dataset_authority(
+            project_id=project_id, run_id=run_id, state=state
         )
         mode=state.get("analysis_execution_mode","DATASET_ONLY_EXPLORATORY_EXECUTION")
         storage=self.storage_factory(project_id,run_id)
@@ -131,21 +133,20 @@ class QuantitativeStageServiceFactory:
             )
         if mode=="DESIGN_AWARE_EXECUTION":
             if self.analysis_plan_service is None or execution_service is None: raise QuantitativeWorkflowError("design-aware Quantitative execution composition is unavailable")
-            qc=self.state_service.load(state.get("qc_record_id",""),project_id=project_id,expected_type=QualityControlRun)
-            approvals=QuantitativeApprovalService(self.state_service,self.digest_provider)
-            qc_approval_id=state.get("cleaned_qc_approval_id") or state.get("qc_approval_id","")
-            qc_approval=approvals.require_current(qc_approval_id,project_id=project_id,subject_fingerprint=qc.fingerprint)
-            quality=assess_dataset_quality(dataset=dataset,qc_run=qc,manager_approved=True,approval_fingerprint=qc_approval.fingerprint,digest_provider=self.digest_provider)
-            plans=self.analysis_plan_service._repository.list_plans(project_id=project_id,run_id=run_id)
-            if not plans: raise QuantitativeWorkflowError("approved Analysis Plan is unavailable")
-            current=plans[-1]
-            current_plan=current
-            weight_sets={x.weight_set_id:x for x in self.state_service.list_for_run(run_id,project_id=project_id,expected_type=WeightSet)}
-            weight_approvals={x.weight_set_id:x for x in self.state_service.list_for_run(run_id,project_id=project_id,expected_type=WeightSetApproval) if x.state.value=="APPROVED"}
-            for item in current.planned_analyses:
-                binding=item.weight_set_binding
-                if binding is not None and binding.weight_set_id in weight_sets and binding.weight_set_id in weight_approvals: execution_weights[item.planned_analysis_id]=(weight_sets[binding.weight_set_id],weight_approvals[binding.weight_set_id])
-            projection=self.analysis_plan_service.execution_projection(project_id=project_id,run_id=run_id,dataset=dataset,codebook=codebook,quality_assessment=quality,weight_sets=execution_weights)
+            current_plan, projection, execution_weights = self._resolve_design_aware_execution(
+                project_id=project_id,
+                run_id=run_id,
+                state=state,
+                dataset=dataset,
+                codebook=codebook,
+            )
+            if (
+                state.get("analysis_plan_version_id") != current_plan.version_id
+                or state.get("analysis_plan_fingerprint") != current_plan.fingerprint
+            ):
+                raise QuantitativeWorkflowError(
+                    "bound Analysis Plan is missing, stale, or no longer current"
+                )
             plan=self._build_design_plan(run_id=run_id,dataset=dataset,codebook=codebook)
         elif mode=="DATASET_ONLY_EXPLORATORY_EXECUTION": plan=self._build_plan(run_id=run_id,dataset=dataset,codebook=codebook)
         else: raise QuantitativeWorkflowError("unknown Quantitative analysis execution mode")
@@ -188,6 +189,102 @@ class QuantitativeStageServiceFactory:
             research_question_coverage_service=research_question_coverage_service,
             analysis_plan_authority=current_plan,
         )
+
+    def _load_dataset_authority(self, *, project_id, run_id, state):
+        scoped_record_ids = {
+            value
+            for key, value in state.items()
+            if key.endswith("_record_id") or key.endswith("_approval_id")
+        }
+        for record_id in scoped_record_ids:
+            self.state_service.require_record_scope(
+                record_id,
+                project_id=project_id,
+                run_id=run_id,
+            )
+        dataset_record_id = state.get("dataset_record_id")
+        codebook_record_id = state.get("codebook_record_id")
+        if not dataset_record_id or not codebook_record_id:
+            raise QuantitativeWorkflowError(
+                "Durable Quantitative dataset authority is unavailable"
+            )
+        dataset = self.state_service.load(
+            dataset_record_id,
+            project_id=project_id,
+            expected_type=DatasetVersion,
+        )
+        codebook = self.state_service.load(
+            codebook_record_id,
+            project_id=project_id,
+            expected_type=CodebookVersion,
+        )
+        return dataset, codebook
+
+    def _resolve_design_aware_execution(
+        self, *, project_id, run_id, state, dataset, codebook
+    ):
+        if self.analysis_plan_service is None:
+            raise QuantitativeWorkflowError(
+                "design-aware Quantitative execution composition is unavailable"
+            )
+        qc = self.state_service.load(
+            state.get("qc_record_id", ""),
+            project_id=project_id,
+            expected_type=QualityControlRun,
+        )
+        approvals = QuantitativeApprovalService(
+            self.state_service, self.digest_provider
+        )
+        qc_approval_id = state.get("cleaned_qc_approval_id") or state.get(
+            "qc_approval_id", ""
+        )
+        qc_approval = approvals.require_current(
+            qc_approval_id,
+            project_id=project_id,
+            subject_fingerprint=qc.fingerprint,
+        )
+        quality = assess_dataset_quality(
+            dataset=dataset,
+            qc_run=qc,
+            manager_approved=True,
+            approval_fingerprint=qc_approval.fingerprint,
+            digest_provider=self.digest_provider,
+        )
+        weight_sets = {
+            item.weight_set_id: item
+            for item in self.state_service.list_for_run(
+                run_id, project_id=project_id, expected_type=WeightSet
+            )
+        }
+        weight_approvals = {
+            item.weight_set_id: item
+            for item in self.state_service.list_for_run(
+                run_id, project_id=project_id, expected_type=WeightSetApproval
+            )
+            if item.state.value == "APPROVED"
+        }
+        current, execution_weights = (
+            self.analysis_plan_service.resolve_current_execution_authority(
+                project_id=project_id,
+                run_id=run_id,
+                dataset=dataset,
+                codebook=codebook,
+                weight_authorities={
+                    weight_set_id: (weight_set, weight_approvals[weight_set_id])
+                    for weight_set_id, weight_set in weight_sets.items()
+                    if weight_set_id in weight_approvals
+                },
+            )
+        )
+        projection = self.analysis_plan_service.execution_projection(
+            project_id=project_id,
+            run_id=run_id,
+            dataset=dataset,
+            codebook=codebook,
+            quality_assessment=quality,
+            weight_sets=execution_weights,
+        )
+        return current, projection, execution_weights
 
     def _build_design_plan(self,*,run_id,dataset,codebook):
         questionnaire=build_questionnaire_snapshot(snapshot_id=f"questionnaire-{run_id}-rd",version="RD-1",codebook_version_id=codebook.codebook_version_id,question_variable_bindings=(),digest_provider=self.digest_provider)

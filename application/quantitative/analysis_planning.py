@@ -66,12 +66,42 @@ class QuantitativeAnalysisPlanService:
         if self._require(version_id,project_id).lifecycle_status is not AnalysisPlanLifecycle.APPROVED: raise QuantitativeAnalysisPlanError("only approved Plan can be superseded")
         return self._transition(version_id,project_id,run_id,new_version_id,actor_id,changed_at,AnalysisPlanLifecycle.SUPERSEDED)
 
-    def resolve_current_approved(self,*,project_id,run_id,dataset,codebook,weight_sets=()):
+    def resolve_current_approved(
+        self, *, project_id, run_id, dataset, codebook, weight_sets=(),
+        weight_authorities=(),
+    ):
         plans=self._repository.list_plans(project_id=project_id,run_id=run_id)
         if not plans or plans[-1].lifecycle_status is not AnalysisPlanLifecycle.APPROVED: raise QuantitativeAnalysisPlanError("no current approved Analysis Plan")
-        value=plans[-1];self._require_current(value,project_id,run_id,dataset,codebook,dict(weight_sets));approval=self._repository.get_approval(value.approval_reference or "",project_id=project_id)
+        value=plans[-1]
+        bindings = dict(weight_sets)
+        if weight_authorities:
+            bindings = self._execution_weight_bindings(value, dict(weight_authorities))
+        self._require_current(value,project_id,run_id,dataset,codebook,bindings);approval=self._repository.get_approval(value.approval_reference or "",project_id=project_id)
         if approval is None or approval.decision is not AnalysisPlanApprovalDecision.APPROVED or approval.plan_fingerprint!=value.fingerprint or approval.coverage_manifest_fingerprint!=value.coverage_manifest_fingerprint: raise QuantitativeAnalysisPlanError("Plan approval is missing or stale")
         return value
+    def resolve_current_execution_authority(
+        self, *, project_id, run_id, dataset, codebook, weight_authorities=()
+    ):
+        """Resolve current RC and its exact approved WeightSet bindings."""
+        available = dict(weight_authorities)
+        current = self.resolve_current_approved(
+            project_id=project_id,
+            run_id=run_id,
+            dataset=dataset,
+            codebook=codebook,
+            weight_authorities=available,
+        )
+        return current, self._execution_weight_bindings(current, available)
+
+    @staticmethod
+    def _execution_weight_bindings(plan, available):
+        bindings = {}
+        for item in plan.planned_analyses:
+            binding = item.weight_set_binding
+            if binding is not None and binding.weight_set_id in available:
+                bindings[item.planned_analysis_id] = available[binding.weight_set_id]
+        return bindings
+
     def approved_projection(self,**kwargs):
         value=self.resolve_current_approved(**kwargs);coverage=self._repository.get_coverage(value.coverage_manifest_id,project_id=value.project_id)
         return ApprovedAnalysisPlanProjection(value.plan_id,value.version_id,value.fingerprint,(("qz",value.research_design_fingerprint),("ra",value.questionnaire_fingerprint),("rb",value.reconciliation_fingerprint),("dataset",value.dataset_fingerprint),("codebook",value.codebook_fingerprint)),tuple((x.planned_analysis_id,x.specification.statistic_family,x.specification_fingerprint,x.research_question_ids,x.analytical_requirement_ids,tuple((b.expected_variable_id,b.actual_variable_id,b.actual_variable_fingerprint) for b in x.variable_bindings)) for x in value.planned_analyses),tuple((x.planned_comparison_id,x.specification.method,x.precursor_analysis_ids) for x in value.planned_comparisons),tuple((x.requirement_id,x.status.value) for x in coverage.requirements),value.assumptions,value.limitations)
