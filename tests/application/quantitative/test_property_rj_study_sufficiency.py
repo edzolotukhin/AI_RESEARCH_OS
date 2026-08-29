@@ -27,7 +27,7 @@ class Repo:
 
 class PropertyRJTests(unittest.TestCase):
     def setUp(self):
-        self.repo=Repo();self.selection=QuantitativeCurrentAuthorityChainSelection("sel","p","r","QUANTITATIVE","DESIGN_AWARE_EXECUTION","chain","chain-fp","qz-v1","qz-fp","rc","rc-fp",None,"t","system","rk-1","sel-fp");qzref=QuantitativeAuthorityReference("QZ_DESIGN","qz-v1","qz-fp");self.chain=QuantitativeDesignAwareAuthorityChainProjection("chain","chain-fp","p","r","DESIGN_AWARE_EXECUTION",(qzref,),(),(),());self.rk=NS(resolve_current_selection=lambda **_: (self.selection,self.chain));self.brief=NS(version_id="brief-v1",fingerprint="brief-fp");self.design=NS(project_id="p",methodology="QUANTITATIVE",version_id="qz-v1",fingerprint="qz-fp",source_brief_version_id="brief-v1",source_brief_fingerprint="brief-fp",objectives=(NS(objective_id="o1",priority="LOW"),NS(objective_id="o2",priority="HIGH")));self.qz=NS(resolve_current_approved=lambda **_:self.design,repository=NS(get_brief=lambda *a,**k:self.brief));self.current={"o1":self.ri("o1"),"o2":self.ri("o2")};self.ri_service=NS(get_approved_projection=lambda **k:self.current[k["objective_id"]]);self.service=QuantitativeStudySufficiencyService(repository=self.repo,digest_provider=Sha256DigestProvider(),authority_chain_selection_service=self.rk,research_design_service=self.qz,objective_coverage_service=self.ri_service)
+        self.repo=Repo();self.selection=QuantitativeCurrentAuthorityChainSelection("sel","p","r","QUANTITATIVE","DESIGN_AWARE_EXECUTION","chain","chain-fp","qz-v1","qz-fp","rc","rc-fp",None,"t","system","rk-1","sel-fp");qzref=QuantitativeAuthorityReference("QZ_DESIGN","qz-v1","qz-fp");self.chain=QuantitativeDesignAwareAuthorityChainProjection("chain","chain-fp","p","r","DESIGN_AWARE_EXECUTION",(qzref,),(),(),());self.rk=NS(resolve_current_selection=lambda **_: (self.selection,self.chain));self.brief=NS(version_id="brief-v1",fingerprint="brief-fp");self.design=NS(project_id="p",methodology="QUANTITATIVE",version_id="qz-v1",fingerprint="qz-fp",source_brief_version_id="brief-v1",source_brief_fingerprint="brief-fp",objectives=(NS(objective_id="o1",priority="LOW"),NS(objective_id="o2",priority="HIGH")));self.qz=NS(resolve_current_approved=lambda **_:self.design,resolve_current_approved_brief=lambda **_:self.brief);self.current={"o1":self.ri("o1"),"o2":self.ri("o2")};self.ri_service=NS(get_approved_projection=lambda **k:self.current[k["objective_id"]]);self.service=QuantitativeStudySufficiencyService(repository=self.repo,digest_provider=Sha256DigestProvider(),authority_chain_selection_service=self.rk,research_design_service=self.qz,objective_coverage_service=self.ri_service)
     def ri(self,o,d="OBJECTIVE_SATISFIED"):
         return ApprovedObjectiveCoverageProjection("p","r",o,"qz-v1","qz-fp",f"a-{o}",f"af-{o}",f"ap-{o}",f"apf-{o}",ObjectiveCoverageDecision(d),ObjectiveAssessmentStatus.READY_FOR_OBJECTIVE_REVIEW,"pol","pf","pap","papf",(),(),(),f"proj-{o}")
     def entry(self,o,ob="MANDATORY"):return StudyObjectivePolicyEntry(o,StudyObjectiveObligation(ob),"Reviewed role")
@@ -38,6 +38,19 @@ class PropertyRJTests(unittest.TestCase):
         p,a=self.policy();self.assertEqual(self.selection.fingerprint,p.selection_fingerprint);self.assertEqual(p.fingerprint,a.policy_fingerprint)
         for entries,message in [((self.entry("o1"),),"omitted"),((self.entry("o1"),self.entry("bad")),"unknown"),((self.entry("o1"),self.entry("o1"),self.entry("o2")),"duplicate"),((self.entry("o1","OPTIONAL"),self.entry("o2","OPTIONAL")),"mandatory")]:
             with self.subTest(message=message),self.assertRaisesRegex(QuantitativeStudySufficiencyError,message):self.service.create_policy(policy_id=message,version_id=message,project_id="p",run_id="r",entries=entries,created_at="t",created_by="h")
+    def test_root_uses_public_qz_boundary_and_checks_exact_brief_binding(self):
+        calls=[]
+        self.qz=NS(
+            resolve_current_approved=lambda **scope:(calls.append(("design",scope)) or self.design),
+            resolve_current_approved_brief=lambda **scope:(calls.append(("brief",scope)) or self.brief),
+        )
+        self.service._qz=self.qz
+        self.service.create_policy(policy_id="public",version_id="public-v1",project_id="p",run_id="r",entries=(self.entry("o1"),self.entry("o2")),created_at="t",created_by="h")
+        self.assertEqual([("design",{"project_id":"p","run_id":"r"}),("brief",{"project_id":"p","run_id":"r"})],calls)
+        for brief in (NS(version_id="brief-v2",fingerprint=self.brief.fingerprint),NS(version_id=self.brief.version_id,fingerprint="other")):
+            with self.subTest(brief=brief),self.assertRaisesRegex(QuantitativeStudySufficiencyError,"stale selected QZ/Brief"):
+                self.qz.resolve_current_approved_brief=lambda **_:brief
+                self.service.create_policy(policy_id="stale",version_id="stale",project_id="p",run_id="r",entries=(self.entry("o1"),self.entry("o2")),created_at="t",created_by="h")
     def test_ready_optional_absence_and_delivery_separation(self):
         del self.current["o2"];v=self.assess();self.assertEqual(StudySufficiencyStatus.READY_FOR_STUDY_REVIEW,v.status);self.assertNotIn("report",repr(v).lower())
     def test_status_precedence(self):

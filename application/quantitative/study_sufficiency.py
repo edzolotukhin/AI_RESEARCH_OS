@@ -17,9 +17,9 @@ class QuantitativeStudySufficiencyService:
     def _root(self,project_id,run_id):
         selection,chain=self._rk.resolve_current_selection(project_id=project_id,run_id=run_id)
         design=self._qz.resolve_current_approved(project_id=project_id,run_id=run_id)
-        brief=self._qz.repository.get_brief(design.source_brief_version_id,project_id=project_id)
+        brief=self._qz.resolve_current_approved_brief(project_id=project_id,run_id=run_id)
         refs={(x.authority_kind,x.authority_id,x.authority_fingerprint) for x in chain.ordered_authorities}
-        if ("QZ_DESIGN",design.version_id,design.fingerprint) not in refs or brief is None or brief.fingerprint!=design.source_brief_fingerprint:raise QuantitativeStudySufficiencyError("stale selected QZ/Brief authority")
+        if ("QZ_DESIGN",design.version_id,design.fingerprint) not in refs or (brief.version_id,brief.fingerprint)!=(design.source_brief_version_id,design.source_brief_fingerprint):raise QuantitativeStudySufficiencyError("stale selected QZ/Brief authority")
         return selection,chain,design,brief
     def create_policy(self,*,policy_id,version_id,project_id,run_id,entries,created_at,created_by,version_sequence=1,parent_version_id=None,policy_semantics="ALL_MANDATORY"):
         if policy_semantics!="ALL_MANDATORY":raise QuantitativeStudySufficiencyError("unsupported alternative Study policy semantics")
