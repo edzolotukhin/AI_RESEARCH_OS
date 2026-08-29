@@ -212,12 +212,13 @@ class RealQuantitativeStageService:
             state["analysis_execution_manifest_record_id"]=manifest.manifest_id
             state["analysis_execution_mode"]="DESIGN_AWARE_EXECUTION"
             return state
-        if any(value is None for value in (self.plan.one_way,self.plan.cross_tab,self.plan.numeric,self.plan.nps)): raise QuantitativeWorkflowError("dataset-only analysis plan is incomplete")
+        if any(value is None for value in (self.plan.one_way,self.plan.cross_tab,self.plan.numeric)): raise QuantitativeWorkflowError("dataset-only analysis plan is incomplete")
         results = list(self.one_way.compute(dataset=dataset, codebook=codebook, specification=self.plan.one_way))
         cross_view = self._view(dataset, qc, weights, weight_approval, self.plan.cross_tab, codebook)
         table, cross_results = self.cross_tab.compute(dataset=dataset, codebook=codebook, specification=self.plan.cross_tab, view=cross_view, weight_set=weights); results.extend(cross_results)
         numeric_view = self._view(dataset, qc, weights, weight_approval, self.plan.numeric, codebook); results.extend(self.numeric.compute(dataset=dataset, codebook=codebook, specification=self.plan.numeric, view=numeric_view, weight_set=weights if self.plan.numeric.weighting_status == "WEIGHTED" else None))
-        nps_view = self._view(dataset, qc, weights, weight_approval, self.plan.nps, codebook); results.extend(self.kpi.compute_nps(dataset=dataset, codebook=codebook, specification=self.plan.nps, view=nps_view, weight_set=weights if self.plan.nps.weighting_status == "WEIGHTED" else None))
+        if self.plan.nps is not None:
+            nps_view = self._view(dataset, qc, weights, weight_approval, self.plan.nps, codebook); results.extend(self.kpi.compute_nps(dataset=dataset, codebook=codebook, specification=self.plan.nps, view=nps_view, weight_set=weights if self.plan.nps.weighting_status == "WEIGHTED" else None))
         ids=[self._persist(result,"stat",project_id,run_id,dataset_id=dataset.version_id) for result in results]
         table_id=self._persist(table,"table",project_id,run_id,dataset_id=dataset.version_id)
         manifest_fp=canonical_digest({"dataset":dataset.dataset_fingerprint,"results":ids,"tables":[table_id]},digest_provider=self.digest)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Mapping
 
 from application.quantitative.analysis_execution import QuantitativeAnalysisExecutionService
@@ -41,7 +42,7 @@ from domain.quantitative.analysis import (
     NpsAnalysisSpecification,
     NumericAnalysisSpecification,
 )
-from domain.quantitative.dataset import CodebookVersion, DatasetVersion, VariableType
+from domain.quantitative.dataset import CodebookVersion, DatasetVersion, VariableDefinition, VariableType
 from domain.quantitative.quality import QualityControlRun
 from domain.quantitative.weighting import WeightSet, WeightSetApproval
 from domain.workflow_status import WorkflowStatus
@@ -321,6 +322,10 @@ class QuantitativeStageServiceFactory:
             categoricals[1],
         )
         numeric = numerics[0]
+        nps_candidates = tuple(
+            item for item in numerics if _is_valid_dataset_only_nps_source(item)
+        )
+        nps_source = nps_candidates[0] if len(nps_candidates) == 1 else None
         questionnaire = build_questionnaire_snapshot(
             snapshot_id=f"questionnaire-{run_id}-terminal",
             version="QO-1",
@@ -328,7 +333,11 @@ class QuantitativeStageServiceFactory:
             question_variable_bindings=tuple(
                 (item.name, item.variable_id) for item in codebook.variables
             ),
-            answer_domains=((numeric.variable_id, (0, 7, 8, 9, 10)),),
+            answer_domains=(
+                ((nps_source.variable_id, tuple(range(11))),)
+                if nps_source is not None
+                else ()
+            ),
             digest_provider=self.digest_provider,
         )
         return QuantitativeVerticalPlan(
@@ -349,11 +358,54 @@ class QuantitativeStageServiceFactory:
             NumericAnalysisSpecification(
                 "qo-numeric", numeric.variable_id, weighting_status="WEIGHTED"
             ),
-            NpsAnalysisSpecification(
-                "qo-nps", numeric.variable_id, weighting_status="WEIGHTED"
+            (
+                NpsAnalysisSpecification(
+                    "qo-nps", nps_source.variable_id, weighting_status="WEIGHTED"
+                )
+                if nps_source is not None
+                else None
             ),
             weight_mode="CONSTRUCT_FROM_TARGET_MARGINS",
         )
+
+
+def _is_valid_dataset_only_nps_source(variable: VariableDefinition) -> bool:
+    """Return whether imported metadata proves the structural NPS 0-10 contract."""
+    if (
+        variable.variable_type is not VariableType.NUMERIC
+        or not variable.analytically_eligible
+        or variable.measurement_level.strip().casefold() != "scale"
+    ):
+        return False
+    codes: set[int] = set()
+    for raw, _ in variable.value_labels:
+        try:
+            value = Decimal(str(raw).strip())
+        except (InvalidOperation, ValueError):
+            return False
+        if not value.is_finite() or value != value.to_integral_value():
+            return False
+        codes.add(int(value))
+    if len(variable.value_labels) != 11 or codes != set(range(11)):
+        return False
+    for rule in variable.missing_rules:
+        bounds = tuple(
+            value for value in (rule.value, rule.low, rule.high) if value is not None
+        )
+        normalized: list[Decimal] = []
+        for raw in bounds:
+            try:
+                value = Decimal(str(raw).strip())
+            except (InvalidOperation, ValueError):
+                return False
+            if not value.is_finite():
+                return False
+            normalized.append(value)
+        if any(Decimal(0) <= value <= Decimal(10) for value in normalized):
+            return False
+        if len(normalized) == 2 and normalized[0] < 0 < normalized[1]:
+            return False
+    return True
 
 
 @dataclass(frozen=True)
