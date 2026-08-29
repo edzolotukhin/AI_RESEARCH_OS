@@ -34,6 +34,13 @@ class PropertyRJTests(unittest.TestCase):
     def policy(self,entries=None):
         entries=entries or (self.entry("o1"),self.entry("o2","OPTIONAL"));tag="-".join(x.objective_id+x.obligation.value for x in entries);d=self.service.create_policy(policy_id=tag,version_id="d"+tag,project_id="p",run_id="r",entries=entries,created_at="t",created_by="h");rv=self.service.submit_policy_for_review(d.version_id,project_id="p",run_id="r",new_version_id="v"+tag,actor_id="h",changed_at="t");p=self.service.approve_policy(rv.version_id,project_id="p",run_id="r",new_version_id="p"+tag,approval_id="pa"+tag,expected_fingerprint=rv.fingerprint,actor_id="h",decided_at="t",rationale="Approved");return p,self.repo.pa["pa"+tag]
     def assess(self,entries=None):self.policy(entries);return self.service.assess_current_study(project_id="p",run_id="r",created_at="t",created_by="system")
+    def replacement_draft(self,parent,tag="2",entries=None):
+        entries=entries or (self.entry("o1"),self.entry("o2","OPTIONAL"))
+        return self.service.create_policy(policy_id=f"replacement-{tag}",version_id=f"replacement-{tag}-draft",project_id="p",run_id="r",entries=entries,created_at="t",created_by="h",version_sequence=parent.version_sequence+1,parent_version_id=parent.version_id)
+    def approve_replacement(self,draft,tag="2"):
+        review=self.service.submit_policy_for_review(draft.version_id,project_id="p",run_id="r",new_version_id=f"replacement-{tag}-review",actor_id="h",changed_at="t")
+        approved=self.service.approve_policy(review.version_id,project_id="p",run_id="r",new_version_id=f"replacement-{tag}-approved",approval_id=f"replacement-{tag}-approval",expected_fingerprint=review.fingerprint,actor_id="h",decided_at="t",rationale="Approved replacement")
+        return review,approved,self.repo.pa[f"replacement-{tag}-approval"]
     def test_policy_validation_and_exact_binding(self):
         p,a=self.policy();self.assertEqual(self.selection.fingerprint,p.selection_fingerprint);self.assertEqual(p.fingerprint,a.policy_fingerprint)
         for entries,message in [((self.entry("o1"),),"omitted"),((self.entry("o1"),self.entry("bad")),"unknown"),((self.entry("o1"),self.entry("o1"),self.entry("o2")),"duplicate"),((self.entry("o1","OPTIONAL"),self.entry("o2","OPTIONAL")),"mandatory")]:
@@ -71,5 +78,56 @@ class PropertyRJTests(unittest.TestCase):
     def test_dataset_only_and_payload_safety(self):
         x=self.service.dataset_only_absence(project_id="p",run_id="r");self.assertEqual("NO_DESIGN_AWARE_STUDY_SUFFICIENCY_AUTHORITY",x.status);text=repr(self.assess()).lower()
         for word in ("respondent_id","raw_sav","credentials","storage_path"):self.assertNotIn(word,text)
+
+    def test_immutable_replacement_selects_only_approved_lineage_head(self):
+        p1,p1_approval=self.policy((self.entry("o1"),self.entry("o2")))
+        current,approval=self.service._current_policy("p","r",self.selection,self.chain,self.design)
+        self.assertEqual((p1.version_id,p1_approval.approval_id),(current.version_id,approval.approval_id))
+        old_assessment=self.service.assess_current_study(project_id="p",run_id="r",created_at="t",created_by="system")
+        self.service.approve_study(old_assessment.version_id,project_id="p",run_id="r",new_version_id="old-approved-assessment",approval_id="old-study-approval",expected_fingerprint=old_assessment.fingerprint,decision="STUDY_SUFFICIENT",actor_id="h",decided_at="t",rationale="Historically sufficient")
+        marker=self.service.supersede_policy(p1.version_id,project_id="p",run_id="r",new_version_id="p1-superseded",actor_id="h",changed_at="t")
+        draft=self.replacement_draft(marker)
+        self.assertEqual(p1.version_id,self.service._current_policy("p","r",self.selection,self.chain,self.design)[0].version_id)
+        review=self.service.submit_policy_for_review(draft.version_id,project_id="p",run_id="r",new_version_id="replacement-2-review",actor_id="h",changed_at="t")
+        self.assertEqual(p1.version_id,self.service._current_policy("p","r",self.selection,self.chain,self.design)[0].version_id)
+        p2=self.service.approve_policy(review.version_id,project_id="p",run_id="r",new_version_id="replacement-2-approved",approval_id="replacement-2-approval",expected_fingerprint=review.fingerprint,actor_id="h",decided_at="t",rationale="Approved replacement")
+        current,approval=self.service._current_policy("p","r",self.selection,self.chain,self.design)
+        self.assertEqual((p2.version_id,"replacement-2-approval"),(current.version_id,approval.approval_id))
+        self.assertEqual(StudySufficiencyLifecycle.APPROVED,self.repo.get_policy(p1.version_id,project_id="p").lifecycle_status)
+        self.assertEqual(p1_approval,self.repo.get_policy_approval(p1_approval.approval_id,project_id="p"))
+        assessment=self.service.assess_current_study(project_id="p",run_id="r",created_at="t2",created_by="system")
+        self.assertEqual(("o1",),assessment.mandatory_objective_ids);self.assertEqual(("o2",),assessment.optional_objective_ids)
+        with self.assertRaisesRegex(QuantitativeStudySufficiencyError,"missing or ambiguous"):
+            self.service.resolve_current_approved_study(project_id="p",run_id="r")
+
+    def test_linear_replacements_and_competing_approved_heads(self):
+        p1,_=self.policy((self.entry("o1"),self.entry("o2")))
+        marker=self.service.supersede_policy(p1.version_id,project_id="p",run_id="r",new_version_id="linear-marker-1",actor_id="h",changed_at="t")
+        _,p2,_=self.approve_replacement(self.replacement_draft(marker,"2"),"2")
+        marker2=self.service.supersede_policy(p2.version_id,project_id="p",run_id="r",new_version_id="linear-marker-2",actor_id="h",changed_at="t")
+        _,p3,_=self.approve_replacement(self.replacement_draft(marker2,"3"),"3")
+        self.assertEqual(p3.version_id,self.service._current_policy("p","r",self.selection,self.chain,self.design)[0].version_id)
+        self.assertEqual(StudySufficiencyLifecycle.APPROVED,self.repo.get_policy(p2.version_id,project_id="p").lifecycle_status)
+        branch=self.replacement_draft(marker2,"branch")
+        self.approve_replacement(branch,"branch")
+        with self.assertRaisesRegex(QuantitativeStudySufficiencyError,"missing or ambiguous"):
+            self.service._current_policy("p","r",self.selection,self.chain,self.design)
+
+    def test_rejected_child_and_corrupt_or_cross_root_lineage_fail_closed(self):
+        p1,_=self.policy((self.entry("o1"),self.entry("o2")))
+        marker=self.service.supersede_policy(p1.version_id,project_id="p",run_id="r",new_version_id="reject-marker",actor_id="h",changed_at="t")
+        draft=self.replacement_draft(marker,"rejected")
+        review=self.service.submit_policy_for_review(draft.version_id,project_id="p",run_id="r",new_version_id="rejected-review",actor_id="h",changed_at="t")
+        self.service.reject_policy(review.version_id,project_id="p",run_id="r",new_version_id="rejected-final",actor_id="h",decided_at="t")
+        self.assertEqual(p1.version_id,self.service._current_policy("p","r",self.selection,self.chain,self.design)[0].version_id)
+        corrupt=replace(draft,version_id="corrupt",parent_version_id="missing",version_sequence=99)
+        self.repo.p[corrupt.version_id]=corrupt
+        with self.assertRaisesRegex(QuantitativeStudySufficiencyError,"missing parent"):
+            self.service._current_policy("p","r",self.selection,self.chain,self.design)
+        del self.repo.p[corrupt.version_id]
+        other=replace(draft,version_id="cross-root",project_id="other",parent_version_id=p1.version_id)
+        self.repo.p[other.version_id]=other
+        with self.assertRaisesRegex(QuantitativeStudySufficiencyError,"crosses authority roots"):
+            self.service._current_policy("p","r",self.selection,self.chain,self.design)
 
 if __name__=="__main__":unittest.main()

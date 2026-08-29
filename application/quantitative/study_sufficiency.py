@@ -34,6 +34,10 @@ class QuantitativeStudySufficiencyService:
             items.append(StudyObjectivePolicyEntry(oid,ob,_text(getattr(raw,"rationale",""),False)))
         if seen!=expected:raise QuantitativeStudySufficiencyError("Objective omitted from Study policy")
         if not any(x.obligation is StudyObjectiveObligation.MANDATORY for x in items):raise QuantitativeStudySufficiencyError("Study policy requires a mandatory Objective")
+        if parent_version_id is not None:
+            parent=self._policy(parent_version_id,project_id,run_id)
+            if self._policy_root(parent)!=(project_id,run_id,"QUANTITATIVE",selection.fingerprint,chain.manifest_fingerprint,design.fingerprint,brief.fingerprint):raise QuantitativeStudySufficiencyError("Study policy parent belongs to a different authority root")
+            if version_sequence!=parent.version_sequence+1:raise QuantitativeStudySufficiencyError("Study policy version sequence does not follow its parent")
         items=tuple(sorted(items,key=lambda x:x.objective_id));body={"contract":"RJ_POLICY_V1","project":project_id,"run":run_id,"selection":selection.fingerprint,"manifest":chain.manifest_fingerprint,"qz":design.fingerprint,"brief":brief.fingerprint,"entries":tuple(asdict(x) for x in items),"method":RJ_METHOD_VERSION};fp=canonical_digest(body,digest_provider=self._digest)
         return self.repository.save_policy(QuantitativeStudyObjectiveObligationPolicyVersion(policy_id,version_id,version_sequence,project_id,run_id,"QUANTITATIVE",selection.selection_id,selection.fingerprint,chain.manifest_id,chain.manifest_fingerprint,design.version_id,design.fingerprint,brief.version_id,brief.fingerprint,items,RJ_METHOD_VERSION,parent_version_id,StudySufficiencyLifecycle.DRAFT,None,fp,created_at,created_by))
     def submit_policy_for_review(self,version_id,*,project_id,run_id,new_version_id,actor_id,changed_at):
@@ -97,13 +101,48 @@ class QuantitativeStudySufficiencyService:
         return v
     def _current_policy(self,p,r,selection,chain,design):
         values=self.repository.list_policies(project_id=p,run_id=r)
-        candidates=[]
+        expected=(p,r,"QUANTITATIVE",selection.fingerprint,chain.manifest_fingerprint,design.fingerprint,design.source_brief_fingerprint)
+        by_id={v.version_id:v for v in values}
+        if len(by_id)!=len(values):raise QuantitativeStudySufficiencyError("Study policy lineage contains duplicate version IDs")
+        relevant={v.version_id:v for v in values if self._policy_root(v)==expected}
+        children={k:set() for k in relevant}
         for v in values:
-            if v.lifecycle_status is not StudySufficiencyLifecycle.APPROVED or (v.selection_fingerprint,v.manifest_fingerprint,v.research_design_fingerprint)!=(selection.fingerprint,chain.manifest_fingerprint,design.fingerprint):continue
+            if v.parent_version_id is None:continue
+            parent=by_id.get(v.parent_version_id)
+            if parent is None:
+                if v.version_id in relevant:raise QuantitativeStudySufficiencyError("Study policy lineage has a missing parent")
+                continue
+            if self._policy_root(parent)!=self._policy_root(v):raise QuantitativeStudySufficiencyError("Study policy lineage crosses authority roots")
+            if v.version_sequence!=parent.version_sequence+1:raise QuantitativeStudySufficiencyError("Study policy lineage has an invalid version sequence")
+            if v.version_id in relevant:children[parent.version_id].add(v.version_id)
+        visiting=set();visited=set()
+        def visit(version_id):
+            if version_id in visiting:raise QuantitativeStudySufficiencyError("Study policy lineage contains a cycle")
+            if version_id in visited:return
+            visiting.add(version_id)
+            for child_id in children[version_id]:visit(child_id)
+            visiting.remove(version_id);visited.add(version_id)
+        for version_id in relevant:visit(version_id)
+        approved={v.version_id:v for v in relevant.values() if v.lifecycle_status is StudySufficiencyLifecycle.APPROVED}
+        superseded_approved=set()
+        for version_id in approved:
+            pending=list(children[version_id]);seen=set()
+            while pending:
+                child_id=pending.pop()
+                if child_id in seen:continue
+                seen.add(child_id)
+                if child_id in approved:superseded_approved.add(version_id);break
+                pending.extend(children[child_id])
+        candidates=[]
+        for version_id,v in approved.items():
+            if version_id in superseded_approved:continue
             a=self.repository.get_policy_approval(v.approval_reference or "",project_id=p)
-            if a is not None and a.decision is StudyPolicyDecision.APPROVED and (a.policy_fingerprint,a.selection_fingerprint,a.manifest_fingerprint)==(v.fingerprint,selection.fingerprint,chain.manifest_fingerprint):candidates.append((v,a))
+            if a is not None and a.decision is StudyPolicyDecision.APPROVED and (a.project_id,a.run_id,a.policy_version_id,a.policy_fingerprint,a.selection_fingerprint,a.manifest_fingerprint,a.research_design_fingerprint)==(p,r,v.version_id,v.fingerprint,selection.fingerprint,chain.manifest_fingerprint,design.fingerprint):candidates.append((v,a))
         if len(candidates)!=1:raise QuantitativeStudySufficiencyError("current Study policy is missing or ambiguous")
         return candidates[0]
+    @staticmethod
+    def _policy_root(v):
+        return (v.project_id,v.run_id,v.methodology,v.selection_fingerprint,v.manifest_fingerprint,v.research_design_fingerprint,v.source_brief_fingerprint)
     @staticmethod
     def _status(ids,refs,blockers):
         if blockers or len(ids)!=len(refs):return StudySufficiencyStatus.BLOCKED
