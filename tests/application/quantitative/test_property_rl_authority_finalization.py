@@ -10,6 +10,7 @@ from application.quantitative.authority_finalization import (
     QuantitativeAuthorityFinalizationInput,
     QuantitativeAuthorityFinalizationService,
 )
+from application.quantitative.workflow import QUANTITATIVE_SAFE_STATE_KEY
 from application.quantitative.state_persistence import QuantitativeStateService
 from domain.quantitative.research_question_coverage import DatasetOnlyResearchQuestionCoverageAbsence, QuantitativeAuthorityReference
 from domain.quantitative.workflow import QuantitativeTerminalOutcome, QuantitativeTerminalResult
@@ -38,7 +39,11 @@ class PropertyRLTests(unittest.TestCase):
         self.project = NS(id="p")
         self.run = NS(id="r", project_id="p", status=WorkflowStatus.COMPLETED)
         self.projects = NS(get_project=lambda project_id: self.project if project_id == "p" else (_ for _ in ()).throw(ValueError("missing project")))
-        self.workflows = NS(get_workflow_run=lambda run_id: self.run if run_id == "r" else (_ for _ in ()).throw(ValueError("missing run")))
+        self.workflow_results = {QUANTITATIVE_SAFE_STATE_KEY: {}}
+        self.workflows = NS(
+            get_workflow_run=lambda run_id: self.run if run_id == "r" else (_ for _ in ()).throw(ValueError("missing run")),
+            get_task_results=lambda run_id: dict(self.workflow_results) if run_id == "r" else (_ for _ in ()).throw(ValueError("missing run")),
+        )
         self.current_ids = {"qz": "qz", "ra": "ra", "rb": "rb", "rc": "rc"}
         self.service = self._service()
         self.refs = {name: self._ref(kind, name) for name, kind in (
@@ -51,6 +56,7 @@ class PropertyRLTests(unittest.TestCase):
             ("codebook", "CODEBOOK"), ("qc", "QC_APPROVAL"),
             ("weight", "WEIGHT_SET"), ("no_report", "RG_CONTROLLED_ABSENCE"),
         )}
+        self.terminal_record_id = "terminal-record"
         self.terminal = self._terminal()
 
     def _service(self):
@@ -87,12 +93,15 @@ class PropertyRLTests(unittest.TestCase):
             "ACCEPTED" if outcome is QuantitativeTerminalOutcome.COMPLETED else outcome.value,
             (), "COMPLETED", outcome, f"terminal-{outcome.value}",
         )
-        self.state.persist(value, record_id=value.result_id, project_id="p", run_id="r", accepted=True)
+        self.state.persist(value, record_id=self.terminal_record_id, project_id="p", run_id="r", accepted=True)
+        self.workflow_results[QUANTITATIVE_SAFE_STATE_KEY] = {
+            "terminal_result_record_id": self.terminal_record_id,
+        }
         return value
 
     def request(self, **changes):
         request = QuantitativeAuthorityFinalizationInput(
-            "p", "r", self.terminal.result_id, self.refs["brief"], self.refs["qz"],
+            "p", "r", self.terminal_record_id, self.refs["brief"], self.refs["qz"],
             self.refs["ra"], self.refs["rb"], self.refs["rc"], (self.refs["rd"],),
             (self.refs["re"],), (self.refs["rf"],), (self.refs["rg"],),
             (self.refs["rh"],), (self.refs["ri"],), self.refs["dataset"],
@@ -101,6 +110,7 @@ class PropertyRLTests(unittest.TestCase):
         return replace(request, **changes)
 
     def test_real_transition_idempotency_restart_and_backward_chain(self):
+        self.assertNotEqual(self.terminal_record_id, self.terminal.result_id)
         first = self.service.finalize(self.request(), created_at="t", created_by="system")
         second = self.service.finalize(self.request(), created_at="ignored", created_by="ignored")
         self.assertEqual(first, second)
@@ -112,6 +122,26 @@ class PropertyRLTests(unittest.TestCase):
         )
         self.assertEqual(first.manifest_fingerprint, backward.manifest_fingerprint)
         self.assertEqual((("ri", "fp-ri"),), first.approved_objective_authorities)
+
+    def test_current_resolution_requires_exact_durable_terminal_record_id(self):
+        finalized = self.service.finalize(self.request(), created_at="t", created_by="system")
+        self.workflow_results[QUANTITATIVE_SAFE_STATE_KEY] = {
+            "terminal_result_record_id": self.terminal.result_id,
+        }
+        with self.assertRaisesRegex(ValueError, "unavailable for project"):
+            self.service.resolve_current(project_id="p", run_id="r")
+        self.workflow_results[QUANTITATIVE_SAFE_STATE_KEY] = {}
+        with self.assertRaisesRegex(
+            QuantitativeAuthorityFinalizationError, "no durable terminal record",
+        ):
+            self.service.resolve_current(project_id="p", run_id="r")
+        self.workflow_results[QUANTITATIVE_SAFE_STATE_KEY] = {
+            "terminal_result_record_id": self.terminal_record_id,
+        }
+        self.assertEqual(
+            finalized,
+            self.service.resolve_current(project_id="p", run_id="r"),
+        )
 
     def test_resolve_current_revalidates_qz_ra_rb_rc_and_preserves_history(self):
         finalized = self.service.finalize(self.request(), created_at="t", created_by="system")
@@ -141,7 +171,7 @@ class PropertyRLTests(unittest.TestCase):
                 self.current_ids[key] = key
                 self.assertEqual(finalized, self.service.resolve_current(project_id="p", run_id="r"))
     def test_controlled_no_report_finalizes_without_fabricating_report(self):
-        self.backing._records.pop("terminal")
+        self.backing._records.pop(self.terminal_record_id)
         self.terminal = self._terminal(QuantitativeTerminalOutcome.COMPLETED_WITH_NO_SUPPORTED_REPORT)
         request = self.request(
             report_authority=(), controlled_absences=(self.refs["no_report"],),

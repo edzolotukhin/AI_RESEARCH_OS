@@ -4,6 +4,10 @@ from dataclasses import asdict, dataclass
 
 from application.quantitative.fingerprints import canonical_digest
 from application.quantitative.state_persistence import authority_fingerprint
+from application.quantitative.workflow import (
+    QUANTITATIVE_SAFE_STATE_KEY,
+    validate_safe_workflow_state,
+)
 from domain.quantitative.authority_finalization import (
     AUTHORITY_FINALIZATION_METHOD_VERSION,
     QuantitativeFinalizedStudyProjection,
@@ -108,20 +112,30 @@ class QuantitativeAuthorityFinalizationService:
         dataset_ref = self._one(chain.ordered_authorities, "DATASET")
         dataset = self._state.load(dataset_ref.authority_id, project_id=project_id)
         dataset_version_id = getattr(dataset, "version_id", dataset_ref.authority_id)
-        terminals = tuple(
-            item for item in self._state.list_for_run(
-                run_id, project_id=project_id, expected_type=QuantitativeTerminalResult
-            )
-            if item.terminal_outcome in self._TERMINAL_OUTCOMES
-            and item.execution_status == "COMPLETED"
-            and item.dataset_version_id == dataset_version_id
-            and item.dataset_fingerprint == dataset_ref.authority_fingerprint
+        results = self._workflows.get_task_results(run_id)
+        safe_state = validate_safe_workflow_state(
+            results.get(QUANTITATIVE_SAFE_STATE_KEY, {})
         )
-        if len(terminals) != 1:
+        terminal_record_id = safe_state.get("terminal_result_record_id")
+        if not terminal_record_id:
             raise QuantitativeAuthorityFinalizationError(
-                "finalized current chain has missing or ambiguous terminal authority"
+                "completed WorkflowRun has no durable terminal record reference"
             )
-        request = self._request_from_chain(chain, terminal_result_record_id=terminals[0].result_id)
+        terminal = self._state.load(
+            terminal_record_id, project_id=project_id,
+            expected_type=QuantitativeTerminalResult,
+        )
+        if (
+            terminal.run_id != run_id
+            or terminal.dataset_version_id != dataset_version_id
+            or terminal.dataset_fingerprint != dataset_ref.authority_fingerprint
+        ):
+            raise QuantitativeAuthorityFinalizationError(
+                "completed WorkflowRun terminal authority mismatch"
+            )
+        request = self._request_from_chain(
+            chain, terminal_result_record_id=terminal_record_id,
+        )
         terminal = self._preflight(request)
         return self._projection(terminal, selection, chain)
 
