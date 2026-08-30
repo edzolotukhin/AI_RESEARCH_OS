@@ -90,7 +90,7 @@ class DurableWorkflowService:
                     "shared_state": shared_state,
                 }
             elif task.definition_id in skipped and not task.is_terminal:
-                task.skip()
+                workflow_run.skip_task_as_satisfied_dependency(task)
                 activation_results[task.id] = {
                     "task_id": task.id,
                     "definition_id": task.definition_id,

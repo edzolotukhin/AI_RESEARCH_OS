@@ -612,7 +612,7 @@ class QuantitativeUiService:
         else:
             for task in run.tasks:
                 if task.definition_id in {"quant_weightset", "quant_weight_approval"} and not task.is_terminal:
-                    task.skip()
+                    run.skip_task_as_satisfied_dependency(task)
         service = self.stage_service_factory.create(
             project_id=study.project_id,
             run_id=study.run_id,

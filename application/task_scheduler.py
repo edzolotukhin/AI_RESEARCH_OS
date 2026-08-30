@@ -95,6 +95,7 @@ class TaskScheduler:
                 task=task,
                 dependency_ids=dependency_ids,
                 projected_status=projected_status,
+                satisfied_skipped_task_ids=workflow_run.satisfied_skipped_task_ids,
             )
             decisions.append(decision)
 
@@ -225,10 +226,19 @@ class TaskScheduler:
             for dependency_id in dependency_ids
         }
 
+        def incomplete(dependency_id: str, status: TaskStatus) -> bool:
+            return not (
+                status == TaskStatus.COMPLETED
+                or (
+                    status == TaskStatus.SKIPPED
+                    and dependency_id in workflow_run.satisfied_skipped_task_ids
+                )
+            )
+
         if task.status == TaskStatus.READY:
             if any(
-                status != TaskStatus.COMPLETED
-                for status in dependency_statuses.values()
+                incomplete(dependency_id, status)
+                for dependency_id, status in dependency_statuses.items()
             ):
                 TaskScheduler._raise_invariant(
                     workflow_run=workflow_run,
@@ -243,8 +253,8 @@ class TaskScheduler:
 
         if task.status == TaskStatus.RUNNING:
             if any(
-                status != TaskStatus.COMPLETED
-                for status in dependency_statuses.values()
+                incomplete(dependency_id, status)
+                for dependency_id, status in dependency_statuses.items()
             ):
                 TaskScheduler._raise_invariant(
                     workflow_run=workflow_run,
@@ -259,8 +269,8 @@ class TaskScheduler:
 
         if task.status == TaskStatus.COMPLETED:
             if any(
-                status != TaskStatus.COMPLETED
-                for status in dependency_statuses.values()
+                incomplete(dependency_id, status)
+                for dependency_id, status in dependency_statuses.items()
             ):
                 TaskScheduler._raise_invariant(
                     workflow_run=workflow_run,
@@ -296,6 +306,7 @@ class TaskScheduler:
         task: Task,
         dependency_ids: tuple[str, ...],
         projected_status: dict[str, TaskStatus],
+        satisfied_skipped_task_ids: set[str],
     ) -> TaskSchedulingDecision:
         current_status = task.status
 
@@ -320,8 +331,12 @@ class TaskScheduler:
         ]
 
         if any(
-            status in _FAILURE_TERMINAL_STATUSES
-            for status in dependency_states
+            status in {TaskStatus.FAILED, TaskStatus.CANCELLED}
+            or (
+                status == TaskStatus.SKIPPED
+                and dependency_id not in satisfied_skipped_task_ids
+            )
+            for dependency_id, status in zip(dependency_ids, dependency_states)
         ):
             return TaskScheduler._plan_transition(
                 task=task,
@@ -333,7 +348,11 @@ class TaskScheduler:
 
         if all(
             status == TaskStatus.COMPLETED
-            for status in dependency_states
+            or (
+                status == TaskStatus.SKIPPED
+                and dependency_id in satisfied_skipped_task_ids
+            )
+            for dependency_id, status in zip(dependency_ids, dependency_states)
         ):
             return TaskScheduler._plan_transition(
                 task=task,

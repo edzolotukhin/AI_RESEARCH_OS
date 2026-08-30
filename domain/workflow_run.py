@@ -13,6 +13,7 @@ from domain.runtime.state_machine import (
 )
 from domain.runtime.task_dependency_graph import TaskDependencyGraph
 from domain.task import Task
+from domain.value_objects.task_status import TaskStatus
 from domain.workflow_status import WorkflowStatus
 from domain.common.exceptions import ValidationError
 
@@ -37,6 +38,8 @@ class WorkflowRun:
     dependency_graph: TaskDependencyGraph = field(
         default_factory=TaskDependencyGraph,
     )
+
+    satisfied_skipped_task_ids: set[str] = field(default_factory=set)
 
     status: WorkflowStatus = WorkflowStatus.CREATED
 
@@ -132,8 +135,32 @@ class WorkflowRun:
                 "WorkflowRun contains tasks that are missing from dependency graph."
             )
 
+        if self.satisfied_skipped_task_ids - task_ids:
+            raise ValidationError(
+                "Satisfied skipped dependencies reference unknown tasks."
+            )
+
+        task_index = {task.id: task for task in self.tasks}
+        if any(
+            task_index[task_id].status != TaskStatus.SKIPPED
+            for task_id in self.satisfied_skipped_task_ids
+        ):
+            raise ValidationError(
+                "Satisfied skipped dependency must have SKIPPED task status."
+            )
+
         if self.tasks:
             self.dependency_graph.validate()
+
+    def skip_task_as_satisfied_dependency(self, task: Task) -> None:
+        """Record an explicit application-authorized no-op dependency."""
+        if task not in self.tasks:
+            raise ValidationError("Satisfied skipped dependency is not in WorkflowRun.")
+        if not task.is_terminal:
+            task.skip()
+        if task.status != TaskStatus.SKIPPED:
+            raise ValidationError("Satisfied dependency must be skipped.")
+        self.satisfied_skipped_task_ids.add(task.id)
 
     @property
     def progress(self) -> int:

@@ -26,7 +26,10 @@ def workflow_run_to_model(
         project_id=project_id or workflow_run.project_id,
         workflow_template_id=workflow_run.workflow_template_id,
         status=workflow_run.status.value,
-        dependency_graph=dependency_graph_to_dict(workflow_run.dependency_graph),
+        dependency_graph=dependency_graph_to_dict(
+            workflow_run.dependency_graph,
+            satisfied_skipped_task_ids=workflow_run.satisfied_skipped_task_ids,
+        ),
         task_results=task_results if task_results is not None else {},
         version=version,
     )
@@ -47,6 +50,7 @@ def workflow_run_to_update_values(
         "status": workflow_run.status.value,
         "dependency_graph": dependency_graph_to_dict(
             workflow_run.dependency_graph,
+            satisfied_skipped_task_ids=workflow_run.satisfied_skipped_task_ids,
         ),
     }
     if workflow_run.project_id:
@@ -68,21 +72,36 @@ def workflow_run_from_model(model: WorkflowRunModel) -> WorkflowRun:
         workflow_template_id=model.workflow_template_id,
         tasks=tasks,
         dependency_graph=dependency_graph,
+        satisfied_skipped_task_ids=set(
+            model.dependency_graph.get("satisfied_skipped_task_ids", [])
+        ),
         status=WorkflowStatus(model.status),
     )
 
 
-def dependency_graph_to_dict(graph: TaskDependencyGraph) -> dict[str, Any]:
+def dependency_graph_to_dict(
+    graph: TaskDependencyGraph,
+    *,
+    satisfied_skipped_task_ids: set[str] | None = None,
+) -> dict[str, Any]:
     nodes = list(graph.topological_order())
     if not nodes:
-        return {"nodes": [], "edges": []}
+        return {
+            "nodes": [],
+            "edges": [],
+            "satisfied_skipped_task_ids": sorted(satisfied_skipped_task_ids or ()),
+        }
 
     edges: list[list[str]] = []
     for node in nodes:
         for dependency in graph.dependencies_of(node):
             edges.append([dependency, node])
 
-    return {"nodes": nodes, "edges": edges}
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "satisfied_skipped_task_ids": sorted(satisfied_skipped_task_ids or ()),
+    }
 
 
 def dependency_graph_from_dict(payload: dict[str, Any]) -> TaskDependencyGraph:
