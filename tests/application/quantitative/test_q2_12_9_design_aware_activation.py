@@ -228,55 +228,6 @@ class Q2129DesignAwareActivationTests(unittest.TestCase):
                 run_id=rd.run,
                 initially_paused=True,
             )
-            weights = WeightSet(
-                "activation-weights",
-                rd.dataset.version_id,
-                rd.dataset.dataset_fingerprint,
-                WeightSourceType.EMBEDDED_VARIABLE,
-                "source-fp",
-                "keys-fp",
-                (),
-                "vector-fp",
-                0,
-                0,
-                0,
-                Decimal("1"),
-                Decimal("1"),
-                Decimal("1"),
-                Decimal("1"),
-                Decimal("0"),
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                WeightValidationStatus.VALID,
-                (),
-                "validation-fp",
-                "weights-fp",
-            )
-            ui.state.persist(
-                weights,
-                record_id="activation-weight-record",
-                project_id=rd.project,
-                run_id=rd.run,
-                dataset_version_id=rd.dataset.version_id,
-            )
-            weight_approval = QuantitativeApprovalService(
-                ui.state, rd.rc.digest
-            ).record(
-                approval_id="activation-weight-approval",
-                project_id=rd.project,
-                run_id=rd.run,
-                subject_type="WEIGHTSET",
-                subject_id=weights.weight_set_id,
-                subject_fingerprint=weights.reproducibility_fingerprint,
-                decision=QuantitativeApprovalDecision.APPROVED,
-                actor_id="reviewer",
-                decided_at="now",
-                rationale="approved",
-            )
             study = ui._persist_study(
                 QuantitativeStudyProjection(
                     rd.project,
@@ -284,13 +235,11 @@ class Q2129DesignAwareActivationTests(unittest.TestCase):
                     rd.run,
                     "Study",
                     "Description",
-                    "READY_TO_ANALYZE",
+                    "WEIGHTING_REQUIRED",
                     dataset_record_id="activation-dataset",
                     codebook_record_id="activation-codebook",
                     qc_record_id="activation-qc-record",
                     qc_approval_id="activation-qc-approval",
-                    weight_set_record_id="activation-weight-record",
-                    weight_approval_id=weight_approval.approval_id,
                 )
             )
             ui.durable_workflow_service = Mock()
@@ -303,6 +252,15 @@ class Q2129DesignAwareActivationTests(unittest.TestCase):
             self.assertEqual(activated.state, "ANALYZING")
             self.assertEqual(
                 safe["analysis_execution_mode"], "DESIGN_AWARE_EXECUTION"
+            )
+            self.assertEqual(safe["study_weighting_mode"], "UNWEIGHTED")
+            self.assertNotIn("weight_set_record_id", safe)
+            self.assertNotIn("weight_approval_id", safe)
+            skipped = ui.durable_workflow_service.activate_paused_run.call_args.kwargs[
+                "skipped_task_definition_ids"
+            ]
+            self.assertEqual(
+                skipped, ("quant_weightset", "quant_weight_approval")
             )
             service = ui.stage_service_factory.create(
                 project_id=rd.project, run_id=rd.run, safe_state=safe
@@ -317,6 +275,26 @@ class Q2129DesignAwareActivationTests(unittest.TestCase):
             )
             self.assertIsNotNone(service.analysis_execution_service)
             container.shutdown()
+
+    def test_explicit_unweighted_activation_rejects_contradictory_weightset(self):
+        rd, factory, safe = self._factory_fixture()
+        activated = factory.prepare_design_aware_activation(
+            project_id=rd.project, run_id=rd.run, safe_state=safe
+        )
+        self.assertEqual(activated["study_weighting_mode"], "UNWEIGHTED")
+        contradictory = dict(
+            activated,
+            weight_set_record_id="forbidden-weightset",
+            weight_set_id="forbidden",
+            weight_set_fingerprint="forbidden",
+            weight_approval_id="forbidden-approval",
+        )
+        with self.assertRaisesRegex(QuantitativeWorkflowError, "unweighted"):
+            factory.create(
+                project_id=rd.project,
+                run_id=rd.run,
+                safe_state=contradictory,
+            )
 
     def _ui(self, *, prepare):
         project_id = run_id = study_id = "study"
@@ -381,8 +359,6 @@ class Q2129DesignAwareActivationTests(unittest.TestCase):
 
     def test_public_design_aware_intent_persists_application_resolved_mode_and_rc(self):
         def prepare(*, project_id, run_id, safe_state):
-            self.assertNotIn("analysis_execution_mode", safe_state)
-            self.assertNotIn("analysis_plan_fingerprint", safe_state)
             return dict(
                 safe_state,
                 analysis_execution_mode="DESIGN_AWARE_EXECUTION",
@@ -397,7 +373,7 @@ class Q2129DesignAwareActivationTests(unittest.TestCase):
         self.assertEqual(safe["analysis_execution_mode"], "DESIGN_AWARE_EXECUTION")
         self.assertEqual(safe["analysis_plan_version_id"], "rc-approved-v1")
         self.assertEqual(safe["analysis_plan_fingerprint"], "rc-fingerprint")
-        factory.prepare_design_aware_activation.assert_called_once()
+        self.assertEqual(factory.prepare_design_aware_activation.call_count, 2)
         durable.activate_paused_run.assert_called_once()
 
     def test_failed_design_resolution_has_no_dataset_only_fallback(self):

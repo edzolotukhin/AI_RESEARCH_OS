@@ -104,7 +104,7 @@ class ApprovedAnalysisPlanProjection:
 
 @dataclass(frozen=True)
 class AnalysisExecutionProjection:
-    plan_id: str; plan_version_id: str; plan_fingerprint: str; quality_assessment_fingerprint: str; coverage_manifest_id: str; coverage_manifest_fingerprint: str; planned_analyses: tuple[PlannedAnalysis,...]; planned_comparisons: tuple[PlannedComparison,...]; specifications: tuple[AnalysisSpecification,...]; comparisons: tuple[ComparisonSpecification,...]; fingerprint: str
+    plan_id: str; plan_version_id: str; plan_fingerprint: str; quality_assessment_fingerprint: str; coverage_manifest_id: str; coverage_manifest_fingerprint: str; planned_analyses: tuple[PlannedAnalysis,...]; planned_comparisons: tuple[PlannedComparison,...]; specifications: tuple[AnalysisSpecification,...]; comparisons: tuple[ComparisonSpecification,...]; fingerprint: str; weighting_mode:str="WEIGHTED"; weighting_authority_fingerprint:str|None=None
 
 @dataclass(frozen=True)
 class DatasetOnlyAnalysisPlanAuthority:

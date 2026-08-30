@@ -44,6 +44,7 @@ from domain.quantitative.analysis import (
 )
 from domain.quantitative.dataset import CodebookVersion, DatasetVersion, VariableDefinition, VariableType
 from domain.quantitative.quality import QualityControlRun
+from domain.quantitative.research_design_authority import StudyWeightingMode
 from domain.quantitative.weighting import WeightSet, WeightSetApproval
 from domain.workflow_status import WorkflowStatus
 from runtime.workflow_context import WorkflowContext
@@ -87,10 +88,19 @@ class QuantitativeStageServiceFactory:
             dataset=dataset,
             codebook=codebook,
         )
+        weighting_mode, design_version_id, design_fingerprint = (
+            self.analysis_plan_service.resolve_current_weighting_authority(
+                project_id=project_id, run_id=run_id, plan=plan,
+            )
+        )
+        self._validate_weighting_state(state, weighting_mode)
         state.update(
             analysis_execution_mode="DESIGN_AWARE_EXECUTION",
             analysis_plan_version_id=plan.version_id,
             analysis_plan_fingerprint=plan.fingerprint,
+            study_weighting_mode=weighting_mode.value,
+            weighting_authority_id=design_version_id,
+            weighting_authority_fingerprint=design_fingerprint,
         )
         return validate_safe_workflow_state(state)
 
@@ -104,12 +114,16 @@ class QuantitativeStageServiceFactory:
         if not project_id or not run_id:
             raise QuantitativeWorkflowError("Quantitative project/run identity is required")
         state = validate_safe_workflow_state(safe_state)
+        if state.get("study_weighting_mode") == StudyWeightingMode.UNWEIGHTED.value:
+            self._validate_weighting_state(state, StudyWeightingMode.UNWEIGHTED)
         dataset, codebook = self._load_dataset_authority(
             project_id=project_id, run_id=run_id, state=state
         )
         mode=state.get("analysis_execution_mode","DATASET_ONLY_EXPLORATORY_EXECUTION")
         storage=self.storage_factory(project_id,run_id)
         current_plan=None
+        weighting_mode=None
+        weighting_authority_fingerprint=None
         execution_service=None; projection=None; execution_weights={}
         if self.analysis_execution_repository_factory is not None:
             execution_service=QuantitativeAnalysisExecutionService(repository=self.analysis_execution_repository_factory(),state_service=self.state_service,storage=storage,digest_provider=self.digest_provider)
@@ -148,6 +162,21 @@ class QuantitativeStageServiceFactory:
                 raise QuantitativeWorkflowError(
                     "bound Analysis Plan is missing, stale, or no longer current"
                 )
+            weighting_mode, design_version_id, weighting_authority_fingerprint = (
+                self.analysis_plan_service.resolve_current_weighting_authority(
+                    project_id=project_id, run_id=run_id, plan=current_plan,
+                )
+            )
+            if (
+                state.get("study_weighting_mode") != weighting_mode.value
+                or state.get("weighting_authority_id") != design_version_id
+                or state.get("weighting_authority_fingerprint")
+                != weighting_authority_fingerprint
+            ):
+                raise QuantitativeWorkflowError(
+                    "bound study weighting authority is missing, stale, or non-current"
+                )
+            self._validate_weighting_state(state, weighting_mode)
             plan=self._build_design_plan(run_id=run_id,dataset=dataset,codebook=codebook)
         elif mode=="DATASET_ONLY_EXPLORATORY_EXECUTION": plan=self._build_plan(run_id=run_id,dataset=dataset,codebook=codebook)
         else: raise QuantitativeWorkflowError("unknown Quantitative analysis execution mode")
@@ -189,6 +218,8 @@ class QuantitativeStageServiceFactory:
             report_lineage_service=report_lineage_service,
             research_question_coverage_service=research_question_coverage_service,
             analysis_plan_authority=current_plan,
+            study_weighting_mode=weighting_mode,
+            weighting_authority_fingerprint=weighting_authority_fingerprint,
         )
 
     def _load_dataset_authority(self, *, project_id, run_id, state):
@@ -286,6 +317,30 @@ class QuantitativeStageServiceFactory:
             weight_sets=execution_weights,
         )
         return current, projection, execution_weights
+
+    @staticmethod
+    def _validate_weighting_state(state, mode):
+        has_any_weight = any(
+            state.get(key)
+            for key in (
+                "weight_set_record_id", "weight_set_id",
+                "weight_set_fingerprint", "weight_approval_id",
+            )
+        )
+        if mode is StudyWeightingMode.UNWEIGHTED and has_any_weight:
+            raise QuantitativeWorkflowError(
+                "explicitly unweighted study carries contradictory WeightSet authority"
+            )
+        if mode is StudyWeightingMode.WEIGHTED and not all(
+            state.get(key)
+            for key in (
+                "weight_set_record_id", "weight_set_id",
+                "weight_set_fingerprint", "weight_approval_id",
+            )
+        ):
+            raise QuantitativeWorkflowError(
+                "weighted study requires exact approved WeightSet authority"
+            )
 
     def _build_design_plan(self,*,run_id,dataset,codebook):
         questionnaire=build_questionnaire_snapshot(snapshot_id=f"questionnaire-{run_id}-rd",version="RD-1",codebook_version_id=codebook.codebook_version_id,question_variable_bindings=(),digest_provider=self.digest_provider)

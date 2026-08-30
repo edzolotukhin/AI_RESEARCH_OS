@@ -15,11 +15,23 @@ from domain.quantitative.research_design_authority import (
     QuantitativeResearchQuestion, QuantitativeStudyBriefApproval,
     QuantitativeStudyBriefVersion,
     QuantitativeStudyMode, QuantitativeTraceabilityManifest,
-    ResearchDesignApprovalDecision, ResearchDesignLifecycle,
+    ResearchDesignApprovalDecision, ResearchDesignLifecycle, StudyWeightingMode,
     ResearchObjective, TargetPopulation,
 )
 
 QUANTITATIVE = "QUANTITATIVE"
+
+_WEIGHTED_INTENTS = frozenset({"WEIGHTED", "TARGET_MARGINS", "PRECOMPUTED_WEIGHTSET"})
+
+
+def resolve_study_weighting_mode(value: QuantitativeResearchDesignVersion) -> StudyWeightingMode:
+    """Resolve the closed execution mode from exact approved QZ intent."""
+    intent = value.methodology_intent.weighting_intent.strip().upper()
+    if intent == StudyWeightingMode.UNWEIGHTED.value:
+        return StudyWeightingMode.UNWEIGHTED
+    if intent in _WEIGHTED_INTENTS:
+        return StudyWeightingMode.WEIGHTED
+    return StudyWeightingMode.UNRESOLVED
 DATASET_ONLY_LIMITATION = "Objective coverage cannot be assessed because no approved Quantitative Research Design is present."
 
 

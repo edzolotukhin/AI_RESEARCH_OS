@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 
 from application.quantitative.fingerprints import canonical_digest
 from application.quantitative.state_persistence import authority_fingerprint
+from application.quantitative.research_design_authority import resolve_study_weighting_mode
 from application.quantitative.workflow import (
     QUANTITATIVE_SAFE_STATE_KEY,
     validate_safe_workflow_state,
@@ -15,6 +16,7 @@ from domain.quantitative.authority_finalization import (
 from domain.quantitative.dataset import CodebookVersion, DatasetVersion
 from domain.quantitative.research_question_coverage import QuantitativeAuthorityReference
 from domain.quantitative.workflow import QuantitativeTerminalOutcome, QuantitativeTerminalResult
+from domain.quantitative.research_design_authority import StudyWeightingMode
 from domain.workflow_status import WorkflowStatus
 
 
@@ -200,13 +202,26 @@ class QuantitativeAuthorityFinalizationService:
             terminal.dataset_version_id, terminal.dataset_fingerprint
         ):
             raise QuantitativeAuthorityFinalizationError("terminal Dataset authority mismatch")
-        if request.weight_set_authorities:
+        unweighted_refs = tuple(
+            ref for ref in request.controlled_absences
+            if ref.authority_kind == "WEIGHTING_UNWEIGHTED"
+        )
+        if terminal.weighting_mode == StudyWeightingMode.WEIGHTED.value:
+            if unweighted_refs or not request.weight_set_authorities:
+                raise QuantitativeAuthorityFinalizationError("weighted terminal lacks exact WeightSet authority")
             matches = []
             for ref in request.weight_set_authorities:
                 weight = self._state.load(ref.authority_id, project_id=request.project_id)
                 matches.append((getattr(weight, "weight_set_id", ref.authority_id), ref.authority_fingerprint))
             if (terminal.weight_set_id, terminal.weight_set_fingerprint) not in matches:
                 raise QuantitativeAuthorityFinalizationError("terminal WeightSet authority mismatch")
+        elif terminal.weighting_mode == StudyWeightingMode.UNWEIGHTED.value:
+            if request.weight_set_authorities or terminal.weight_set_id is not None or terminal.weight_set_fingerprint is not None or terminal.weight_approval_id is not None:
+                raise QuantitativeAuthorityFinalizationError("unweighted terminal carries WeightSet authority")
+            if len(unweighted_refs) != 1 or unweighted_refs[0].authority_fingerprint != terminal.weighting_authority_fingerprint:
+                raise QuantitativeAuthorityFinalizationError("explicit unweighted terminal authority is missing")
+        else:
+            raise QuantitativeAuthorityFinalizationError("terminal weighting authority is unresolved")
         if not request.analysis_execution or not request.research_question_authorities:
             raise QuantitativeAuthorityFinalizationError("required RD/RH authority is missing")
         self._validate_controlled_downstream(request, terminal)
@@ -228,6 +243,25 @@ class QuantitativeAuthorityFinalizationService:
             project_id=request.project_id, run_id=request.run_id,
         )
         self._require_current_reference(request.research_design, current_design, "QZ")
+        current_weighting_mode = None
+        if hasattr(current_design, "methodology_intent"):
+            current_weighting_mode = resolve_study_weighting_mode(current_design)
+        if current_weighting_mode is not None and (
+            current_weighting_mode is StudyWeightingMode.UNRESOLVED
+            or terminal.weighting_mode != current_weighting_mode.value
+            or terminal.weighting_authority_fingerprint != current_design.fingerprint
+        ):
+            raise QuantitativeAuthorityFinalizationError("terminal weighting authority is stale")
+        if current_weighting_mode is StudyWeightingMode.UNWEIGHTED:
+            unweighted_refs = tuple(
+                ref for ref in request.controlled_absences
+                if ref.authority_kind == "WEIGHTING_UNWEIGHTED"
+            )
+            if len(unweighted_refs) != 1 or (
+                unweighted_refs[0].authority_id,
+                unweighted_refs[0].authority_fingerprint,
+            ) != (current_design.version_id, current_design.fingerprint):
+                raise QuantitativeAuthorityFinalizationError("current explicit unweighted authority mismatch")
         source_version_id = getattr(current_design, "source_brief_version_id", None)
         source_fingerprint = getattr(current_design, "source_brief_fingerprint", None)
         if source_version_id is not None:
@@ -272,6 +306,10 @@ class QuantitativeAuthorityFinalizationService:
             raise QuantitativeAuthorityFinalizationError("current RC Dataset authority mismatch")
 
     def _validate_current_downstream(self, request, design, plan, dataset, codebook):
+        design_weighting_mode = (
+            resolve_study_weighting_mode(design)
+            if hasattr(design, "methodology_intent") else None
+        )
         rd_values = tuple(self._state.load(ref.authority_id, project_id=request.project_id) for ref in request.analysis_execution)
         rd_manifests = tuple(
             item for item in rd_values
@@ -292,6 +330,11 @@ class QuantitativeAuthorityFinalizationService:
                 plan.version_id, plan.fingerprint, dataset.version_id, dataset.dataset_fingerprint,
                 codebook.codebook_version_id, codebook.fingerprint):
                 raise QuantitativeAuthorityFinalizationError("stale RD authority cannot be finalized")
+            if design_weighting_mode is not None and (
+                rd.weighting_mode != design_weighting_mode.value
+                or rd.weighting_authority_fingerprint != design.fingerprint
+            ):
+                raise QuantitativeAuthorityFinalizationError("stale RD weighting authority cannot be finalized")
         for label, refs in (("RE", request.finding_authority), ("RF", request.insight_authority),
                             ("RG", request.report_authority), ("CONTROLLED_ABSENCE", request.controlled_absences)):
             for ref in refs:

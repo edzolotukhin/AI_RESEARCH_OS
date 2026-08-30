@@ -54,6 +54,9 @@ class PropertyRDAnalysisExecutionTests(unittest.TestCase):
         self.assertEqual(projection.entries[0].objective_ids,("objective-brand",))
         self.assertTrue(projection.complete_design_aware_result_set)
         self.assertFalse(hasattr(manifest,"respondent_rows")); self.assertNotIn("r-0",repr(manifest))
+        self.assertEqual(self.projection.weighting_mode,"UNWEIGHTED")
+        self.assertEqual(manifest.weighting_mode,"UNWEIGHTED")
+        self.assertEqual(manifest.weighting_authority_fingerprint,self.projection.weighting_authority_fingerprint)
 
     def test_global_authority_matrix_blocks_before_statistics(self):
         cases=(

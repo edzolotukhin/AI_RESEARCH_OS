@@ -6,13 +6,14 @@ from typing import Mapping
 from uuid import NAMESPACE_URL, uuid5
 
 from application.quantitative.fingerprints import canonical_digest, canonical_scalar, fingerprint_analysis_specification
+from application.quantitative.research_design_authority import resolve_study_weighting_mode
 from application.quantitative.comparison_statistics import MEAN_METHOD, PROPORTION_METHOD
 from domain.quantitative.analysis import AnalysisSpecification, CrossTabAnalysisSpecification, NumericAnalysisSpecification, NpsAnalysisSpecification, CustomIndexAnalysisSpecification, ComparisonSpecification
 from domain.quantitative.analysis_plan import *
 from domain.quantitative.dataset import PiiClassification, VariableType
 from domain.quantitative.measurement_reconciliation import ReconciliationMatchStatus, DataAvailabilityStatus
 from domain.quantitative.quality import DatasetQualityAssessment, DatasetQualityState
-from domain.quantitative.research_design_authority import RequirementObligation
+from domain.quantitative.research_design_authority import RequirementObligation, StudyWeightingMode
 from domain.quantitative.weighting import WeightApprovalState, WeightSet, WeightSetApproval
 
 class QuantitativeAnalysisPlanError(ValueError): pass
@@ -93,6 +94,29 @@ class QuantitativeAnalysisPlanService:
         )
         return current, self._execution_weight_bindings(current, available)
 
+    def resolve_current_weighting_authority(self, *, project_id, run_id, plan=None):
+        """Return exact QZ-bound study weighting authority for execution."""
+        design = self._designs.resolve_current_approved(
+            project_id=project_id, run_id=run_id,
+        )
+        if plan is not None and (
+            plan.research_design_version_id != design.version_id
+            or plan.research_design_fingerprint != design.fingerprint
+        ):
+            raise QuantitativeAnalysisPlanError("Analysis Plan weighting authority is stale")
+        mode = resolve_study_weighting_mode(design)
+        if mode is StudyWeightingMode.UNRESOLVED:
+            raise QuantitativeAnalysisPlanError("Research Design weighting intent is unresolved")
+        if mode is StudyWeightingMode.UNWEIGHTED and any(
+            item.weighting_policy is not AnalysisWeightingPolicy.UNWEIGHTED
+            or item.weight_set_binding is not None
+            for item in (plan.planned_analyses if plan is not None else ())
+        ):
+            raise QuantitativeAnalysisPlanError(
+                "explicitly unweighted Research Design conflicts with Analysis Plan"
+            )
+        return mode, design.version_id, design.fingerprint
+
     @staticmethod
     def _execution_weight_bindings(plan, available):
         bindings = {}
@@ -109,7 +133,7 @@ class QuantitativeAnalysisPlanService:
         dataset=kwargs.get("dataset")
         if not isinstance(quality_assessment,DatasetQualityAssessment) or not quality_assessment.current or quality_assessment.state is not DatasetQualityState.QC_APPROVED or not quality_assessment.approval_fingerprint or dataset is None or quality_assessment.dataset_version_id!=dataset.version_id or quality_assessment.dataset_fingerprint!=dataset.dataset_fingerprint:
             raise QuantitativeAnalysisPlanError("current fingerprint-bound QC authority is required for execution")
-        value=self.resolve_current_approved(**kwargs); specs=tuple(x.specification for x in value.planned_analyses);comparisons=tuple(x.specification for x in value.planned_comparisons);fp=canonical_digest({"plan":value.fingerprint,"analyses":tuple(self._analysis_payload(x) for x in value.planned_analyses),"comparisons":tuple((x.planned_comparison_id,x.specification_fingerprint,x.precursor_analysis_ids,x.objective_ids,x.research_question_ids,x.analytical_requirement_ids,x.obligation,tuple((r.role,r.precursor_analysis_id,r.statistic_type,r.variable_id,r.group_variable_id,canonical_scalar(r.outcome_category),canonical_scalar(r.group_category),r.filter_definition) for r in x.result_role_selectors)) for x in value.planned_comparisons),"coverage":value.coverage_manifest_fingerprint,"qc_authority":quality_assessment.fingerprint},digest_provider=self._digest);return AnalysisExecutionProjection(value.plan_id,value.version_id,value.fingerprint,quality_assessment.fingerprint,value.coverage_manifest_id,value.coverage_manifest_fingerprint,value.planned_analyses,value.planned_comparisons,specs,comparisons,fp)
+        value=self.resolve_current_approved(**kwargs); specs=tuple(x.specification for x in value.planned_analyses);comparisons=tuple(x.specification for x in value.planned_comparisons);mode,_,weighting_fp=self.resolve_current_weighting_authority(project_id=kwargs["project_id"],run_id=kwargs["run_id"],plan=value);fp=canonical_digest({"plan":value.fingerprint,"analyses":tuple(self._analysis_payload(x) for x in value.planned_analyses),"comparisons":tuple((x.planned_comparison_id,x.specification_fingerprint,x.precursor_analysis_ids,x.objective_ids,x.research_question_ids,x.analytical_requirement_ids,x.obligation,tuple((r.role,r.precursor_analysis_id,r.statistic_type,r.variable_id,r.group_variable_id,canonical_scalar(r.outcome_category),canonical_scalar(r.group_category),r.filter_definition) for r in x.result_role_selectors)) for x in value.planned_comparisons),"coverage":value.coverage_manifest_fingerprint,"qc_authority":quality_assessment.fingerprint,"weighting_mode":mode.value,"weighting_authority":weighting_fp},digest_provider=self._digest);return AnalysisExecutionProjection(value.plan_id,value.version_id,value.fingerprint,quality_assessment.fingerprint,value.coverage_manifest_id,value.coverage_manifest_fingerprint,value.planned_analyses,value.planned_comparisons,specs,comparisons,fp,mode.value,weighting_fp)
     def resolve_dataset_only(self,*,authority_id,project_id,run_id):
         limitation="Design-aware analysis-plan coverage is absent in dataset-only exploratory mode.";payload={"contract":"RC_DATASET_ONLY_V1","authority":authority_id,"project":project_id,"run":run_id,"status":"NO_DESIGN_AWARE_ANALYSIS_PLAN_AUTHORITY","limitation":limitation};value=DatasetOnlyAnalysisPlanAuthority(authority_id,project_id,run_id,"NO_DESIGN_AWARE_ANALYSIS_PLAN_AUTHORITY",limitation,canonical_digest(payload,digest_provider=self._digest));self._repository.save_dataset_only(value);return value
 

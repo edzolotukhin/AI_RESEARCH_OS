@@ -180,6 +180,45 @@ class PropertyRLTests(unittest.TestCase):
         self.assertEqual("COMPLETED_WITH_NO_SUPPORTED_REPORT", value.terminal_outcome)
         self.assertEqual("RG_CONTROLLED_ABSENCE", value.controlled_absences[0][0])
 
+    def test_explicit_unweighted_finalization_has_no_weightset_and_restarts(self):
+        self.backing._records.pop(self.terminal_record_id)
+        self.terminal = replace(
+            self._terminal(),
+            weight_set_id=None,
+            weight_set_fingerprint=None,
+            weight_approval_id=None,
+            weighting_mode="UNWEIGHTED",
+            weighting_authority_fingerprint=self.refs["qz"].authority_fingerprint,
+            fingerprint="terminal-unweighted",
+        )
+        self.backing._records.pop(self.terminal_record_id)
+        self.state.persist(
+            self.terminal,
+            record_id=self.terminal_record_id,
+            project_id="p",
+            run_id="r",
+            accepted=True,
+        )
+        unweighted = QuantitativeAuthorityReference(
+            "WEIGHTING_UNWEIGHTED",
+            self.refs["qz"].authority_id,
+            self.refs["qz"].authority_fingerprint,
+        )
+        request = self.request(
+            weight_set_authorities=(), controlled_absences=(unweighted,)
+        )
+        finalized = self.service.finalize(
+            request, created_at="t", created_by="system"
+        )
+        self.assertIn(
+            ("WEIGHTING_UNWEIGHTED", "qz", "fp-qz"),
+            finalized.controlled_absences,
+        )
+        self.assertEqual(
+            finalized,
+            self._service().resolve_current(project_id="p", run_id="r"),
+        )
+
     def test_fail_closed_preconditions_and_partial_resume(self):
         for request, message in (
             (self.request(execution_mode="DATASET_ONLY_EXPLORATORY_EXECUTION"), "dataset-only"),

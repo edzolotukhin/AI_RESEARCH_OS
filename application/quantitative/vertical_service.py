@@ -36,6 +36,7 @@ from domain.quantitative.quality import (
     CleaningDecisionSet, DatasetQualityState, QualityControlRun, QuestionnaireSnapshot,
 )
 from domain.quantitative.report import QuantitativeReportCompositionResult
+from domain.quantitative.research_design_authority import StudyWeightingMode
 from domain.quantitative.weighting import WeightSet, WeightSetApproval, WeightingMode, WeightingTargetPlan
 from domain.quantitative.workflow import QuantitativeAnalysisManifest, QuantitativeTerminalOutcome, QuantitativeTerminalResult
 from application.quantitative.fingerprints import canonical_digest
@@ -78,6 +79,8 @@ class RealQuantitativeStageService:
         report_lineage_service=None,
         research_question_coverage_service=None,
         analysis_plan_authority=None,
+        study_weighting_mode=None,
+        weighting_authority_fingerprint=None,
     ) -> None:
         self.plan, self.storage, self.digest = plan, storage, digest_provider
         self.state, self.approvals = state_service, approval_service
@@ -91,6 +94,8 @@ class RealQuantitativeStageService:
         self.report_lineage = report_lineage_service
         self.research_question_coverage = research_question_coverage_service
         self.analysis_plan_authority = analysis_plan_authority
+        self.study_weighting_mode = study_weighting_mode
+        self.weighting_authority_fingerprint = weighting_authority_fingerprint
         self.supports_progress_checkpoint = analysis_execution_service is not None
         self.importer = QuantitativeDatasetImportService(importers=tuple(importers), storage=storage, digest_provider=digest_provider)
         self.qc = DataQualityService(storage=storage, digest_provider=digest_provider)
@@ -159,6 +164,11 @@ class RealQuantitativeStageService:
         return state
 
     def _quant_weightset(self, project_id, run_id, state):
+        if self.study_weighting_mode is StudyWeightingMode.UNWEIGHTED:
+            if any(state.get(key) for key in ("weight_set_record_id", "weight_set_id", "weight_set_fingerprint", "weight_approval_id")):
+                raise QuantitativeWorkflowError("unweighted study carries contradictory WeightSet authority")
+            state["weighting_authority_status"] = "EXPLICIT_UNWEIGHTED"
+            return state
         dataset = self._load(state, "dataset_record_id", project_id, DatasetVersion)
         if self.plan.weight_mode == "CONSTRUCT_FROM_TARGET_MARGINS":
             codebook = self._load(state, "codebook_record_id", project_id, CodebookVersion)
@@ -173,6 +183,11 @@ class RealQuantitativeStageService:
         return state
 
     def _quant_weight_approval(self, project_id, run_id, state):
+        if self.study_weighting_mode is StudyWeightingMode.UNWEIGHTED:
+            if state.get("weighting_authority_status") != "EXPLICIT_UNWEIGHTED":
+                raise QuantitativeWorkflowError("explicit unweighted authority is unavailable")
+            state["weighting_approval_status"] = "NOT_REQUIRED_EXPLICIT_UNWEIGHTED"
+            return state
         approval_id = state.get("weight_approval_id")
         if not approval_id: raise QuantitativeApprovalRequired(subject_type="WEIGHTSET", subject_id=state["weight_set_id"], subject_fingerprint=state["weight_set_fingerprint"])
         durable = self.approvals.require_current(approval_id, project_id=project_id, subject_fingerprint=state["weight_set_fingerprint"])
@@ -188,11 +203,18 @@ class RealQuantitativeStageService:
         return build_analytical_view(dataset=dataset, quality=quality, specification=spec, mode=WeightingMode.WEIGHTED if spec.weighting_status == "WEIGHTED" else WeightingMode.UNWEIGHTED, respondent_refs=refs, digest_provider=self.digest, weight_set=weight_set if spec.weighting_status == "WEIGHTED" else None, approval=approval if spec.weighting_status == "WEIGHTED" else None)
 
     def _quant_analysis(self, project_id, run_id, state, progress_callback=None):
-        dataset = self._load(state, "dataset_record_id", project_id, DatasetVersion); codebook = self._load(state, "codebook_record_id", project_id, CodebookVersion); qc = self._load(state, "qc_record_id", project_id, QualityControlRun); weights = self._load(state, "weight_set_record_id", project_id, WeightSet)
+        dataset = self._load(state, "dataset_record_id", project_id, DatasetVersion); codebook = self._load(state, "codebook_record_id", project_id, CodebookVersion); qc = self._load(state, "qc_record_id", project_id, QualityControlRun)
         qc_approval_id = state.get("cleaned_qc_approval_id") or state["qc_approval_id"]
         qc_approval = self.approvals.require_current(qc_approval_id, project_id=project_id, subject_fingerprint=qc.fingerprint)
-        self.approvals.require_current(state["weight_approval_id"], project_id=project_id, subject_fingerprint=weights.reproducibility_fingerprint)
-        weight_approval = self._load(state, "analytical_weight_approval_record_id", project_id, WeightSetApproval)
+        weights = None
+        weight_approval = None
+        if self.study_weighting_mode is StudyWeightingMode.UNWEIGHTED:
+            if self.weighting_authority_fingerprint != state.get("weighting_authority_fingerprint") or any(state.get(key) for key in ("weight_set_record_id", "weight_set_id", "weight_set_fingerprint", "weight_approval_id")):
+                raise QuantitativeWorkflowError("unweighted execution authority is missing or contradictory")
+        else:
+            weights = self._load(state, "weight_set_record_id", project_id, WeightSet)
+            self.approvals.require_current(state["weight_approval_id"], project_id=project_id, subject_fingerprint=weights.reproducibility_fingerprint)
+            weight_approval = self._load(state, "analytical_weight_approval_record_id", project_id, WeightSetApproval)
         quality = assess_dataset_quality(dataset=dataset, qc_run=qc, manager_approved=True, approval_fingerprint=qc_approval.fingerprint, digest_provider=self.digest)
         if self.analysis_execution_projection is not None:
             if self.analysis_execution_service is None: raise QuantitativeWorkflowError("design-aware analysis execution service is unavailable")
@@ -500,39 +522,69 @@ class RealQuantitativeStageService:
         state["rq_coverage_manifest_record_id"] = manifest.manifest_id
         state["rq_coverage_status"] = "IN_REVIEW"
         return state
+    def _terminal_weighting(self, project_id, state):
+        mode = state.get("study_weighting_mode", StudyWeightingMode.WEIGHTED.value)
+        if mode == StudyWeightingMode.UNWEIGHTED.value:
+            if (
+                not state.get("weighting_authority_fingerprint")
+                or any(state.get(key) for key in ("weight_set_record_id", "weight_set_id", "weight_set_fingerprint", "weight_approval_id"))
+            ):
+                raise QuantitativeWorkflowError("explicit unweighted terminal authority is invalid")
+            return mode, state["weighting_authority_fingerprint"], None, None, None
+        if mode != StudyWeightingMode.WEIGHTED.value:
+            raise QuantitativeWorkflowError("terminal weighting authority is unresolved")
+        weighting_authority_fingerprint = state.get("weighting_authority_fingerprint")
+        if (
+            not weighting_authority_fingerprint
+            and state.get("analysis_execution_mode", "DATASET_ONLY_EXPLORATORY_EXECUTION")
+            == "DATASET_ONLY_EXPLORATORY_EXECUTION"
+        ):
+            weights = self._load(state, "weight_set_record_id", project_id, WeightSet)
+            weighting_authority_fingerprint = weights.reproducibility_fingerprint
+        elif not weighting_authority_fingerprint:
+            raise QuantitativeWorkflowError("weighted mode lacks current design authority")
+        else:
+            weights = self._load(state, "weight_set_record_id", project_id, WeightSet)
+        return mode, weighting_authority_fingerprint, weights, weights.weight_set_id, state.get("weight_approval_id")
+
+    def _terminal_required(self, state, keys):
+        required = tuple(keys)
+        if state.get("study_weighting_mode", StudyWeightingMode.WEIGHTED.value) == StudyWeightingMode.WEIGHTED.value:
+            required += ("weight_set_record_id", "weight_approval_id")
+        if any(not state.get(key) for key in required):
+            raise QuantitativeWorkflowError("terminal Quantitative authority is incomplete")
+
     def _quant_complete(self, project_id, run_id, state):
         if state.get("zero_supported_findings") == "true":
             return self._complete_without_supported_findings(project_id, run_id, state)
         if state.get("zero_supported_insights") == "true":
             return self._complete_without_supported_insights(project_id, run_id, state)
-        required = ("dataset_record_id", "qc_record_id", "weight_set_record_id", "analysis_manifest_record_id", "finding_generation_record_id", "insight_generation_record_id", "report_composition_record_id")
-        if any(not state.get(key) for key in required): raise QuantitativeWorkflowError("terminal Quantitative authority is incomplete")
-        dataset=self._load(state,"dataset_record_id",project_id,DatasetVersion); qc=self._load(state,"qc_record_id",project_id,QualityControlRun); weights=self._load(state,"weight_set_record_id",project_id,WeightSet)
+        self._terminal_required(state, ("dataset_record_id", "qc_record_id", "analysis_manifest_record_id", "finding_generation_record_id", "insight_generation_record_id", "report_composition_record_id"))
+        dataset=self._load(state,"dataset_record_id",project_id,DatasetVersion); qc=self._load(state,"qc_record_id",project_id,QualityControlRun); weighting_mode,weighting_fp,weights,weight_set_id,weight_approval_id=self._terminal_weighting(project_id,state)
         manifest=self._load(state,"analysis_manifest_record_id",project_id,QuantitativeAnalysisManifest); findings=self._load(state,"finding_generation_record_id",project_id,QuantitativeFindingGenerationResult); insights=self._load(state,"insight_generation_record_id",project_id,QuantitativeInsightGenerationResult); report=self._load(state,"report_composition_record_id",project_id,QuantitativeReportCompositionResult)
         if report.accepted_report is None:
             return self._complete_without_supported_report(project_id, run_id, state, dataset, qc, weights, manifest, findings, insights, report)
         result_ids=tuple(self.state.load(record_id,project_id=project_id,expected_type=StatisticalResult).result_id for record_id in manifest.statistical_result_record_ids)
-        payload={"run":run_id,"dataset":dataset.dataset_fingerprint,"qc":qc.fingerprint,"weights":weights.reproducibility_fingerprint,"results":result_ids,"findings":findings.generation_fingerprint,"insights":insights.generation_fingerprint,"report":report.composition_fingerprint}
+        payload={"run":run_id,"dataset":dataset.dataset_fingerprint,"qc":qc.fingerprint,"weighting_mode":weighting_mode,"weighting_authority":weighting_fp,"weights":weights.reproducibility_fingerprint if weights else None,"results":result_ids,"findings":findings.generation_fingerprint,"insights":insights.generation_fingerprint,"report":report.composition_fingerprint}
         fp=canonical_digest(payload,digest_provider=self.digest)
         limitation = (
             "Synthetic offline vertical; no live LLM."
             if self.generation_mode == "offline"
             else "Synthetic dataset vertical with production Quantitative generation."
         )
-        terminal=QuantitativeTerminalResult(result_id=f"terminal-{fp}",project_id=project_id,run_id=run_id,methodology="QUANTITATIVE",dataset_version_id=dataset.version_id,dataset_fingerprint=dataset.dataset_fingerprint,qc_status="APPROVED",cleaning_lineage=tuple(item for item in (dataset.parent_version_id,dataset.version_id) if item),weight_set_id=weights.weight_set_id,weight_set_fingerprint=weights.reproducibility_fingerprint,weight_approval_id=state["weight_approval_id"],statistical_result_ids=result_ids,accepted_finding_count=len(findings.accepted_findings),rejected_finding_count=len(findings.rejected_findings),accepted_insight_count=len(insights.accepted_insights),rejected_insight_count=len(insights.rejected_insights),report_id=report.accepted_report.report_id,report_status=report.accepted_report.validation_status.value,limitations=(limitation,),execution_status="COMPLETED",terminal_outcome=QuantitativeTerminalOutcome.COMPLETED,fingerprint=fp)
+        terminal=QuantitativeTerminalResult(result_id=f"terminal-{fp}",project_id=project_id,run_id=run_id,methodology="QUANTITATIVE",dataset_version_id=dataset.version_id,dataset_fingerprint=dataset.dataset_fingerprint,qc_status="APPROVED",cleaning_lineage=tuple(item for item in (dataset.parent_version_id,dataset.version_id) if item),weight_set_id=weight_set_id,weight_set_fingerprint=weights.reproducibility_fingerprint if weights else None,weight_approval_id=weight_approval_id,statistical_result_ids=result_ids,accepted_finding_count=len(findings.accepted_findings),rejected_finding_count=len(findings.rejected_findings),accepted_insight_count=len(insights.accepted_insights),rejected_insight_count=len(insights.rejected_insights),report_id=report.accepted_report.report_id,report_status=report.accepted_report.validation_status.value,limitations=(limitation,),execution_status="COMPLETED",terminal_outcome=QuantitativeTerminalOutcome.COMPLETED,fingerprint=fp,weighting_mode=weighting_mode,weighting_authority_fingerprint=weighting_fp)
         state["terminal_result_record_id"]=self._persist(terminal,"terminal",project_id,run_id,dataset_id=dataset.version_id,accepted=True)
         state["terminal_authority_status"] = "COMPLETE"
         return state
 
     def _complete_without_supported_insights(self, project_id, run_id, state):
         required = (
-            "dataset_record_id", "qc_record_id", "weight_set_record_id",
+            "dataset_record_id", "qc_record_id",
             "analysis_manifest_record_id", "finding_generation_record_id",
             "insight_generation_record_id",
         )
-        if any(not state.get(key) for key in required):
-            raise QuantitativeWorkflowError("zero-Insight terminal authority is incomplete")
-        dataset=self._load(state,"dataset_record_id",project_id,DatasetVersion); qc=self._load(state,"qc_record_id",project_id,QualityControlRun); weights=self._load(state,"weight_set_record_id",project_id,WeightSet)
+        self._terminal_required(state, required)
+        dataset=self._load(state,"dataset_record_id",project_id,DatasetVersion); qc=self._load(state,"qc_record_id",project_id,QualityControlRun); _,_,weights,_,_=self._terminal_weighting(project_id,state)
         manifest=self._load(state,"analysis_manifest_record_id",project_id,QuantitativeAnalysisManifest); findings=self._load(state,"finding_generation_record_id",project_id,QuantitativeFindingGenerationResult); insights=self._load(state,"insight_generation_record_id",project_id,QuantitativeInsightGenerationResult)
         if not findings.accepted_findings or insights.accepted_insights:
             raise QuantitativeWorkflowError("zero-Insight terminal conflicts with accepted authority")
@@ -557,22 +609,22 @@ class RealQuantitativeStageService:
 
     def _persist_controlled_terminal(self, project_id, run_id, state, dataset, qc, weights, manifest, findings, insights, report, outcome, report_status, limitation):
         result_ids=tuple(self.state.load(record_id,project_id=project_id,expected_type=StatisticalResult).result_id for record_id in manifest.statistical_result_record_ids)
-        payload={"run":run_id,"dataset":dataset.dataset_fingerprint,"qc":qc.fingerprint,"weights":weights.reproducibility_fingerprint,"results":result_ids,"findings":findings.generation_fingerprint,"insights":insights.generation_fingerprint,"report":report.composition_fingerprint if report else None,"outcome":outcome.value}
+        weighting_mode,weighting_fp,weights,weight_set_id,weight_approval_id=self._terminal_weighting(project_id,state)
+        payload={"run":run_id,"dataset":dataset.dataset_fingerprint,"qc":qc.fingerprint,"weighting_mode":weighting_mode,"weighting_authority":weighting_fp,"weights":weights.reproducibility_fingerprint if weights else None,"results":result_ids,"findings":findings.generation_fingerprint,"insights":insights.generation_fingerprint,"report":report.composition_fingerprint if report else None,"outcome":outcome.value}
         fp=canonical_digest(payload,digest_provider=self.digest)
-        terminal=QuantitativeTerminalResult(result_id=f"terminal-{fp}",project_id=project_id,run_id=run_id,methodology="QUANTITATIVE",dataset_version_id=dataset.version_id,dataset_fingerprint=dataset.dataset_fingerprint,qc_status="APPROVED",cleaning_lineage=tuple(item for item in (dataset.parent_version_id,dataset.version_id) if item),weight_set_id=weights.weight_set_id,weight_set_fingerprint=weights.reproducibility_fingerprint,weight_approval_id=state["weight_approval_id"],statistical_result_ids=result_ids,accepted_finding_count=len(findings.accepted_findings),rejected_finding_count=len(findings.rejected_findings),accepted_insight_count=len(insights.accepted_insights),rejected_insight_count=len(insights.rejected_insights),report_id="",report_status=report_status,limitations=(limitation,),execution_status="COMPLETED",terminal_outcome=outcome,fingerprint=fp)
+        terminal=QuantitativeTerminalResult(result_id=f"terminal-{fp}",project_id=project_id,run_id=run_id,methodology="QUANTITATIVE",dataset_version_id=dataset.version_id,dataset_fingerprint=dataset.dataset_fingerprint,qc_status="APPROVED",cleaning_lineage=tuple(item for item in (dataset.parent_version_id,dataset.version_id) if item),weight_set_id=weight_set_id,weight_set_fingerprint=weights.reproducibility_fingerprint if weights else None,weight_approval_id=weight_approval_id,statistical_result_ids=result_ids,accepted_finding_count=len(findings.accepted_findings),rejected_finding_count=len(findings.rejected_findings),accepted_insight_count=len(insights.accepted_insights),rejected_insight_count=len(insights.rejected_insights),report_id="",report_status=report_status,limitations=(limitation,),execution_status="COMPLETED",terminal_outcome=outcome,fingerprint=fp,weighting_mode=weighting_mode,weighting_authority_fingerprint=weighting_fp)
         state["terminal_result_record_id"]=self._persist(terminal,"terminal",project_id,run_id,dataset_id=dataset.version_id,accepted=True)
         state["terminal_authority_status"] = outcome.value.replace("COMPLETED", "COMPLETE", 1)
         return state
     def _complete_without_supported_findings(self, project_id, run_id, state):
         required = (
-            "dataset_record_id", "qc_record_id", "weight_set_record_id",
+            "dataset_record_id", "qc_record_id",
             "analysis_manifest_record_id", "finding_generation_record_id",
         )
-        if any(not state.get(key) for key in required):
-            raise QuantitativeWorkflowError("zero-Finding terminal authority is incomplete")
+        self._terminal_required(state, required)
         dataset = self._load(state, "dataset_record_id", project_id, DatasetVersion)
         qc = self._load(state, "qc_record_id", project_id, QualityControlRun)
-        weights = self._load(state, "weight_set_record_id", project_id, WeightSet)
+        weighting_mode,weighting_fp,weights,weight_set_id,weight_approval_id = self._terminal_weighting(project_id,state)
         manifest = self._load(
             state, "analysis_manifest_record_id", project_id, QuantitativeAnalysisManifest
         )
@@ -593,7 +645,9 @@ class RealQuantitativeStageService:
             "run": run_id,
             "dataset": dataset.dataset_fingerprint,
             "qc": qc.fingerprint,
-            "weights": weights.reproducibility_fingerprint,
+            "weighting_mode": weighting_mode,
+            "weighting_authority": weighting_fp,
+            "weights": weights.reproducibility_fingerprint if weights else None,
             "results": result_ids,
             "findings": findings.generation_fingerprint,
             "outcome": outcome.value,
@@ -606,9 +660,9 @@ class RealQuantitativeStageService:
             cleaning_lineage=tuple(
                 item for item in (dataset.parent_version_id, dataset.version_id) if item
             ),
-            weight_set_id=weights.weight_set_id,
-            weight_set_fingerprint=weights.reproducibility_fingerprint,
-            weight_approval_id=state["weight_approval_id"],
+            weight_set_id=weight_set_id,
+            weight_set_fingerprint=weights.reproducibility_fingerprint if weights else None,
+            weight_approval_id=weight_approval_id,
             statistical_result_ids=result_ids,
             accepted_finding_count=0,
             rejected_finding_count=len(findings.rejected_findings),
@@ -619,7 +673,8 @@ class RealQuantitativeStageService:
                 "accepted no supported Findings; Insight and Report generation were skipped.",
             ),
             execution_status="COMPLETED", terminal_outcome=outcome,
-            fingerprint=fp,
+            fingerprint=fp, weighting_mode=weighting_mode,
+            weighting_authority_fingerprint=weighting_fp,
         )
         state["terminal_result_record_id"] = self._persist(
             terminal, "terminal", project_id, run_id,

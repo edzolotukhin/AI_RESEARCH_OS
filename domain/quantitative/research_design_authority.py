@@ -36,6 +36,11 @@ class QuantitativeStudyMode(StrEnum):
     DESIGN_LED = "DESIGN_LED"
     DATASET_ONLY_EXPLORATORY = "DATASET_ONLY_EXPLORATORY"
 
+class StudyWeightingMode(StrEnum):
+    WEIGHTED = "WEIGHTED"
+    UNWEIGHTED = "UNWEIGHTED"
+    UNRESOLVED = "UNRESOLVED"
+
 class ResearchDesignApprovalDecision(StrEnum):
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"

@@ -65,7 +65,7 @@ class PropertyQYTests(unittest.TestCase):
         self.assertIn("supporting_finding_ids", schema)
         self.assertNotIn("supporting_finding_fingerprints", schema)
 
-    def terminal_service(self, findings, insights, report=None):
+    def terminal_service(self, findings, insights, report=None, *, unweighted=False):
         service = object.__new__(RealQuantitativeStageService)
         repository = InMemoryQuantitativeStateRepository()
         durable = QuantitativeStateService(repository=repository, digest_provider=self.digest)
@@ -76,10 +76,12 @@ class PropertyQYTests(unittest.TestCase):
         stat = SimpleNamespace(result_id="result-1")
         objects = {
             "dataset_record_id": dataset, "qc_record_id": qc,
-            "weight_set_record_id": weights, "analysis_manifest_record_id": manifest,
+            "analysis_manifest_record_id": manifest,
             "finding_generation_record_id": findings,
             "insight_generation_record_id": insights,
         }
+        if not unweighted:
+            objects["weight_set_record_id"] = weights
         if report is not None: objects["report_composition_record_id"] = report
         service._load = lambda state, key, project_id, expected: objects[key]
         service.state = _TerminalState(durable, stat)
@@ -92,7 +94,14 @@ class PropertyQYTests(unittest.TestCase):
             return record_id
         service._persist = persist
         state = {key: key for key in objects}
-        state["weight_approval_id"] = "weight-approval"
+        if unweighted:
+            state.update(
+                study_weighting_mode="UNWEIGHTED",
+                weighting_authority_fingerprint="design-weighting-fp",
+                analysis_execution_mode="DESIGN_AWARE_EXECUTION",
+            )
+        else:
+            state["weight_approval_id"] = "weight-approval"
         return service, durable, state
 
     def test_zero_insights_skips_qk_and_completes_truthfully(self):
@@ -122,6 +131,20 @@ class PropertyQYTests(unittest.TestCase):
         self.assertEqual(terminal.terminal_outcome, QuantitativeTerminalOutcome.COMPLETED_WITH_NO_SUPPORTED_REPORT)
         self.assertEqual(terminal.report_status, "REJECTED_NO_SUPPORTED_REPORT")
         self.assertEqual((terminal.accepted_finding_count, terminal.accepted_insight_count), (1, 1))
+
+    def test_unweighted_terminal_binds_explicit_authority_without_weightset(self):
+        accepted = self.accepted_finding()
+        findings = QuantitativeFindingGenerationResult("fg", "bundle", "gen", "v", "p", (accepted,), (accepted,), (), {}, {"accepted": 1}, "fg-fp")
+        insights = QuantitativeInsightGenerationResult("ig", "bundle", "gen", "v", "p", (), (), (), {}, {"accepted": 0}, "ig-fp")
+        service, durable, state = self.terminal_service(findings, insights, unweighted=True)
+        state["zero_supported_insights"] = "true"
+        completed = service._quant_complete("project", "run", state)
+        terminal = durable.load(completed["terminal_result_record_id"], project_id="project", expected_type=QuantitativeTerminalResult)
+        self.assertEqual(terminal.weighting_mode, "UNWEIGHTED")
+        self.assertEqual(terminal.weighting_authority_fingerprint, "design-weighting-fp")
+        self.assertIsNone(terminal.weight_set_id)
+        self.assertIsNone(terminal.weight_set_fingerprint)
+        self.assertIsNone(terminal.weight_approval_id)
 
 
 if __name__ == "__main__":

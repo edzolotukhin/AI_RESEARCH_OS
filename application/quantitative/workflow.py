@@ -29,8 +29,8 @@ STAGES = (
     ("quant_qc", "Quantitative QC"),
     ("quant_qc_approval", "QC approval"),
     ("quant_cleaning", "Approved cleaning"),
-    ("quant_weightset", "Imported WeightSet"),
-    ("quant_weight_approval", "WeightSet approval"),
+    ("quant_weightset", "Weighting authority"),
+    ("quant_weight_approval", "Weighting authorization"),
     ("quant_analysis", "Deterministic analysis"),
     ("quant_findings", "Quantitative Findings"),
     ("quant_insights", "Quantitative Insights"),
@@ -64,12 +64,13 @@ def build_quantitative_workflow_template() -> WorkflowTemplate:
     workflow = Workflow(id=QUANTITATIVE_WORKFLOW_ID, name="Quantitative consumer survey V1")
     previous: str | None = None
     for stage_id, name in STAGES:
+        depends_on = [] if previous is None else [previous]
         workflow.task(
             id=stage_id,
             name=name,
             executor_id="quantitative-stage",
             executor_type=ExecutorType.TOOL,
-            depends_on=[] if previous is None else [previous],
+            depends_on=depends_on,
             metadata={"methodology": "QUANTITATIVE", "stage": stage_id},
         )
         previous = stage_id

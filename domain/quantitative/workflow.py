@@ -55,9 +55,9 @@ class QuantitativeTerminalResult:
     dataset_fingerprint: str
     qc_status: str
     cleaning_lineage: tuple[str, ...]
-    weight_set_id: str
-    weight_set_fingerprint: str
-    weight_approval_id: str
+    weight_set_id: str | None
+    weight_set_fingerprint: str | None
+    weight_approval_id: str | None
     statistical_result_ids: tuple[str, ...]
     accepted_finding_count: int
     rejected_finding_count: int
@@ -69,6 +69,8 @@ class QuantitativeTerminalResult:
     execution_status: str
     terminal_outcome: QuantitativeTerminalOutcome
     fingerprint: str
+    weighting_mode: str = "WEIGHTED"
+    weighting_authority_fingerprint: str | None = None
 @dataclass(frozen=True)
 class QuantitativeStudyProjection:
     study_id: str

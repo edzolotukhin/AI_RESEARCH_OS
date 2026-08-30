@@ -5,6 +5,7 @@ import unittest
 
 from application.quantitative.research_design_authority import (
     QuantitativeResearchDesignError, QuantitativeResearchDesignService,
+    resolve_study_weighting_mode,
 )
 from application.quantitative.state_persistence import QuantitativePersistenceError, QuantitativeStateService
 from domain.quantitative.research_design_authority import (
@@ -12,7 +13,7 @@ from domain.quantitative.research_design_authority import (
     HypothesisDirection, MethodologyIntent, ObjectiveCoverageAuthority,
     ObjectiveCoverageStatus, QuantitativeResearchQuestion,
     RequirementObligation, ResearchDesignLifecycle, ResearchObjective,
-    ResearchPriority, TargetPopulation,
+    ResearchPriority, StudyWeightingMode, TargetPopulation,
 )
 from infrastructure.persistence.memory.in_memory_quantitative_state_repository import InMemoryQuantitativeStateRepository
 from infrastructure.persistence.quantitative_research_design_repository import QLQuantitativeResearchDesignRepository
@@ -58,7 +59,7 @@ class PropertyQZResearchDesignAuthorityTests(unittest.TestCase):
             source_brief_version_id=brief.version_id, source_brief_fingerprint=brief.fingerprint,
             objectives=objectives, research_questions=questions, hypotheses=hypotheses,
             target_population=TargetPopulation(("Germany",), ("Adults 18+",), ("Category rejectors",)),
-            methodology_intent=MethodologyIntent("QUANTITATIVE", "ONLINE_SURVEY", "Consumer sample", "TARGET_MARGINS", "95% confidence where applicable"),
+            methodology_intent=MethodologyIntent("QUANTITATIVE", "ONLINE_SURVEY", "Consumer sample", "UNWEIGHTED", "95% confidence where applicable"),
             analytical_requirements=requirements, deliverable_requirements=deliverables,
             assumptions=("Self-reported survey data",), limitations=("Observational design",),
             created_at="2026-08-25T10:01:00Z", created_by="researcher",
@@ -176,6 +177,36 @@ class PropertyQZResearchDesignAuthorityTests(unittest.TestCase):
         modules = " ".join((QuantitativeResearchDesignService.__module__, type(self.repository).__module__))
         for forbidden in ("domain.research_brief", "domain.planning", "evidence", "sufficiency", "LLMClient"):
             self.assertNotIn(forbidden, modules)
+
+    def test_approved_design_is_the_closed_weighting_authority(self):
+        unweighted = self.approve()
+        self.assertEqual(
+            resolve_study_weighting_mode(unweighted), StudyWeightingMode.UNWEIGHTED
+        )
+        self.assertEqual(
+            resolve_study_weighting_mode(
+                replace(
+                    unweighted,
+                    methodology_intent=replace(
+                        unweighted.methodology_intent,
+                        weighting_intent="TARGET_MARGINS",
+                    ),
+                )
+            ),
+            StudyWeightingMode.WEIGHTED,
+        )
+        self.assertEqual(
+            resolve_study_weighting_mode(
+                replace(
+                    unweighted,
+                    methodology_intent=replace(
+                        unweighted.methodology_intent,
+                        weighting_intent="NONE",
+                    ),
+                )
+            ),
+            StudyWeightingMode.UNRESOLVED,
+        )
 
 
 if __name__ == "__main__": unittest.main()

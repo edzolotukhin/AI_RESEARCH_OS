@@ -506,14 +506,24 @@ class QuantitativeUiService:
             run = self.workflows.get_workflow_run(study.run_id)
             if run.status.value == "running":
                 return study
-        if study.state != "READY_TO_ANALYZE" or not study.weight_approval_id:
-            raise QuantitativeUiError("Current approved WeightSet is required before analysis")
+        persisted = self.workflows.get_task_results(study.run_id).get(
+            QUANTITATIVE_SAFE_STATE_KEY, {}
+        )
+        design_aware = isinstance(persisted, Mapping) and persisted.get(
+            "analysis_execution_mode"
+        ) == "DESIGN_AWARE_EXECUTION"
+        if study.state not in ({"READY_TO_ANALYZE", "WEIGHTING_REQUIRED"} if design_aware else {"READY_TO_ANALYZE"}):
+            raise QuantitativeUiError("Current weighting authority is required before analysis")
         dataset, codebook = self._dataset(study)
         qc = self.state.load(study.qc_record_id or "", project_id=study.project_id, expected_type=QualityControlRun)
-        weights = self.state.load(study.weight_set_record_id or "", project_id=study.project_id, expected_type=WeightSet)
         approvals = QuantitativeApprovalService(self.state, self.digest)
         approvals.require_current(study.qc_approval_id or "", project_id=study.project_id, subject_fingerprint=qc.fingerprint)
-        approvals.require_current(study.weight_approval_id, project_id=study.project_id, subject_fingerprint=weights.reproducibility_fingerprint)
+        weights = None
+        if study.weight_set_record_id or study.weight_approval_id:
+            if not study.weight_set_record_id or not study.weight_approval_id:
+                raise QuantitativeUiError("Contradictory WeightSet authority")
+            weights = self.state.load(study.weight_set_record_id, project_id=study.project_id, expected_type=WeightSet)
+            approvals.require_current(study.weight_approval_id, project_id=study.project_id, subject_fingerprint=weights.reproducibility_fingerprint)
         run = self.workflows.get_workflow_run(study.run_id)
         if run.is_terminal:
             snapshots = self.state.list_for_run(study.run_id, project_id=study.project_id, expected_type=QuantitativeTerminalResult)
@@ -523,9 +533,6 @@ class QuantitativeUiService:
         if run.status.value != "paused":
             raise QuantitativeUiError("Quantitative workflow is not awaiting authorized activation")
         safe = self._analysis_safe_state(study, dataset, qc, weights)
-        persisted = self.workflows.get_task_results(study.run_id).get(
-            QUANTITATIVE_SAFE_STATE_KEY, {}
-        )
         if isinstance(persisted, Mapping):
             mode = persisted.get("analysis_execution_mode")
             if mode == "DESIGN_AWARE_EXECUTION":
@@ -533,6 +540,9 @@ class QuantitativeUiService:
                     "analysis_execution_mode",
                     "analysis_plan_version_id",
                     "analysis_plan_fingerprint",
+                    "study_weighting_mode",
+                    "weighting_authority_id",
+                    "weighting_authority_fingerprint",
                 ):
                     value = persisted.get(key)
                     if isinstance(value, str):
@@ -541,20 +551,63 @@ class QuantitativeUiService:
                 safe["analysis_execution_mode"] = mode
         if "analysis_execution_mode" not in safe:
             safe["analysis_execution_mode"] = "DATASET_ONLY_EXPLORATORY_EXECUTION"
+        if safe["analysis_execution_mode"] == "DESIGN_AWARE_EXECUTION":
+            try:
+                safe = self.stage_service_factory.prepare_design_aware_activation(
+                    project_id=study.project_id, run_id=study.run_id, safe_state=safe,
+                )
+            except Exception as exc:
+                raise QuantitativeUiError(
+                    "Current approved Analysis Plan and weighting authority are required"
+                ) from exc
+        weighting_mode = safe.get("study_weighting_mode", "WEIGHTED")
+        if weighting_mode == "WEIGHTED" and weights is None:
+            raise QuantitativeUiError("Current approved WeightSet is required before analysis")
+        if weighting_mode == "UNWEIGHTED" and weights is not None:
+            raise QuantitativeUiError("Explicitly unweighted study cannot carry WeightSet authority")
+        if weighting_mode not in {"WEIGHTED", "UNWEIGHTED"}:
+            raise QuantitativeUiError("Study weighting authority is unresolved")
         safe = self._persist_activation_state(run, safe)
+        setup_ids = {
+            "quant_import", "quant_qc", "quant_qc_approval", "quant_cleaning"
+        }
+        completed_setup = tuple(
+            task.definition_id for task in run.tasks
+            if task.definition_id in setup_ids
+        )
+        skipped_weighting = ()
+        if weighting_mode == "WEIGHTED":
+            completed_setup += tuple(
+                task.definition_id for task in run.tasks
+                if task.definition_id == "quant_weightset"
+            )
+        else:
+            skipped_weighting = tuple(
+                task.definition_id for task in run.tasks
+                if task.definition_id in {"quant_weightset", "quant_weight_approval"}
+            )
         if self.durable_workflow_service is not None:
             self.durable_workflow_service.activate_paused_run(
                 study.run_id,
                 shared_state={QUANTITATIVE_SAFE_STATE_KEY: safe},
-                completed_task_definition_ids=tuple(
-                    task.definition_id for task in run.tasks[:5]
-                ),
+                completed_task_definition_ids=completed_setup,
+                skipped_task_definition_ids=skipped_weighting,
             )
             return self._save(replace(study, state="ANALYZING"))
         run.resume()
-        for task in run.tasks[:5]:
+        for task in run.tasks:
+            if task.definition_id not in setup_ids:
+                continue
             if not task.is_terminal:
                 task.ready(); task.start(); task.complete()
+        if weighting_mode == "WEIGHTED":
+            for task in run.tasks:
+                if task.definition_id == "quant_weightset" and not task.is_terminal:
+                    task.ready(); task.start(); task.complete()
+        else:
+            for task in run.tasks:
+                if task.definition_id in {"quant_weightset", "quant_weight_approval"} and not task.is_terminal:
+                    task.skip()
         service = self.stage_service_factory.create(
             project_id=study.project_id,
             run_id=study.run_id,
@@ -598,10 +651,8 @@ class QuantitativeUiService:
     ) -> QuantitativeStudyProjection:
         """Activate against the exact current approved RC authority."""
         study = self.get(study_id, owner_id=owner_id)
-        if study.state != "READY_TO_ANALYZE" or not study.weight_approval_id:
-            raise QuantitativeUiError(
-                "Current approved WeightSet is required before analysis"
-            )
+        if study.state not in {"READY_TO_ANALYZE", "WEIGHTING_REQUIRED"}:
+            raise QuantitativeUiError("Current QC and weighting authority are required")
         run = self.workflows.get_workflow_run(study.run_id)
         if run.status.value != "paused":
             raise QuantitativeUiError(
@@ -613,11 +664,15 @@ class QuantitativeUiService:
             project_id=study.project_id,
             expected_type=QualityControlRun,
         )
-        weights = self.state.load(
-            study.weight_set_record_id or "",
-            project_id=study.project_id,
-            expected_type=WeightSet,
-        )
+        weights = None
+        if study.weight_set_record_id or study.weight_approval_id:
+            if not study.weight_set_record_id or not study.weight_approval_id:
+                raise QuantitativeUiError("Contradictory WeightSet authority")
+            weights = self.state.load(
+                study.weight_set_record_id,
+                project_id=study.project_id,
+                expected_type=WeightSet,
+            )
         safe = self._analysis_safe_state(study, dataset, qc, weights)
         try:
             safe = self.stage_service_factory.prepare_design_aware_activation(
@@ -633,8 +688,8 @@ class QuantitativeUiService:
         return self.resume_workflow(study_id, owner_id=owner_id)
 
     @staticmethod
-    def _analysis_safe_state(study, dataset, qc, weights) -> dict[str, str]:
-        return {
+    def _analysis_safe_state(study, dataset, qc, weights=None) -> dict[str, str]:
+        value = {
             "dataset_record_id": study.dataset_record_id or "",
             "codebook_record_id": study.codebook_record_id or "",
             "dataset_version_id": dataset.version_id,
@@ -645,11 +700,15 @@ class QuantitativeUiService:
             "cleaning_status": (
                 "CLEANED" if dataset.parent_version_id else "NOT_REQUIRED"
             ),
-            "weight_set_record_id": study.weight_set_record_id or "",
-            "weight_set_id": weights.weight_set_id,
-            "weight_set_fingerprint": weights.reproducibility_fingerprint,
-            "weight_approval_id": study.weight_approval_id,
         }
+        if weights is not None:
+            value.update(
+                weight_set_record_id=study.weight_set_record_id or "",
+                weight_set_id=weights.weight_set_id,
+                weight_set_fingerprint=weights.reproducibility_fingerprint,
+                weight_approval_id=study.weight_approval_id or "",
+            )
+        return value
 
     def _persist_activation_state(self, run, safe) -> dict[str, str]:
         safe = dict(safe)

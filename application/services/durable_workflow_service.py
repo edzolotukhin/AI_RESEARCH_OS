@@ -65,6 +65,7 @@ class DurableWorkflowService:
         *,
         shared_state: dict[str, object],
         completed_task_definition_ids: tuple[str, ...] = (),
+        skipped_task_definition_ids: tuple[str, ...] = (),
     ) -> WorkflowContext:
         """Persist one authorized PAUSED -> RUNNING transition for worker claim."""
         workflow_run = self._workflow_service.get_workflow_run(run_id)
@@ -74,6 +75,9 @@ class DurableWorkflowService:
             raise RuntimeError("WorkflowRun is not awaiting authorized activation.")
         version = self._workflow_service.get_workflow_run_version(run_id)
         completed = set(completed_task_definition_ids)
+        skipped = set(skipped_task_definition_ids)
+        if completed.intersection(skipped):
+            raise RuntimeError("Task cannot be both completed and skipped at activation.")
         activation_results: dict[str, object] = {}
         for task in workflow_run.tasks:
             if task.definition_id in completed and not task.is_terminal:
@@ -84,6 +88,14 @@ class DurableWorkflowService:
                     "task_id": task.id,
                     "definition_id": task.definition_id,
                     "shared_state": shared_state,
+                }
+            elif task.definition_id in skipped and not task.is_terminal:
+                task.skip()
+                activation_results[task.id] = {
+                    "task_id": task.id,
+                    "definition_id": task.definition_id,
+                    "shared_state": shared_state,
+                    "status": "skipped_explicit_unweighted",
                 }
         workflow_run.resume()
         self._workflow_service.save_workflow_run(

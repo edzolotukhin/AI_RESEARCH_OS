@@ -112,5 +112,54 @@ class PropertyRCAnalysisPlanAuthorityTests(unittest.TestCase):
         mode=self.service.resolve_dataset_only(authority_id="dataset-only-rc",project_id=self.project,run_id=self.run)
         self.assertEqual(mode.status,"NO_DESIGN_AWARE_ANALYSIS_PLAN_AUTHORITY")
 
+    def test_weighting_mode_revision_stales_current_plan_but_preserves_history(self):
+        approved_plan = self.approve()
+        designs = self.service._designs
+        current_design = designs.resolve_current_approved(
+            project_id=self.project, run_id=self.run
+        )
+        weighted_draft = designs.revise_design(
+            current_design.version_id,
+            project_id=self.project,
+            run_id=self.run,
+            version_id="design-weighted-draft",
+            created_at="later",
+            created_by="researcher",
+            methodology_intent=replace(
+                current_design.methodology_intent,
+                weighting_intent="TARGET_MARGINS",
+            ),
+        )
+        weighted_review = designs.submit_for_review(
+            weighted_draft.version_id,
+            project_id=self.project,
+            run_id=self.run,
+            new_version_id="design-weighted-review",
+            actor_id="researcher",
+            changed_at="later",
+        )
+        designs.approve(
+            weighted_review.version_id,
+            project_id=self.project,
+            run_id=self.run,
+            new_version_id="design-weighted-approved",
+            approval_id="design-weighted-approval",
+            expected_fingerprint=weighted_review.fingerprint,
+            actor_id="owner",
+            decided_at="latest",
+            rationale="Weighting authority changed",
+        )
+        with self.assertRaisesRegex(Exception, "Research Design|current|stale"):
+            self.service.resolve_current_approved(
+                project_id=self.project,
+                run_id=self.run,
+                dataset=self.dataset,
+                codebook=self.codebook,
+            )
+        self.assertEqual(
+            self.repository.get_plan(approved_plan.version_id, project_id=self.project),
+            approved_plan,
+        )
+
 
 if __name__=="__main__": unittest.main()
