@@ -25,6 +25,10 @@ from application.quantitative.workflow import (
     QUANTITATIVE_SAFE_STATE_KEY, QUANTITATIVE_STAGE_SERVICE_KEY,
     QuantitativeStageExecutor, build_quantitative_workflow_template,
 )
+from application.quantitative.execution_diagnostics import (
+    FAILURE_DIAGNOSTIC_KEY,
+    validate_diagnostics,
+)
 from domain.quantitative.dataset import CodebookVersion, DatasetFormat, DatasetVersion
 from domain.quantitative.quality import ApprovalState, CleaningAction, QualityControlRun, QuestionnaireSnapshot
 from domain.quantitative.weighting import WeightSet, WeightingTargetMargin, WeightingTargetPlan, WeightTrimmingPolicy
@@ -38,9 +42,10 @@ class QuantitativeUiError(ValueError):
 
 
 class _QuantitativeWorkflowExecutionFailure(RuntimeError):
-    def __init__(self, context) -> None:
+    def __init__(self, context, error: BaseException) -> None:
         super().__init__("Quantitative workflow execution failed")
         self.context = context
+        self.error = error
 
 
 class QuantitativeUiService:
@@ -627,7 +632,9 @@ class QuantitativeUiService:
             raise
         except _QuantitativeWorkflowExecutionFailure as exc:
             failed_context = exc.context
+            existing_results = self.workflows.get_task_results(run.id)
             safe_results = {
+                **existing_results,
                 QUANTITATIVE_SAFE_STATE_KEY: failed_context.shared_state.get(
                     QUANTITATIVE_SAFE_STATE_KEY, safe
                 ),
@@ -641,7 +648,11 @@ class QuantitativeUiService:
                 expected_version=self.workflows.get_workflow_run_version(run.id),
                 task_results=safe_results,
             )
-            raise QuantitativeUiError("Quantitative workflow failed safely") from None
+            diagnostic = safe_results.get(FAILURE_DIAGNOSTIC_KEY)
+            detail = ""
+            if isinstance(diagnostic, Mapping):
+                detail = f" at {diagnostic.get('stage', 'unknown')}: {diagnostic.get('failure_category', 'failure')}"
+            raise QuantitativeUiError(f"Quantitative workflow failed safely{detail}") from None
         except Exception as exc:
             raise QuantitativeUiError("Quantitative workflow failed safely") from exc
         return self._save(replace(study, state="COMPLETED", terminal_result_record_id=terminal_record_id))
@@ -898,13 +909,23 @@ class QuantitativeUiService:
         from application.task_lifecycle_manager import TaskLifecycleManager
         from application.runtime.workflow_completion_policy import WorkflowCompletionPolicy
         from runtime.workflow_context import WorkflowContext
+        from application.runtime.workflow_runtime_persister import WorkflowRuntimePersister
         class Resolver:
             def resolve(self, task): return QuantitativeStageExecutor()
         context=WorkflowContext(project=self.projects.get_project(study.project_id),workflow_template=build_quantitative_workflow_template(),workflow_run=run,services={QUANTITATIVE_STAGE_SERVICE_KEY:service},shared_state={QUANTITATIVE_SAFE_STATE_KEY:safe})
+        persister=WorkflowRuntimePersister(workflow_service=self.workflows,audit=None,run_id=run.id,initial_version=self.workflows.get_workflow_run_version(run.id),task_results=self.workflows.get_task_results(run.id))
         try:
-            return WorkflowEngine(TaskScheduler(),TaskExecutor(Resolver(),TaskLifecycleManager()),WorkflowCompletionPolicy()).run(context)
-        except Exception:
-            raise _QuantitativeWorkflowExecutionFailure(context) from None
+            return WorkflowEngine(TaskScheduler(),TaskExecutor(Resolver(),TaskLifecycleManager()),WorkflowCompletionPolicy()).run(context,checkpoint=persister)
+        except Exception as exc:
+            raise _QuantitativeWorkflowExecutionFailure(context, exc) from None
+
+    def execution_diagnostics(self, study_id: str, *, owner_id: str) -> dict[str, Any]:
+        study = self.get(study_id, owner_id=owner_id)
+        return validate_diagnostics(
+            self.workflows.get_task_results(study.run_id),
+            project_id=study.project_id,
+            run_id=study.run_id,
+        )
 
     def _terminal_record_id(self, study):
         records=self.state.list_for_run(study.run_id,project_id=study.project_id,expected_type=QuantitativeTerminalResult)

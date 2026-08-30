@@ -9,6 +9,7 @@ from application.structured_output.json_validator import JsonValidator
 from domain.ai.prompt import Prompt
 from infrastructure.llm.generation_options import LLMGenerationOptions
 from infrastructure.llm.llm_client import LLMClient
+from application.quantitative.execution_diagnostics import get_semantic_call_recorder
 
 
 class QuantitativeGenerationError(RuntimeError):
@@ -53,16 +54,25 @@ class _SingleCallQuantitativeGenerator:
                 f"{self.stage} provider generation failed"
             ) from None
 
-        decoded = self._json_validator.validate(response.content or "")
-        if not decoded.is_valid:
-            raise QuantitativeGenerationError(
-                f"{self.stage} structured response is malformed"
-            )
-        if not isinstance(decoded.data, Mapping):
-            raise QuantitativeGenerationError(
-                f"{self.stage} structured response must be an object"
-            )
-        return dict(decoded.data)
+        recorder = get_semantic_call_recorder()
+        try:
+            decoded = self._json_validator.validate(response.content or "")
+            if not decoded.is_valid:
+                raise QuantitativeGenerationError(
+                    f"{self.stage} structured response is malformed"
+                )
+            if not isinstance(decoded.data, Mapping):
+                raise QuantitativeGenerationError(
+                    f"{self.stage} structured response must be an object"
+                )
+            result = dict(decoded.data)
+        except Exception as exc:
+            if recorder is not None:
+                recorder.fail_current_after_return(exc)
+            raise
+        if recorder is not None:
+            recorder.complete_current()
+        return result
 
 
 class LLMQuantitativeFindingGenerator(_SingleCallQuantitativeGenerator):

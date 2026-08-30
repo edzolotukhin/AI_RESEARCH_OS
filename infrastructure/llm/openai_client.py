@@ -1,3 +1,9 @@
+from hashlib import sha256
+
+from application.quantitative.execution_diagnostics import (
+    get_semantic_call_recorder,
+    semantic_stage,
+)
 from domain.ai.prompt import Prompt
 from domain.ai.llm_response import LLMResponse
 
@@ -29,7 +35,22 @@ class OpenAIClient(LLMClient):
         *,
         options: LLMGenerationOptions | None = None,
     ) -> LLMResponse:
-        client = self._get_client()
+        recorder = get_semantic_call_recorder()
+        stage = semantic_stage()
+        call_id = None
+        if recorder is not None and stage is not None:
+            call_id = recorder.planned(
+                stage=stage,
+                provider="openai",
+                model=self._configuration.model,
+                input_fingerprint=sha256((prompt.system + "\n" + prompt.user).encode()).hexdigest(),
+            )
+        try:
+            client = self._get_client()
+        except Exception as exc:
+            if recorder is not None and call_id is not None:
+                recorder.failed(call_id, exc, after_dispatch=False)
+            raise
 
         max_output_tokens = (
             options.max_output_tokens
@@ -60,7 +81,17 @@ class OpenAIClient(LLMClient):
         if reasoning_effort:
             request_kwargs["reasoning"] = {"effort": reasoning_effort}
 
-        response = client.responses.create(**request_kwargs)
+        if recorder is not None and call_id is not None:
+            recorder.dispatched(call_id)
+        try:
+            response = client.responses.create(**request_kwargs)
+        except Exception as exc:
+            if recorder is not None and call_id is not None:
+                recorder.failed(call_id, exc, after_dispatch=True)
+            raise
+
+        if recorder is not None and call_id is not None:
+            recorder.returned(call_id, sha256((response.output_text or "").encode()).hexdigest())
 
         return LLMResponse(
             content=response.output_text,

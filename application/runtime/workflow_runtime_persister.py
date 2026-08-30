@@ -14,6 +14,12 @@ from application.evidence.evidence_failure_diagnostics_persistence import (
 )
 from application.runtime.workflow_execution_audit import WorkflowExecutionAudit
 from application.execution.execution_budget_context import RUN_USAGE_SUMMARY_KEY
+from application.quantitative.execution_diagnostics import (
+    FAILURE_DIAGNOSTIC_KEY,
+    SEMANTIC_LEDGER_KEY,
+    build_stage_failure_diagnostic,
+    is_quantitative_diagnostic_stage,
+)
 from application.scheduling.scheduling_result import SchedulingResult
 from application.services.workflow_service import WorkflowService
 from domain.value_objects.task_status import TaskStatus
@@ -29,7 +35,7 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
         self,
         *,
         workflow_service: WorkflowService,
-        audit: WorkflowExecutionAudit,
+        audit: WorkflowExecutionAudit | None,
         run_id: str,
         initial_version: int = 0,
         task_results: dict[str, Any] | None = None,
@@ -53,7 +59,8 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
 
     def on_workflow_started(self, context: WorkflowContext) -> None:
         self._checkpoint(context)
-        self._audit.workflow_started(context.workflow_run.id)
+        if self._audit is not None:
+            self._audit.workflow_started(context.workflow_run.id)
 
     def on_scheduling(
         self,
@@ -61,13 +68,15 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
         scheduling_result: SchedulingResult,
     ) -> None:
         self._checkpoint(context)
-        self._audit.record_scheduling(context, scheduling_result)
+        if self._audit is not None:
+            self._audit.record_scheduling(context, scheduling_result)
 
     def on_task_running(self, context: WorkflowContext) -> None:
         self._checkpoint(context)
         task = context.current_task
         if task is not None:
-            self._audit.task_started(context.workflow_run.id, task.id)
+            if self._audit is not None:
+                self._audit.task_started(context.workflow_run.id, task.id)
 
     def on_task_progress(self, context: WorkflowContext) -> None:
         task = context.current_task
@@ -86,14 +95,24 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
         if task is not None:
             if task.status == TaskStatus.COMPLETED:
                 self._task_results[task.id] = capture_task_result(context, task.id)
-            elif (
-                task.status == TaskStatus.FAILED
-                and has_evidence_failure_diagnostics(context)
+            elif task.status == TaskStatus.FAILED and (
+                is_quantitative_diagnostic_stage(task.definition_id)
+                or has_evidence_failure_diagnostics(context)
             ):
+                if is_quantitative_diagnostic_stage(task.definition_id):
+                    diagnostic = build_stage_failure_diagnostic(
+                        context, error or RuntimeError("task failed")
+                    )
+                    context.shared_state[FAILURE_DIAGNOSTIC_KEY] = diagnostic
+                    self._task_results[FAILURE_DIAGNOSTIC_KEY] = diagnostic
+                    ledger = context.shared_state.get(SEMANTIC_LEDGER_KEY, ())
+                    if isinstance(ledger, (list, tuple)):
+                        self._task_results[SEMANTIC_LEDGER_KEY] = list(ledger)
                 self._task_results[task.id] = capture_task_result(context, task.id)
 
         self._checkpoint(context, critical=True)
-        self._audit.record_task_outcome(context, error=error)
+        if self._audit is not None:
+            self._audit.record_task_outcome(context, error=error)
 
     def on_workflow_finalized(
         self,
@@ -109,7 +128,11 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
                 context.shared_state["run_usage_summary"],
             )
         self._checkpoint(context, critical=True)
-        self._audit.record_workflow_outcome(context)
+        ledger = context.shared_state.get(SEMANTIC_LEDGER_KEY, ())
+        if isinstance(ledger, (list, tuple)):
+            self._task_results[SEMANTIC_LEDGER_KEY] = list(ledger)
+        if self._audit is not None:
+            self._audit.record_workflow_outcome(context)
 
     def _checkpoint(
         self,

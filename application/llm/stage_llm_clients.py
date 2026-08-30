@@ -103,7 +103,22 @@ def create_quantitative_live_llm_client(
 ) -> LLMClient:
     """Build the Quantitative client with no ambiguous SDK transport retry."""
     if override is not None:
-        return _budget_wrap(override)
+        from infrastructure.llm.openai_client import OpenAIClient
+        from infrastructure.llm.semantic_call_audited_client import SemanticCallAuditedClient
+        candidate = override
+        self_auditing = False
+        for _ in range(4):
+            if isinstance(candidate, OpenAIClient):
+                self_auditing = True
+                break
+            nested = getattr(candidate, "inner", None)
+            if nested is None:
+                nested = getattr(candidate, "_delegate", None)
+            if nested is None or nested is candidate:
+                break
+            candidate = nested
+        audited = override if self_auditing else SemanticCallAuditedClient(override)
+        return _budget_wrap(audited)
     from infrastructure.llm.llm_configuration import LLMConfiguration
     from infrastructure.llm.openai_client import OpenAIClient
 
