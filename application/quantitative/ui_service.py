@@ -652,7 +652,9 @@ class QuantitativeUiService:
             detail = ""
             if isinstance(diagnostic, Mapping):
                 detail = f" at {diagnostic.get('stage', 'unknown')}: {diagnostic.get('failure_category', 'failure')}"
-            raise QuantitativeUiError(f"Quantitative workflow failed safely{detail}") from None
+            raise QuantitativeUiError(
+                f"Quantitative workflow failed safely{detail}"
+            ) from exc.error
         except Exception as exc:
             raise QuantitativeUiError("Quantitative workflow failed safely") from exc
         return self._save(replace(study, state="COMPLETED", terminal_result_record_id=terminal_record_id))
@@ -919,13 +921,53 @@ class QuantitativeUiService:
         except Exception as exc:
             raise _QuantitativeWorkflowExecutionFailure(context, exc) from None
 
-    def execution_diagnostics(self, study_id: str, *, owner_id: str) -> dict[str, Any]:
-        study = self.get(study_id, owner_id=owner_id)
-        return validate_diagnostics(
-            self.workflows.get_task_results(study.run_id),
-            project_id=study.project_id,
-            run_id=study.run_id,
+    def execution_diagnostics(
+        self,
+        project_id: str,
+        workflow_run_id: str | None = None,
+        *,
+        owner_id: str,
+    ) -> dict[str, Any]:
+        """Return operational diagnostics without reconstructing Study authority.
+
+        The one-identifier form remains compatible with Quantitative studies,
+        whose project and initial workflow-run identifiers are identical.  The
+        explicit two-identifier form is the durable failed-run query boundary.
+        """
+        run_id = workflow_run_id or project_id
+        try:
+            project = self.projects.get_project(project_id)
+        except Exception as exc:
+            raise QuantitativeUiError("Quantitative workflow run not found") from exc
+        if project.owner_principal_id != owner_id:
+            raise QuantitativeUiError("Quantitative workflow run not found")
+        try:
+            run = self.workflows.get_workflow_run(run_id)
+        except Exception as exc:
+            raise QuantitativeUiError("Quantitative workflow run not found") from exc
+        if run.project_id != project_id:
+            raise QuantitativeUiError("Quantitative workflow run not found")
+
+        task_results = self.workflows.get_task_results(run_id)
+        projection = validate_diagnostics(
+            task_results,
+            project_id=project_id,
+            run_id=run_id,
         )
+        safe = task_results.get(QUANTITATIVE_SAFE_STATE_KEY, {})
+        terminal_record_id = (
+            safe.get("terminal_result_record_id")
+            if isinstance(safe, Mapping)
+            else None
+        )
+        return {
+            **projection,
+            "terminal_result_record_id": (
+                terminal_record_id
+                if isinstance(terminal_record_id, str) and terminal_record_id
+                else None
+            ),
+        }
 
     def _terminal_record_id(self, study):
         records=self.state.list_for_run(study.run_id,project_id=study.project_id,expected_type=QuantitativeTerminalResult)
