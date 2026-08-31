@@ -12,6 +12,18 @@ from infrastructure.llm.llm_client import LLMClient
 from infrastructure.llm.llm_configuration import LLMConfiguration
 
 
+_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+
+
+def model_supports_reasoning(model: str) -> bool:
+    """Fail-safe local capability gate for model-specific request options."""
+    normalized = model.strip().casefold()
+    return any(
+        normalized == prefix or normalized.startswith(f"{prefix}-")
+        for prefix in _REASONING_MODEL_PREFIXES
+    )
+
+
 class OpenAIClient(LLMClient):
     """
     OpenAI implementation of the LLMClient interface.
@@ -57,9 +69,15 @@ class OpenAIClient(LLMClient):
             if options and options.max_output_tokens is not None
             else self._configuration.max_tokens
         )
-        reasoning_effort = (
+        configured_reasoning_effort = (
             options.reasoning_effort
             if options and options.reasoning_effort
+            else None
+        )
+        reasoning_effort = (
+            configured_reasoning_effort
+            if configured_reasoning_effort
+            and model_supports_reasoning(self._configuration.model)
             else None
         )
 

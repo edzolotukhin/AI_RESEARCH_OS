@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from hashlib import sha256
 import json
+import re
 from typing import Any, Mapping
 
 
@@ -35,6 +36,58 @@ def _safe_failure(error: BaseException, *, after_dispatch: bool | None = None) -
     category = type(error).__name__[:96]
     boundary = " after provider dispatch" if after_dispatch else " before provider dispatch" if after_dispatch is False else ""
     return category, f"{category}{boundary}"[:256]
+
+
+_PROVIDER_ERROR_KEYS = {
+    "status_code", "code", "type", "param", "message", "request_id",
+    "exception_class",
+}
+_SENSITIVE_PROVIDER_TEXT = re.compile(
+    r"authorization|bearer\s+|\bsk-[a-z0-9_-]+|[a-z]:\\|/users/|/home/|"
+    r"\.sav\b|\.pptx\b|\.docx\b|respondent|raw[_ -]?sav|api[_ -]?key",
+    re.IGNORECASE,
+)
+
+
+def _bounded_provider_text(value: Any, *, limit: int) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = " ".join(value.split())
+    if _SENSITIVE_PROVIDER_TEXT.search(normalized):
+        return "[redacted provider diagnostic]"
+    return normalized[:limit]
+
+
+def _safe_provider_error(error: BaseException) -> dict[str, Any] | None:
+    body = getattr(error, "body", None)
+    body_error = body.get("error") if isinstance(body, Mapping) else None
+    if not isinstance(body_error, Mapping):
+        body_error = body if isinstance(body, Mapping) else {}
+    status = getattr(error, "status_code", None)
+    metadata = {
+        "status_code": status if isinstance(status, int) else None,
+        "code": _bounded_provider_text(
+            getattr(error, "code", None) or body_error.get("code"), limit=96
+        ),
+        "type": _bounded_provider_text(
+            getattr(error, "type", None) or body_error.get("type"), limit=96
+        ),
+        "param": _bounded_provider_text(
+            getattr(error, "param", None) or body_error.get("param"), limit=96
+        ),
+        "message": _bounded_provider_text(body_error.get("message"), limit=256),
+        "request_id": _bounded_provider_text(
+            getattr(error, "request_id", None), limit=128
+        ),
+        "exception_class": type(error).__name__[:96],
+    }
+    if not any(
+        value is not None
+        for key, value in metadata.items()
+        if key != "exception_class"
+    ):
+        return None
+    return metadata
 
 
 def build_stage_failure_diagnostic(context, error: BaseException) -> dict[str, Any]:
@@ -128,7 +181,18 @@ class SemanticCallRecorder:
 
     def failed(self, call_id: str, error: BaseException, *, after_dispatch: bool) -> None:
         category, message = _safe_failure(error, after_dispatch=after_dispatch)
-        self._transition(call_id, "FAILED_AFTER_DISPATCH" if after_dispatch else "FAILED_BEFORE_DISPATCH", failure_classification=category, failure_message=message)
+        changes = {
+            "failure_classification": category,
+            "failure_message": message,
+        }
+        provider_error = _safe_provider_error(error)
+        if provider_error is not None:
+            changes["provider_error_metadata"] = provider_error
+        self._transition(
+            call_id,
+            "FAILED_AFTER_DISPATCH" if after_dispatch else "FAILED_BEFORE_DISPATCH",
+            **changes,
+        )
 
     def _entries(self) -> list[dict[str, Any]]:
         value = self.context.shared_state.get(SEMANTIC_LEDGER_KEY, ())
@@ -234,6 +298,30 @@ def validate_diagnostics(task_results: Mapping[str, Any], *, project_id: str, ru
             raise QuantitativeExecutionDiagnosticsError("returned call has no return authority")
         if returned and not item.get("response_authority_fingerprint"):
             raise QuantitativeExecutionDiagnosticsError("returned call has no response fingerprint")
+        provider_error = item.get("provider_error_metadata")
+        if provider_error is not None:
+            if (
+                not isinstance(provider_error, Mapping)
+                or set(provider_error) != _PROVIDER_ERROR_KEYS
+            ):
+                raise QuantitativeExecutionDiagnosticsError("provider error metadata is invalid")
+            status_code = provider_error.get("status_code")
+            if status_code is not None and not isinstance(status_code, int):
+                raise QuantitativeExecutionDiagnosticsError("provider status code is invalid")
+            limits = {
+                "code": 96, "type": 96, "param": 96, "message": 256,
+                "request_id": 128, "exception_class": 96,
+            }
+            for key, limit in limits.items():
+                value = provider_error.get(key)
+                if value is not None and (
+                    not isinstance(value, str)
+                    or len(value) > limit
+                    or _SENSITIVE_PROVIDER_TEXT.search(value)
+                ):
+                    raise QuantitativeExecutionDiagnosticsError(
+                        "provider error metadata is unsafe"
+                    )
         if item.get("dispatched"):
             counts[stage] += 1
             if counts[stage] > CALL_LIMITS[stage]:
