@@ -219,6 +219,19 @@ class PropertyRLTests(unittest.TestCase):
             self._service().resolve_current(project_id="p", run_id="r"),
         )
 
+        with self.assertRaisesRegex(
+            QuantitativeAuthorityFinalizationError,
+            "unweighted terminal carries WeightSet authority",
+        ):
+            self.service.finalize(
+                self.request(
+                    weight_set_authorities=(self.refs["weight"],),
+                    controlled_absences=(unweighted,),
+                ),
+                created_at="t2",
+                created_by="system",
+            )
+
     def test_fail_closed_preconditions_and_partial_resume(self):
         for request, message in (
             (self.request(execution_mode="DATASET_ONLY_EXPLORATORY_EXECUTION"), "dataset-only"),

@@ -327,6 +327,19 @@ def validate_diagnostics(task_results: Mapping[str, Any], *, project_id: str, ru
             if counts[stage] > CALL_LIMITS[stage]:
                 raise QuantitativeExecutionDiagnosticsError("semantic call budget is exceeded")
         validated.append(dict(item))
+    usage = task_results.get("_run_usage_summary")
+    if isinstance(usage, Mapping):
+        stages = usage.get("stages", {})
+        if isinstance(stages, Mapping):
+            for stage_name, ledger_stage in SEMANTIC_STAGES.items():
+                stage_usage = stages.get(stage_name, {})
+                if isinstance(stage_usage, Mapping):
+                    llm_calls = stage_usage.get("llm_calls", 0)
+                    if isinstance(llm_calls, int) and not isinstance(llm_calls, bool):
+                        if llm_calls != counts[ledger_stage]:
+                            raise QuantitativeExecutionDiagnosticsError(
+                                "semantic call usage and lifecycle ledger disagree"
+                            )
     return {
         "failure": dict(diagnostic) if isinstance(diagnostic, Mapping) else None,
         "calls": tuple(validated), "dispatched": counts,

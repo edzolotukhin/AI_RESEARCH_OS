@@ -45,7 +45,20 @@ class BudgetEnforcingLLMClient(LLMClient):
         budget.assert_can_call(stage, purpose=purpose)
 
         started = time.perf_counter()
-        response = self._delegate.generate(prompt, options=options)
+        try:
+            response = self._delegate.generate(prompt, options=options)
+        except Exception:
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            budget.record_llm_call(
+                stage,
+                purpose=purpose,
+                input_tokens=0,
+                output_tokens=0,
+                reasoning_tokens=0,
+                elapsed_ms=elapsed_ms,
+                retry=consume_llm_call_retry_flag(),
+            )
+            raise
         elapsed_ms = int((time.perf_counter() - started) * 1000)
 
         budget.record_llm_call(

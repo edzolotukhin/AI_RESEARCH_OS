@@ -623,8 +623,10 @@ class QuantitativeUiService:
             if not run.is_terminal or run.status.value != "completed":
                 raise QuantitativeUiError("Quantitative workflow did not reach a terminal result")
             terminal_record_id = context.shared_state[QUANTITATIVE_SAFE_STATE_KEY]["terminal_result_record_id"]
+            existing_results = self.workflows.get_task_results(run.id)
             self.workflows.save_workflow_run(run, expected_version=self.workflows.get_workflow_run_version(run.id),
                                              task_results={
+                                                 **existing_results,
                                                  QUANTITATIVE_SAFE_STATE_KEY: context.shared_state[QUANTITATIVE_SAFE_STATE_KEY],
                                                  "_run_usage_summary": context.shared_state.get("run_usage_summary", {}),
                                              })

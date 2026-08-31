@@ -5,7 +5,11 @@ import unittest
 from unittest.mock import Mock
 
 from application.config import ApplicationConfig
-from application.execution.execution_budget_context import execution_stage_scope
+from application.execution.execution_budget import ExecutionBudget
+from application.execution.execution_budget_context import (
+    execution_budget_scope,
+    execution_stage_scope,
+)
 from application.llm.stage_llm_clients import (
     create_quantitative_live_llm_client,
     unwrap_llm_client,
@@ -22,6 +26,7 @@ from application.runtime.workflow_runtime_persister import WorkflowRuntimePersis
 from domain.ai.llm_response import LLMResponse
 from domain.ai.prompt import Prompt
 from domain.project import Project
+from infrastructure.llm.budget_enforcing_llm_client import BudgetEnforcingLLMClient
 from infrastructure.llm.llm_client import LLMClient
 from infrastructure.llm.llm_configuration import LLMConfiguration
 from infrastructure.llm.openai_client import OpenAIClient
@@ -151,6 +156,58 @@ class Q213CExecutionDiagnosticsTests(unittest.TestCase):
         projection = validate_diagnostics(saved, project_id="project", run_id=context.workflow_run.id)
         self.assertEqual(projection["failure"]["stage"], "RD")
         self.assertFalse(projection["terminal_result_persisted"])
+
+    def test_usage_and_semantic_ledger_agree_for_success_failure_and_restart(self):
+        for fail, expected_status in ((False, "COMPLETED"), (True, "FAILED_AFTER_DISPATCH")):
+            with self.subTest(fail=fail):
+                context = self.context()
+                budget = ExecutionBudget()
+                client = SemanticCallAuditedClient(
+                    BudgetEnforcingLLMClient(_Client(fail=fail))
+                )
+                checkpoint = _Checkpoint()
+                with semantic_call_recording_scope(context, checkpoint):
+                    with execution_stage_scope("quant_findings"), execution_budget_scope(budget):
+                        if fail:
+                            with self.assertRaises(RuntimeError):
+                                client.generate(Prompt(system="bounded", user="aggregate only"))
+                        else:
+                            client.generate(Prompt(system="bounded", user="aggregate only"))
+                            from application.quantitative.execution_diagnostics import get_semantic_call_recorder
+                            get_semantic_call_recorder().complete_current()
+                persisted = {
+                    SEMANTIC_LEDGER_KEY: copy.deepcopy(context.shared_state[SEMANTIC_LEDGER_KEY]),
+                    "_run_usage_summary": budget.summary(),
+                }
+                first = validate_diagnostics(
+                    persisted, project_id="project", run_id=context.workflow_run.id
+                )
+                second = validate_diagnostics(
+                    copy.deepcopy(persisted),
+                    project_id="project",
+                    run_id=context.workflow_run.id,
+                )
+                self.assertEqual(first, second)
+                self.assertEqual(1, first["dispatched"]["QI"])
+                self.assertEqual(expected_status, first["calls"][0]["status"])
+                self.assertEqual(
+                    1, persisted["_run_usage_summary"]["stages"]["quant_findings"]["llm_calls"]
+                )
+
+    def test_usage_ledger_disagreement_fails_closed(self):
+        context = self.context()
+        persisted = {
+            SEMANTIC_LEDGER_KEY: (),
+            "_run_usage_summary": {
+                "stages": {"quant_findings": {"llm_calls": 1}}
+            },
+        }
+        with self.assertRaisesRegex(
+            QuantitativeExecutionDiagnosticsError, "usage and lifecycle ledger disagree"
+        ):
+            validate_diagnostics(
+                persisted, project_id="project", run_id=context.workflow_run.id
+            )
 
     def test_openai_nested_in_safety_wrapper_is_not_double_audited(self):
         live = OpenAIClient(LLMConfiguration(model="offline-test", max_tokens=10))
