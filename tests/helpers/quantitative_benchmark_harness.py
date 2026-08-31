@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import copy
+from hashlib import sha256
 import json
 from pathlib import Path
 import pickle
 import re
+import subprocess
 from typing import Any, Callable, Mapping
 
 from application.persistence.exceptions import (
@@ -25,11 +27,93 @@ _UNSAFE_TEXT = re.compile(
     r"\.sav\b|\.pptx\b|\.docx\b|respondent|api[_ -]?key",
     re.IGNORECASE,
 )
+_GIT_COMMIT = re.compile(r"^[0-9a-f]{40}$")
+_BENCHMARK_IDENTITY_FILE = "benchmark-repository-identity.json"
 
 
 def _safe_text(value: object, limit: int = 256) -> str:
     text = " ".join(str(value).split())
     return "[redacted benchmark diagnostic]" if _UNSAFE_TEXT.search(text) else text[:limit]
+
+
+@dataclass(frozen=True)
+class BenchmarkRepositoryIdentity:
+    repository_head: str
+    origin_head: str
+    ahead: int
+    behind: int
+    fingerprint: str
+
+    @classmethod
+    def create(cls, *, repository_head: str, origin_head: str, ahead: int, behind: int):
+        head = repository_head.strip().lower()
+        origin = origin_head.strip().lower()
+        if not _GIT_COMMIT.fullmatch(head) or not _GIT_COMMIT.fullmatch(origin):
+            raise ValueError("benchmark repository commit is malformed")
+        if head != origin:
+            raise ValueError("benchmark repository HEAD does not match origin")
+        if ahead != 0 or behind != 0:
+            raise ValueError("benchmark repository is not synchronized with origin")
+        canonical = json.dumps(
+            {"ahead": ahead, "behind": behind, "origin_head": origin, "repository_head": head},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return cls(head, origin, ahead, behind, sha256(canonical.encode()).hexdigest())
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]):
+        identity = cls.create(
+            repository_head=str(value.get("repository_head", "")),
+            origin_head=str(value.get("origin_head", "")),
+            ahead=int(value.get("ahead", -1)),
+            behind=int(value.get("behind", -1)),
+        )
+        if value.get("fingerprint") != identity.fingerprint:
+            raise ValueError("benchmark repository identity fingerprint mismatch")
+        return identity
+
+
+def capture_benchmark_repository_identity(
+    repository_root: str | Path,
+    *,
+    command_runner: Callable[[tuple[str, ...], Path], str] | None = None,
+) -> BenchmarkRepositoryIdentity:
+    root = Path(repository_root).resolve()
+
+    def run(arguments: tuple[str, ...]) -> str:
+        if command_runner is not None:
+            return command_runner(arguments, root).strip()
+        completed = subprocess.run(
+            ("git", *arguments), cwd=root, check=True, capture_output=True, text=True,
+        )
+        return completed.stdout.strip()
+
+    head = run(("rev-parse", "HEAD"))
+    origin = run(("rev-parse", "origin/acceptance/live-desk-research-01"))
+    counts = run(("rev-list", "--left-right", "--count", "HEAD...origin/acceptance/live-desk-research-01")).split()
+    if len(counts) != 2:
+        raise ValueError("benchmark repository ahead/behind result is malformed")
+    return BenchmarkRepositoryIdentity.create(
+        repository_head=head, origin_head=origin, ahead=int(counts[0]), behind=int(counts[1]),
+    )
+
+
+def load_or_capture_benchmark_repository_identity(
+    state_root: str | Path,
+    repository_root: str | Path,
+    *,
+    resolver: Callable[[str | Path], BenchmarkRepositoryIdentity] = capture_benchmark_repository_identity,
+) -> BenchmarkRepositoryIdentity:
+    path = Path(state_root) / _BENCHMARK_IDENTITY_FILE
+    if path.exists():
+        return BenchmarkRepositoryIdentity.from_dict(json.loads(path.read_text(encoding="utf-8")))
+    identity = resolver(repository_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(asdict(identity), sort_keys=True, indent=2), encoding="utf-8")
+    temporary.replace(path)
+    return identity
 
 
 class _PickleStore:
@@ -205,6 +289,7 @@ class BenchmarkJournal:
     protocol: str
     source_hashes: Mapping[str, str]
     failure_path: Path
+    repository_identity: BenchmarkRepositoryIdentity | None = None
     project_id: str | None = None
     run_id: str | None = None
     phase: str = "PREFLIGHT"
@@ -223,6 +308,12 @@ class BenchmarkJournal:
             "project_id": self.project_id,
             "workflow_run_id": self.run_id,
             "source_hashes": dict(self.source_hashes),
+            "repository_head": (
+                self.repository_identity.repository_head if self.repository_identity else None
+            ),
+            "repository_identity_fingerprint": (
+                self.repository_identity.fingerprint if self.repository_identity else None
+            ),
             "phase": self.phase,
             "exception_class": type(error).__name__,
             "sanitized_message": _safe_text(error),
@@ -279,13 +370,24 @@ def durable_diagnostics(*, workflow_repository, project_id, run_id):
     )
 
 
-def is_phase_a_freeze(path: str | Path) -> bool:
+def is_phase_a_freeze(
+    path: str | Path,
+    *,
+    expected_repository_head: str | None = None,
+) -> bool:
     try:
         value = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):
         return False
-    return (
+    valid = (
         value.get("artifact_kind") == "PHASE_A_FREEZE"
         and value.get("phase_a_complete") is True
         and isinstance(value.get("freeze_fingerprint"), str)
+    )
+    if not valid or expected_repository_head is None:
+        return valid
+    freeze = value.get("freeze")
+    return (
+        isinstance(freeze, dict)
+        and freeze.get("repository_head") == expected_repository_head
     )

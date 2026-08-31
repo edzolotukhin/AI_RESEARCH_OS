@@ -26,10 +26,13 @@ from infrastructure.persistence.quantitative_research_question_coverage_reposito
 from infrastructure.security.sha256_digest_provider import Sha256DigestProvider
 from runtime.workflow_context import WorkflowContext
 from tests.helpers.quantitative_benchmark_harness import (
+    BenchmarkRepositoryIdentity,
     BenchmarkJournal,
     DurableBenchmarkRepositoryBundle,
+    capture_benchmark_repository_identity,
     durable_diagnostics,
     is_phase_a_freeze,
+    load_or_capture_benchmark_repository_identity,
     resolve_workflow_produced_rh,
 )
 from tests.helpers.workflow_run_builder import make_workflow_run
@@ -38,6 +41,96 @@ from tests.helpers.workflow_run_builder import make_workflow_run
 class Q213FDurableBenchmarkHarnessTests(unittest.TestCase):
     project_id = "benchmark-project"
     run_id = "benchmark-run"
+
+    @staticmethod
+    def _git_runner(*, head="a" * 40, origin="a" * 40, counts="0 0"):
+        values = {
+            ("rev-parse", "HEAD"): head,
+            ("rev-parse", "origin/acceptance/live-desk-research-01"): origin,
+            ("rev-list", "--left-right", "--count", "HEAD...origin/acceptance/live-desk-research-01"): counts,
+        }
+        return lambda arguments, root: values[arguments]
+
+    def test_synchronized_head_is_captured_without_historical_literal(self):
+        identity = capture_benchmark_repository_identity(
+            ".", command_runner=self._git_runner(),
+        )
+        self.assertEqual("a" * 40, identity.repository_head)
+        self.assertEqual(identity.repository_head, identity.origin_head)
+        self.assertNotEqual("867bbd5595ca9b7f9a8a781e6aeabb87ff1a28ec", identity.repository_head)
+
+    def test_head_origin_mismatch_fails_before_persistence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "does not match origin"):
+                load_or_capture_benchmark_repository_identity(
+                    Path(directory) / "state", ".",
+                    resolver=lambda root: capture_benchmark_repository_identity(
+                        root, command_runner=self._git_runner(origin="b" * 40),
+                    ),
+                )
+            self.assertFalse((Path(directory) / "state").exists())
+
+    def test_ahead_or_behind_fails_before_persistence(self):
+        for counts in ("1 0", "0 1"):
+            with self.subTest(counts=counts), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(ValueError, "not synchronized"):
+                    load_or_capture_benchmark_repository_identity(
+                        Path(directory) / "state", ".",
+                        resolver=lambda root, counts=counts: capture_benchmark_repository_identity(
+                            root, command_runner=self._git_runner(counts=counts),
+                        ),
+                    )
+                self.assertFalse((Path(directory) / "state").exists())
+
+    def test_captured_head_persists_and_restart_does_not_requery_git(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original = load_or_capture_benchmark_repository_identity(
+                root, ".", resolver=lambda _: BenchmarkRepositoryIdentity.create(
+                    repository_head="a" * 40, origin_head="a" * 40, ahead=0, behind=0,
+                ),
+            )
+            resolver = Mock(side_effect=AssertionError("restart must not consult Git"))
+            restarted = load_or_capture_benchmark_repository_identity(root, ".", resolver=resolver)
+            self.assertEqual(original, restarted)
+            resolver.assert_not_called()
+
+    def test_existing_run_identity_cannot_be_rewritten_by_repository_movement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original = load_or_capture_benchmark_repository_identity(
+                root, ".", resolver=lambda _: BenchmarkRepositoryIdentity.create(
+                    repository_head="a" * 40, origin_head="a" * 40, ahead=0, behind=0,
+                ),
+            )
+            moved = Mock(return_value=BenchmarkRepositoryIdentity.create(
+                repository_head="b" * 40, origin_head="b" * 40, ahead=0, behind=0,
+            ))
+            self.assertEqual(original, load_or_capture_benchmark_repository_identity(root, ".", resolver=moved))
+            moved.assert_not_called()
+
+    def test_phase_a_freeze_requires_captured_head(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "freeze.json"
+            path.write_text(json.dumps({
+                "artifact_kind": "PHASE_A_FREEZE", "phase_a_complete": True,
+                "freeze_fingerprint": "f" * 64, "freeze": {"repository_head": "a" * 40},
+            }), encoding="utf-8")
+            self.assertTrue(is_phase_a_freeze(path, expected_repository_head="a" * 40))
+            self.assertFalse(is_phase_a_freeze(path, expected_repository_head="b" * 40))
+
+    def test_failure_artifact_carries_captured_repository_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "failure.json"
+            identity = BenchmarkRepositoryIdentity.create(
+                repository_head="a" * 40, origin_head="a" * 40, ahead=0, behind=0,
+            )
+            journal = BenchmarkJournal("Q2-13A-R6", {}, path, repository_identity=identity)
+            with self.assertRaises(RuntimeError):
+                journal.run(lambda: (_ for _ in ()).throw(RuntimeError("offline failure")))
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(identity.repository_head, payload["repository_head"])
+            self.assertEqual(identity.fingerprint, payload["repository_identity_fingerprint"])
 
     def _seed(self, root: Path, *, failed_qj: bool = False):
         bundle = DurableBenchmarkRepositoryBundle.open(root)
