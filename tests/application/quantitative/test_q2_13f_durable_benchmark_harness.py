@@ -23,16 +23,22 @@ from domain.quantitative.workflow import QuantitativeTerminalOutcome, Quantitati
 from infrastructure.persistence.quantitative_research_question_coverage_repository import (
     QLQuantitativeResearchQuestionCoverageRepository,
 )
+from infrastructure.quantitative.storage.protected_file_dataset_storage import (
+    ProtectedFileDatasetStorage,
+)
 from infrastructure.security.sha256_digest_provider import Sha256DigestProvider
 from runtime.workflow_context import WorkflowContext
 from tests.helpers.quantitative_benchmark_harness import (
     BenchmarkRepositoryIdentity,
+    BenchmarkStatePathError,
     BenchmarkJournal,
     DurableBenchmarkRepositoryBundle,
     capture_benchmark_repository_identity,
+    deterministic_benchmark_state_root,
     durable_diagnostics,
     is_phase_a_freeze,
     load_or_capture_benchmark_repository_identity,
+    validate_benchmark_state_root,
     resolve_workflow_produced_rh,
 )
 from tests.helpers.workflow_run_builder import make_workflow_run
@@ -131,6 +137,37 @@ class Q213FDurableBenchmarkHarnessTests(unittest.TestCase):
             payload = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(identity.repository_head, payload["repository_head"])
             self.assertEqual(identity.fingerprint, payload["repository_identity_fingerprint"])
+
+    def test_short_deterministic_root_passes_projected_path_validation(self):
+        root = deterministic_benchmark_state_root(
+            Path("C:/q2b"), protocol="Q2-13A-R6",
+            repository_head="a" * 40,
+        )
+        self.assertEqual("q2-13a-r6-aaaaaaaaaaaa", root.name)
+        self.assertLessEqual(validate_benchmark_state_root(root), 259)
+
+    def test_previous_r6_style_root_fails_before_repository_creation(self):
+        root = Path(
+            "C:/AI_AGENTS/AI_RESEARCH_OS_benchmark_state/"
+            "Q2-13A-R6-2988cd3b044b70f06854ece4ff16bc5aec7d6c0d"
+        )
+        with self.assertRaisesRegex(BenchmarkStatePathError, "path budget"):
+            validate_benchmark_state_root(root)
+
+    def test_short_root_protected_raw_file_put_and_rename_succeeds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_root = Path(directory) / "r6-aaaaaaaaaaaa"
+            validate_benchmark_state_root(state_root)
+            storage = ProtectedFileDatasetStorage(
+                root=state_root / "protected" / ".quantitative-protected",
+                project_id="benchmark-project", run_id="benchmark-run",
+                digest_provider=Sha256DigestProvider(),
+            )
+            locator = storage.put_raw_file("synthetic-source", b"synthetic benchmark bytes")
+            self.assertTrue(locator.startswith("protected-dataset://"))
+            self.assertEqual(
+                b"synthetic benchmark bytes", storage.get_raw_file("synthetic-source"),
+            )
 
     def _seed(self, root: Path, *, failed_qj: bool = False):
         bundle = DurableBenchmarkRepositoryBundle.open(root)

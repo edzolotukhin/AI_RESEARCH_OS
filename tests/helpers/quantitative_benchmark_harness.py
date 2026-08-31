@@ -29,6 +29,8 @@ _UNSAFE_TEXT = re.compile(
 )
 _GIT_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _BENCHMARK_IDENTITY_FILE = "benchmark-repository-identity.json"
+_WINDOWS_SAFE_PATH_LENGTH = 259
+_PROTECTED_STORAGE_KINDS = ("raw", "rows", "lineage", "bindings", "manifest")
 
 
 def _safe_text(value: object, limit: int = 256) -> str:
@@ -72,6 +74,51 @@ class BenchmarkRepositoryIdentity:
         if value.get("fingerprint") != identity.fingerprint:
             raise ValueError("benchmark repository identity fingerprint mismatch")
         return identity
+
+
+class BenchmarkStatePathError(ValueError):
+    pass
+
+
+def projected_benchmark_protected_storage_path(state_root: str | Path) -> Path:
+    longest_kind = max(_PROTECTED_STORAGE_KINDS, key=len)
+    return (
+        Path(state_root).resolve()
+        / "protected"
+        / ".quantitative-protected"
+        / ("f" * 64)
+        / f"{longest_kind}-{'f' * 64}.ql"
+    )
+
+
+def validate_benchmark_state_root(
+    state_root: str | Path,
+    *,
+    maximum_path_length: int = _WINDOWS_SAFE_PATH_LENGTH,
+) -> int:
+    projected_length = len(str(projected_benchmark_protected_storage_path(state_root)))
+    if projected_length > maximum_path_length:
+        raise BenchmarkStatePathError(
+            "benchmark state root exceeds the protected-storage path budget"
+        )
+    return projected_length
+
+
+def deterministic_benchmark_state_root(
+    base_root: str | Path,
+    *,
+    protocol: str,
+    repository_head: str,
+) -> Path:
+    head = repository_head.strip().lower()
+    if not _GIT_COMMIT.fullmatch(head):
+        raise BenchmarkStatePathError("benchmark repository commit is malformed")
+    slug = re.sub(r"[^a-z0-9]+", "-", protocol.casefold()).strip("-")[:24]
+    if not slug:
+        raise BenchmarkStatePathError("benchmark protocol identity is malformed")
+    root = Path(base_root).resolve() / f"{slug}-{head[:12]}"
+    validate_benchmark_state_root(root)
+    return root
 
 
 def capture_benchmark_repository_identity(
