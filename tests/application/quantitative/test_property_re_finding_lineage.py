@@ -55,47 +55,25 @@ class RecordingFindingGenerator:
         comparisons = self.last_bundle["comparison_results"]
         if comparisons:
             comparison = comparisons[0]
-            a = results[comparison["group_a_result_id"]]
-            b = results[comparison["group_b_result_id"]]
             return {"proposals": [{
                 "claim_type": "SIGNIFICANT_COMPARISON",
                 "finding_text": "The authorized group comparison is statistically significant.",
-                "statistical_result_refs": [a["result_id"], b["result_id"]],
-                "comparison_result_refs": [comparison["comparison_result_id"]],
-                "value": None,
-                "display_value": None,
-                "rounding_decimal_places": 1,
-                "variable_id": a["variable_id"],
-                "statistic_type": a["statistic_type"],
-                "category_value": self.scalar(a["row_category_value"]),
-                "filter_definition": a["filter_definition"],
-                "base_definition": a["base_definition"],
-                "weighting_status": a["weighting_status"],
-                "weight_set_fingerprint": a["weight_set_fingerprint"],
-                "direction": "HIGHER" if self.scalar(a["value"]) > self.scalar(b["value"]) else "LOWER" if self.scalar(a["value"]) < self.scalar(b["value"]) else "EQUAL",
+                "selected_result_ids": [
+                    comparison["group_a_result_id"], comparison["group_b_result_id"]
+                ],
+                "selected_comparison_ids": [comparison["comparison_result_id"]],
                 "limitation_note": None,
             }]}
         result = next(
             item
             for item in results.values()
-            if item["statistic_type"] in {"VALID_PERCENTAGE", "CROSS_TAB_COLUMN_PERCENTAGE"}
+            if "DESCRIPTIVE_VALUE" in item["allowed_claim_types"]
         )
         return {"proposals": [{
             "claim_type": "DESCRIPTIVE_VALUE",
             "finding_text": "The authorized distribution result is supported.",
-            "statistical_result_refs": [result["result_id"]],
-            "comparison_result_refs": [],
-            "value": self.scalar(result["value"]),
-            "display_value": result["display_value_1dp"],
-            "rounding_decimal_places": 1,
-            "variable_id": result["variable_id"],
-            "statistic_type": result["statistic_type"],
-            "category_value": self.scalar(result["category_value"]),
-            "filter_definition": result["filter_definition"],
-            "base_definition": result["base_definition"],
-            "weighting_status": result["weighting_status"],
-            "weight_set_fingerprint": result["weight_set_fingerprint"],
-            "direction": None,
+            "selected_result_ids": [result["result_id"]],
+            "selected_comparison_ids": [],
             "limitation_note": None,
         }]}
 

@@ -44,13 +44,14 @@ class _SemanticFake(LLMClient):
         prompt=prompt.user if hasattr(prompt,"user") else prompt; self.calls.append(prompt)
         if "AUTHORITATIVE_BUNDLE=" in prompt:
             bundle=json.loads(prompt.split("AUTHORITATIVE_BUNDLE=",1)[1]); proposals=[]
-            percentage_added=False
+            selected_claims=set()
             for result in bundle["statistical_results"]:
-                is_percentage=result["statistic_type"]=="VALID_PERCENTAGE"
-                if result["statistic_type"] not in {"NUMERIC_MEAN","NPS"} and (not is_percentage or percentage_added): continue
-                percentage_added=percentage_added or is_percentage
-                value=self.scalar(result["value"]); proposals.append({"claim_type":"KPI_VALUE" if result["statistic_type"]=="NPS" else "DESCRIPTIVE_VALUE" if is_percentage else "NUMERIC_SUMMARY","finding_text":"The authorized aggregate result is supported.","statistical_result_refs":[result["result_id"]],"comparison_result_refs":[],"value":value,"display_value":result["display_value_1dp"],"rounding_decimal_places":1,"variable_id":result["variable_id"],"statistic_type":result["statistic_type"],"category_value":self.scalar(result["category_value"]),"filter_definition":result["filter_definition"],"base_definition":result["base_definition"],"weighting_status":result["weighting_status"],"weight_set_fingerprint":result["weight_set_fingerprint"],"direction":None,"limitation_note":"Synthetic aggregate acceptance evidence."})
-                if result["statistic_type"]=="NUMERIC_MEAN": proposals.append(dict(proposals[-1],finding_text="The same authorized numeric result supports a second bounded observation."))
+                claim=next((item for item in ("KPI_VALUE","NUMERIC_SUMMARY","DESCRIPTIVE_VALUE") if item in result["allowed_claim_types"]),None)
+                if claim=="DESCRIPTIVE_VALUE" and result["display_label"]!="VALID_PERCENTAGE": continue
+                if claim is None or claim in selected_claims: continue
+                selected_claims.add(claim)
+                proposals.append({"claim_type":claim,"finding_text":"The authorized aggregate result is supported.","selected_result_ids":[result["result_id"]],"selected_comparison_ids":[],"limitation_note":"Synthetic aggregate acceptance evidence."})
+                if claim=="NUMERIC_SUMMARY": proposals.append(dict(proposals[-1],finding_text="The same authorized numeric result supports a second bounded observation."))
             return LLMResponse(content=json.dumps({"proposals":proposals}),output_tokens=7)
         if "ACCEPTED_FINDINGS=" in prompt:
             findings=json.loads(prompt.split("ACCEPTED_FINDINGS=",1)[1]); contexts={}

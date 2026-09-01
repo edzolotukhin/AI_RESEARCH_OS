@@ -22,7 +22,7 @@ from domain.quantitative.finding import (
 )
 
 
-PROMPT_VERSION = "QI_FINDING_GENERATION_V2"
+PROMPT_VERSION = "QI_FINDING_GENERATION_V3"
 MAX_RESULTS = 100
 MAX_PROMPT_CHARACTERS = 60_000
 MAX_PROPOSALS = 25
@@ -59,8 +59,28 @@ class QuantitativeFindingGenerationService:
         comparisons = self._authoritative_comparisons(comparison_results, results)
         labels = self._safe_text_mapping(display_labels or {}, "display label")
         safe_limitations = tuple(self._safe_text(item, "limitation") for item in limitations)
-        bundle = self._bundle(results, comparisons, labels, safe_limitations)
-        bundle_fingerprint = canonical_digest(bundle, digest_provider=self._digest)
+        authority_bundle = self._bundle(results, comparisons, labels, safe_limitations)
+        selectable_results = tuple(
+            item for item in results if self._allowed_claim_types(item.statistic_type)
+        )
+        if not selectable_results:
+            raise QuantitativeAnalysisError(
+                "approved result bundle contains no QH-compatible Finding support"
+            )
+        selectable_ids = {item.result_id for item in selectable_results}
+        selectable_comparisons = tuple(
+            item
+            for item in comparisons
+            if item.group_a_result_id in selectable_ids
+            and item.group_b_result_id in selectable_ids
+        )
+        bundle = self._bundle(
+            selectable_results, selectable_comparisons, labels, safe_limitations,
+            selector_contract=True,
+        )
+        bundle_fingerprint = canonical_digest(
+            authority_bundle, digest_provider=self._digest
+        )
         prompt = self._prompt(bundle)
         prompt_fingerprint = canonical_digest(
             {"version": PROMPT_VERSION, "prompt": prompt},
@@ -70,9 +90,9 @@ class QuantitativeFindingGenerationService:
         # QI V1 permits exactly one proposal-generation pass and no repair call.
         raw_output = self._generator.generate(prompt)
         raw_proposals = self._proposal_list(raw_output)
-        available_results = {item.result_id: item for item in results}
+        available_results = {item.result_id: item for item in selectable_results}
         available_comparisons = {
-            item.comparison_result_id: item for item in comparisons
+            item.comparison_result_id: item for item in selectable_comparisons
         }
         proposed: list[QuantitativeFinding] = []
         accepted: list[QuantitativeFinding] = []
@@ -170,10 +190,22 @@ class QuantitativeFindingGenerationService:
                 raise QuantitativeAnalysisError("comparison bundle references unavailable StatisticalResults")
         return tuple(comparisons)
 
-    def _bundle(self, results, comparisons, labels, limitations):
+    def _bundle(
+        self, results, comparisons, labels, limitations, *, selector_contract=False
+    ):
         return {
-            "statistical_results": tuple(self._result_projection(item, labels) for item in results),
-            "comparison_results": tuple(self._comparison_projection(item) for item in comparisons),
+            "statistical_results": tuple(
+                self._selector_result_projection(item, labels)
+                if selector_contract
+                else self._result_projection(item, labels)
+                for item in results
+            ),
+            "comparison_results": tuple(
+                self._selector_comparison_projection(item)
+                if selector_contract
+                else self._comparison_projection(item)
+                for item in comparisons
+            ),
             "limitations": limitations,
         }
 
@@ -204,6 +236,28 @@ class QuantitativeFindingGenerationService:
         }
 
     @staticmethod
+    def _selector_result_projection(item, labels):
+        return {
+            "result_id": item.result_id,
+            "display_label": labels.get(item.result_id, item.statistic_type),
+            "allowed_claim_types": QuantitativeFindingGenerationService._allowed_claim_types(
+                item.statistic_type
+            ),
+            "display_value_1dp": QuantitativeFindingSupportValidator.display_value(
+                Decimal(str(item.value)), decimal_places=1
+            ),
+            "category_value": canonical_scalar(item.category_value),
+            "row_category_value": canonical_scalar(item.row_category_value),
+            "column_category_value": canonical_scalar(item.column_category_value),
+            "denominator": canonical_scalar(item.denominator),
+            "filter_definition": item.filter_definition,
+            "base_definition": item.base_definition,
+            "weighting_status": item.weighting_status,
+            "unweighted_n": item.unweighted_n,
+            "presentation_eligible": item.presentation_eligible,
+        }
+
+    @staticmethod
     def _comparison_projection(item):
         return {
             "comparison_result_id": item.comparison_result_id,
@@ -222,12 +276,31 @@ class QuantitativeFindingGenerationService:
         }
 
     @staticmethod
+    def _selector_comparison_projection(item):
+        return {
+            "comparison_result_id": item.comparison_result_id,
+            "group_a_result_id": item.group_a_result_id,
+            "group_b_result_id": item.group_b_result_id,
+            "observed_difference_1dp": QuantitativeFindingSupportValidator.display_value(
+                Decimal(str(item.observed_difference)), decimal_places=1
+            ),
+            "significant": item.significant,
+            "supports_significance_wording": item.supports_significance_wording,
+            "method": item.method,
+            "group_a_base": item.group_a_base,
+            "group_b_base": item.group_b_base,
+        }
+
+    @staticmethod
     def _prompt(bundle):
         instructions = (
-            "Generate structured Quantitative Finding proposals using only the supplied result IDs. "
+            "Generate structured Quantitative Finding proposals by selecting only the supplied result IDs. "
             "Return IDs only: never copy, reconstruct, abbreviate, or return authority fingerprints; "
-            "the application resolves canonical fingerprints from the exact supplied bundle. "
-            "Do not calculate new values or introduce numbers absent from authoritative results. "
+            "the application resolves canonical fingerprints, exact values, statistic types, categories, "
+            "bases, filters, and weighting from the exact supplied bundle. Do not return those fields. "
+            "Use only an allowed_claim_type listed for every selected result. Do not calculate new values "
+            "or introduce numbers absent from authoritative results. When prose includes a percentage, copy "
+            "the supplied display_value_1dp exactly and append %. "
             "Do not infer significance from percentages alone: significance wording requires a supplied "
             "comparison result with supports_significance_wording=true. Distinguish observed differences "
             "from statistically significant differences. Preserve filters, bases, categories, and weighted/"
@@ -238,28 +311,17 @@ class QuantitativeFindingGenerationService:
         )
         schema = {
             "reference_contract": {
-                "DESCRIPTIVE_VALUE": {"statistical_result_refs": 1, "comparison_result_refs": 0},
-                "NUMERIC_SUMMARY": {"statistical_result_refs": 1, "comparison_result_refs": 0},
-                "KPI_VALUE": {"statistical_result_refs": 1, "comparison_result_refs": 0},
-                "DESCRIPTIVE_COMPARISON": {"statistical_result_refs": 2, "comparison_result_refs": 0},
-                "SIGNIFICANT_COMPARISON": {"statistical_result_refs": 2, "comparison_result_refs": 1},
+                "DESCRIPTIVE_VALUE": {"selected_result_ids": 1, "selected_comparison_ids": 0},
+                "NUMERIC_SUMMARY": {"selected_result_ids": 1, "selected_comparison_ids": 0},
+                "KPI_VALUE": {"selected_result_ids": 1, "selected_comparison_ids": 0},
+                "DESCRIPTIVE_COMPARISON": {"selected_result_ids": 2, "selected_comparison_ids": 0},
+                "SIGNIFICANT_COMPARISON": {"selected_result_ids": 2, "selected_comparison_ids": 1},
             },
             "proposals": [{
                 "claim_type": "DESCRIPTIVE_VALUE|NUMERIC_SUMMARY|KPI_VALUE|DESCRIPTIVE_COMPARISON|SIGNIFICANT_COMPARISON",
                 "finding_text": "string",
-                "statistical_result_refs": ["result-id"],
-                "comparison_result_refs": ["comparison-id"],
-                "value": "exact decimal or null",
-                "display_value": "deterministically rounded string or null",
-                "rounding_decimal_places": 1,
-                "variable_id": "variable-id",
-                "statistic_type": "type",
-                "category_value": "category or null",
-                "filter_definition": "exact supplied filter",
-                "base_definition": "exact supplied base",
-                "weighting_status": "UNWEIGHTED|WEIGHTED",
-                "weight_set_fingerprint": "fingerprint or null",
-                "direction": "HIGHER|LOWER|EQUAL|null",
+                "selected_result_ids": ["result-id"],
+                "selected_comparison_ids": ["comparison-id"],
                 "limitation_note": "optional string",
             }]
         }
@@ -287,10 +349,19 @@ class QuantitativeFindingGenerationService:
         if forbidden_design_fields.intersection(raw):
             raise QuantitativeAnalysisError("proposal must not supply design lineage")
         claim_type = QuantitativeClaimType(str(raw["claim_type"]))
-        result_ids = self._string_list(raw.get("statistical_result_refs"), "statistical_result_refs")
+        result_ids = self._selected_ids(
+            raw,
+            canonical_name="selected_result_ids",
+            legacy_name="statistical_result_refs",
+        )
         comparison_ids = self._string_list(
-            raw.get("comparison_result_refs", []),
-            "comparison_result_refs",
+            self._selected_value(
+                raw,
+                canonical_name="selected_comparison_ids",
+                legacy_name="comparison_result_refs",
+                default=[],
+            ),
+            "selected_comparison_ids",
             allow_empty=True,
         )
         self._validate_reference_cardinality(claim_type, result_ids, comparison_ids)
@@ -306,18 +377,23 @@ class QuantitativeFindingGenerationService:
         comparison_refs = tuple(QuantitativeComparisonReference(
             item, available_comparisons[item].reproducibility_fingerprint
         ) for item in comparison_ids)
-        value = self._decimal_or_none(raw.get("value"))
+        resolved = tuple(available_results[item] for item in result_ids)
+        self._validate_claim_compatibility(claim_type, resolved)
+        canonical = self._canonical_claim_fields(claim_type, resolved)
+        self._validate_legacy_authority_fields(raw, canonical, claim_type)
+        value = canonical["value"]
         text = self._safe_text(str(raw["finding_text"]), "finding text")
+        self._validate_prose_numbers(text, canonical["allowed_prose_numbers"])
         limitation = raw.get("limitation_note")
         if limitation is not None:
             self._safe_text(str(limitation), "limitation note")
         pii = self._pii_exposures(text)
         identity_proposal = {
-            key: value for key, value in raw.items()
-            if key not in {
-                "statistical_result_fingerprints",
-                "comparison_result_fingerprints",
-            }
+            "claim_type": claim_type.value,
+            "finding_text": text,
+            "selected_result_ids": result_ids,
+            "selected_comparison_ids": comparison_ids,
+            "limitation_note": None if limitation is None else str(limitation),
         }
         proposal_identity = canonical_digest(
             {"bundle": bundle_fingerprint, "ordinal": ordinal, "proposal": identity_proposal},
@@ -329,21 +405,198 @@ class QuantitativeFindingGenerationService:
             claim=QuantitativeClaim(
                 claim_type=claim_type,
                 value=value,
-                variable_id=str(raw["variable_id"]),
-                statistic_type=str(raw["statistic_type"]),
-                category_value=raw.get("category_value"),
-                filter_definition=str(raw["filter_definition"]),
-                base_definition=str(raw["base_definition"]),
-                weighting_status=str(raw["weighting_status"]),
-                weight_set_fingerprint=self._optional_string(raw.get("weight_set_fingerprint")),
-                direction=self._optional_string(raw.get("direction")),
-                display_value=self._optional_string(raw.get("display_value")),
+                variable_id=canonical["variable_id"],
+                statistic_type=canonical["statistic_type"],
+                category_value=canonical["category_value"],
+                filter_definition=canonical["filter_definition"],
+                base_definition=canonical["base_definition"],
+                weighting_status=canonical["weighting_status"],
+                weight_set_fingerprint=canonical["weight_set_fingerprint"],
+                direction=canonical["direction"],
+                display_value=canonical["display_value"],
             ),
             statistical_result_refs=result_refs,
             comparison_result_refs=comparison_refs,
-            rounding_decimal_places=self._integer(raw.get("rounding_decimal_places", 1)),
+            rounding_decimal_places=1,
             pii_exposures=pii,
         )
+
+    @staticmethod
+    def _allowed_claim_types(statistic_type):
+        if statistic_type in {
+            "VALID_PERCENTAGE", "WEIGHTED_PERCENTAGE", "CROSS_TAB_COLUMN_PERCENTAGE",
+        }:
+            return (
+                QuantitativeClaimType.DESCRIPTIVE_VALUE.value,
+                QuantitativeClaimType.DESCRIPTIVE_COMPARISON.value,
+                QuantitativeClaimType.SIGNIFICANT_COMPARISON.value,
+            )
+        if statistic_type in {
+            "NUMERIC_MEAN", "NUMERIC_WEIGHTED_MEAN", "NUMERIC_MEDIAN",
+            "NUMERIC_MINIMUM", "NUMERIC_MAXIMUM",
+        }:
+            return (QuantitativeClaimType.NUMERIC_SUMMARY.value,)
+        if statistic_type in {"NPS", "CUSTOM_INDEX"}:
+            return (QuantitativeClaimType.KPI_VALUE.value,)
+        return ()
+
+    @classmethod
+    def _validate_claim_compatibility(cls, claim_type, results):
+        if claim_type in {
+            QuantitativeClaimType.DESCRIPTIVE_COMPARISON,
+            QuantitativeClaimType.SIGNIFICANT_COMPARISON,
+        }:
+            if not results or any(
+                item.statistic_type not in {
+                    "VALID_PERCENTAGE", "WEIGHTED_PERCENTAGE",
+                    "CROSS_TAB_COLUMN_PERCENTAGE",
+                }
+                for item in results
+            ):
+                raise QuantitativeAnalysisError(
+                    "selected results are incompatible with comparison Finding claim"
+                )
+            return
+        if len(results) != 1 or claim_type.value not in cls._allowed_claim_types(
+            results[0].statistic_type
+        ):
+            raise QuantitativeAnalysisError(
+                "selected result is incompatible with Finding claim type"
+            )
+
+    @classmethod
+    def _canonical_claim_fields(cls, claim_type, results):
+        first = results[0]
+        if claim_type in {
+            QuantitativeClaimType.DESCRIPTIVE_COMPARISON,
+            QuantitativeClaimType.SIGNIFICANT_COMPARISON,
+        }:
+            value = Decimal(str(first.value)) - Decimal(str(results[1].value))
+            direction = "HIGHER" if value > 0 else "LOWER" if value < 0 else "EQUAL"
+            category = first.row_category_value
+        else:
+            value = Decimal(str(first.value))
+            direction = None
+            category = first.category_value
+        allowed_prose_numbers = {
+            QuantitativeFindingSupportValidator.display_value(
+                Decimal(str(item.value)), decimal_places=1
+            )
+            for item in results
+        }
+        for item in results:
+            for candidate in (
+                item.category_value,
+                item.row_category_value,
+                item.column_category_value,
+                item.denominator,
+                item.unweighted_n,
+            ):
+                rendered = cls._canonical_prose_number(candidate)
+                if rendered is not None:
+                    allowed_prose_numbers.add(rendered)
+        allowed_prose_numbers.add(
+            QuantitativeFindingSupportValidator.display_value(value, decimal_places=1)
+        )
+        return {
+            "value": value,
+            "variable_id": first.variable_id,
+            "statistic_type": first.statistic_type,
+            "category_value": category,
+            "filter_definition": first.filter_definition,
+            "base_definition": first.base_definition,
+            "weighting_status": first.weighting_status,
+            "weight_set_fingerprint": first.weight_set_fingerprint,
+            "direction": direction,
+            "display_value": QuantitativeFindingSupportValidator.display_value(
+                value, decimal_places=1
+            ),
+            "allowed_prose_numbers": frozenset(allowed_prose_numbers),
+        }
+
+    @classmethod
+    def _validate_legacy_authority_fields(cls, raw, canonical, claim_type):
+        comparisons = {
+            "value": lambda actual, expected: cls._decimal_or_none(actual) == expected,
+            "variable_id": lambda actual, expected: str(actual) == expected,
+            "statistic_type": lambda actual, expected: str(actual) == expected,
+            "category_value": lambda actual, expected: actual == expected,
+            "filter_definition": lambda actual, expected: str(actual) == expected,
+            "base_definition": lambda actual, expected: str(actual) == expected,
+            "weighting_status": lambda actual, expected: str(actual) == expected,
+            "weight_set_fingerprint": lambda actual, expected: cls._optional_string(actual) == expected,
+            "direction": lambda actual, expected: cls._optional_string(actual) == expected,
+            "display_value": lambda actual, expected: cls._optional_string(actual) == expected,
+        }
+        for name, matches in comparisons.items():
+            if name == "value" and raw.get(name) is None and claim_type in {
+                QuantitativeClaimType.DESCRIPTIVE_COMPARISON,
+                QuantitativeClaimType.SIGNIFICANT_COMPARISON,
+            }:
+                continue
+            if name == "display_value" and claim_type in {
+                QuantitativeClaimType.DESCRIPTIVE_COMPARISON,
+                QuantitativeClaimType.SIGNIFICANT_COMPARISON,
+            }:
+                continue
+            if name in raw and not matches(raw[name], canonical[name]):
+                raise QuantitativeAnalysisError(
+                    f"model-supplied {name} contradicts canonical support"
+                )
+        if "rounding_decimal_places" in raw and cls._integer(
+            raw["rounding_decimal_places"]
+        ) != 1:
+            raise QuantitativeAnalysisError(
+                "model-supplied rounding precision contradicts canonical support"
+            )
+
+    @staticmethod
+    def _validate_prose_numbers(text, allowed_numbers):
+        numeric_tokens = re.findall(
+            r"(?<![\w-])[-+]?\d+(?:\.\d+)?(?:\s*%)?(?![\w-])", text
+        )
+        for token in numeric_tokens:
+            rendered = token.rstrip().removesuffix("%").strip()
+            if rendered not in allowed_numbers:
+                raise QuantitativeAnalysisError(
+                    "Finding prose contains a number outside canonical display support"
+                )
+
+    @staticmethod
+    def _canonical_prose_number(value):
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            number = Decimal(str(value))
+        except InvalidOperation:
+            return None
+        if not number.is_finite():
+            return None
+        rendered = format(number.normalize(), "f")
+        return "0" if rendered == "-0" else rendered
+
+    @classmethod
+    def _selected_ids(cls, raw, *, canonical_name, legacy_name):
+        return cls._string_list(
+            cls._selected_value(
+                raw,
+                canonical_name=canonical_name,
+                legacy_name=legacy_name,
+            ),
+            canonical_name,
+        )
+
+    @staticmethod
+    def _selected_value(raw, *, canonical_name, legacy_name, default=None):
+        has_canonical = canonical_name in raw
+        has_legacy = legacy_name in raw
+        if has_canonical and has_legacy and raw[canonical_name] != raw[legacy_name]:
+            raise QuantitativeAnalysisError("conflicting Finding support selectors")
+        if has_canonical:
+            return raw[canonical_name]
+        if has_legacy:
+            return raw[legacy_name]
+        return default
 
     @staticmethod
     def _string_list(value, name, *, allow_empty=False):

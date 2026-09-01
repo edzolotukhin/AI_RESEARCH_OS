@@ -172,10 +172,15 @@ class PropertyQXTests(unittest.TestCase):
         service.generate(statistical_results=(authority,))
         prompt = generator.prompts[0]
         self.assertIn('"reference_contract"', prompt)
-        self.assertIn('"DESCRIPTIVE_COMPARISON":{"comparison_result_refs":0,"statistical_result_refs":2}', prompt)
+        self.assertIn(
+            '"DESCRIPTIVE_COMPARISON":{"selected_comparison_ids":0,"selected_result_ids":2}',
+            prompt,
+        )
         schema = prompt.split("AUTHORITATIVE_BUNDLE=", 1)[0]
         self.assertNotIn("statistical_result_fingerprints", schema)
         self.assertNotIn("comparison_result_fingerprints", schema)
+        self.assertNotIn('"value":"exact decimal or null"', schema)
+        self.assertNotIn('"statistic_type":"type"', schema)
         self.assertIn("never copy, reconstruct, abbreviate", prompt)
         self.assertEqual(len(generator.prompts), 1)
 

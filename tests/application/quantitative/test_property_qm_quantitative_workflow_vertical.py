@@ -120,18 +120,12 @@ class _FindingGenerator:
     identity = "qm-offline-findings-v1"
     def generate(self, prompt):
         results = _bundle(prompt, "AUTHORITATIVE_BUNDLE=")["statistical_results"]
-        percentage = next(item for item in results if "PERCENTAGE" in item["statistic_type"])
-        weighted = next(item for item in results if item["weighting_status"] == "WEIGHTED" and "PERCENTAGE" in item["statistic_type"])
-        def decoded(raw):
-            if raw is None or not isinstance(raw,dict): return raw
-            value=raw.get("value"); kind=raw.get("type")
-            if kind in ("integer","int"): return int(value)
-            if kind in ("decimal","float"): return float(value)
-            return value
-        def proposal(item, value=None):
-            raw = item["value"]; scalar = raw["value"] if isinstance(raw, dict) else raw
-            return {"claim_type":"DESCRIPTIVE_VALUE" if "PERCENTAGE" in item["statistic_type"] else "NUMERIC_SUMMARY", "finding_text":f"Supported aggregate was {item['display_value_1dp']}.", "statistical_result_refs":[item["result_id"]], "statistical_result_fingerprints":{item["result_id"]:item["reproducibility_fingerprint"]}, "comparison_result_refs":[], "comparison_result_fingerprints":{}, "value":str(scalar if value is None else value), "display_value":item["display_value_1dp"] if value is None else "999.0", "rounding_decimal_places":1, "variable_id":item["variable_id"], "statistic_type":item["statistic_type"], "category_value":decoded(item["category_value"]), "filter_definition":item["filter_definition"], "base_definition":item["base_definition"], "weighting_status":item["weighting_status"], "weight_set_fingerprint":item["weight_set_fingerprint"], "direction":None, "limitation_note":"Synthetic aggregate."}
-        return {"proposals":[proposal(percentage), proposal(weighted), proposal(percentage, "999")]}
+        percentage = next(item for item in results if "DESCRIPTIVE_VALUE" in item["allowed_claim_types"])
+        weighted = next(item for item in results if item["weighting_status"] == "WEIGHTED" and "DESCRIPTIVE_VALUE" in item["allowed_claim_types"])
+        def proposal(item, *, invalid=False):
+            display = "999.0" if invalid else item["display_value_1dp"]
+            return {"claim_type":"DESCRIPTIVE_VALUE", "finding_text":f"Supported aggregate was {display}.", "selected_result_ids":[item["result_id"]], "selected_comparison_ids":[], "limitation_note":"Synthetic aggregate."}
+        return {"proposals":[proposal(percentage), proposal(weighted), proposal(percentage, invalid=True)]}
 
 
 class _InsightGenerator:

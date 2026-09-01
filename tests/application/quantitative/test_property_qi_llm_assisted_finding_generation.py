@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import unittest
 from copy import deepcopy
+from decimal import Decimal
 
 from application.quantitative.finding_generation import (
     PROMPT_VERSION,
@@ -186,6 +187,129 @@ class PropertyQILLMAssistedFindingGenerationTests(unittest.TestCase):
         for forbidden in ("domain.findings", "domain.evidence", "InformationNeed", "openai", "tavily", "respondent_rows", "get_parsed_rows"):
             self.assertNotIn(forbidden, source)
         self.assertIn("QuantitativeFindingSupportValidator", source)
+
+    def test_bundle_bound_selection_preserves_non_terminating_decimal_exactly(self):
+        authority = result("percentage", "22.02020202020202020202020202", category=5)
+        response = {"proposals": [{
+            "claim_type": "DESCRIPTIVE_VALUE",
+            "finding_text": "Category 5 represents 22.0% of valid responses.",
+            "selected_result_ids": [authority.result_id],
+            "selected_comparison_ids": [],
+            "limitation_note": None,
+        }]}
+        service, generator = self.service(response)
+
+        generated = service.generate(statistical_results=(authority,))
+
+        self.assertEqual(generated.acceptance_summary["accepted"], 1)
+        finding = generated.accepted_findings[0]
+        self.assertEqual(
+            finding.claim.value, Decimal("22.02020202020202020202020202")
+        )
+        self.assertEqual(finding.claim.display_value, "22.0")
+        prompt = generator.prompts[0]
+        self.assertIn('"selected_result_ids"', prompt)
+        self.assertIn('"allowed_claim_types"', prompt)
+        self.assertNotIn('"value":"exact decimal or null"', prompt)
+        provider_bundle = prompt.split("AUTHORITATIVE_BUNDLE=", 1)[1]
+        self.assertNotIn('"reproducibility_fingerprint"', provider_bundle)
+        self.assertNotIn('"value":{"type":"decimal"', provider_bundle)
+
+    def test_frozen_style_percentage_selections_accept_but_count_is_not_selectable(self):
+        values = (
+            ("p5", "22.02020202020202020202020202", 5, "22.0"),
+            ("p11", "15.15151515151515151515151515", 11, "15.2"),
+            ("p10", "17.50841750841750841750841751", 10, "17.5"),
+            ("p3", "9.090909090909090909090909091", 3, "9.1"),
+        )
+        authorities = tuple(
+            result(identity, value, category=category)
+            for identity, value, category, _ in values
+        )
+        count = result("count", "101", statistic_type="CATEGORY_COUNT", category=2)
+        response = {"proposals": [
+            {
+                "claim_type": "DESCRIPTIVE_VALUE",
+                "finding_text": f"Category {category} represents {display}% of valid responses.",
+                "selected_result_ids": [identity],
+                "selected_comparison_ids": [],
+            }
+            for identity, _, category, display in values
+        ]}
+        service, generator = self.service(response)
+
+        generated = service.generate(statistical_results=authorities + (count,))
+
+        self.assertEqual(generated.acceptance_summary["accepted"], 4)
+        self.assertEqual(
+            tuple(item.claim.value for item in generated.accepted_findings),
+            tuple(item.value for item in authorities),
+        )
+        self.assertNotIn('"result_id":"count"', generator.prompts[0])
+        count_only, count_generator = self.service({"proposals": []})
+        with self.assertRaisesRegex(ValueError, "no QH-compatible"):
+            count_only.generate(statistical_results=(count,))
+        self.assertEqual(count_generator.prompts, [])
+
+    def test_selector_contract_rejects_nearby_prose_and_model_authority_fields(self):
+        authority = result("percentage", "22.02020202020202020202020202", category=5)
+        base = {
+            "claim_type": "DESCRIPTIVE_VALUE",
+            "finding_text": "Category 5 represents 22.0% of valid responses.",
+            "selected_result_ids": [authority.result_id],
+            "selected_comparison_ids": [],
+        }
+        cases = (
+            dict(base, finding_text="Category 5 represents 21.9% of valid responses."),
+            dict(base, value=22.02020202020202),
+            dict(base, statistic_type="CATEGORY_COUNT"),
+            dict(base, base_definition="ALL_RESPONSES"),
+        )
+        service, _ = self.service({"proposals": list(cases)})
+
+        generated = service.generate(statistical_results=(authority,))
+
+        self.assertEqual(generated.acceptance_summary["accepted"], 0)
+        self.assertEqual(generated.acceptance_summary["rejected"], 4)
+        self.assertTrue(any("canonical display" in item.reason for item in generated.rejected_findings))
+        self.assertTrue(any("contradicts canonical support" in item.reason for item in generated.rejected_findings))
+
+    def test_wrong_selector_claim_pair_and_replay_fail_closed_or_identical(self):
+        authority = result("percentage", "22.02020202020202020202020202", category=5)
+        valid = {"proposals": [{
+            "claim_type": "DESCRIPTIVE_VALUE",
+            "finding_text": "Category 5 represents 22.0% of valid responses.",
+            "selected_result_ids": [authority.result_id],
+            "selected_comparison_ids": [],
+        }]}
+        first, _ = self.service(valid)
+        second, _ = self.service(valid)
+        self.assertEqual(
+            first.generate(statistical_results=(authority,)),
+            second.generate(statistical_results=(authority,)),
+        )
+        selector_finding = first.generate(
+            statistical_results=(authority,)
+        ).accepted_findings[0]
+        legacy = proposal(authority, "DESCRIPTIVE_VALUE")
+        legacy["finding_text"] = valid["proposals"][0]["finding_text"]
+        legacy["limitation_note"] = None
+        legacy_service, _ = self.service({"proposals": [legacy]})
+        self.assertEqual(
+            selector_finding.finding_id,
+            legacy_service.generate(
+                statistical_results=(authority,)
+            ).accepted_findings[0].finding_id,
+        )
+
+        invalid = {"proposals": [
+            dict(valid["proposals"][0], selected_result_ids=["unknown"]),
+            dict(valid["proposals"][0], claim_type="NUMERIC_SUMMARY"),
+        ]}
+        service, _ = self.service(invalid)
+        generated = service.generate(statistical_results=(authority,))
+        self.assertEqual(generated.acceptance_summary["accepted"], 0)
+        self.assertEqual(generated.acceptance_summary["rejected"], 2)
 
 
 if __name__ == "__main__":
