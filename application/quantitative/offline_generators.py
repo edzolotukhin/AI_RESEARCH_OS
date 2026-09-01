@@ -20,24 +20,27 @@ class OfflineFindingGenerator:
 
     def generate(self, prompt):
         results = _bundle(prompt, "AUTHORITATIVE_BUNDLE=")["statistical_results"]
-        percentage = next(item for item in results if "PERCENTAGE" in item["statistic_type"])
-        weighted = next(item for item in results if item["weighting_status"] == "WEIGHTED" and "PERCENTAGE" in item["statistic_type"])
-
-        def decode(raw):
-            if not isinstance(raw, dict): return raw
-            value, kind = raw.get("value"), raw.get("type")
-            return int(value) if kind in ("integer", "int") else float(value) if kind in ("decimal", "float") else value
+        percentage = next(
+            item
+            for item in results
+            if "DESCRIPTIVE_VALUE" in item["allowed_claim_types"]
+        )
+        weighted = next(
+            item
+            for item in results
+            if item["weighting_status"] == "WEIGHTED"
+            and "DESCRIPTIVE_VALUE" in item["allowed_claim_types"]
+        )
 
         def proposal(item, invented=False):
-            scalar = item["value"]["value"] if isinstance(item["value"], dict) else item["value"]
-            return {"claim_type":"DESCRIPTIVE_VALUE", "finding_text":f"Supported aggregate was {item['display_value_1dp'] if not invented else '999.0'}.",
-                    "statistical_result_refs":[item["result_id"]], "statistical_result_fingerprints":{item["result_id"]:item["reproducibility_fingerprint"]},
-                    "comparison_result_refs":[], "comparison_result_fingerprints":{}, "value":str(scalar if not invented else 999),
-                    "display_value":item["display_value_1dp"] if not invented else "999.0", "rounding_decimal_places":1,
-                    "variable_id":item["variable_id"], "statistic_type":item["statistic_type"], "category_value":decode(item["category_value"]),
-                    "filter_definition":item["filter_definition"], "base_definition":item["base_definition"],
-                    "weighting_status":item["weighting_status"], "weight_set_fingerprint":item["weight_set_fingerprint"],
-                    "direction":None, "limitation_note":"Synthetic aggregate."}
+            display = "999.0" if invented else item["display_value_1dp"]
+            return {
+                "claim_type": "DESCRIPTIVE_VALUE",
+                "finding_text": f"Supported aggregate was {display}.",
+                "selected_result_ids": [item["result_id"]],
+                "selected_comparison_ids": [],
+                "limitation_note": "Synthetic aggregate.",
+            }
         return {"proposals":[proposal(percentage), proposal(weighted), proposal(percentage, True)]}
 
 
