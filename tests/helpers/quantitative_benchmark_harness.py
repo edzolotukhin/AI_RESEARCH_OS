@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 import copy
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
 import pickle
 import re
@@ -90,6 +91,36 @@ def projected_benchmark_protected_storage_path(state_root: str | Path) -> Path:
         / f"{longest_kind}-{'f' * 64}.ql"
     )
 
+
+def validate_benchmark_pickle_atomic_replace(state_root: str | Path) -> None:
+    """Prove the benchmark QL store's write/close/replace/read path before setup."""
+    root = Path(state_root).resolve()
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise BenchmarkStatePathError("benchmark QL preflight root is not writable") from exc
+    destination = root / ".benchmark-ql-preflight"
+    temporary = root / ".benchmark-ql-preflight.tmp"
+    if temporary.exists() or destination.exists():
+        raise BenchmarkStatePathError("benchmark preflight probe path is not fresh")
+    try:
+        with temporary.open("wb") as handle:
+            handle.write(b"q2-13a-ql-preflight")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+        if destination.read_bytes() != b"q2-13a-ql-preflight":
+            raise BenchmarkStatePathError("benchmark preflight replacement readback failed")
+    except OSError as exc:
+        raise BenchmarkStatePathError("benchmark QL atomic replacement is unavailable") from exc
+    finally:
+        for path in (temporary, destination):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                raise BenchmarkStatePathError("benchmark preflight cleanup failed") from exc
 
 def validate_benchmark_state_root(
     state_root: str | Path,

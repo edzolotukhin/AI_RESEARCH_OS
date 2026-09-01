@@ -39,6 +39,7 @@ from tests.helpers.quantitative_benchmark_harness import (
     is_phase_a_freeze,
     load_or_capture_benchmark_repository_identity,
     validate_benchmark_state_root,
+    validate_benchmark_pickle_atomic_replace,
     resolve_workflow_produced_rh,
 )
 from tests.helpers.workflow_run_builder import make_workflow_run
@@ -368,6 +369,23 @@ class Q213FDurableBenchmarkHarnessTests(unittest.TestCase):
             )
             self.assertFalse(is_phase_a_freeze(path))
 
+    def test_atomic_replace_preflight_passes_on_fresh_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            validate_benchmark_pickle_atomic_replace(Path(directory))
+            self.assertFalse((Path(directory) / ".benchmark-ql-preflight").exists())
+
+    def test_atomic_replace_preflight_rejects_unwritable_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "root-file")
+            path.write_bytes(b"not-a-directory")
+            with self.assertRaises(BenchmarkStatePathError):
+                validate_benchmark_pickle_atomic_replace(path)
+
+    def test_atomic_replace_preflight_rejects_stale_probe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, ".benchmark-ql-preflight.tmp").write_bytes(b"stale")
+            with self.assertRaises(BenchmarkStatePathError):
+                validate_benchmark_pickle_atomic_replace(Path(directory))
     def test_only_explicit_success_artifact_unlocks_phase_b(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
