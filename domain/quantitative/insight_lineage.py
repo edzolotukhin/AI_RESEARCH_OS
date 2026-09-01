@@ -126,3 +126,29 @@ class DatasetOnlyInsightLineageAbsence:
     insight_generation_fingerprint: str
     status: str
     fingerprint: str
+
+
+class DesignAwareInsightAbsenceReason(StrEnum):
+    NO_SUPPORTED_FINDINGS = "NO_SUPPORTED_FINDINGS"
+
+
+@dataclass(frozen=True)
+class DesignAwareInsightControlledAbsence:
+    absence_id: str
+    project_id: str
+    run_id: str
+    finding_generation_record_id: str
+    finding_generation_fingerprint: str
+    re_input_authority_id: str
+    re_input_authority_fingerprint: str
+    re_lineage_manifest_id: str
+    re_lineage_manifest_fingerprint: str
+    re_coverage_id: str
+    re_coverage_fingerprint: str
+    rd_execution_manifest_id: str
+    rd_execution_manifest_fingerprint: str
+    rc_plan_id: str
+    rc_plan_fingerprint: str
+    reason: DesignAwareInsightAbsenceReason
+    method_version: str
+    fingerprint: str

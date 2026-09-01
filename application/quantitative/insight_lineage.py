@@ -7,10 +7,13 @@ from application.quantitative.insight_support_canonicalization import (
 )
 from application.quantitative.one_way_statistics import QuantitativeAnalysisError
 from domain.quantitative.finding import QuantitativeSupportStatus
+from domain.quantitative.finding_lineage import FindingCoverageStatus
 from domain.quantitative.insight import QuantitativeInsightGenerationResult
 from domain.quantitative.insight_lineage import (
     INSIGHT_LINEAGE_METHOD_VERSION,
     DatasetOnlyInsightLineageAbsence,
+    DesignAwareInsightAbsenceReason,
+    DesignAwareInsightControlledAbsence,
     DesignAwareInsightFindingSupportEntry,
     DesignAwareInsightInputAuthority,
     InsightCoverageEntry,
@@ -180,6 +183,56 @@ class QuantitativeInsightLineageService:
             f"rf-absence-{fp}", project_id, run_id, generation_record_id,
             generation.generation_fingerprint, "NO_DESIGN_AWARE_INSIGHT_LINEAGE", fp,
         ))
+
+    def design_aware_controlled_absence(
+        self, *, project_id, run_id, generation_record_id, generation,
+        re_input, re_manifest, re_coverage,
+    ):
+        self._preflight(
+            project_id, run_id, generation_record_id, generation,
+            re_input, re_manifest, re_coverage,
+        )
+        if generation.accepted_findings:
+            raise QuantitativeInsightLineageError(
+                "RF controlled absence contradicts accepted Finding authority"
+            )
+        if re_manifest.entries or any(
+            item.status is FindingCoverageStatus.FINDING_SUPPORTED
+            or item.finding_ids
+            for item in re_coverage.entries
+        ):
+            raise QuantitativeInsightLineageError(
+                "RF controlled absence contradicts RE Finding support"
+            )
+        reason = DesignAwareInsightAbsenceReason.NO_SUPPORTED_FINDINGS
+        payload = {
+            "project": project_id,
+            "run": run_id,
+            "generation": (generation_record_id, generation.generation_fingerprint),
+            "re_input": (re_input.authority_id, re_input.fingerprint),
+            "re_lineage": (re_manifest.manifest_id, re_manifest.fingerprint),
+            "re_coverage": (re_coverage.coverage_id, re_coverage.fingerprint),
+            "rd": (
+                re_input.rd_execution_manifest_id,
+                re_input.rd_execution_manifest_fingerprint,
+            ),
+            "rc": (re_input.rc_plan_id, re_input.rc_plan_fingerprint),
+            "reason": reason.value,
+            "version": INSIGHT_LINEAGE_METHOD_VERSION,
+        }
+        fp = canonical_digest(payload, digest_provider=self.digest)
+        value = DesignAwareInsightControlledAbsence(
+            f"rf-controlled-absence-{fp}", project_id, run_id,
+            generation_record_id, generation.generation_fingerprint,
+            re_input.authority_id, re_input.fingerprint,
+            re_manifest.manifest_id, re_manifest.fingerprint,
+            re_coverage.coverage_id, re_coverage.fingerprint,
+            re_input.rd_execution_manifest_id,
+            re_input.rd_execution_manifest_fingerprint,
+            re_input.rc_plan_id, re_input.rc_plan_fingerprint,
+            reason, INSIGHT_LINEAGE_METHOD_VERSION, fp,
+        )
+        return self.repository.save_controlled_absence(value)
 
     @staticmethod
     def _preflight(project_id, run_id, generation_record_id, generation, re_input, re_manifest, re_coverage):

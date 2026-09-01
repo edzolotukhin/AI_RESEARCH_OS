@@ -8,6 +8,8 @@ from domain.quantitative.report_lineage import (
     REPORT_COMPOSITION_CONTRACT_VERSION,
     REPORT_LINEAGE_METHOD_VERSION,
     DatasetOnlyReportLineageAbsence,
+    DesignAwareReportAbsenceReason,
+    DesignAwareReportControlledAbsence,
     DesignAwareReportFindingSupportEntry,
     DesignAwareReportInputAuthority,
     DesignAwareReportInsightSupportEntry,
@@ -235,6 +237,64 @@ class QuantitativeReportLineageService:
             report_composition_record_id, composition.composition_fingerprint,
             "NO_DESIGN_AWARE_REPORT_LINEAGE", fingerprint,
         ))
+
+    def design_aware_controlled_absence(
+        self, *, project_id, run_id, generation_record_id, generation,
+        rf_absence, re_manifest,
+    ):
+        if any(
+            item.project_id != project_id or item.run_id != run_id
+            for item in (rf_absence, re_manifest)
+        ):
+            raise QuantitativeReportLineageError(
+                "RG controlled absence project/run mismatch"
+            )
+        if generation.accepted_findings:
+            raise QuantitativeReportLineageError(
+                "RG controlled absence contradicts accepted Finding authority"
+            )
+        if re_manifest.entries:
+            raise QuantitativeReportLineageError(
+                "RG controlled absence contradicts RE Finding lineage"
+            )
+        reason = DesignAwareReportAbsenceReason.NO_SUPPORTED_FINDINGS
+        if (
+            rf_absence.finding_generation_record_id != generation_record_id
+            or rf_absence.finding_generation_fingerprint
+            != generation.generation_fingerprint
+            or rf_absence.re_lineage_manifest_id != re_manifest.manifest_id
+            or rf_absence.re_lineage_manifest_fingerprint != re_manifest.fingerprint
+            or rf_absence.reason.value != reason.value
+        ):
+            raise QuantitativeReportLineageError(
+                "RG controlled absence upstream mismatch"
+            )
+        payload = {
+            "project": project_id,
+            "run": run_id,
+            "generation": (generation_record_id, generation.generation_fingerprint),
+            "rf_absence": (rf_absence.absence_id, rf_absence.fingerprint),
+            "re_lineage": (re_manifest.manifest_id, re_manifest.fingerprint),
+            "rd": (
+                rf_absence.rd_execution_manifest_id,
+                rf_absence.rd_execution_manifest_fingerprint,
+            ),
+            "rc": (rf_absence.rc_plan_id, rf_absence.rc_plan_fingerprint),
+            "reason": reason.value,
+            "version": REPORT_LINEAGE_METHOD_VERSION,
+        }
+        fp = canonical_digest(payload, digest_provider=self.digest)
+        value = DesignAwareReportControlledAbsence(
+            f"rg-controlled-absence-{fp}", project_id, run_id,
+            generation_record_id, generation.generation_fingerprint,
+            rf_absence.absence_id, rf_absence.fingerprint,
+            re_manifest.manifest_id, re_manifest.fingerprint,
+            rf_absence.rd_execution_manifest_id,
+            rf_absence.rd_execution_manifest_fingerprint,
+            rf_absence.rc_plan_id, rf_absence.rc_plan_fingerprint,
+            reason, REPORT_LINEAGE_METHOD_VERSION, fp,
+        )
+        return self.repository.save_controlled_absence(value)
 
     def _section_entries(self, authority, report):
         findings = {item.finding_id: item for item in authority.finding_entries}

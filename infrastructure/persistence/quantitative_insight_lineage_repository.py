@@ -1,6 +1,7 @@
 from application.quantitative.state_persistence import QuantitativePersistenceError
 from domain.quantitative.insight_lineage import (
-    DatasetOnlyInsightLineageAbsence, DesignAwareInsightInputAuthority,
+    DatasetOnlyInsightLineageAbsence, DesignAwareInsightControlledAbsence,
+    DesignAwareInsightInputAuthority,
     QuantitativeInsightCoverageManifest, QuantitativeInsightDesignLineageManifest,
 )
 
@@ -37,3 +38,5 @@ class QLQuantitativeInsightLineageRepository:
         return matches[0] if matches else None
 
     def save_dataset_only_absence(self, value): return self._save(value, value.absence_id, DatasetOnlyInsightLineageAbsence)
+    def save_controlled_absence(self, value): return self._save(value, value.absence_id, DesignAwareInsightControlledAbsence)
+    def get_controlled_absence(self, absence_id, *, project_id): return self._get(absence_id, project_id, DesignAwareInsightControlledAbsence)

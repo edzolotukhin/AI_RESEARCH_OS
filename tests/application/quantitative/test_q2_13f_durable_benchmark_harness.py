@@ -344,6 +344,30 @@ class Q213FDurableBenchmarkHarnessTests(unittest.TestCase):
                 broken.run(lambda: (_ for _ in ()).throw(original))
             self.assertIs(original, raised.exception)
 
+    def test_diagnostics_failure_does_not_suppress_primary_failure_artifact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "diagnostics-unavailable.json"
+            journal = BenchmarkJournal(
+                "Q2-13A-R6", {}, path, phase="POST_WORKFLOW"
+            )
+            primary = RuntimeError("primary benchmark failure")
+            diagnostics = ValueError("diagnostics lookup failed")
+            with self.assertRaises(RuntimeError) as raised:
+                journal.run(
+                    lambda: (_ for _ in ()).throw(primary),
+                    lambda: (_ for _ in ()).throw(diagnostics),
+                )
+            self.assertIs(primary, raised.exception)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                "DIAGNOSTICS_UNAVAILABLE",
+                payload["diagnostics"]["status"],
+            )
+            self.assertEqual(
+                "ValueError", payload["diagnostics"]["error_class"]
+            )
+            self.assertFalse(is_phase_a_freeze(path))
+
     def test_only_explicit_success_artifact_unlocks_phase_b(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

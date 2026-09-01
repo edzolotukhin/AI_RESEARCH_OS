@@ -127,10 +127,10 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
             self._task_results["_run_usage_summary"] = dict(
                 context.shared_state["run_usage_summary"],
             )
-        self._checkpoint(context, critical=True)
         ledger = context.shared_state.get(SEMANTIC_LEDGER_KEY, ())
         if isinstance(ledger, (list, tuple)):
             self._task_results[SEMANTIC_LEDGER_KEY] = list(ledger)
+        self._checkpoint(context, critical=True)
         if self._audit is not None:
             self._audit.record_workflow_outcome(context)
 

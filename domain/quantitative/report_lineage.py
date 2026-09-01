@@ -172,3 +172,27 @@ class DatasetOnlyReportLineageAbsence:
     report_composition_fingerprint: str
     status: str
     fingerprint: str
+
+
+class DesignAwareReportAbsenceReason(StrEnum):
+    NO_SUPPORTED_FINDINGS = "NO_SUPPORTED_FINDINGS"
+
+
+@dataclass(frozen=True)
+class DesignAwareReportControlledAbsence:
+    absence_id: str
+    project_id: str
+    run_id: str
+    finding_generation_record_id: str
+    finding_generation_fingerprint: str
+    rf_absence_id: str
+    rf_absence_fingerprint: str
+    re_lineage_manifest_id: str
+    re_lineage_manifest_fingerprint: str
+    rd_execution_manifest_id: str
+    rd_execution_manifest_fingerprint: str
+    rc_plan_id: str
+    rc_plan_fingerprint: str
+    reason: DesignAwareReportAbsenceReason
+    method_version: str
+    fingerprint: str

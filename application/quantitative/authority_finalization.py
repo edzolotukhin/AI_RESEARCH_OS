@@ -14,6 +14,8 @@ from domain.quantitative.authority_finalization import (
     QuantitativeFinalizedStudyProjection,
 )
 from domain.quantitative.dataset import CodebookVersion, DatasetVersion
+from domain.quantitative.insight_lineage import DesignAwareInsightControlledAbsence
+from domain.quantitative.report_lineage import DesignAwareReportControlledAbsence
 from domain.quantitative.research_question_coverage import QuantitativeAuthorityReference
 from domain.quantitative.workflow import QuantitativeTerminalOutcome, QuantitativeTerminalResult
 from domain.quantitative.research_design_authority import StudyWeightingMode
@@ -379,11 +381,35 @@ class QuantitativeAuthorityFinalizationService:
         if run.status is not WorkflowStatus.COMPLETED:
             raise QuantitativeAuthorityFinalizationError("WorkflowRun is not successfully terminal")
 
-    @staticmethod
-    def _validate_controlled_downstream(request, terminal):
+    def _validate_controlled_downstream(self, request, terminal):
         absence_kinds = {item.authority_kind for item in request.controlled_absences}
         has_rf_absence = any(kind.startswith("RF_") for kind in absence_kinds)
         has_rg_absence = any(kind.startswith("RG_") for kind in absence_kinds)
+        typed = tuple(
+            self._state.load(item.authority_id, project_id=request.project_id)
+            for item in request.controlled_absences
+        )
+        for ref, value in zip(request.controlled_absences, typed):
+            if isinstance(value, DesignAwareInsightControlledAbsence):
+                if (
+                    ref.authority_kind != "RF_CONTROLLED_ABSENCE"
+                    or terminal.terminal_outcome
+                    is not QuantitativeTerminalOutcome.COMPLETED_WITH_NO_SUPPORTED_FINDINGS
+                    or request.insight_authority
+                ):
+                    raise QuantitativeAuthorityFinalizationError(
+                        "contradictory RF controlled-absence authority"
+                    )
+            if isinstance(value, DesignAwareReportControlledAbsence):
+                if (
+                    ref.authority_kind != "RG_CONTROLLED_ABSENCE"
+                    or terminal.terminal_outcome
+                    is not QuantitativeTerminalOutcome.COMPLETED_WITH_NO_SUPPORTED_FINDINGS
+                    or request.report_authority
+                ):
+                    raise QuantitativeAuthorityFinalizationError(
+                        "contradictory RG controlled-absence authority"
+                    )
         if not request.finding_authority:
             raise QuantitativeAuthorityFinalizationError("required RE authority is missing")
         if terminal.terminal_outcome is QuantitativeTerminalOutcome.COMPLETED:

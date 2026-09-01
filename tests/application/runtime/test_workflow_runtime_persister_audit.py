@@ -6,6 +6,7 @@ from unittest.mock import Mock
 from application.persistence.exceptions import CheckpointPersistenceError
 from application.runtime.workflow_execution_audit import WorkflowExecutionAudit
 from application.runtime.workflow_runtime_persister import WorkflowRuntimePersister
+from application.quantitative.execution_diagnostics import SEMANTIC_LEDGER_KEY
 from domain.project import Project
 from domain.value_objects.task_status import TaskStatus
 from domain.workflow_status import WorkflowStatus
@@ -67,6 +68,29 @@ class WorkflowRuntimePersisterAuditOrderingTests(unittest.TestCase):
 
         self.assertEqual(call_order, ["save", "audit"])
         self.workflow_service.save_workflow_run.assert_called_once()
+
+    def test_final_checkpoint_contains_semantic_ledger(self) -> None:
+        self.context.shared_state[SEMANTIC_LEDGER_KEY] = [
+            {"stage": "QI", "status": "COMPLETED"}
+        ]
+        persisted = {}
+
+        def save(run, expected_version, **kwargs):
+            persisted.update(kwargs["task_results"])
+            return expected_version + 1
+
+        self.workflow_service.save_workflow_run.side_effect = save
+        persister = WorkflowRuntimePersister(
+            workflow_service=self.workflow_service,
+            audit=self.audit,
+            run_id=self.workflow_run.id,
+            initial_version=0,
+        )
+        persister.on_workflow_finalized(self.context, error=None)
+        self.assertEqual(
+            [{"stage": "QI", "status": "COMPLETED"}],
+            persisted[SEMANTIC_LEDGER_KEY],
+        )
 
 
 class WorkflowExecutionAuditResumeTests(unittest.TestCase):

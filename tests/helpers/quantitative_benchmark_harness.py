@@ -380,8 +380,17 @@ class BenchmarkJournal:
         try:
             return operation()
         except BaseException as primary:
+            diagnostics = None
             try:
-                payload = self.failure_payload(primary, diagnostics_loader())
+                diagnostics = diagnostics_loader()
+            except BaseException as diagnostics_error:
+                diagnostics = {
+                    "status": "DIAGNOSTICS_UNAVAILABLE",
+                    "error_class": type(diagnostics_error).__name__,
+                    "sanitized_message": _safe_text(diagnostics_error),
+                }
+            try:
+                payload = self.failure_payload(primary, diagnostics)
                 self.failure_path.parent.mkdir(parents=True, exist_ok=True)
                 self.failure_path.write_text(
                     json.dumps(payload, sort_keys=True, indent=2), encoding="utf-8"

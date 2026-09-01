@@ -30,8 +30,16 @@ from domain.quantitative.finding import QuantitativeFindingGenerationResult
 from domain.quantitative.insight import QuantitativeInsightGenerationResult
 from domain.quantitative.analysis_execution import QuantitativeAnalysisExecutionManifest
 from domain.quantitative.finding_lineage import DesignAwareFindingInputAuthority, QuantitativeFindingCoverageManifest, QuantitativeFindingDesignLineageManifest
-from domain.quantitative.insight_lineage import DesignAwareInsightInputAuthority, QuantitativeInsightCoverageManifest, QuantitativeInsightDesignLineageManifest
-from domain.quantitative.report_lineage import DesignAwareReportInputAuthority
+from domain.quantitative.insight_lineage import (
+    DesignAwareInsightControlledAbsence,
+    DesignAwareInsightInputAuthority,
+    QuantitativeInsightCoverageManifest,
+    QuantitativeInsightDesignLineageManifest,
+)
+from domain.quantitative.report_lineage import (
+    DesignAwareReportControlledAbsence,
+    DesignAwareReportInputAuthority,
+)
 from domain.quantitative.quality import (
     CleaningDecisionSet, DatasetQualityState, QualityControlRun, QuestionnaireSnapshot,
 )
@@ -331,11 +339,35 @@ class RealQuantitativeStageService:
         return state
     def _quant_insights(self, project_id, run_id, state):
         generated = self._load(state, "finding_generation_record_id", project_id, QuantitativeFindingGenerationResult)
+        mode = state.get("analysis_execution_mode", "DATASET_ONLY_EXPLORATORY_EXECUTION")
         if not generated.accepted_findings:
+            if mode == "DESIGN_AWARE_EXECUTION":
+                if self.insight_lineage is None:
+                    raise QuantitativeWorkflowError(
+                        "design-aware RF authority composition is unavailable"
+                    )
+                re_input = self._load(
+                    state, "finding_input_authority_record_id", project_id,
+                    DesignAwareFindingInputAuthority,
+                )
+                re_manifest = self._load(
+                    state, "finding_lineage_manifest_record_id", project_id,
+                    QuantitativeFindingDesignLineageManifest,
+                )
+                re_coverage = self._load(
+                    state, "finding_coverage_manifest_record_id", project_id,
+                    QuantitativeFindingCoverageManifest,
+                )
+                absence = self.insight_lineage.design_aware_controlled_absence(
+                    project_id=project_id, run_id=run_id,
+                    generation_record_id=state["finding_generation_record_id"],
+                    generation=generated, re_input=re_input,
+                    re_manifest=re_manifest, re_coverage=re_coverage,
+                )
+                state["insight_controlled_absence_record_id"] = absence.absence_id
             state["zero_supported_findings"] = "true"
             state["insight_generation_status"] = "SKIPPED_NO_SUPPORTED_FINDINGS"
             return state
-        mode = state.get("analysis_execution_mode", "DATASET_ONLY_EXPLORATORY_EXECUTION")
         if mode == "DESIGN_AWARE_EXECUTION":
             return self._design_aware_insights(project_id, run_id, state, generated)
         if mode != "DATASET_ONLY_EXPLORATORY_EXECUTION":
@@ -402,6 +434,34 @@ class RealQuantitativeStageService:
         return state
     def _quant_report(self, project_id, run_id, state):
         if state.get("zero_supported_findings") == "true":
+            mode = state.get(
+                "analysis_execution_mode",
+                "DATASET_ONLY_EXPLORATORY_EXECUTION",
+            )
+            if mode == "DESIGN_AWARE_EXECUTION":
+                if self.report_lineage is None:
+                    raise QuantitativeWorkflowError(
+                        "design-aware RG authority composition is unavailable"
+                    )
+                generated = self._load(
+                    state, "finding_generation_record_id", project_id,
+                    QuantitativeFindingGenerationResult,
+                )
+                rf_absence = self._load(
+                    state, "insight_controlled_absence_record_id", project_id,
+                    DesignAwareInsightControlledAbsence,
+                )
+                re_manifest = self._load(
+                    state, "finding_lineage_manifest_record_id", project_id,
+                    QuantitativeFindingDesignLineageManifest,
+                )
+                absence = self.report_lineage.design_aware_controlled_absence(
+                    project_id=project_id, run_id=run_id,
+                    generation_record_id=state["finding_generation_record_id"],
+                    generation=generated, rf_absence=rf_absence,
+                    re_manifest=re_manifest,
+                )
+                state["report_controlled_absence_record_id"] = absence.absence_id
             state["report_composition_status"] = "SKIPPED_NO_SUPPORTED_FINDINGS"
             return state
         if state.get("zero_supported_insights") == "true":
@@ -634,6 +694,30 @@ class RealQuantitativeStageService:
         )
         if findings.accepted_findings:
             raise QuantitativeWorkflowError("zero-Finding terminal conflicts with accepted authority")
+        if state.get("analysis_execution_mode") == "DESIGN_AWARE_EXECUTION":
+            rf_absence = self._load(
+                state, "insight_controlled_absence_record_id", project_id,
+                DesignAwareInsightControlledAbsence,
+            )
+            rg_absence = self._load(
+                state, "report_controlled_absence_record_id", project_id,
+                DesignAwareReportControlledAbsence,
+            )
+            if (
+                rf_absence.finding_generation_record_id
+                != state["finding_generation_record_id"]
+                or rf_absence.finding_generation_fingerprint
+                != findings.generation_fingerprint
+                or rg_absence.finding_generation_record_id
+                != state["finding_generation_record_id"]
+                or rg_absence.finding_generation_fingerprint
+                != findings.generation_fingerprint
+                or rg_absence.rf_absence_id != rf_absence.absence_id
+                or rg_absence.rf_absence_fingerprint != rf_absence.fingerprint
+            ):
+                raise QuantitativeWorkflowError(
+                    "zero-Finding terminal controlled-absence authority mismatch"
+                )
         result_ids = tuple(
             self.state.load(
                 record_id, project_id=project_id, expected_type=StatisticalResult
