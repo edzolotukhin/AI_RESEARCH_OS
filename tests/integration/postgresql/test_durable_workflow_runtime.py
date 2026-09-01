@@ -123,7 +123,11 @@ class PostgreSQLDurableWorkflowRuntimeTests(PostgreSQLIntegrationTestCase):
         reloaded = service._workflow_service.get_workflow_run("pg-run-success")
         self.assertEqual(reloaded.status, WorkflowStatus.COMPLETED)
         results = service._workflow_service.get_task_results("pg-run-success")
-        self.assertEqual(set(results), {"task-a", "task-b", "_run_usage_summary", "_quantitative_semantic_call_ledger"})
+        task_a = next(task for task in context.workflow_run.tasks if task.definition_id == "task-a")
+        task_b = next(task for task in context.workflow_run.tasks if task.definition_id == "task-b")
+        self.assertEqual(set(results), {task_a.id, task_b.id, "_run_usage_summary", "_quantitative_semantic_call_ledger"})
+        self.assertEqual(results[task_a.id]["definition_id"], "task-a")
+        self.assertEqual(results[task_b.id]["definition_id"], "task-b")
         self.assertIn("_run_usage_summary", results)
         usage = results["_run_usage_summary"]
         self.assertIsInstance(usage, dict)
