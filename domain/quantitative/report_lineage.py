@@ -164,6 +164,26 @@ class QuantitativeReportDesignLineageManifest:
 
 
 @dataclass(frozen=True)
+class DesignAwareReportNoInsightControlledAbsence:
+    """Typed report omission after an accepted QJ generation yields no Insights."""
+    absence_id: str
+    project_id: str
+    run_id: str
+    insight_generation_record_id: str
+    insight_generation_fingerprint: str
+    rf_lineage_manifest_id: str
+    rf_lineage_manifest_fingerprint: str
+    rf_coverage_id: str
+    rf_coverage_fingerprint: str
+    rd_execution_manifest_id: str
+    rd_execution_manifest_fingerprint: str
+    rc_plan_id: str
+    rc_plan_fingerprint: str
+    reason: DesignAwareReportAbsenceReason
+    method_version: str
+    fingerprint: str
+
+@dataclass(frozen=True)
 class DatasetOnlyReportLineageAbsence:
     absence_id: str
     project_id: str
@@ -176,6 +196,7 @@ class DatasetOnlyReportLineageAbsence:
 
 class DesignAwareReportAbsenceReason(StrEnum):
     NO_SUPPORTED_FINDINGS = "NO_SUPPORTED_FINDINGS"
+    NO_SUPPORTED_INSIGHTS = "NO_SUPPORTED_INSIGHTS"
 
 
 @dataclass(frozen=True)

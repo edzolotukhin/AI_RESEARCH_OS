@@ -38,6 +38,7 @@ from domain.quantitative.insight_lineage import (
 )
 from domain.quantitative.report_lineage import (
     DesignAwareReportControlledAbsence,
+    DesignAwareReportNoInsightControlledAbsence,
     DesignAwareReportInputAuthority,
 )
 from domain.quantitative.quality import (
@@ -465,6 +466,34 @@ class RealQuantitativeStageService:
             state["report_composition_status"] = "SKIPPED_NO_SUPPORTED_FINDINGS"
             return state
         if state.get("zero_supported_insights") == "true":
+            mode = state.get(
+                "analysis_execution_mode",
+                "DATASET_ONLY_EXPLORATORY_EXECUTION",
+            )
+            if mode == "DESIGN_AWARE_EXECUTION":
+                if self.report_lineage is None:
+                    raise QuantitativeWorkflowError(
+                        "design-aware RG authority composition is unavailable"
+                    )
+                generation = self._load(
+                    state, "insight_generation_record_id", project_id,
+                    QuantitativeInsightGenerationResult,
+                )
+                rf_manifest = self._load(
+                    state, "insight_lineage_manifest_record_id", project_id,
+                    QuantitativeInsightDesignLineageManifest,
+                )
+                rf_coverage = self._load(
+                    state, "insight_coverage_manifest_record_id", project_id,
+                    QuantitativeInsightCoverageManifest,
+                )
+                absence = self.report_lineage.design_aware_no_insight_controlled_absence(
+                    project_id=project_id, run_id=run_id,
+                    generation_record_id=state["insight_generation_record_id"],
+                    generation=generation, rf_manifest=rf_manifest,
+                    rf_coverage=rf_coverage,
+                )
+                state["report_controlled_absence_record_id"] = absence.absence_id
             state["report_composition_status"] = "SKIPPED_NO_SUPPORTED_INSIGHTS"
             return state
         findings = self._load(state, "finding_generation_record_id", project_id, QuantitativeFindingGenerationResult)
@@ -701,7 +730,7 @@ class RealQuantitativeStageService:
             )
             rg_absence = self._load(
                 state, "report_controlled_absence_record_id", project_id,
-                DesignAwareReportControlledAbsence,
+                (DesignAwareReportControlledAbsence, DesignAwareReportNoInsightControlledAbsence),
             )
             if (
                 rf_absence.finding_generation_record_id

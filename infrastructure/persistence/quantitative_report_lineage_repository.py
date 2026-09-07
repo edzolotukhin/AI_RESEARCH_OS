@@ -2,6 +2,7 @@ from application.quantitative.state_persistence import QuantitativePersistenceEr
 from domain.quantitative.report_lineage import (
     DatasetOnlyReportLineageAbsence,
     DesignAwareReportControlledAbsence,
+    DesignAwareReportNoInsightControlledAbsence,
     DesignAwareReportInputAuthority,
     QuantitativeReportCoverageManifest,
     QuantitativeReportDesignLineageManifest,
@@ -48,5 +49,10 @@ class QLQuantitativeReportLineageRepository:
         return matches[0] if matches else None
 
     def save_dataset_only_absence(self, value): return self._save(value, value.absence_id, DatasetOnlyReportLineageAbsence)
-    def save_controlled_absence(self, value): return self._save(value, value.absence_id, DesignAwareReportControlledAbsence)
-    def get_controlled_absence(self, absence_id, *, project_id): return self._get(absence_id, project_id, DesignAwareReportControlledAbsence)
+    _CONTROLLED_ABSENCE_TYPES = (
+        DesignAwareReportControlledAbsence,
+        DesignAwareReportNoInsightControlledAbsence,
+    )
+
+    def save_controlled_absence(self, value): return self._save(value, value.absence_id, self._CONTROLLED_ABSENCE_TYPES)
+    def get_controlled_absence(self, absence_id, *, project_id): return self._get(absence_id, project_id, self._CONTROLLED_ABSENCE_TYPES)

@@ -23,6 +23,7 @@ from infrastructure.persistence.quantitative_report_lineage_repository import (
 )
 from tests.application.quantitative.test_property_rf_insight_lineage import (
     PropertyRFInsightLineageTests,
+    RecordingInsightGenerator,
 )
 
 
@@ -242,5 +243,27 @@ class Q213DesignAwareControlledAbsenceTests(unittest.TestCase):
         self.assertNotIn("report_composition_record_id", state)
 
 
+    def _zero_insight_authority(self):
+        authority = self.fixture.rf_repository.save_input_authority(self.fixture.authority())
+        generation = self.fixture.insight_service(RecordingInsightGenerator(empty=True)).generate(
+            findings=self.fixture.findings.accepted_findings,
+            post_validator=self.fixture.rf.compatibility_validator(authority),
+        )
+        self.assertEqual(generation.accepted_insights, ())
+        record_id = f"{self.fixture.run}:insight-generation:{generation.generation_fingerprint}"
+        self.fixture.state.persist(generation, record_id=record_id, project_id=self.fixture.project, run_id=self.fixture.run)
+        manifest, coverage = self.fixture.rf.finalize(authority=authority, generation_record_id=record_id, generation=generation)
+        return generation, record_id, manifest, coverage
+
+    def test_typed_rg_no_insight_absence_is_exact_and_fail_closed(self):
+        generation, record_id, rf_manifest, rf_coverage = self._zero_insight_authority()
+        kwargs = dict(project_id=self.fixture.project, run_id=self.fixture.run, generation_record_id=record_id, generation=generation, rf_manifest=rf_manifest, rf_coverage=rf_coverage)
+        first = self.rg.design_aware_no_insight_controlled_absence(**kwargs)
+        self.assertEqual(first, self.rg.design_aware_no_insight_controlled_absence(**kwargs))
+        self.assertEqual(DesignAwareReportAbsenceReason.NO_SUPPORTED_INSIGHTS, first.reason)
+        for change in ({"generation_record_id": "wrong"}, {"rf_coverage": replace(rf_coverage, fingerprint="wrong")}):
+            with self.subTest(change=change), self.assertRaisesRegex(QuantitativeReportLineageError, "upstream mismatch"):
+                self.rg.design_aware_no_insight_controlled_absence(**(kwargs | change))
+        self.assertNotIn("respondent", repr(first).lower())
 if __name__ == "__main__":
     unittest.main()

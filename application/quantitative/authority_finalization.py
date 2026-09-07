@@ -15,7 +15,10 @@ from domain.quantitative.authority_finalization import (
 )
 from domain.quantitative.dataset import CodebookVersion, DatasetVersion
 from domain.quantitative.insight_lineage import DesignAwareInsightControlledAbsence
-from domain.quantitative.report_lineage import DesignAwareReportControlledAbsence
+from domain.quantitative.report_lineage import (
+    DesignAwareReportControlledAbsence,
+    DesignAwareReportNoInsightControlledAbsence,
+)
 from domain.quantitative.research_question_coverage import QuantitativeAuthorityReference
 from domain.quantitative.workflow import QuantitativeTerminalOutcome, QuantitativeTerminalResult
 from domain.quantitative.research_design_authority import StudyWeightingMode
@@ -410,6 +413,31 @@ class QuantitativeAuthorityFinalizationService:
                     raise QuantitativeAuthorityFinalizationError(
                         "contradictory RG controlled-absence authority"
                     )
+            if isinstance(value, DesignAwareReportNoInsightControlledAbsence):
+                rf_lineage = tuple(
+                    item for item in request.insight_authority
+                    if item.authority_kind == "RF_LINEAGE"
+                )
+                rf_coverage = tuple(
+                    item for item in request.insight_authority
+                    if item.authority_kind == "RF_COVERAGE"
+                )
+                if (
+                    ref.authority_kind != "RG_NO_INSIGHT_CONTROLLED_ABSENCE"
+                    or authority_fingerprint(value) != ref.authority_fingerprint
+                    or terminal.terminal_outcome
+                    is not QuantitativeTerminalOutcome.COMPLETED_WITH_NO_SUPPORTED_INSIGHTS
+                    or request.report_authority
+                    or len(rf_lineage) != 1
+                    or len(rf_coverage) != 1
+                    or (value.rf_lineage_manifest_id, value.rf_lineage_manifest_fingerprint)
+                    != (rf_lineage[0].authority_id, rf_lineage[0].authority_fingerprint)
+                    or (value.rf_coverage_id, value.rf_coverage_fingerprint)
+                    != (rf_coverage[0].authority_id, rf_coverage[0].authority_fingerprint)
+                ):
+                    raise QuantitativeAuthorityFinalizationError(
+                        "contradictory RG no-Insight controlled-absence authority"
+                    )
         if not request.finding_authority:
             raise QuantitativeAuthorityFinalizationError("required RE authority is missing")
         if terminal.terminal_outcome is QuantitativeTerminalOutcome.COMPLETED:
@@ -419,7 +447,11 @@ class QuantitativeAuthorityFinalizationService:
             if request.insight_authority or request.report_authority or not (has_rf_absence and has_rg_absence):
                 raise QuantitativeAuthorityFinalizationError("invalid controlled no-Finding authority")
         elif terminal.terminal_outcome is QuantitativeTerminalOutcome.COMPLETED_WITH_NO_SUPPORTED_INSIGHTS:
-            if request.report_authority or not (request.insight_authority or has_rf_absence) or not has_rg_absence:
+            has_rg_no_insight_absence = any(
+                item.authority_kind == "RG_NO_INSIGHT_CONTROLLED_ABSENCE"
+                for item in request.controlled_absences
+            )
+            if request.report_authority or not request.insight_authority or has_rf_absence or not has_rg_no_insight_absence:
                 raise QuantitativeAuthorityFinalizationError("invalid controlled no-Insight authority")
         elif terminal.terminal_outcome is QuantitativeTerminalOutcome.COMPLETED_WITH_NO_SUPPORTED_REPORT:
             if not request.insight_authority or (not request.report_authority and not has_rg_absence):
