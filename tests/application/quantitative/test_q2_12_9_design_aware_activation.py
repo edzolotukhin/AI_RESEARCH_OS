@@ -5,14 +5,18 @@ from unittest.mock import Mock
 
 from application.config import ApplicationConfig, ApplicationOverrides
 from application.composition_root import create_application_container
+from application.quantitative.execution_diagnostics import validate_diagnostics
 from application.quantitative.stage_service_factory import QuantitativeStageServiceFactory
-from application.quantitative.ui_service import QuantitativeUiService
+from application.quantitative.ui_service import QuantitativeUiError, QuantitativeUiService
 from application.quantitative.workflow import (
     QUANTITATIVE_SAFE_STATE_KEY,
     QuantitativeApprovalService,
     QuantitativeWorkflowError,
     build_quantitative_workflow_template,
 )
+from domain.factories.task_factory import TaskFactory
+from domain.factories.workflow_run_factory import WorkflowRunFactory
+from domain.workflow_status import WorkflowStatus
 from domain.quantitative.quality import QualityControlRun
 from domain.quantitative.weighting import (
     WeightSet,
@@ -386,6 +390,49 @@ class Q2129DesignAwareActivationTests(unittest.TestCase):
         self.assertEqual(workflows.results, {})
         durable.activate_paused_run.assert_not_called()
 
+    def test_sync_activation_durably_fails_if_stage_composition_fails(self):
+        def prepare(*, project_id, run_id, safe_state):
+            return dict(
+                safe_state,
+                analysis_execution_mode="DESIGN_AWARE_EXECUTION",
+                analysis_plan_version_id="rc-approved-v1",
+                analysis_plan_fingerprint="rc-fingerprint",
+            )
+
+        ui, workflows, factory, _ = self._ui(prepare=prepare)
+        run = WorkflowRunFactory(TaskFactory()).create(
+            build_quantitative_workflow_template(),
+            run_id="study",
+            project_id="study",
+        )
+        run.ready(); run.start(); run.pause()
+        workflows.run = run
+        ui.durable_workflow_service = None
+        factory.create.side_effect = RuntimeError("composition is unavailable")
+
+        with self.assertRaisesRegex(QuantitativeUiError, "failed safely"):
+            ui.activate_design_aware_workflow("study", owner_id="owner")
+
+        reloaded = workflows.get_workflow_run("study")
+        self.assertIs(reloaded, run)
+        self.assertEqual(reloaded.status, WorkflowStatus.FAILED)
+        statuses = {task.definition_id: task.status.value for task in reloaded.tasks}
+        self.assertEqual("completed", statuses["quant_import"])
+        self.assertEqual("completed", statuses["quant_qc"])
+        self.assertEqual("completed", statuses["quant_weightset"])
+        results = workflows.get_task_results("study")
+        self.assertEqual("GENERATION_FAILED", results["quantitative_generation_status"])
+        diagnostic = results["_quantitative_failure_diagnostic"]
+        self.assertEqual("ACTIVATION", diagnostic["stage"])
+        self.assertEqual("study", diagnostic["project_id"])
+        self.assertEqual("study", diagnostic["run_id"])
+        self.assertEqual(
+            "ACTIVATION",
+            validate_diagnostics(
+                results, project_id="study", run_id="study"
+            )["failure"]["stage"],
+        )
+        factory.create.assert_called_once()
     def test_dataset_only_resume_persists_explicit_mode_without_rc(self):
         ui, workflows, factory, durable = self._ui(prepare=lambda **kwargs: kwargs)
         result = ui.resume_workflow("study", owner_id="owner")

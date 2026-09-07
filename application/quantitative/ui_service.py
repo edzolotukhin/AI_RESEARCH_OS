@@ -27,6 +27,7 @@ from application.quantitative.workflow import (
 )
 from application.quantitative.execution_diagnostics import (
     FAILURE_DIAGNOSTIC_KEY,
+    build_activation_failure_diagnostic,
     validate_diagnostics,
 )
 from domain.quantitative.dataset import CodebookVersion, DatasetFormat, DatasetVersion
@@ -599,26 +600,18 @@ class QuantitativeUiService:
                 skipped_task_definition_ids=skipped_weighting,
             )
             return self._save(replace(study, state="ANALYZING"))
-        run.resume()
-        for task in run.tasks:
-            if task.definition_id not in setup_ids:
-                continue
-            if not task.is_terminal:
-                task.ready(); task.start(); task.complete()
-        if weighting_mode == "WEIGHTED":
-            for task in run.tasks:
-                if task.definition_id == "quant_weightset" and not task.is_terminal:
-                    task.ready(); task.start(); task.complete()
-        else:
-            for task in run.tasks:
-                if task.definition_id in {"quant_weightset", "quant_weight_approval"} and not task.is_terminal:
-                    run.skip_task_as_satisfied_dependency(task)
-        service = self.stage_service_factory.create(
-            project_id=study.project_id,
-            run_id=study.run_id,
-            safe_state=safe,
+        self._activate_in_process_run(
+            run,
+            safe=safe,
+            setup_ids=setup_ids,
+            weighting_mode=weighting_mode,
         )
         try:
+            service = self.stage_service_factory.create(
+                project_id=study.project_id,
+                run_id=study.run_id,
+                safe_state=safe,
+            )
             context = self._run_engine(study, run, service, safe)
             if not run.is_terminal or run.status.value != "completed":
                 raise QuantitativeUiError("Quantitative workflow did not reach a terminal result")
@@ -658,6 +651,24 @@ class QuantitativeUiService:
                 f"Quantitative workflow failed safely{detail}"
             ) from exc.error
         except Exception as exc:
+            if not run.is_terminal and run.status is WorkflowStatus.RUNNING:
+                run.fail()
+                existing_results = self.workflows.get_task_results(run.id)
+                existing_results.update({
+                    QUANTITATIVE_SAFE_STATE_KEY: safe,
+                    FAILURE_DIAGNOSTIC_KEY: build_activation_failure_diagnostic(
+                        project_id=study.project_id,
+                        run_id=run.id,
+                        error=exc,
+                        safe_state=safe,
+                    ),
+                    "quantitative_generation_status": "GENERATION_FAILED",
+                })
+                self.workflows.save_workflow_run(
+                    run,
+                    expected_version=self.workflows.get_workflow_run_version(run.id),
+                    task_results=existing_results,
+                )
             raise QuantitativeUiError("Quantitative workflow failed safely") from exc
         return self._save(replace(study, state="COMPLETED", terminal_result_record_id=terminal_record_id))
 
@@ -736,6 +747,34 @@ class QuantitativeUiService:
         )
         return safe
 
+    def _activate_in_process_run(
+        self,
+        run,
+        *,
+        safe: Mapping[str, str],
+        setup_ids: set[str],
+        weighting_mode: str,
+    ) -> None:
+        """Durably record the canonical activation before constructing stages."""
+        run.resume()
+        for task in run.tasks:
+            if task.definition_id in setup_ids and not task.is_terminal:
+                task.ready(); task.start(); task.complete()
+        if weighting_mode == "WEIGHTED":
+            for task in run.tasks:
+                if task.definition_id == "quant_weightset" and not task.is_terminal:
+                    task.ready(); task.start(); task.complete()
+        else:
+            for task in run.tasks:
+                if task.definition_id in {"quant_weightset", "quant_weight_approval"} and not task.is_terminal:
+                    run.skip_task_as_satisfied_dependency(task)
+        task_results = self.workflows.get_task_results(run.id)
+        task_results[QUANTITATIVE_SAFE_STATE_KEY] = dict(safe)
+        self.workflows.save_workflow_run(
+            run,
+            expected_version=self.workflows.get_workflow_run_version(run.id),
+            task_results=task_results,
+        )
     def rearm_failed_run(
         self,
         study_id: str,

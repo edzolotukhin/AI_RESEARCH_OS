@@ -90,6 +90,41 @@ def _safe_provider_error(error: BaseException) -> dict[str, Any] | None:
     return metadata
 
 
+def build_activation_failure_diagnostic(
+    *,
+    project_id: str,
+    run_id: str,
+    error: BaseException,
+    safe_state: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Create a bounded durable diagnostic for pre-engine activation failures."""
+    category, message = _safe_failure(error)
+    last_authority = None
+    for key in (
+        "analysis_plan_version_id", "qc_approval_id", "codebook_record_id",
+        "dataset_record_id",
+    ):
+        value = safe_state.get(key)
+        if isinstance(value, str) and value:
+            last_authority = {"key": key, "record_id": value}
+            break
+    payload = {
+        "project_id": project_id,
+        "run_id": run_id,
+        "task_id": None,
+        "stage_id": "quantitative_activation",
+        "stage": "ACTIVATION",
+        "attempt_number": 1,
+        "status": "FAILED",
+        "failure_category": category,
+        "failure_message": message,
+        "terminal_result_persisted": False,
+        "last_successful_authority": last_authority,
+        "method_version": LEDGER_VERSION,
+    }
+    payload["fingerprint"] = _digest(payload)
+    return payload
+
 def build_stage_failure_diagnostic(context, error: BaseException) -> dict[str, Any]:
     task = context.current_task
     definition_id = task.definition_id if task is not None else "unknown"
