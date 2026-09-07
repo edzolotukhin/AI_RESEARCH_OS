@@ -23,6 +23,7 @@ from domain.quantitative.finding import (
 
 
 PROMPT_VERSION = "QI_FINDING_GENERATION_V3"
+MATERIALITY_METHOD_VERSION = "QI_SELECTOR_MATERIALITY_V1"
 MAX_RESULTS = 100
 MAX_PROMPT_CHARACTERS = 60_000
 MAX_PROPOSALS = 25
@@ -59,13 +60,19 @@ class QuantitativeFindingGenerationService:
         comparisons = self._authoritative_comparisons(comparison_results, results)
         labels = self._safe_text_mapping(display_labels or {}, "display label")
         safe_limitations = tuple(self._safe_text(item, "limitation") for item in limitations)
-        authority_bundle = self._bundle(results, comparisons, labels, safe_limitations)
+        materiality = self._selection_materiality(results)
+        authority_bundle = self._bundle(
+            results, comparisons, labels, safe_limitations,
+        )
         selectable_results = tuple(
-            item for item in results if self._allowed_claim_types(item.statistic_type)
+            item
+            for item in results
+            if item.presentation_eligible and self._allowed_claim_types(item.statistic_type)
         )
         if not selectable_results:
-            raise QuantitativeAnalysisError(
-                "approved result bundle contains no QH-compatible Finding support"
+            return self._empty_generation(
+                authority_bundle=authority_bundle,
+                reason="NO_PRESENTATION_ELIGIBLE_QH_SUPPORT",
             )
         selectable_ids = {item.result_id for item in selectable_results}
         selectable_comparisons = tuple(
@@ -76,7 +83,7 @@ class QuantitativeFindingGenerationService:
         )
         bundle = self._bundle(
             selectable_results, selectable_comparisons, labels, safe_limitations,
-            selector_contract=True,
+            selector_contract=True, materiality=materiality,
         )
         bundle_fingerprint = canonical_digest(
             authority_bundle, digest_provider=self._digest
@@ -90,6 +97,13 @@ class QuantitativeFindingGenerationService:
         # QI V1 permits exactly one proposal-generation pass and no repair call.
         raw_output = self._generator.generate(prompt)
         raw_proposals = self._proposal_list(raw_output)
+        if not raw_proposals and any(
+            materiality[item.result_id]["is_dominant"]
+            for item in selectable_results
+        ):
+            raise QuantitativeAnalysisError(
+                "QI selector abstained despite application-ranked dominant eligible result"
+            )
         available_results = {item.result_id: item for item in selectable_results}
         available_comparisons = {
             item.comparison_result_id: item for item in selectable_comparisons
@@ -166,6 +180,45 @@ class QuantitativeFindingGenerationService:
             generation_fingerprint=generation_fingerprint,
         )
 
+    def _empty_generation(self, *, authority_bundle, reason):
+        bundle_fingerprint = canonical_digest(
+            authority_bundle, digest_provider=self._digest
+        )
+        prompt_fingerprint = canonical_digest(
+            {"version": PROMPT_VERSION, "abstention": reason},
+            digest_provider=self._digest,
+        )
+        summary = {"proposed": 0, "parsed": 0, "accepted": 0, "rejected": 0}
+        generation_fingerprint = canonical_digest(
+            {
+                "bundle": bundle_fingerprint,
+                "generator": self._generator.identity,
+                "prompt": prompt_fingerprint,
+                "accepted": (),
+                "rejected": (),
+                "summary": summary,
+                "abstention": reason,
+                "version": PROMPT_VERSION,
+            },
+            digest_provider=self._digest,
+        )
+        return QuantitativeFindingGenerationResult(
+            generation_id=str(uuid5(NAMESPACE_URL, f"qi-generation:{generation_fingerprint}")),
+            input_result_bundle_fingerprint=bundle_fingerprint,
+            generator_identity=self._generator.identity,
+            prompt_version=PROMPT_VERSION,
+            prompt_fingerprint=prompt_fingerprint,
+            proposed_findings=(),
+            accepted_findings=(),
+            rejected_findings=(),
+            generation_metadata={
+                "generation_passes": 0,
+                "repair_attempts": 0,
+                "abstention_reason": reason,
+            },
+            acceptance_summary=summary,
+            generation_fingerprint=generation_fingerprint,
+        )
     @staticmethod
     def _authoritative_results(results):
         if not results or len(results) > MAX_RESULTS:
@@ -191,11 +244,22 @@ class QuantitativeFindingGenerationService:
         return tuple(comparisons)
 
     def _bundle(
-        self, results, comparisons, labels, limitations, *, selector_contract=False
+        self, results, comparisons, labels, limitations, *, selector_contract=False,
+        materiality=None,
     ):
+        expected_materiality = self._selection_materiality(results)
+        if materiality is None:
+            materiality = expected_materiality
+        if any(
+            materiality.get(item.result_id) != expected_materiality[item.result_id]
+            for item in results
+        ):
+            raise QuantitativeAnalysisError(
+                "selection materiality metadata is inconsistent with authoritative results"
+            )
         return {
             "statistical_results": tuple(
-                self._selector_result_projection(item, labels)
+                self._selector_result_projection(item, labels, materiality[item.result_id])
                 if selector_contract
                 else self._result_projection(item, labels)
                 for item in results
@@ -236,7 +300,7 @@ class QuantitativeFindingGenerationService:
         }
 
     @staticmethod
-    def _selector_result_projection(item, labels):
+    def _selector_result_projection(item, labels, selection_materiality):
         return {
             "result_id": item.result_id,
             "display_label": labels.get(item.result_id, item.statistic_type),
@@ -255,8 +319,68 @@ class QuantitativeFindingGenerationService:
             "weighting_status": item.weighting_status,
             "unweighted_n": item.unweighted_n,
             "presentation_eligible": item.presentation_eligible,
+            "selection_materiality": selection_materiality,
         }
 
+    def _selection_materiality(self, results):
+        ranked = {}
+        distributions = {}
+        for item in results:
+            if not item.presentation_eligible or item.statistic_type not in {
+                "VALID_PERCENTAGE", "WEIGHTED_PERCENTAGE", "CROSS_TAB_COLUMN_PERCENTAGE",
+            }:
+                continue
+            key = canonical_digest(
+                {
+                    "analysis_specification_id": item.analysis_specification_id,
+                    "analysis_specification_fingerprint": item.analysis_specification_fingerprint,
+                    "variable_id": item.variable_id,
+                    "variable_fingerprint": item.variable_fingerprint,
+                    "statistic_type": item.statistic_type,
+                    "filter_definition": item.filter_definition,
+                    "base_definition": item.base_definition,
+                    "weighting_status": item.weighting_status,
+                    "weight_set_fingerprint": item.weight_set_fingerprint,
+                    "row_variable_id": item.row_variable_id,
+                    "row_variable_fingerprint": item.row_variable_fingerprint,
+                    "column_variable_id": item.column_variable_id,
+                    "column_variable_fingerprint": item.column_variable_fingerprint,
+                    "column_category_value": canonical_scalar(item.column_category_value),
+                },
+                digest_provider=self._digest,
+            )
+            try:
+                value = Decimal(str(item.value))
+            except (InvalidOperation, ValueError) as exc:
+                raise QuantitativeAnalysisError("ranked percentage result has invalid value") from exc
+            if not value.is_finite():
+                raise QuantitativeAnalysisError("ranked percentage result has invalid value")
+            distributions.setdefault(key, []).append((item, value))
+        for entries in distributions.values():
+            values = sorted({value for _, value in entries}, reverse=True)
+            for item, value in entries:
+                ranked[item.result_id] = {
+                    "method_version": MATERIALITY_METHOD_VERSION,
+                    "kind": "TOP_CATEGORICAL_PERCENTAGE",
+                    "rank_within_distribution": values.index(value) + 1,
+                    "tied_result_count": sum(1 for _, other in entries if other == value),
+                    "eligible_distribution_size": len(entries),
+                    "is_dominant": value == values[0],
+                }
+        return {
+            item.result_id: ranked.get(
+                item.result_id,
+                {
+                    "method_version": MATERIALITY_METHOD_VERSION,
+                    "kind": "NOT_RANKED",
+                    "rank_within_distribution": None,
+                    "tied_result_count": 0,
+                    "eligible_distribution_size": 0,
+                    "is_dominant": False,
+                },
+            )
+            for item in results
+        }
     @staticmethod
     def _comparison_projection(item):
         return {
@@ -305,9 +429,11 @@ class QuantitativeFindingGenerationService:
             "comparison result with supports_significance_wording=true. Distinguish observed differences "
             "from statistically significant differences. Preserve filters, bases, categories, and weighted/"
             "unweighted context exactly. Prefer analytically useful findings over exhaustive restatement and "
-            "include a limitation_note when supplied bases or context warrant caution. Return one JSON object "
-            "with a proposals array and only QH claim types. No respondent-level facts or identifiers exist in "
-            "this context."
+            "include a limitation_note when supplied bases or context warrant caution. selection_materiality is "
+            "application-owned: never return it. If any supplied result has is_dominant=true, select at least one "
+            "such result; an empty proposals array is allowed only when no supplied result is dominant. Return one "
+            "JSON object with a proposals array and only QH claim types. No respondent-level facts or identifiers "
+            "exist in this context."
         )
         schema = {
             "reference_contract": {
@@ -345,6 +471,7 @@ class QuantitativeFindingGenerationService:
         forbidden_design_fields = {
             "planned_analysis_id", "planned_comparison_id", "objective_ids",
             "research_question_ids", "analytical_requirement_ids",
+            "selection_materiality", "rank_within_distribution", "is_dominant",
         }
         if forbidden_design_fields.intersection(raw):
             raise QuantitativeAnalysisError("proposal must not supply design lineage")
