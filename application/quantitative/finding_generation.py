@@ -64,23 +64,30 @@ class QuantitativeFindingGenerationService:
         authority_bundle = self._bundle(
             results, comparisons, labels, safe_limitations,
         )
-        selectable_results = tuple(
+        eligible_results = tuple(
             item
             for item in results
             if item.presentation_eligible and self._allowed_claim_types(item.statistic_type)
         )
-        if not selectable_results:
+        eligible_ids = {item.result_id for item in eligible_results}
+        selectable_comparisons = tuple(
+            item
+            for item in comparisons
+            if item.group_a_result_id in {result.result_id for result in results}
+            and item.group_b_result_id in {result.result_id for result in results}
+        )
+        comparison_precursor_ids = {
+            result_id
+            for item in selectable_comparisons
+            for result_id in (item.group_a_result_id, item.group_b_result_id)
+        }
+        selectable_ids = eligible_ids | comparison_precursor_ids
+        selectable_results = tuple(item for item in results if item.result_id in selectable_ids)
+        if not eligible_results and not selectable_comparisons:
             return self._empty_generation(
                 authority_bundle=authority_bundle,
                 reason="NO_PRESENTATION_ELIGIBLE_QH_SUPPORT",
             )
-        selectable_ids = {item.result_id for item in selectable_results}
-        selectable_comparisons = tuple(
-            item
-            for item in comparisons
-            if item.group_a_result_id in selectable_ids
-            and item.group_b_result_id in selectable_ids
-        )
         bundle = self._bundle(
             selectable_results, selectable_comparisons, labels, safe_limitations,
             selector_contract=True, materiality=materiality,
@@ -569,6 +576,13 @@ class QuantitativeFindingGenerationService:
 
     @classmethod
     def _validate_claim_compatibility(cls, claim_type, results):
+        if claim_type not in {
+            QuantitativeClaimType.DESCRIPTIVE_COMPARISON,
+            QuantitativeClaimType.SIGNIFICANT_COMPARISON,
+        } and any(not item.presentation_eligible for item in results):
+            raise QuantitativeAnalysisError(
+                "ineligible result cannot support a standalone Finding"
+            )
         if claim_type in {
             QuantitativeClaimType.DESCRIPTIVE_COMPARISON,
             QuantitativeClaimType.SIGNIFICANT_COMPARISON,
