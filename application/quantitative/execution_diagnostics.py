@@ -18,6 +18,11 @@ LEDGER_VERSION = "q2-13c-1"
 SEMANTIC_STAGES = {"quant_findings": "QI", "quant_insights": "QJ", "quant_report": "QK"}
 STAGE_NAMES = {"quant_analysis": "RD", **SEMANTIC_STAGES}
 CALL_LIMITS = {"QI": 1, "QJ": 1, "QK": 1}
+_STRUCTURED_FAILURE_CODES = {
+    "INVALID_JSON",
+    "TOP_LEVEL_NOT_OBJECT",
+    "VALIDATOR_EXCEPTION",
+}
 
 
 class QuantitativeExecutionDiagnosticsError(RuntimeError):
@@ -89,6 +94,18 @@ def _safe_provider_error(error: BaseException) -> dict[str, Any] | None:
         return None
     return metadata
 
+
+def _safe_structured_failure(error: BaseException) -> dict[str, Any] | None:
+    """Preserve only bounded parser-state diagnostics, never provider content."""
+    code = getattr(error, "structured_failure_code", None)
+    if code not in _STRUCTURED_FAILURE_CODES:
+        return None
+    payload: dict[str, Any] = {"code": code}
+    for source, target in (("validation_line", "line"), ("validation_column", "column")):
+        value = getattr(error, source, None)
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            payload[target] = value
+    return payload
 
 def build_activation_failure_diagnostic(
     *,
@@ -223,6 +240,9 @@ class SemanticCallRecorder:
         provider_error = _safe_provider_error(error)
         if provider_error is not None:
             changes["provider_error_metadata"] = provider_error
+        structured_failure = _safe_structured_failure(error)
+        if structured_failure is not None:
+            changes["structured_failure"] = structured_failure
         self._transition(
             call_id,
             "FAILED_AFTER_DISPATCH" if after_dispatch else "FAILED_BEFORE_DISPATCH",
@@ -356,6 +376,30 @@ def validate_diagnostics(task_results: Mapping[str, Any], *, project_id: str, ru
                 ):
                     raise QuantitativeExecutionDiagnosticsError(
                         "provider error metadata is unsafe"
+                    )
+        structured_failure = item.get("structured_failure")
+        if structured_failure is not None:
+            if not isinstance(structured_failure, Mapping):
+                raise QuantitativeExecutionDiagnosticsError(
+                    "structured response failure diagnostic is invalid"
+                )
+            if set(structured_failure) - {"code", "line", "column"}:
+                raise QuantitativeExecutionDiagnosticsError(
+                    "structured response failure diagnostic is invalid"
+                )
+            if structured_failure.get("code") not in _STRUCTURED_FAILURE_CODES:
+                raise QuantitativeExecutionDiagnosticsError(
+                    "structured response failure diagnostic is invalid"
+                )
+            for key in ("line", "column"):
+                value = structured_failure.get(key)
+                if value is not None and (
+                    not isinstance(value, int)
+                    or isinstance(value, bool)
+                    or value < 1
+                ):
+                    raise QuantitativeExecutionDiagnosticsError(
+                        "structured response failure diagnostic is invalid"
                     )
         if item.get("dispatched"):
             counts[stage] += 1

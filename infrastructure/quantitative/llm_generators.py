@@ -15,6 +15,19 @@ from application.quantitative.execution_diagnostics import get_semantic_call_rec
 class QuantitativeGenerationError(RuntimeError):
     """Sanitized failure raised when no structured proposal was generated."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        structured_failure_code: str | None = None,
+        validation_line: int | None = None,
+        validation_column: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.structured_failure_code = structured_failure_code
+        self.validation_line = validation_line
+        self.validation_column = validation_column
+
 
 class _SingleCallQuantitativeGenerator:
     identity = ""
@@ -56,14 +69,24 @@ class _SingleCallQuantitativeGenerator:
 
         recorder = get_semantic_call_recorder()
         try:
-            decoded = self._json_validator.validate(response.content or "")
+            try:
+                decoded = self._json_validator.validate(response.content or "")
+            except Exception:
+                raise QuantitativeGenerationError(
+                    f"{self.stage} structured response validation failed",
+                    structured_failure_code="VALIDATOR_EXCEPTION",
+                ) from None
             if not decoded.is_valid:
                 raise QuantitativeGenerationError(
-                    f"{self.stage} structured response is malformed"
+                    f"{self.stage} structured response is malformed",
+                    structured_failure_code="INVALID_JSON",
+                    validation_line=decoded.error_line,
+                    validation_column=decoded.error_column,
                 )
             if not isinstance(decoded.data, Mapping):
                 raise QuantitativeGenerationError(
-                    f"{self.stage} structured response must be an object"
+                    f"{self.stage} structured response must be an object",
+                    structured_failure_code="TOP_LEVEL_NOT_OBJECT",
                 )
             result = dict(decoded.data)
         except Exception as exc:
