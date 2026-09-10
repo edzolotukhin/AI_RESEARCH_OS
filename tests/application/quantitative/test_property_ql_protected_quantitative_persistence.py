@@ -6,10 +6,12 @@ import unittest
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 from sqlalchemy import create_engine, text
 
 from application.ports.quantitative_state_repository import QuantitativeStateRecord
-from application.quantitative.state_persistence import QuantitativePersistenceError, QuantitativeStateService, validate_recovered_analysis_linkage, validate_recovered_dataset
+import application.quantitative.state_persistence as state_persistence
+from application.quantitative.state_persistence import QuantitativePersistenceError, QuantitativeStateService, decode_quantitative, encode_quantitative, validate_recovered_analysis_linkage, validate_recovered_dataset
 from application.quantitative.fingerprints import fingerprint_codebook, fingerprint_data, fingerprint_dataset, fingerprint_schema, sha256_bytes
 from domain.quantitative.analysis import AnalyticalComparisonResult, StatisticalResult, StatisticalTable
 from domain.quantitative.dataset import CodebookVersion, DatasetFormat, DatasetVersion, DatasetVersionKind, PiiClassification, ValidationStatus, VariableDefinition, VariableType
@@ -39,6 +41,22 @@ class DurableTestRecordRepository:
         return tuple(value for value in self.backing.values() if value.run_id == run_id and value.project_id == project_id and (record_type is None or value.record_type == record_type))
 
 
+class RecordingDurableTestRecordRepository(DurableTestRecordRepository):
+    def __init__(self, backing):
+        super().__init__(backing)
+        self.list_record_types = []
+        self.loaded_record_ids = []
+
+    def get_for_project(self, record_id, *, project_id):
+        self.loaded_record_ids.append(record_id)
+        return super().get_for_project(record_id, project_id=project_id)
+
+    def list_for_run(self, run_id, *, project_id, record_type=None):
+        self.list_record_types.append(record_type)
+        return super().list_for_run(
+            run_id, project_id=project_id, record_type=record_type
+        )
+
 def dataset():
     return DatasetVersion("dataset", "version", "project-a", "run-a", DatasetVersionKind.RAW, "file", "survey.sav", "a" * 64, DatasetFormat.SAV, 2, 3, "schema", "codebook", "codebook-fp", "data-fp", "dataset-fp", PiiClassification.PII_RESTRICTED, ValidationStatus.VALID, "protected-dataset://opaque", "pyreadstat", "1.3.5", respondent_identity_kind="technical_id_pseudonym", weight_set_binding_supported=True)
 
@@ -49,6 +67,8 @@ def statistical_result():
 
 class PropertyQLProtectedQuantitativePersistenceTests(unittest.TestCase):
     def setUp(self): self.digest = Sha256DigestProvider()
+
+    def tearDown(self): state_persistence._cached_type_hints.cache_clear()
 
     def storage(self, root, project="project-a", run="run-a"):
         return ProtectedFileDatasetStorage(root=root, project_id=project, run_id=run, digest_provider=self.digest)
@@ -129,6 +149,134 @@ class PropertyQLProtectedQuantitativePersistenceTests(unittest.TestCase):
         backing["result-record"] = replace(original, authority_fingerprint="tampered")
         with self.assertRaisesRegex(QuantitativePersistenceError, "authority fingerprint"): restarted.load("result-record", project_id="project-a")
 
+    def test_decode_type_hints_are_cached_per_exact_class_without_semantic_change(self):
+        manifest = dataset()
+        result = statistical_result()
+        manifest_payload = encode_quantitative(manifest)
+        result_payload = encode_quantitative(result)
+        state_persistence._cached_type_hints.cache_clear()
+        real_get_type_hints = state_persistence.get_type_hints
+        resolved = []
+
+        def recording_get_type_hints(cls):
+            resolved.append(cls)
+            return real_get_type_hints(cls)
+
+        with patch.object(state_persistence, "get_type_hints", recording_get_type_hints):
+            self.assertEqual(decode_quantitative(manifest_payload), manifest)
+            self.assertEqual(decode_quantitative(manifest_payload), manifest)
+            self.assertEqual(decode_quantitative(result_payload), result)
+            self.assertEqual(decode_quantitative(result_payload), result)
+
+        self.assertEqual(resolved.count(DatasetVersion), 1)
+        self.assertEqual(resolved.count(StatisticalResult), 1)
+        self.assertIsNot(
+            state_persistence._cached_type_hints(DatasetVersion),
+            state_persistence._cached_type_hints(StatisticalResult),
+        )
+        self.assertEqual(encode_quantitative(decode_quantitative(result_payload)), result_payload)
+
+    def test_cached_decode_preserves_nested_annotations_and_fail_closed_behavior(self):
+        finding = QuantitativeFinding(
+            "finding", "42.0% selected yes.",
+            QuantitativeClaim(
+                QuantitativeClaimType.DESCRIPTIVE_VALUE, Decimal("42"), "var-q1",
+                "VALID_PERCENTAGE", "YES", "ALL_ROWS", "VALID_RESPONSES",
+                "UNWEIGHTED", display_value="42.0",
+            ),
+            (QuantitativeResultReference("result", "result-fp"),),
+            comparison_result_refs=(), analytical_context_fingerprint="context-fp",
+            support_validation_status=QuantitativeSupportStatus.SUPPORTED,
+            support_validation_fingerprint="finding-fp",
+            semantic_evidence_context=None,
+        )
+        payload = encode_quantitative(finding)
+        self.assertEqual(decode_quantitative(payload), finding)
+        self.assertIsNone(decode_quantitative(payload).semantic_evidence_context)
+        with self.assertRaisesRegex(QuantitativePersistenceError, "invalid persisted"):
+            decode_quantitative([])
+        with self.assertRaisesRegex(QuantitativePersistenceError, "unapproved dataclass"):
+            decode_quantitative({"$type": "unknown.LocalType", "fields": {}})
+    def test_exact_registered_dataclass_type_pushes_filter_before_load(self):
+        backing = {}
+        repository = RecordingDurableTestRecordRepository(backing)
+        service = QuantitativeStateService(repository=repository, digest_provider=self.digest)
+        manifest = dataset()
+        result = statistical_result()
+        service.persist(manifest, record_id="dataset-record", project_id="project-a", run_id="run-a")
+        service.persist(result, record_id="result-record", project_id="project-a", run_id="run-a")
+        original_payloads = {key: value.payload for key, value in backing.items()}
+        repository.loaded_record_ids.clear()
+
+        self.assertEqual(
+            service.list_for_run("run-a", project_id="project-a", expected_type=DatasetVersion),
+            (manifest,),
+        )
+        self.assertEqual(
+            repository.list_record_types[-1],
+            "domain.quantitative.dataset.DatasetVersion",
+        )
+        self.assertEqual(repository.loaded_record_ids, ["dataset-record"])
+        self.assertEqual({key: value.payload for key, value in backing.items()}, original_payloads)
+        self.assertEqual(backing["dataset-record"].authority_fingerprint, manifest.dataset_fingerprint)
+
+    def test_exact_type_pushdown_keeps_matching_corruption_and_mismatch_fail_closed(self):
+        backing = {}
+        repository = RecordingDurableTestRecordRepository(backing)
+        service = QuantitativeStateService(repository=repository, digest_provider=self.digest)
+        service.persist(dataset(), record_id="dataset-record", project_id="project-a", run_id="run-a")
+        backing["dataset-record"] = replace(backing["dataset-record"], payload_checksum="corrupt")
+        self.assertEqual(
+            service.list_for_run("run-a", project_id="project-a", expected_type=DatasetVersion),
+            (),
+        )
+
+        backing.clear()
+        service.persist(statistical_result(), record_id="wrong-record", project_id="project-a", run_id="run-a")
+        backing["wrong-record"] = replace(
+            backing["wrong-record"],
+            record_type="domain.quantitative.dataset.DatasetVersion",
+        )
+        self.assertEqual(
+            service.list_for_run("run-a", project_id="project-a", expected_type=DatasetVersion),
+            (),
+        )
+
+    def test_non_exact_expected_types_preserve_legacy_scan_and_order(self):
+        backing = {}
+        repository = RecordingDurableTestRecordRepository(backing)
+        service = QuantitativeStateService(repository=repository, digest_provider=self.digest)
+        first = dataset()
+        second = replace(first, dataset_id="dataset-2", version_id="version-2", dataset_fingerprint="dataset-fp-2")
+        result = statistical_result()
+        service.persist(first, record_id="z-dataset", project_id="project-a", run_id="run-a")
+        service.persist(result, record_id="m-result", project_id="project-a", run_id="run-a")
+        service.persist(second, record_id="a-dataset", project_id="project-a", run_id="run-a")
+
+        broad = service.list_for_run("run-a", project_id="project-a")
+        self.assertIsNone(repository.list_record_types[-1])
+        self.assertEqual(broad, (first, result, second))
+        self.assertEqual(
+            service.list_for_run(
+                "run-a", project_id="project-a",
+                expected_type=(DatasetVersion, StatisticalResult),
+            ),
+            broad,
+        )
+        self.assertIsNone(repository.list_record_types[-1])
+
+        class Unregistered:
+            pass
+
+        self.assertEqual(
+            service.list_for_run("run-a", project_id="project-a", expected_type=Unregistered),
+            (),
+        )
+        self.assertIsNone(repository.list_record_types[-1])
+        self.assertEqual(
+            service.list_for_run("run-a", project_id="project-a", expected_type=DatasetVersion),
+            (first, second),
+        )
     def test_rejected_audit_state_and_lineage_fields_survive(self):
         backing = {}; service = QuantitativeStateService(repository=DurableTestRecordRepository(backing), digest_provider=self.digest)
         result = statistical_result()

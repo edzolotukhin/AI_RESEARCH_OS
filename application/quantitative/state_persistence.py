@@ -5,6 +5,8 @@ import base64
 from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum
+from functools import cache
+from inspect import isabstract
 from typing import Any, get_type_hints
 
 from application.ports.deterministic_digest_provider import DeterministicDigestProvider
@@ -31,6 +33,12 @@ def _classes() -> dict[str, type]:
 
 
 _ALLOWED = _classes()
+
+
+@cache
+def _cached_type_hints(cls: type) -> dict[str, Any]:
+    """Resolve stable domain dataclass annotations once per exact class."""
+    return get_type_hints(cls)
 
 
 def encode_quantitative(value: Any) -> Any:
@@ -96,7 +104,7 @@ def decode_quantitative(value: Any) -> Any:
     # Codec ql-1 historically persisted StrEnum members as plain strings.
     # Reconstruct direct enum-typed dataclass fields at this single boundary so
     # old and new durable records expose the same domain representation.
-    for key, expected in get_type_hints(cls).items():
+    for key, expected in _cached_type_hints(cls).items():
         current = decoded_fields.get(key)
         if (
             isinstance(expected, type)
@@ -157,8 +165,19 @@ class QuantitativeStateService:
             )
 
     def list_for_run(self, run_id: str, *, project_id: str, expected_type: type | None = None) -> tuple[Any, ...]:
+        record_type = None
+        if (
+            isinstance(expected_type, type)
+            and is_dataclass(expected_type)
+            and not isabstract(expected_type)
+        ):
+            candidate = f"{expected_type.__module__}.{expected_type.__qualname__}"
+            if _ALLOWED.get(candidate) is expected_type:
+                record_type = candidate
         values = []
-        for record in self._repository.list_for_run(run_id, project_id=project_id):
+        for record in self._repository.list_for_run(
+            run_id, project_id=project_id, record_type=record_type
+        ):
             try:
                 value = self.load(record.record_id, project_id=project_id, expected_type=expected_type)
             except QuantitativePersistenceError:
