@@ -32,6 +32,7 @@ class DesignAwareAnalysisSupportEntry:
     obligation: str
     assumptions: tuple[str, ...]
     limitations: tuple[str, ...]
+    semantic_evidence_context: Any | None = None
 
 
 @dataclass(frozen=True)

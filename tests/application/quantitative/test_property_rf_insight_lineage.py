@@ -60,6 +60,7 @@ class PropertyRFInsightLineageTests(unittest.TestCase):
         self.findings = self.finding_service(RecordingFindingGenerator()).generate(
             statistical_results=results,
             comparison_results=comparisons,
+            semantic_evidence_contexts=self.lineage.semantic_contexts(self.re_input),
             limitations=self.lineage.generation_limitations(self.re_input),
         )
         self.finding_record = f"{self.run}:finding-generation:{self.findings.generation_fingerprint}"

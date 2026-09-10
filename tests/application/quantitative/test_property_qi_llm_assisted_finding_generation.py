@@ -12,7 +12,11 @@ from application.quantitative.finding_generation import (
     QuantitativeFindingGenerationService,
 )
 from application.quantitative.finding_support import QuantitativeFindingSupportValidator
-from domain.quantitative.finding import QuantitativeSupportStatus
+from application.quantitative.fingerprints import canonical_digest, canonical_scalar
+from domain.quantitative.finding import (
+    QuantitativeSemanticEvidenceContext,
+    QuantitativeSupportStatus,
+)
 from infrastructure.security.sha256_digest_provider import Sha256DigestProvider
 from tests.application.quantitative.test_property_qh_quantitative_finding_support_contract import (
     comparison,
@@ -67,6 +71,101 @@ class PropertyQILLMAssistedFindingGenerationTests(unittest.TestCase):
             support_validator=QuantitativeFindingSupportValidator(digest_provider=digest),
             digest_provider=digest,
         ), generator
+
+    def test_p1_18_benchmark_semantic_context_is_bound_and_fail_closed(self):
+        digest = Sha256DigestProvider()
+        authority = replace(
+            result("e09e22b4-e870-5e11-9897-037b4cf11a34", "22.020202"),
+            variable_id="var-11-Q12",
+            variable_fingerprint="variable-fingerprint",
+            category_value=5,
+            denominator=1485,
+            filter_definition="ALL_ROWS",
+            base_definition="VALID_RESPONSES",
+            weighting_status="UNWEIGHTED",
+        )
+        provenance = (
+            ("STATISTICAL_RESULT", authority.result_id, authority.reproducibility_fingerprint),
+            ("VARIABLE_DEFINITION", authority.variable_id, authority.variable_fingerprint),
+            ("CODEBOOK_VERSION", "codebook-v1", authority.codebook_fingerprint),
+            ("RC_ANALYSIS_PLAN", "plan-v1", "plan-fingerprint"),
+            ("RD_EXECUTION_MANIFEST", "rd-v1", "rd-fingerprint"),
+        )
+        payload = {
+            "result": (authority.result_id, authority.reproducibility_fingerprint),
+            "variable": (authority.variable_id, authority.variable_fingerprint),
+            "variable_label": "household wall-painting repair frequency",
+            "question_context": "household wall-painting repair frequency",
+            "category_code": canonical_scalar(5),
+            "category_label": "once every five years",
+            "filter": "ALL_ROWS",
+            "base": "VALID_RESPONSES",
+            "denominator": canonical_scalar(1485),
+            "population_description": None,
+            "value": canonical_scalar(authority.value),
+            "display_value": "22.0",
+            "weighting": ("UNWEIGHTED", None),
+            "provenance": provenance,
+            "version": "P1_18_SEMANTIC_EVIDENCE_V1",
+        }
+        fingerprint = canonical_digest(payload, digest_provider=digest)
+        context = QuantitativeSemanticEvidenceContext(
+            f"qi-context-{fingerprint}", authority.result_id,
+            authority.reproducibility_fingerprint, authority.variable_id,
+            authority.variable_fingerprint,
+            "household wall-painting repair frequency",
+            "household wall-painting repair frequency", 5,
+            "once every five years", "ALL_ROWS", "VALID_RESPONSES", 1485,
+            None, authority.value, "22.0", "UNWEIGHTED", None,
+            provenance, fingerprint,
+        )
+        response = {"proposals": [{
+            "claim_type": "DESCRIPTIVE_VALUE",
+            "finding_text": (
+                "For household wall-painting repair frequency, once every five years "
+                "was 22.0% (N=1,485; ALL_ROWS; VALID_RESPONSES; UNWEIGHTED)."
+            ),
+            "selected_result_ids": [authority.result_id],
+            "selected_comparison_ids": [],
+        }]}
+        service, generator = self.service(response)
+        generated = service.generate(
+            statistical_results=(authority,),
+            semantic_evidence_contexts={authority.result_id: context},
+        )
+        finding = generated.accepted_findings[0]
+        self.assertEqual(finding.semantic_evidence_context, context)
+        self.assertIn("once every five years", generator.prompts[0])
+        self.assertNotIn("interior-paint users", generator.prompts[0])
+        self.assertEqual(finding.statistical_result_refs[0].result_id, authority.result_id)
+        with self.assertRaisesRegex(
+            Exception, "omits required canonical semantic evidence context"
+        ):
+            service._validator.validate(
+                replace(finding, semantic_evidence_context=None),
+                statistical_results={authority.result_id: authority},
+                semantic_evidence_contexts={authority.result_id: context},
+            )
+
+        for changed in (
+            {"category_label": "another label"},
+            {"question_context": "another question"},
+            {"denominator": 1484},
+            {"filter_definition": "FILTERED"},
+            {"base_definition": "ALL_RESPONSES"},
+            {"population_description": "interior-paint users"},
+            {"value": Decimal("21")},
+            {"weighting_status": "WEIGHTED"},
+            {"fingerprint": "wrong"},
+            {"provenance": provenance[:-1]},
+        ):
+            corrupted = replace(context, **changed)
+            with self.assertRaisesRegex(Exception, "semantic evidence context"):
+                service._validator.validate(
+                    finding,
+                    statistical_results={authority.result_id: authority},
+                    semantic_evidence_contexts={authority.result_id: corrupted},
+                )
 
     def test_all_five_supported_claim_types_are_accepted(self):
         percentage = result("percentage", "42")

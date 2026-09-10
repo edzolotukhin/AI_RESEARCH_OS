@@ -3,6 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from application.quantitative.finding_support import QuantitativeFindingSupportValidator
+from application.quantitative.finding_generation import QuantitativeFindingGenerationService
 from application.quantitative.fingerprints import canonical_digest, canonical_scalar
 from application.quantitative.state_persistence import authority_fingerprint
 from domain.quantitative.analysis import AnalyticalComparisonResult, StatisticalResult
@@ -11,7 +12,10 @@ from domain.quantitative.analysis_execution import (
     AnalysisItemExecutionStatus,
     QuantitativeAnalysisExecutionMode,
 )
-from domain.quantitative.finding import QuantitativeFindingGenerationResult
+from domain.quantitative.finding import (
+    QuantitativeFindingGenerationResult,
+    QuantitativeSemanticEvidenceContext,
+)
 from domain.quantitative.finding_lineage import (
     FINDING_LINEAGE_METHOD_VERSION,
     DatasetOnlyFindingLineageAbsence,
@@ -118,6 +122,12 @@ class QuantitativeFindingLineageService:
                     planned.obligation,
                     planned.assumptions,
                     tuple(dict.fromkeys(planned.limitations + outcome.limitations)),
+                    self._semantic_context(
+                        result=result,
+                        codebook=codebook,
+                        manifest=manifest,
+                        projection=projection,
+                    ),
                 )
                 result_owners[key] = entry
                 analysis_entries.append(entry)
@@ -460,7 +470,19 @@ class QuantitativeFindingLineageService:
     def expected_generation_bundle_fingerprint(self, authority):
         bundle = {
             "statistical_results": tuple(
-                item.safe_numerical_projection for item in authority.analysis_entries
+                {
+                    **item.safe_numerical_projection,
+                    **(
+                        {
+                            "semantic_evidence_context":
+                                QuantitativeFindingGenerationService._semantic_context_projection(
+                                    item.semantic_evidence_context
+                                )
+                        }
+                        if item.semantic_evidence_context is not None else {}
+                    ),
+                }
+                for item in authority.analysis_entries
             ),
             "comparison_results": tuple(
                 item.safe_comparison_projection for item in authority.comparison_entries
@@ -468,6 +490,14 @@ class QuantitativeFindingLineageService:
             "limitations": self.generation_limitations(authority),
         }
         return canonical_digest(bundle, digest_provider=self.digest)
+
+    @staticmethod
+    def semantic_contexts(authority):
+        return {
+            item.result_id: item.semantic_evidence_context
+            for item in authority.analysis_entries
+            if item.semantic_evidence_context is not None
+        }
 
     @staticmethod
     def generation_limitations(authority):
@@ -576,6 +606,94 @@ class QuantitativeFindingLineageService:
             "presentation_eligible": item.presentation_eligible,
         }
 
+    def _semantic_context(self, *, result, codebook, manifest, projection):
+        if result.statistic_type not in {
+            "VALID_PERCENTAGE", "WEIGHTED_PERCENTAGE", "CROSS_TAB_COLUMN_PERCENTAGE",
+        } or result.category_value is None:
+            return None
+        try:
+            variable = codebook.variable_by_id(result.variable_id)
+        except KeyError as exc:
+            raise QuantitativeFindingLineageError(
+                "StatisticalResult variable is unavailable in exact Codebook authority"
+            ) from exc
+        if variable.fingerprint != result.variable_fingerprint:
+            raise QuantitativeFindingLineageError(
+                "StatisticalResult variable fingerprint is stale"
+            )
+        category_label = self._category_label(variable.value_labels, result.category_value)
+        if category_label is None:
+            raise QuantitativeFindingLineageError(
+                "categorical StatisticalResult lacks canonical Codebook category meaning"
+            )
+        provenance = (
+            ("STATISTICAL_RESULT", result.result_id, result.reproducibility_fingerprint),
+            ("VARIABLE_DEFINITION", variable.variable_id, variable.fingerprint),
+            ("CODEBOOK_VERSION", codebook.codebook_version_id, codebook.fingerprint),
+            ("RC_ANALYSIS_PLAN", projection.plan_id, projection.plan_fingerprint),
+            ("RD_EXECUTION_MANIFEST", manifest.manifest_id, manifest.fingerprint),
+        )
+        display_value = QuantitativeFindingSupportValidator.display_value(
+            Decimal(str(result.value)), decimal_places=1
+        )
+        payload = {
+            "result": (result.result_id, result.reproducibility_fingerprint),
+            "variable": (variable.variable_id, variable.fingerprint),
+            "variable_label": variable.label,
+            "question_context": variable.label,
+            "category_code": canonical_scalar(result.category_value),
+            "category_label": category_label,
+            "filter": result.filter_definition,
+            "base": result.base_definition,
+            "denominator": canonical_scalar(result.denominator),
+            "population_description": None,
+            "value": canonical_scalar(result.value),
+            "display_value": display_value,
+            "weighting": (result.weighting_status, result.weight_set_fingerprint),
+            "provenance": provenance,
+            "version": "P1_18_SEMANTIC_EVIDENCE_V1",
+        }
+        fingerprint = canonical_digest(payload, digest_provider=self.digest)
+        return QuantitativeSemanticEvidenceContext(
+            f"qi-context-{fingerprint}",
+            result.result_id,
+            result.reproducibility_fingerprint,
+            variable.variable_id,
+            variable.fingerprint,
+            variable.label,
+            variable.label,
+            result.category_value,
+            category_label,
+            result.filter_definition,
+            result.base_definition,
+            result.denominator,
+            None,
+            Decimal(str(result.value)),
+            display_value,
+            result.weighting_status,
+            result.weight_set_fingerprint,
+            provenance,
+            fingerprint,
+        )
+
+    @staticmethod
+    def _category_label(value_labels, category_code):
+        def key(value):
+            try:
+                number = Decimal(str(value).strip())
+                if number.is_finite():
+                    rendered = format(number.normalize(), "f")
+                    return ("number", "0" if rendered == "-0" else rendered)
+            except Exception:
+                pass
+            return ("text", str(value).strip())
+
+        wanted = key(category_code)
+        matches = [str(label).strip() for code, label in value_labels if key(code) == wanted]
+        if len(matches) != 1 or not matches[0]:
+            return None
+        return matches[0]
+
     @staticmethod
     def _comparison_projection(item):
         return {
@@ -611,6 +729,9 @@ class QuantitativeFindingLineageService:
             item.assumptions,
             item.limitations,
             item.safe_numerical_projection,
+            QuantitativeFindingGenerationService._semantic_context_projection(
+                item.semantic_evidence_context
+            ) if item.semantic_evidence_context is not None else None,
         )
 
     @staticmethod

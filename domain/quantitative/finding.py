@@ -32,6 +32,29 @@ class QuantitativeComparisonReference:
 
 
 @dataclass(frozen=True)
+class QuantitativeSemanticEvidenceContext:
+    context_id: str
+    result_id: str
+    result_fingerprint: str
+    variable_id: str
+    variable_fingerprint: str
+    variable_label: str
+    question_context: str
+    category_code: Any
+    category_label: str
+    filter_definition: str
+    base_definition: str
+    denominator: Any
+    population_description: str | None
+    value: Decimal
+    display_value: str
+    weighting_status: str
+    weight_set_fingerprint: str | None
+    provenance: tuple[tuple[str, str, str], ...]
+    fingerprint: str
+
+
+@dataclass(frozen=True)
 class QuantitativeClaim:
     claim_type: QuantitativeClaimType
     value: Decimal | None
@@ -62,6 +85,7 @@ class QuantitativeFinding:
     support_validation_status: QuantitativeSupportStatus = QuantitativeSupportStatus.UNVALIDATED
     support_validation_fingerprint: str = ""
     support_validation_version: str = "qh-1"
+    semantic_evidence_context: QuantitativeSemanticEvidenceContext | None = None
 
 
 @dataclass(frozen=True)

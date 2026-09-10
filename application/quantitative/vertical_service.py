@@ -318,6 +318,7 @@ class RealQuantitativeStageService:
             generated = self.findings.generate(
                 statistical_results=results,
                 comparison_results=comparisons,
+                semantic_evidence_contexts=self.finding_lineage.semantic_contexts(authority),
                 limitations=self.finding_lineage.generation_limitations(authority),
             )
             generation_record_id = self._persist(generated, "finding-generation", project_id, run_id)

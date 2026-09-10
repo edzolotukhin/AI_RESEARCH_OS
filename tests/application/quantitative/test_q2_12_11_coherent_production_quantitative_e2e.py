@@ -50,7 +50,14 @@ class _SemanticFake(LLMClient):
                 if claim=="DESCRIPTIVE_VALUE" and result["display_label"]!="VALID_PERCENTAGE": continue
                 if claim is None or claim in selected_claims: continue
                 selected_claims.add(claim)
-                proposals.append({"claim_type":claim,"finding_text":"The authorized aggregate result is supported.","selected_result_ids":[result["result_id"]],"selected_comparison_ids":[],"limitation_note":"Synthetic aggregate acceptance evidence."})
+                context=result.get("semantic_evidence_context")
+                text="The authorized aggregate result is supported."
+                if context is not None:
+                    text=(f'{context["question_context"]}: {context["category_label"]} '
+                          f'{context["display_value"]}% (N={context["denominator"]["value"]}; '
+                          f'{context["filter_definition"]}; {context["base_definition"]}; '
+                          f'{context["weighting_status"]}).')
+                proposals.append({"claim_type":claim,"finding_text":text,"selected_result_ids":[result["result_id"]],"selected_comparison_ids":[],"limitation_note":"Synthetic aggregate acceptance evidence."})
                 if claim=="NUMERIC_SUMMARY": proposals.append(dict(proposals[-1],finding_text="The same authorized numeric result supports a second bounded observation."))
             return LLMResponse(content=json.dumps({"proposals":proposals}),output_tokens=7)
         if "ACCEPTED_FINDINGS=" in prompt:
@@ -60,7 +67,7 @@ class _SemanticFake(LLMClient):
             return LLMResponse(content=json.dumps({"proposals":[{"insight_type":"SYNTHESIS","insight_text":"The supported experience and advocacy evidence forms a coherent pattern.","supporting_finding_ids":ids,"referenced_display_values":[],"direction":None,"limitation_note":"Synthetic acceptance synthesis."}]}),output_tokens=7)
         if "APPROVED_SUPPORT=" in prompt:
             support=json.loads(prompt.split("APPROVED_SUPPORT=",1)[1]); insight=support["insights"][0]; by_id={x["finding_id"]:x for x in support["findings"]}; selected=[by_id[x] for x in insight["finding_refs"]]; finding=selected[0]; finding_ids=[x["finding_id"] for x in selected]; result_ids=list(dict.fromkeys(r for x in selected for r in x["result_refs"]))
-            section={"section_id":"section-1","section_type":"KEY_FINDINGS","title":"Supported findings","narrative":finding["text"],"finding_refs":finding_ids,"insight_refs":[insight["insight_id"]],"referenced_display_values":[],"authoritative_result_refs":result_ids,"authoritative_table_refs":[],"weighting_status":finding["weighting"],"filter_definition":finding["filter"],"base_definition":finding["base"],"direction":finding["direction"]}
+            section={"section_id":"section-1","section_type":"KEY_FINDINGS","title":"Supported findings","narrative":"The selected evidence is supported.","finding_refs":finding_ids,"insight_refs":[insight["insight_id"]],"referenced_display_values":[],"authoritative_result_refs":result_ids,"authoritative_table_refs":[],"weighting_status":finding["weighting"],"filter_definition":finding["filter"],"base_definition":finding["base"],"direction":finding["direction"]}
             return LLMResponse(content=json.dumps({"title":"Controlled design-aware report","finding_refs":finding_ids,"insight_refs":[insight["insight_id"]],"sections":[section]}),output_tokens=7)
         raise AssertionError("unexpected semantic boundary")
 

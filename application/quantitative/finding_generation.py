@@ -19,6 +19,7 @@ from domain.quantitative.finding import (
     QuantitativeFindingGenerationResult,
     QuantitativeFindingRejection,
     QuantitativeResultReference,
+    QuantitativeSemanticEvidenceContext,
 )
 
 
@@ -54,15 +55,19 @@ class QuantitativeFindingGenerationService:
         statistical_results: Sequence[StatisticalResult],
         comparison_results: Sequence[AnalyticalComparisonResult] = (),
         display_labels: Mapping[str, str] | None = None,
+        semantic_evidence_contexts: Mapping[str, QuantitativeSemanticEvidenceContext] | None = None,
         limitations: Sequence[str] = (),
     ) -> QuantitativeFindingGenerationResult:
         results = self._authoritative_results(statistical_results)
         comparisons = self._authoritative_comparisons(comparison_results, results)
         labels = self._safe_text_mapping(display_labels or {}, "display label")
+        contexts = dict(semantic_evidence_contexts or {})
+        if any(key != value.result_id for key, value in contexts.items()):
+            raise QuantitativeAnalysisError("semantic evidence context result identity mismatch")
         safe_limitations = tuple(self._safe_text(item, "limitation") for item in limitations)
         materiality = self._selection_materiality(results)
         authority_bundle = self._bundle(
-            results, comparisons, labels, safe_limitations,
+            results, comparisons, labels, safe_limitations, contexts,
         )
         eligible_results = tuple(
             item
@@ -89,7 +94,7 @@ class QuantitativeFindingGenerationService:
                 reason="NO_PRESENTATION_ELIGIBLE_QH_SUPPORT",
             )
         bundle = self._bundle(
-            selectable_results, selectable_comparisons, labels, safe_limitations,
+            selectable_results, selectable_comparisons, labels, safe_limitations, contexts,
             selector_contract=True, materiality=materiality,
         )
         bundle_fingerprint = canonical_digest(
@@ -128,6 +133,7 @@ class QuantitativeFindingGenerationService:
                     bundle_fingerprint=bundle_fingerprint,
                     available_results=available_results,
                     available_comparisons=available_comparisons,
+                    semantic_evidence_contexts=contexts,
                 )
                 proposed.append(finding)
                 accepted.append(
@@ -135,6 +141,7 @@ class QuantitativeFindingGenerationService:
                         finding,
                         statistical_results=available_results,
                         comparison_results=available_comparisons,
+                        semantic_evidence_contexts=contexts,
                     )
                 )
             except (QuantitativeAnalysisError, ValueError, TypeError, KeyError) as exc:
@@ -251,9 +258,10 @@ class QuantitativeFindingGenerationService:
         return tuple(comparisons)
 
     def _bundle(
-        self, results, comparisons, labels, limitations, *, selector_contract=False,
+        self, results, comparisons, labels, limitations, contexts=None, *, selector_contract=False,
         materiality=None,
     ):
+        contexts = contexts or {}
         expected_materiality = self._selection_materiality(results)
         if materiality is None:
             materiality = expected_materiality
@@ -266,9 +274,11 @@ class QuantitativeFindingGenerationService:
             )
         return {
             "statistical_results": tuple(
-                self._selector_result_projection(item, labels, materiality[item.result_id])
+                self._selector_result_projection(
+                    item, labels, materiality[item.result_id], contexts.get(item.result_id)
+                )
                 if selector_contract
-                else self._result_projection(item, labels)
+                else self._result_projection(item, labels, contexts.get(item.result_id))
                 for item in results
             ),
             "comparison_results": tuple(
@@ -281,8 +291,8 @@ class QuantitativeFindingGenerationService:
         }
 
     @staticmethod
-    def _result_projection(item, labels):
-        return {
+    def _result_projection(item, labels, context=None):
+        projection = {
             "result_id": item.result_id,
             "reproducibility_fingerprint": item.reproducibility_fingerprint,
             "display_label": labels.get(item.result_id, item.statistic_type),
@@ -305,10 +315,15 @@ class QuantitativeFindingGenerationService:
             "missing_value_semantics": item.missing_value_semantics,
             "presentation_eligible": item.presentation_eligible,
         }
+        if context is not None:
+            projection["semantic_evidence_context"] = (
+                QuantitativeFindingGenerationService._semantic_context_projection(context)
+            )
+        return projection
 
     @staticmethod
-    def _selector_result_projection(item, labels, selection_materiality):
-        return {
+    def _selector_result_projection(item, labels, selection_materiality, context=None):
+        projection = {
             "result_id": item.result_id,
             "display_label": labels.get(item.result_id, item.statistic_type),
             "allowed_claim_types": QuantitativeFindingGenerationService._allowed_claim_types(
@@ -327,6 +342,31 @@ class QuantitativeFindingGenerationService:
             "unweighted_n": item.unweighted_n,
             "presentation_eligible": item.presentation_eligible,
             "selection_materiality": selection_materiality,
+        }
+        if context is not None:
+            projection["semantic_evidence_context"] = (
+                QuantitativeFindingGenerationService._semantic_context_projection(context)
+            )
+        return projection
+
+    @staticmethod
+    def _semantic_context_projection(context):
+        return {
+            "context_id": context.context_id,
+            "fingerprint": context.fingerprint,
+            "result_id": context.result_id,
+            "variable_id": context.variable_id,
+            "variable_label": context.variable_label,
+            "question_context": context.question_context,
+            "category_code": canonical_scalar(context.category_code),
+            "category_label": context.category_label,
+            "filter_definition": context.filter_definition,
+            "base_definition": context.base_definition,
+            "denominator": canonical_scalar(context.denominator),
+            "population_description": context.population_description,
+            "display_value": context.display_value,
+            "weighting_status": context.weighting_status,
+            "provenance": context.provenance,
         }
 
     def _selection_materiality(self, results):
@@ -429,6 +469,9 @@ class QuantitativeFindingGenerationService:
             "Return IDs only: never copy, reconstruct, abbreviate, or return authority fingerprints; "
             "the application resolves canonical fingerprints, exact values, statistic types, categories, "
             "bases, filters, and weighting from the exact supplied bundle. Do not return those fields. "
+            "When semantic_evidence_context is supplied, preserve its exact category label, question "
+            "context, denominator, filter, base, and weighting status in the Finding wording; never "
+            "invent a population description. "
             "Use only an allowed_claim_type listed for every selected result. Do not calculate new values "
             "or introduce numbers absent from authoritative results. When prose includes a percentage, copy "
             "the supplied display_value_1dp exactly and append %. "
@@ -472,7 +515,7 @@ class QuantitativeFindingGenerationService:
             raise QuantitativeAnalysisError("structured generator proposals must be a bounded array")
         return tuple(proposals)
 
-    def _parse_proposal(self, raw, *, ordinal, bundle_fingerprint, available_results, available_comparisons):
+    def _parse_proposal(self, raw, *, ordinal, bundle_fingerprint, available_results, available_comparisons, semantic_evidence_contexts):
         if not isinstance(raw, Mapping):
             raise QuantitativeAnalysisError("proposal must be an object")
         forbidden_design_fields = {
@@ -518,6 +561,9 @@ class QuantitativeFindingGenerationService:
         value = canonical["value"]
         text = self._safe_text(str(raw["finding_text"]), "finding text")
         self._validate_prose_numbers(text, canonical["allowed_prose_numbers"])
+        context = semantic_evidence_contexts.get(result_ids[0]) if len(result_ids) == 1 else None
+        if context is not None:
+            self._validate_semantic_prose(text, context)
         limitation = raw.get("limitation_note")
         if limitation is not None:
             self._safe_text(str(limitation), "limitation note")
@@ -553,7 +599,27 @@ class QuantitativeFindingGenerationService:
             comparison_result_refs=comparison_refs,
             rounding_decimal_places=1,
             pii_exposures=pii,
+            semantic_evidence_context=context,
         )
+
+    @staticmethod
+    def _validate_semantic_prose(text, context):
+        normalized = " ".join(text.casefold().replace(",", "").split())
+        required = (
+            context.category_label,
+            context.question_context,
+            context.display_value,
+            str(context.denominator),
+            context.filter_definition,
+            context.base_definition,
+            context.weighting_status,
+        )
+        if any(" ".join(str(value).casefold().replace(",", "").split()) not in normalized for value in required):
+            raise QuantitativeAnalysisError(
+                "Finding prose does not retain canonical semantic evidence context"
+            )
+        if context.population_description is None and "interior-paint users" in normalized:
+            raise QuantitativeAnalysisError("Finding prose fabricates an unauthorized population")
 
     @staticmethod
     def _allowed_claim_types(statistic_type):
@@ -694,10 +760,11 @@ class QuantitativeFindingGenerationService:
     @staticmethod
     def _validate_prose_numbers(text, allowed_numbers):
         numeric_tokens = re.findall(
-            r"(?<![\w-])[-+]?\d+(?:\.\d+)?(?:\s*%)?(?![\w-])", text
+            r"(?<![\w-])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:\s*%)?(?![\w-])",
+            text,
         )
         for token in numeric_tokens:
-            rendered = token.rstrip().removesuffix("%").strip()
+            rendered = token.rstrip().removesuffix("%").strip().replace(",", "")
             if rendered not in allowed_numbers:
                 raise QuantitativeAnalysisError(
                     "Finding prose contains a number outside canonical display support"

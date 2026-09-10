@@ -12,6 +12,7 @@ from domain.quantitative.finding import (
     QuantitativeClaimType,
     QuantitativeFinding,
     QuantitativeSupportStatus,
+    QuantitativeSemanticEvidenceContext,
 )
 
 
@@ -31,12 +32,16 @@ class QuantitativeFindingSupportValidator:
         *,
         statistical_results: Mapping[str, StatisticalResult],
         comparison_results: Mapping[str, AnalyticalComparisonResult] | None = None,
+        semantic_evidence_contexts: Mapping[str, QuantitativeSemanticEvidenceContext] | None = None,
     ) -> QuantitativeFinding:
         comparisons = comparison_results or {}
         self._validate_finding_shape(finding)
         results = self._resolve_results(finding, statistical_results)
         resolved_comparisons = self._resolve_comparisons(finding, comparisons)
         self._validate_common_context(finding, results)
+        self._validate_semantic_context(
+            finding, results, semantic_evidence_contexts or {}
+        )
 
         claim_type = finding.claim.claim_type
         if claim_type is QuantitativeClaimType.DESCRIPTIVE_VALUE:
@@ -240,4 +245,63 @@ class QuantitativeFindingSupportValidator:
             "weight_set_fingerprint": claim.weight_set_fingerprint,
             "direction": claim.direction,
             "display_value": claim.display_value,
+            "semantic_evidence_context": (
+                finding.semantic_evidence_context.fingerprint
+                if finding.semantic_evidence_context is not None else None
+            ),
         }
+
+    def _validate_semantic_context(self, finding, results, available):
+        context = finding.semantic_evidence_context
+        if context is None:
+            if len(results) == 1 and results[0].result_id in available:
+                raise QuantitativeAnalysisError(
+                    "Finding omits required canonical semantic evidence context"
+                )
+            return
+        if len(results) != 1:
+            raise QuantitativeAnalysisError("semantic evidence context requires one result")
+        expected = available.get(context.result_id)
+        if expected is None or expected != context:
+            raise QuantitativeAnalysisError("semantic evidence context is outside canonical authority")
+        result = results[0]
+        if (
+            context.result_id != result.result_id
+            or context.result_fingerprint != result.reproducibility_fingerprint
+            or context.variable_id != result.variable_id
+            or context.variable_fingerprint != result.variable_fingerprint
+            or context.category_code != result.category_value
+            or context.filter_definition != result.filter_definition
+            or context.base_definition != result.base_definition
+            or context.denominator != result.denominator
+            or context.value != Decimal(str(result.value))
+            or context.weighting_status != result.weighting_status
+            or context.weight_set_fingerprint != result.weight_set_fingerprint
+            or context.population_description is not None
+        ):
+            raise QuantitativeAnalysisError("semantic evidence context contradicts result authority")
+        required_sources = {
+            "STATISTICAL_RESULT", "VARIABLE_DEFINITION", "CODEBOOK_VERSION",
+            "RC_ANALYSIS_PLAN", "RD_EXECUTION_MANIFEST",
+        }
+        if {item[0] for item in context.provenance} != required_sources:
+            raise QuantitativeAnalysisError("semantic evidence context provenance is incomplete")
+        payload = {
+            "result": (context.result_id, context.result_fingerprint),
+            "variable": (context.variable_id, context.variable_fingerprint),
+            "variable_label": context.variable_label,
+            "question_context": context.question_context,
+            "category_code": canonical_scalar(context.category_code),
+            "category_label": context.category_label,
+            "filter": context.filter_definition,
+            "base": context.base_definition,
+            "denominator": canonical_scalar(context.denominator),
+            "population_description": context.population_description,
+            "value": canonical_scalar(context.value),
+            "display_value": context.display_value,
+            "weighting": (context.weighting_status, context.weight_set_fingerprint),
+            "provenance": context.provenance,
+            "version": "P1_18_SEMANTIC_EVIDENCE_V1",
+        }
+        if canonical_digest(payload, digest_provider=self._digest) != context.fingerprint:
+            raise QuantitativeAnalysisError("semantic evidence context fingerprint mismatch")

@@ -78,6 +78,9 @@ class Q213DesignAwareControlledAbsenceTests(unittest.TestCase):
         generation = service.generate(
             statistical_results=results,
             comparison_results=comparisons,
+            semantic_evidence_contexts=self.fixture.lineage.semantic_contexts(
+                self.fixture.re_input
+            ),
             limitations=self.fixture.lineage.generation_limitations(
                 self.fixture.re_input
             ),

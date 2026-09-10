@@ -22,6 +22,7 @@ from domain.quantitative.analysis import ComparisonSpecification
 from domain.quantitative.analysis_execution import AnalysisItemExecutionStatus
 from domain.quantitative.analysis_plan import ComparisonResultRoleSelector, PlannedComparison
 from domain.quantitative.finding_lineage import FindingCoverageStatus
+from domain.quantitative.finding import QuantitativeFindingGenerationResult
 from domain.quantitative.quality import DatasetQualityAssessment, DatasetQualityState
 from infrastructure.persistence.quantitative_analysis_execution_repository import (
     QLQuantitativeAnalysisExecutionRepository,
@@ -69,9 +70,19 @@ class RecordingFindingGenerator:
             for item in results.values()
             if "DESCRIPTIVE_VALUE" in item["allowed_claim_types"]
         )
+        context = result.get("semantic_evidence_context")
+        finding_text = "The authorized distribution result is supported."
+        if context is not None:
+            denominator = context["denominator"]["value"]
+            finding_text = (
+                f'{context["question_context"]}: {context["category_label"]} '
+                f'{context["display_value"]}% (N={denominator}; '
+                f'{context["filter_definition"]}; {context["base_definition"]}; '
+                f'{context["weighting_status"]}).'
+            )
         return {"proposals": [{
             "claim_type": "DESCRIPTIVE_VALUE",
-            "finding_text": "The authorized distribution result is supported.",
+            "finding_text": finding_text,
             "selected_result_ids": [result["result_id"]],
             "selected_comparison_ids": [],
             "limitation_note": None,
@@ -225,6 +236,7 @@ class PropertyREFindingLineageTests(unittest.TestCase):
         generated = self.finding_service(generator).generate(
             statistical_results=results,
             comparison_results=comparisons,
+            semantic_evidence_contexts=self.lineage.semantic_contexts(authority),
             limitations=self.lineage.generation_limitations(authority),
         )
         record_id = f"{self.run}:finding-generation:{generated.generation_fingerprint}"
@@ -287,6 +299,20 @@ class PropertyREFindingLineageTests(unittest.TestCase):
         self.assertEqual(
             first["finding_lineage_manifest_record_id"],
             second["finding_lineage_manifest_record_id"],
+        )
+        persisted = self.state.load(
+            first["finding_generation_record_id"],
+            project_id=self.project,
+            expected_type=QuantitativeFindingGenerationResult,
+        )
+        self.assertIsNotNone(
+            persisted.accepted_findings[0].semantic_evidence_context
+        )
+        self.assertEqual(
+            persisted.accepted_findings[0].semantic_evidence_context,
+            service.finding_lineage.repository.get_input_authority(
+                first["finding_input_authority_record_id"], project_id=self.project
+            ).analysis_entries[0].semantic_evidence_context,
         )
 
     def test_reserved_input_without_generation_fails_closed_without_retry(self):

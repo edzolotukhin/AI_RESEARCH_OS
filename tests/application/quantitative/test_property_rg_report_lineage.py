@@ -46,7 +46,10 @@ class RecordingReportGenerator:
         finding = support["findings"][0]
         insight = support["insights"][0]
         finding_id = "unknown-finding" if self.unknown else finding["finding_id"]
-        narrative = finding["text"]
+        narrative = (
+            f'The authorized result was {finding["display_value"]}%.'
+            if finding.get("display_value") else "The authorized result is supported."
+        )
         values = [finding["display_value"]] if finding.get("display_value") else []
         if self.rejected:
             narrative = "The unsupported result was 999.0%."
