@@ -97,6 +97,57 @@ class PropertyRFInsightLineageTests(unittest.TestCase):
         self.assertNotIn("respondent-0", repr(first))
         self.assertNotIn("storage", repr(first).lower())
 
+    def test_p1_19_rf_uses_the_same_semantic_projection_and_rejects_stale_context(self):
+        authority = self.authority()
+        semantic_entries = tuple(
+            item for item in authority.finding_entries
+            if "semantic_evidence_context" in item.safe_finding_projection
+        )
+        self.assertTrue(semantic_entries)
+        semantic = semantic_entries[0].safe_finding_projection[
+            "semantic_evidence_context"
+        ]
+        for required in (
+            "context_id", "fingerprint", "result_id", "result_fingerprint",
+            "variable_id", "variable_fingerprint", "variable_label",
+            "question_context", "category_code", "category_label",
+            "exact_value", "display_value", "denominator",
+            "filter_definition", "base_definition", "weighting_status",
+            "weight_set_fingerprint", "provenance",
+        ):
+            self.assertIn(required, semantic)
+        self.assertNotIn("population_description", semantic)
+        saved = self.rf_repository.save_input_authority(authority)
+        self.assertEqual(
+            saved,
+            self.rf_repository.get_input_authority(
+                authority.authority_id, project_id=self.project
+            ),
+        )
+
+        finding = next(
+            item for item in self.findings.accepted_findings
+            if item.semantic_evidence_context is not None
+        )
+        corrupted = replace(
+            finding,
+            semantic_evidence_context=replace(
+                finding.semantic_evidence_context,
+                question_context="stale question context",
+            ),
+        )
+        generation = replace(
+            self.findings,
+            accepted_findings=tuple(
+                corrupted if item.finding_id == finding.finding_id else item
+                for item in self.findings.accepted_findings
+            ),
+        )
+        with self.assertRaisesRegex(
+            QuantitativeInsightLineageError, "semantic evidence context"
+        ):
+            self.authority(generation=generation)
+
     def test_stale_and_wrong_scope_authority_fails_closed(self):
         cases = (
             {"project_id": "wrong"}, {"run_id": "wrong"},

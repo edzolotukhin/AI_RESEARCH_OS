@@ -11,6 +11,7 @@ from application.quantitative.fingerprints import canonical_digest
 from application.quantitative.insight_support_canonicalization import (
     canonical_finding_support_bundle,
     finding_support_projection,
+    validate_finding_semantic_context,
 )
 from application.quantitative.one_way_statistics import QuantitativeAnalysisError
 from domain.quantitative.finding import (
@@ -28,7 +29,7 @@ from domain.quantitative.insight import (
 )
 
 
-PROMPT_VERSION = "QJ_INSIGHT_SYNTHESIS_V2"
+PROMPT_VERSION = "QJ_INSIGHT_SYNTHESIS_V3"
 VALIDATION_VERSION = "qj-1"
 MAX_FINDINGS = 50
 MAX_PROPOSALS = 20
@@ -192,6 +193,10 @@ class QuantitativeInsightSynthesisService:
         post_validator: Callable[[QuantitativeInsight], QuantitativeInsight] | None = None,
     ) -> QuantitativeInsightGenerationResult:
         accepted = self._accepted_findings(findings)
+        for finding in accepted:
+            validate_finding_semantic_context(
+                finding, digest_provider=self._digest
+            )
         available = {item.finding_id: item for item in accepted}
         bundle = canonical_finding_support_bundle(accepted)
         bundle_fingerprint = canonical_digest(bundle, digest_provider=self._digest)
@@ -279,7 +284,11 @@ class QuantitativeInsightSynthesisService:
             "and be listed in referenced_display_values. Do not upgrade observed differences to significance; "
             "significance wording requires an accepted SIGNIFICANT_COMPARISON Finding. Preserve weighting, "
             "filters, bases, populations, and direction. Do not infer causality or introduce unsupported "
-            "segments. Use one of SYNTHESIS, SEGMENT_CONTRAST, KPI_INTERPRETATION, LIMITATION."
+            "segments. Treat semantic_evidence_context as application-owned support facts; do not replace "
+            "or invent its question, category, denominator, population, provenance, or authority. A valid "
+            "Finding does not require an Insight: return an empty proposals array when no defensible "
+            "higher-order Insight is warranted. Use one of SYNTHESIS, SEGMENT_CONTRAST, "
+            "KPI_INTERPRETATION, LIMITATION."
         )
         schema = {"proposals": [{"insight_type": "SYNTHESIS|SEGMENT_CONTRAST|KPI_INTERPRETATION|LIMITATION", "insight_text": "string", "supporting_finding_ids": ["finding-id"], "referenced_display_values": ["exact display value"], "direction": "HIGHER|LOWER|EQUAL|null", "limitation_note": "string or null"}]}
         prompt = instructions + "\nOUTPUT_SCHEMA=" + json.dumps(schema, sort_keys=True, separators=(",", ":")) + "\nACCEPTED_FINDINGS=" + json.dumps(bundle, sort_keys=True, separators=(",", ":"), ensure_ascii=False)

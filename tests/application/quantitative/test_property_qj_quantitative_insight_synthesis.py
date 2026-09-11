@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 import inspect
+import json
 import unittest
 from copy import deepcopy
 from dataclasses import replace
+from decimal import Decimal
 
 from application.quantitative.finding_support import QuantitativeFindingSupportValidator
+from application.quantitative.fingerprints import canonical_digest, canonical_scalar
+from application.quantitative.insight_support_canonicalization import (
+    canonical_finding_support_bundle,
+)
 from application.quantitative.insight_synthesis import (
     QuantitativeInsightSynthesisService,
     QuantitativeInsightValidator,
 )
 from domain.findings.insight import Insight as DeskInsight
-from domain.quantitative.finding import QuantitativeClaimType, QuantitativeSupportStatus
+from domain.quantitative.finding import QuantitativeClaimType, QuantitativeSemanticEvidenceContext, QuantitativeSupportStatus
 from domain.quantitative.insight import QuantitativeInsightValidationStatus
 from infrastructure.security.sha256_digest_provider import Sha256DigestProvider
 from tests.application.quantitative.test_property_qh_quantitative_finding_support_contract import (
@@ -89,6 +95,147 @@ class PropertyQJQuantitativeInsightSynthesisTests(unittest.TestCase):
             validator=QuantitativeInsightValidator(digest_provider=self.digest),
             digest_provider=self.digest,
         ), generator
+
+    def r6_semantic_finding(self):
+        authority = replace(
+            result("r6-03", "22.020202020202", category=5),
+            denominator=1485,
+        )
+        provenance = (
+            ("STATISTICAL_RESULT", authority.result_id, authority.reproducibility_fingerprint),
+            ("VARIABLE_DEFINITION", authority.variable_id, authority.variable_fingerprint),
+            ("CODEBOOK_VERSION", "codebook-v1", authority.codebook_fingerprint),
+            ("RC_ANALYSIS_PLAN", "plan-v1", "plan-fingerprint"),
+            ("RD_EXECUTION_MANIFEST", "rd-v1", "rd-fingerprint"),
+        )
+        payload = {
+            "result": (authority.result_id, authority.reproducibility_fingerprint),
+            "variable": (authority.variable_id, authority.variable_fingerprint),
+            "variable_label": "household wall-painting renovation frequency",
+            "question_context": "household wall-painting renovation frequency",
+            "category_code": canonical_scalar(5),
+            "category_label": "once every five years",
+            "filter": "ALL_ROWS",
+            "base": "VALID_RESPONSES",
+            "denominator": canonical_scalar(1485),
+            "population_description": None,
+            "value": canonical_scalar(authority.value),
+            "display_value": "22.0",
+            "weighting": ("UNWEIGHTED", None),
+            "provenance": provenance,
+            "version": "P1_18_SEMANTIC_EVIDENCE_V1",
+        }
+        fingerprint = canonical_digest(payload, digest_provider=self.digest)
+        context = QuantitativeSemanticEvidenceContext(
+            f"qi-context-{fingerprint}", authority.result_id,
+            authority.reproducibility_fingerprint, authority.variable_id,
+            authority.variable_fingerprint,
+            "household wall-painting renovation frequency",
+            "household wall-painting renovation frequency", 5,
+            "once every five years", "ALL_ROWS", "VALID_RESPONSES", 1485,
+            None, Decimal("22.020202020202"), "22.0", "UNWEIGHTED", None,
+            provenance, fingerprint,
+        )
+        raw = replace(
+            finding(
+                QuantitativeClaimType.DESCRIPTIVE_VALUE, (authority,),
+                value=str(authority.value), statistic_type=authority.statistic_type,
+                category=5, display_value="22.0",
+            ),
+            finding_id="r6-03-finding",
+            text=(
+                "For household wall-painting renovation frequency, once every "
+                "five years was 22.0% (N=1,485; ALL_ROWS; "
+                "VALID_RESPONSES; UNWEIGHTED)."
+            ),
+            semantic_evidence_context=context,
+        )
+        accepted = self.qh.validate(
+            raw,
+            statistical_results={authority.result_id: authority},
+            semantic_evidence_contexts={authority.result_id: context},
+        )
+        return authority, accepted
+
+    def test_r6_semantics_reach_qj_and_legitimate_abstention_is_preserved(self):
+        _, accepted = self.r6_semantic_finding()
+        service, generator = self.service({"proposals": []})
+        generated = service.generate(findings=(accepted,))
+        bundle = json.loads(generator.prompts[0].split("ACCEPTED_FINDINGS=", 1)[1])
+        semantic = bundle[0]["semantic_evidence_context"]
+
+        self.assertEqual(generated.accepted_insights, ())
+        self.assertEqual(generated.acceptance_summary["proposed"], 0)
+        self.assertEqual(semantic["question_context"], "household wall-painting renovation frequency")
+        self.assertEqual(semantic["category_label"], "once every five years")
+        self.assertEqual(semantic["exact_value"], {"type": "decimal", "value": "22.020202020202"})
+        self.assertEqual(semantic["display_value"], "22.0")
+        self.assertEqual(semantic["denominator"], {"type": "integer", "value": "1485"})
+        self.assertEqual(semantic["filter_definition"], "ALL_ROWS")
+        self.assertEqual(semantic["base_definition"], "VALID_RESPONSES")
+        self.assertEqual(semantic["weighting_status"], "UNWEIGHTED")
+        self.assertNotIn("population_description", semantic)
+        self.assertIn("return an empty proposals array", generator.prompts[0])
+
+    def test_semantic_authority_changes_bind_qj_fingerprint_deterministically(self):
+        _, accepted = self.r6_semantic_finding()
+        first = canonical_finding_support_bundle((accepted,))
+        second = canonical_finding_support_bundle((accepted,))
+        self.assertEqual(first, second)
+        baseline = canonical_digest(first, digest_provider=self.digest)
+
+        context = accepted.semantic_evidence_context
+        changes = (
+            {"category_label": "once every four years"},
+            {"question_context": "different question"},
+            {"denominator": 1484},
+            {"value": Decimal("21")},
+            {"population_description": "authorized households"},
+            {"result_fingerprint": "different-result"},
+            {"variable_fingerprint": "different-variable"},
+        )
+        for change in changes:
+            changed = replace(accepted, semantic_evidence_context=replace(context, **change))
+            self.assertNotEqual(
+                baseline,
+                canonical_digest(
+                    canonical_finding_support_bundle((changed,)),
+                    digest_provider=self.digest,
+                ),
+            )
+
+    def test_corrupt_semantic_authority_fails_before_qj_dispatch(self):
+        _, accepted = self.r6_semantic_finding()
+        context = accepted.semantic_evidence_context
+        changes = (
+            {"fingerprint": ""},
+            {"fingerprint": "wrong"},
+            {"result_id": "wrong-result"},
+            {"result_fingerprint": "wrong-result-fingerprint"},
+            {"variable_id": "wrong-variable"},
+            {"variable_fingerprint": "wrong-variable-fingerprint"},
+            {"category_code": 4},
+            {"category_label": "wrong category"},
+            {"question_context": "wrong question"},
+            {"denominator": 1484},
+            {"value": Decimal("21")},
+            {"weighting_status": "WEIGHTED"},
+            {"weight_set_fingerprint": "fabricated-weights"},
+            {"population_description": "fabricated population"},
+            {"provenance": context.provenance[:-1]},
+        )
+        for change in changes:
+            service, generator = self.service({"proposals": []})
+            with self.subTest(change=change), self.assertRaisesRegex(
+                ValueError, "semantic evidence context"
+            ):
+                service.generate(
+                    findings=(replace(
+                        accepted,
+                        semantic_evidence_context=replace(context, **change),
+                    ),)
+                )
+            self.assertEqual(generator.prompts, [])
 
     def test_valid_synthesis_from_two_descriptive_findings(self):
         x = self.supported_single(result("x", "42", category="X"), QuantitativeClaimType.DESCRIPTIVE_VALUE, finding_id="fx")

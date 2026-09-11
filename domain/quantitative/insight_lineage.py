@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Mapping
 
-INSIGHT_LINEAGE_METHOD_VERSION = "rf-1"
+INSIGHT_LINEAGE_METHOD_VERSION = "rf-2"
 
 class InsightCoverageStatus(StrEnum):
     INSIGHT_SUPPORTED = "INSIGHT_SUPPORTED"

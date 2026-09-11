@@ -4,6 +4,7 @@ from application.quantitative.fingerprints import canonical_digest
 from application.quantitative.insight_support_canonicalization import (
     canonical_finding_support_bundle,
     finding_support_projection,
+    validate_finding_semantic_context,
 )
 from application.quantitative.one_way_statistics import QuantitativeAnalysisError
 from domain.quantitative.finding import QuantitativeSupportStatus
@@ -43,6 +44,12 @@ class QuantitativeInsightLineageService:
         comparisons = {item.rd_outcome_id: item for item in re_input.comparison_entries}
         entries = []
         for finding in generation.accepted_findings:
+            try:
+                validate_finding_semantic_context(
+                    finding, digest_provider=self.digest
+                )
+            except QuantitativeAnalysisError as exc:
+                raise QuantitativeInsightLineageError(str(exc)) from exc
             lineage = re_entries.get(finding.finding_id)
             if lineage is None or lineage.qh_validation_fingerprint != finding.support_validation_fingerprint:
                 raise QuantitativeInsightLineageError("accepted Finding lacks exact current RE lineage")
