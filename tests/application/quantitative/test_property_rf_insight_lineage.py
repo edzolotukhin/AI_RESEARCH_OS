@@ -32,12 +32,12 @@ class RecordingInsightGenerator:
         import json
         findings = json.loads(prompt.split("ACCEPTED_FINDINGS=", 1)[1])
         proposal = {
-            "insight_type": "SYNTHESIS",
+            "insight_type": "SYNTHESIS" if len(findings) >= 2 else "LIMITATION",
             "insight_text": "The supported pattern warrants synthesis.",
             "supporting_finding_ids": [item["finding_id"] for item in findings],
             "referenced_display_values": [],
             "direction": None,
-            "limitation_note": None,
+            "limitation_note": None if len(findings) >= 2 else "A single Finding does not establish a broader pattern.",
         }
         if self.design_fields:
             proposal["objective_ids"] = ["fabricated-objective"]
@@ -276,6 +276,32 @@ class PropertyRFInsightLineageTests(unittest.TestCase):
         )
         self.assertEqual(generated.accepted_insights, ())
         self.assertIn("model-authored design authority", generated.rejected_insights[0].reason)
+
+    def test_stale_qj_prompt_and_validation_contracts_cannot_finalize_as_current(self):
+        authority = self.rf_repository.save_input_authority(self.authority())
+        generated = self.insight_service(RecordingInsightGenerator()).generate(
+            findings=self.findings.accepted_findings,
+            post_validator=self.rf.compatibility_validator(authority),
+        )
+        record = f"{self.run}:insight-generation:{generated.generation_fingerprint}"
+        stale_prompt = replace(generated, prompt_version="QJ_INSIGHT_SYNTHESIS_V3")
+        stale_validation = replace(
+            generated,
+            accepted_insights=tuple(
+                replace(insight, validation_version="qj-1")
+                for insight in generated.accepted_insights
+            ),
+        )
+
+        for stale in (stale_prompt, stale_validation):
+            with self.subTest(prompt=stale.prompt_version), self.assertRaisesRegex(
+                QuantitativeInsightLineageError, "stale Quantitative Insight generation contract"
+            ):
+                self.rf.finalize(
+                    authority=authority,
+                    generation_record_id=record,
+                    generation=stale,
+                )
 
     def test_zero_proposals_persist_empty_lineage_and_truthful_coverage(self):
         authority = self.rf_repository.save_input_authority(self.authority())

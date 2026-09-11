@@ -408,13 +408,14 @@ class RealQuantitativeStageService:
             completed = self.insight_lineage.repository.find_manifest_for_input(candidate.authority_id, project_id=project_id, run_id=run_id)
             if completed is not None:
                 insights = self.state.load(completed.insight_generation_record_id, project_id=project_id, expected_type=QuantitativeInsightGenerationResult)
+                self.insight_lineage.validate_generation_contract(insights)
                 state["insight_generation_record_id"] = completed.insight_generation_record_id
                 state["insight_input_authority_record_id"] = candidate.authority_id
                 state["insight_lineage_manifest_record_id"] = completed.manifest_id
                 state["insight_coverage_manifest_record_id"] = completed.coverage_manifest_id
                 if not insights.accepted_insights: state["zero_supported_insights"] = "true"
                 return state
-            matching = tuple(item for item in self.state.list_for_run(run_id, project_id=project_id, expected_type=QuantitativeInsightGenerationResult) if item.input_finding_bundle_fingerprint == self.insight_lineage.expected_generation_bundle_fingerprint(candidate))
+            matching = tuple(item for item in self.state.list_for_run(run_id, project_id=project_id, expected_type=QuantitativeInsightGenerationResult) if item.input_finding_bundle_fingerprint == self.insight_lineage.expected_generation_bundle_fingerprint(candidate) and self.insight_lineage.is_current_generation(item))
             if len(matching) > 1:
                 raise QuantitativeWorkflowError("ambiguous persisted Insight generation")
             if not matching:

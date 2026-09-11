@@ -7,6 +7,10 @@ from application.quantitative.insight_support_canonicalization import (
     validate_finding_semantic_context,
 )
 from application.quantitative.one_way_statistics import QuantitativeAnalysisError
+from application.quantitative.insight_synthesis import (
+    PROMPT_VERSION as INSIGHT_PROMPT_VERSION,
+    VALIDATION_VERSION as INSIGHT_VALIDATION_VERSION,
+)
 from domain.quantitative.finding import QuantitativeSupportStatus
 from domain.quantitative.finding_lineage import FindingCoverageStatus
 from domain.quantitative.insight import QuantitativeInsightGenerationResult
@@ -130,7 +134,24 @@ class QuantitativeInsightLineageService:
         )
         return canonical_digest(bundle, digest_provider=self.digest)
 
+    @staticmethod
+    def is_current_generation(generation: QuantitativeInsightGenerationResult) -> bool:
+        return (
+            generation.prompt_version == INSIGHT_PROMPT_VERSION
+            and all(
+                insight.validation_version == INSIGHT_VALIDATION_VERSION
+                for insight in generation.accepted_insights
+            )
+        )
+
+    def validate_generation_contract(self, generation: QuantitativeInsightGenerationResult) -> None:
+        if not self.is_current_generation(generation):
+            raise QuantitativeInsightLineageError(
+                "stale Quantitative Insight generation contract"
+            )
+
     def finalize(self, *, authority, generation_record_id, generation: QuantitativeInsightGenerationResult):
+        self.validate_generation_contract(generation)
         if generation.input_finding_bundle_fingerprint != self.expected_generation_bundle_fingerprint(authority):
             raise QuantitativeInsightLineageError("Insight generation input authority mismatch")
         available = {item.finding_id: item for item in authority.finding_entries}

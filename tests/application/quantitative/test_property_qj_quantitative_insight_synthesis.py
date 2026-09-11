@@ -13,6 +13,8 @@ from application.quantitative.insight_support_canonicalization import (
     canonical_finding_support_bundle,
 )
 from application.quantitative.insight_synthesis import (
+    PROMPT_VERSION,
+    VALIDATION_VERSION,
     QuantitativeInsightSynthesisService,
     QuantitativeInsightValidator,
 )
@@ -247,6 +249,41 @@ class PropertyQJQuantitativeInsightSynthesisTests(unittest.TestCase):
         self.assertEqual(generated.acceptance_summary, {"proposed": 1, "parsed": 1, "accepted": 1, "rejected": 0})
         self.assertEqual(generated.accepted_insights[0].validation_status, QuantitativeInsightValidationStatus.SUPPORTED)
 
+    def test_single_finding_synthesis_and_duplicate_support_are_rejected(self):
+        _, accepted = self.r6_semantic_finding()
+        proposals = [
+            insight_proposal(
+                "SYNTHESIS",
+                "The dominant response accounted for 22.0%.",
+                (accepted,),
+                values=("22.0",),
+            ),
+            insight_proposal(
+                "SYNTHESIS",
+                "In the unweighted analysis, the dominant response accounted for 22.0% of valid responses.",
+                (accepted,),
+                values=("22.0",),
+            ),
+            {
+                **insight_proposal(
+                    "SYNTHESIS",
+                    "The same Finding cannot become two independent supports.",
+                    (accepted,),
+                ),
+                "supporting_finding_ids": [accepted.finding_id, accepted.finding_id],
+            },
+        ]
+        service, generator = self.service({"proposals": proposals})
+        generated = service.generate(findings=(accepted,))
+
+        self.assertEqual(generated.accepted_insights, ())
+        self.assertEqual(generated.acceptance_summary, {"proposed": 3, "parsed": 2, "accepted": 0, "rejected": 3})
+        self.assertIn("at least two distinct accepted Findings", generated.rejected_insights[0].reason)
+        self.assertIn("at least two distinct accepted Findings", generated.rejected_insights[1].reason)
+        self.assertIn("unique string array", generated.rejected_insights[2].reason)
+        self.assertEqual(generated.prompt_version, PROMPT_VERSION)
+        self.assertIn("never restate a single descriptive Finding", generator.prompts[0])
+
     def test_valid_segment_contrast_and_significance_authority(self):
         a = result("a", "70", statistic_type="CROSS_TAB_COLUMN_PERCENTAGE", column="WOMEN")
         b = result("b", "40", statistic_type="CROSS_TAB_COLUMN_PERCENTAGE", column="MEN")
@@ -269,6 +306,24 @@ class PropertyQJQuantitativeInsightSynthesisTests(unittest.TestCase):
         service, _ = self.service({"proposals": proposals})
         generated = service.generate(findings=(kpi,))
         self.assertEqual(len(generated.accepted_insights), 2)
+
+    def test_one_finding_typed_contracts_reject_incompatible_claim_types(self):
+        descriptive = self.supported_single(
+            result("typed", "42"),
+            QuantitativeClaimType.DESCRIPTIVE_VALUE,
+            finding_id="typed-descriptive",
+        )
+        proposals = [
+            insight_proposal("KPI_INTERPRETATION", "Interpret the accepted value.", (descriptive,)),
+            insight_proposal("SEGMENT_CONTRAST", "The value was higher.", (descriptive,), direction="HIGHER"),
+        ]
+        service, _ = self.service({"proposals": proposals})
+        generated = service.generate(findings=(descriptive,))
+
+        self.assertEqual(generated.accepted_insights, ())
+        self.assertEqual(len(generated.rejected_insights), 2)
+        self.assertIn("requires an accepted KPI Finding", generated.rejected_insights[0].reason)
+        self.assertIn("direction is unsupported", generated.rejected_insights[1].reason)
 
     def test_invented_number_and_significance_without_authority_are_rejected(self):
         descriptive = self.supported_single(result("x", "42"), QuantitativeClaimType.DESCRIPTIVE_VALUE, finding_id="fx")
@@ -315,16 +370,18 @@ class PropertyQJQuantitativeInsightSynthesisTests(unittest.TestCase):
         self.assertEqual(generator.prompts, [])
 
     def test_deterministic_generation_and_auditable_rejection(self):
-        accepted = self.supported_single(result("x", "42"), QuantitativeClaimType.DESCRIPTIVE_VALUE, finding_id="accepted")
+        accepted = self.supported_single(result("x", "42", category="X"), QuantitativeClaimType.DESCRIPTIVE_VALUE, finding_id="accepted")
+        second = self.supported_single(result("y", "28", category="Y"), QuantitativeClaimType.DESCRIPTIVE_VALUE, finding_id="second")
         response = {"proposals": [
-            insight_proposal("SYNTHESIS", "The accepted share was 42.0%.", (accepted,), values=("42.0",)),
-            insight_proposal("SYNTHESIS", "The invented share was 99.0%.", (accepted,), values=("99.0",)),
+            insight_proposal("SYNTHESIS", "X reached 42.0% while Y reached 28.0%.", (accepted, second), values=("42.0", "28.0")),
+            insight_proposal("SYNTHESIS", "The invented share was 99.0%.", (accepted, second), values=("99.0",)),
         ]}
         first_service, first_generator = self.service(response)
         second_service, second_generator = self.service(response)
-        first = first_service.generate(findings=(accepted,)); second = second_service.generate(findings=(accepted,))
-        self.assertEqual(first, second)
+        first = first_service.generate(findings=(accepted, second)); second_result = second_service.generate(findings=(accepted, second))
+        self.assertEqual(first, second_result)
         self.assertEqual(first_generator.prompts, second_generator.prompts)
+        self.assertEqual(first.accepted_insights[0].validation_version, VALIDATION_VERSION)
         self.assertEqual(first.rejected_insights[0].proposal_ordinal, 2)
         self.assertIn("99.0", str(first.rejected_insights[0].proposal_payload))
         self.assertTrue(first.rejected_insights[0].rejection_fingerprint)

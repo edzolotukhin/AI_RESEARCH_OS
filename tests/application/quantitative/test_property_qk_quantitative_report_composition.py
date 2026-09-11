@@ -104,7 +104,7 @@ class PropertyQKQuantitativeReportCompositionTests(unittest.TestCase):
             comparison_results={qg.comparison_result_id: qg} if qg else {},
         )
 
-    def supported_insight(self, accepted_finding, *, kind=QuantitativeInsightType.SYNTHESIS, text="The accepted share was 42.0%."):
+    def supported_insight(self, accepted_finding, *, kind=QuantitativeInsightType.LIMITATION, text="The accepted share was 42.0%."):
         raw = QuantitativeInsight(
             insight_id="insight-" + accepted_finding.finding_id,
             insight_text=text,

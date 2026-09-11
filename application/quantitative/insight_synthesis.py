@@ -29,8 +29,8 @@ from domain.quantitative.insight import (
 )
 
 
-PROMPT_VERSION = "QJ_INSIGHT_SYNTHESIS_V3"
-VALIDATION_VERSION = "qj-1"
+PROMPT_VERSION = "QJ_INSIGHT_SYNTHESIS_V4"
+VALIDATION_VERSION = "qj-2"
 MAX_FINDINGS = 50
 MAX_PROPOSALS = 20
 MAX_PROMPT_CHARACTERS = 50_000
@@ -144,7 +144,12 @@ class QuantitativeInsightValidator:
 
     @staticmethod
     def _validate_type(insight, findings):
-        if insight.insight_type is QuantitativeInsightType.SEGMENT_CONTRAST:
+        if insight.insight_type is QuantitativeInsightType.SYNTHESIS:
+            if len({item.finding_id for item in findings}) < 2:
+                raise QuantitativeAnalysisError(
+                    "synthesis Insight requires at least two distinct accepted Findings"
+                )
+        elif insight.insight_type is QuantitativeInsightType.SEGMENT_CONTRAST:
             directions = {
                 item.claim.direction
                 for item in findings
@@ -287,7 +292,11 @@ class QuantitativeInsightSynthesisService:
             "segments. Treat semantic_evidence_context as application-owned support facts; do not replace "
             "or invent its question, category, denominator, population, provenance, or authority. A valid "
             "Finding does not require an Insight: return an empty proposals array when no defensible "
-            "higher-order Insight is warranted. Use one of SYNTHESIS, SEGMENT_CONTRAST, "
+            "higher-order Insight is warranted. SYNTHESIS requires at least two distinct accepted "
+            "Finding IDs; never restate a single descriptive Finding as SYNTHESIS and do not manufacture "
+            "a second support or manufacture interpretation merely to produce an Insight. A single Finding may "
+            "support only KPI_INTERPRETATION, SEGMENT_CONTRAST, "
+            "or LIMITATION when that type's validation requirements are met. Use one of SYNTHESIS, SEGMENT_CONTRAST, "
             "KPI_INTERPRETATION, LIMITATION."
         )
         schema = {"proposals": [{"insight_type": "SYNTHESIS|SEGMENT_CONTRAST|KPI_INTERPRETATION|LIMITATION", "insight_text": "string", "supporting_finding_ids": ["finding-id"], "referenced_display_values": ["exact display value"], "direction": "HIGHER|LOWER|EQUAL|null", "limitation_note": "string or null"}]}

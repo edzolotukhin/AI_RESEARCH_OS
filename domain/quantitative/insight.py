@@ -36,7 +36,7 @@ class QuantitativeInsight:
     support_context_fingerprint: str = ""
     validation_status: QuantitativeInsightValidationStatus = QuantitativeInsightValidationStatus.UNVALIDATED
     validation_fingerprint: str = ""
-    validation_version: str = "qj-1"
+    validation_version: str = "qj-2"
 
 
 @dataclass(frozen=True)

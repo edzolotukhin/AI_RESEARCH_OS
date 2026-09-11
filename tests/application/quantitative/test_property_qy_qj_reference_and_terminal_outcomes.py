@@ -43,11 +43,11 @@ class PropertyQYTests(unittest.TestCase):
     def test_qj_resolves_bundle_fingerprint_and_ignores_model_override(self):
         accepted = self.accepted_finding()
         proposal = {
-            "insight_type": "SYNTHESIS", "insight_text": "The accepted share was 42.0%.",
+            "insight_type": "LIMITATION", "insight_text": "Interpret the accepted share cautiously.",
             "supporting_finding_ids": [accepted.finding_id],
             "supporting_finding_fingerprints": {accepted.finding_id: "forged"},
             "referenced_display_values": ["42.0"], "direction": None,
-            "limitation_note": None,
+            "limitation_note": "A single descriptive Finding does not establish a broader pattern.",
         }
         generator = FakeInsightGenerator({"proposals": [proposal]})
         service = QuantitativeInsightSynthesisService(

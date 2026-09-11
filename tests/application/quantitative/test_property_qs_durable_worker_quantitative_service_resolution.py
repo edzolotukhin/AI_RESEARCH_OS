@@ -230,7 +230,10 @@ class PropertyQsDurableWorkerResolutionTests(ApiTestCase):
             f"/ui/quantitative/studies/{study.study_id}/result.json"
         )
         self.assertEqual(result.status_code, 200)
-        self.assertEqual(result.json()["terminal_status"], "COMPLETED")
+        self.assertEqual(
+            result.json()["terminal_status"],
+            "COMPLETED_WITH_NO_SUPPORTED_INSIGHTS",
+        )
 
     def test_missing_factory_and_wrong_project_fail_closed(self):
         study = self._ready_study("qs-fail-closed")

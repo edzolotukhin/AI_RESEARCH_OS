@@ -80,8 +80,9 @@ class PropertyQPProductionLlmAdapterTests(unittest.TestCase):
         finding = qi.accepted_findings[0]
 
         client.responses.append(json.dumps({"proposals": [insight_proposal(
-            "SYNTHESIS", "The accepted share was 42.0%.", (finding,),
-            values=("42.0",),
+            "LIMITATION", "Interpret the accepted share cautiously.", (finding,),
+            values=(),
+            limitation="A single descriptive Finding does not establish a broader pattern.",
             fingerprints={finding.finding_id: finding.support_validation_fingerprint},
         )]}))
         qj = QuantitativeInsightSynthesisService(
