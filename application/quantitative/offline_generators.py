@@ -48,8 +48,8 @@ class OfflineInsightGenerator:
     identity = "qo-offline-insights-v1"
     def generate(self, prompt):
         finding = _bundle(prompt, "ACCEPTED_FINDINGS=")[0]
-        base={"insight_type":"SYNTHESIS", "supporting_finding_ids":[finding["finding_id"]],
-              "direction":None, "limitation_note":"Synthetic aggregate."}
+        base={"insight_type":"LIMITATION", "supporting_finding_ids":[finding["finding_id"]],
+              "direction":None, "limitation_note":"A single Finding does not establish a broader pattern."}
         valid=dict(base, insight_text=f"Supported result was {finding['display_value']}.", referenced_display_values=[finding["display_value"]])
         invalid=dict(base, insight_text="Unsupported result was 999.0.", referenced_display_values=["999.0"])
         return {"proposals":[valid, invalid]}
