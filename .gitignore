@@ -45,3 +45,5 @@ agency/projects/
 
 # Generated repository dumps
 strukture.txt
+/tests/application/quantitative/test_q2_13a_blind_real_study_benchmark.py
+/tests/application/quantitative/test_q2_13a_temp_durable_outcomes.py
