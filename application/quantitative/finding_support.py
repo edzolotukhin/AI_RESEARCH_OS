@@ -42,6 +42,7 @@ class QuantitativeFindingSupportValidator:
         self._validate_semantic_context(
             finding, results, semantic_evidence_contexts or {}
         )
+        self._validate_semantic_prose(finding)
 
         claim_type = finding.claim.claim_type
         if claim_type is QuantitativeClaimType.DESCRIPTIVE_VALUE:
@@ -277,7 +278,6 @@ class QuantitativeFindingSupportValidator:
             or context.value != Decimal(str(result.value))
             or context.weighting_status != result.weighting_status
             or context.weight_set_fingerprint != result.weight_set_fingerprint
-            or context.population_description is not None
         ):
             raise QuantitativeAnalysisError("semantic evidence context contradicts result authority")
         required_sources = {
@@ -305,3 +305,29 @@ class QuantitativeFindingSupportValidator:
         }
         if canonical_digest(payload, digest_provider=self._digest) != context.fingerprint:
             raise QuantitativeAnalysisError("semantic evidence context fingerprint mismatch")
+
+    @staticmethod
+    def _validate_semantic_prose(finding):
+        context = finding.semantic_evidence_context
+        if context is None:
+            return
+        normalized = " ".join(finding.text.casefold().replace(",", "").split())
+        required = (
+            context.context_id,
+            context.category_label,
+            context.question_context,
+            context.display_value,
+            str(context.denominator),
+            context.filter_definition,
+            context.base_definition,
+            context.weighting_status,
+        )
+        if context.population_description is not None:
+            required += (context.population_description,)
+        if any(
+            " ".join(str(value).casefold().replace(",", "").split()) not in normalized
+            for value in required
+        ):
+            raise QuantitativeAnalysisError(
+                "Finding prose does not retain canonical semantic evidence context"
+            )

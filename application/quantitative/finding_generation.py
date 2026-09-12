@@ -23,7 +23,7 @@ from domain.quantitative.finding import (
 )
 
 
-PROMPT_VERSION = "QI_FINDING_GENERATION_V3"
+PROMPT_VERSION = "QI_FINDING_GENERATION_V4"
 MATERIALITY_METHOD_VERSION = "QI_SELECTOR_MATERIALITY_V1"
 MAX_RESULTS = 100
 MAX_PROMPT_CHARACTERS = 60_000
@@ -469,9 +469,10 @@ class QuantitativeFindingGenerationService:
             "Return IDs only: never copy, reconstruct, abbreviate, or return authority fingerprints; "
             "the application resolves canonical fingerprints, exact values, statistic types, categories, "
             "bases, filters, and weighting from the exact supplied bundle. Do not return those fields. "
-            "When semantic_evidence_context is supplied, preserve its exact category label, question "
-            "context, denominator, filter, base, and weighting status in the Finding wording; never "
-            "invent a population description. "
+            "When semantic_evidence_context is supplied, write only a bounded analytical claim. The "
+            "application deterministically attaches its canonical category, question, population, "
+            "denominator, filter, base, and weighting context. Omission is allowed, but never state or "
+            "imply a conflicting population, denominator, filter, base, or weighting contract. "
             "Use only an allowed_claim_type listed for every selected result. Do not calculate new values "
             "or introduce numbers absent from authoritative results. When prose includes a percentage, copy "
             "the supplied display_value_1dp exactly and append %. "
@@ -559,11 +560,13 @@ class QuantitativeFindingGenerationService:
         canonical = self._canonical_claim_fields(claim_type, resolved)
         self._validate_legacy_authority_fields(raw, canonical, claim_type)
         value = canonical["value"]
-        text = self._safe_text(str(raw["finding_text"]), "finding text")
-        self._validate_prose_numbers(text, canonical["allowed_prose_numbers"])
+        provider_text = self._safe_text(str(raw["finding_text"]), "finding text")
+        self._validate_prose_numbers(provider_text, canonical["allowed_prose_numbers"])
         context = semantic_evidence_contexts.get(result_ids[0]) if len(result_ids) == 1 else None
+        text = provider_text
         if context is not None:
-            self._validate_semantic_prose(text, context)
+            self._validate_provider_semantic_prose(provider_text, context, claim_type)
+            text = self._project_canonical_semantic_context(provider_text, context)
         limitation = raw.get("limitation_note")
         if limitation is not None:
             self._safe_text(str(limitation), "limitation note")
@@ -603,23 +606,71 @@ class QuantitativeFindingGenerationService:
         )
 
     @staticmethod
-    def _validate_semantic_prose(text, context):
+    def _validate_provider_semantic_prose(text, context, claim_type):
         normalized = " ".join(text.casefold().replace(",", "").split())
-        required = (
-            context.category_label,
-            context.question_context,
-            context.display_value,
-            str(context.denominator),
-            context.filter_definition,
-            context.base_definition,
-            context.weighting_status,
+        if claim_type is not QuantitativeClaimType.SIGNIFICANT_COMPARISON and re.search(
+            r"\b(?:statistically significant|significant difference|significantly)\b", normalized
+        ):
+            raise QuantitativeAnalysisError("Finding prose claims unsupported significance")
+        if re.search(
+            r"\b(?:causes?|caused|causing|drives?|drove|led to|leads to|results? in|because of|due to)\b",
+            normalized,
+        ):
+            raise QuantitativeAnalysisError("Finding prose claims unsupported causality")
+        population = QuantitativeFindingGenerationService._normalize_semantic_text(
+            context.population_description
         )
-        if any(" ".join(str(value).casefold().replace(",", "").split()) not in normalized for value in required):
+        population_terms = re.compile(
+            r"\b(?:among|amongst|of|for)\s+(?:the\s+)?(?:all\s+)?"
+            r"[^,.;:]{0,80}?\b(?:respondents?|consumers?|users?|participants?|adults?|"
+            r"households|customers?|population)\b"
+        )
+        if population_terms.search(normalized) and (not population or population not in normalized):
             raise QuantitativeAnalysisError(
-                "Finding prose does not retain canonical semantic evidence context"
+                "Finding prose contradicts or fabricates canonical population context"
             )
-        if context.population_description is None and "interior-paint users" in normalized:
-            raise QuantitativeAnalysisError("Finding prose fabricates an unauthorized population")
+        contract_terms = {
+            "weighted": context.weighting_status.casefold() == "weighted",
+            "unweighted": context.weighting_status.casefold() == "unweighted",
+            "all_rows": context.filter_definition.casefold() == "all_rows",
+            "filtered": context.filter_definition.casefold() == "filtered",
+            "valid_responses": context.base_definition.casefold() == "valid_responses",
+            "all_responses": context.base_definition.casefold() == "all_responses",
+        }
+        tokenized = normalized.replace("-", "_").replace(" ", "_")
+        for term, canonical_match in contract_terms.items():
+            mentioned = (
+                bool(re.search(r"\bweighted\b", normalized))
+                if term == "weighted"
+                else term in tokenized
+            )
+            if mentioned and not canonical_match:
+                raise QuantitativeAnalysisError(
+                    "Finding prose contradicts canonical filter/base/weighting context"
+                )
+
+    @staticmethod
+    def _project_canonical_semantic_context(text, context):
+        fields = (
+            ("context", context.context_id),
+            ("question", context.question_context),
+            ("category", context.category_label),
+            ("value", context.display_value),
+            ("denominator", context.denominator),
+            ("filter", context.filter_definition),
+            ("base", context.base_definition),
+            ("weighting", context.weighting_status),
+        )
+        if context.population_description is not None:
+            fields += (("population", context.population_description),)
+        rendered = "; ".join(f"{name}={value}" for name, value in fields)
+        return f"{text} [Canonical quantitative context: {rendered}.]"
+
+    @staticmethod
+    def _normalize_semantic_text(value):
+        if value is None:
+            return ""
+        return " ".join(str(value).casefold().replace(",", "").split())
 
     @staticmethod
     def _allowed_claim_types(statistic_type):

@@ -7,6 +7,7 @@ from copy import deepcopy
 from dataclasses import replace
 from decimal import Decimal
 
+from application.quantitative.finding_generation import QuantitativeFindingGenerationService
 from application.quantitative.finding_support import QuantitativeFindingSupportValidator
 from application.quantitative.fingerprints import canonical_digest, canonical_scalar
 from application.quantitative.insight_support_canonicalization import (
@@ -145,10 +146,13 @@ class PropertyQJQuantitativeInsightSynthesisTests(unittest.TestCase):
                 category=5, display_value="22.0",
             ),
             finding_id="r6-03-finding",
-            text=(
-                "For household wall-painting renovation frequency, once every "
-                "five years was 22.0% (N=1,485; ALL_ROWS; "
-                "VALID_RESPONSES; UNWEIGHTED)."
+            text=QuantitativeFindingGenerationService._project_canonical_semantic_context(
+                (
+                    "For household wall-painting renovation frequency, once every "
+                    "five years was 22.0% (N=1,485; ALL_ROWS; "
+                    "VALID_RESPONSES; UNWEIGHTED)."
+                ),
+                context,
             ),
             semantic_evidence_context=context,
         )
