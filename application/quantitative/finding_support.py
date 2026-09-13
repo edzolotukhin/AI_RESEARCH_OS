@@ -48,7 +48,7 @@ class QuantitativeFindingSupportValidator:
         if claim_type is QuantitativeClaimType.DESCRIPTIVE_VALUE:
             self._validate_single(finding, results, {
                 "VALID_PERCENTAGE", "WEIGHTED_PERCENTAGE",
-                "CROSS_TAB_COLUMN_PERCENTAGE",
+                "CROSS_TAB_COLUMN_PERCENTAGE", "GROUPED_CATEGORY_PERCENTAGE",
             })
         elif claim_type is QuantitativeClaimType.NUMERIC_SUMMARY:
             self._validate_single(finding, results, {
@@ -278,6 +278,16 @@ class QuantitativeFindingSupportValidator:
             or context.value != Decimal(str(result.value))
             or context.weighting_status != result.weighting_status
             or context.weight_set_fingerprint != result.weight_set_fingerprint
+            or (
+                result.statistic_type == "GROUPED_CATEGORY_PERCENTAGE"
+                and (
+                    context.statistic_type != result.statistic_type
+                    or context.grouped_category_members != result.grouped_category_members
+                    or context.grouped_metric_semantic != result.grouped_metric_semantic
+                    or context.grouped_category_method_version != result.grouped_category_method_version
+                    or context.numerator != result.numerator
+                )
+            )
         ):
             raise QuantitativeAnalysisError("semantic evidence context contradicts result authority")
         required_sources = {
@@ -303,6 +313,13 @@ class QuantitativeFindingSupportValidator:
             "provenance": context.provenance,
             "version": "P1_18_SEMANTIC_EVIDENCE_V1",
         }
+        if context.statistic_type == "GROUPED_CATEGORY_PERCENTAGE":
+            payload["grouped_category"] = {
+                "members": tuple(canonical_scalar(item) for item in context.grouped_category_members),
+                "metric_semantic": context.grouped_metric_semantic,
+                "method_version": context.grouped_category_method_version,
+                "numerator": canonical_scalar(context.numerator),
+            }
         if canonical_digest(payload, digest_provider=self._digest) != context.fingerprint:
             raise QuantitativeAnalysisError("semantic evidence context fingerprint mismatch")
 

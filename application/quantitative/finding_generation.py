@@ -351,7 +351,7 @@ class QuantitativeFindingGenerationService:
 
     @staticmethod
     def _semantic_context_projection(context):
-        return {
+        projection = {
             "context_id": context.context_id,
             "fingerprint": context.fingerprint,
             "result_id": context.result_id,
@@ -368,6 +368,14 @@ class QuantitativeFindingGenerationService:
             "weighting_status": context.weighting_status,
             "provenance": context.provenance,
         }
+        if context.statistic_type == "GROUPED_CATEGORY_PERCENTAGE":
+            projection["grouped_category"] = {
+                "members": [canonical_scalar(item) for item in context.grouped_category_members],
+                "metric_semantic": context.grouped_metric_semantic,
+                "method_version": context.grouped_category_method_version,
+                "numerator": canonical_scalar(context.numerator),
+            }
+        return projection
 
     def _selection_materiality(self, results):
         ranked = {}
@@ -375,6 +383,7 @@ class QuantitativeFindingGenerationService:
         for item in results:
             if not item.presentation_eligible or item.statistic_type not in {
                 "VALID_PERCENTAGE", "WEIGHTED_PERCENTAGE", "CROSS_TAB_COLUMN_PERCENTAGE",
+                "GROUPED_CATEGORY_PERCENTAGE",
             }:
                 continue
             key = canonical_digest(
@@ -676,6 +685,7 @@ class QuantitativeFindingGenerationService:
     def _allowed_claim_types(statistic_type):
         if statistic_type in {
             "VALID_PERCENTAGE", "WEIGHTED_PERCENTAGE", "CROSS_TAB_COLUMN_PERCENTAGE",
+            "GROUPED_CATEGORY_PERCENTAGE",
         }:
             return (
                 QuantitativeClaimType.DESCRIPTIVE_VALUE.value,
@@ -707,7 +717,7 @@ class QuantitativeFindingGenerationService:
             if not results or any(
                 item.statistic_type not in {
                     "VALID_PERCENTAGE", "WEIGHTED_PERCENTAGE",
-                    "CROSS_TAB_COLUMN_PERCENTAGE",
+                    "CROSS_TAB_COLUMN_PERCENTAGE", "GROUPED_CATEGORY_PERCENTAGE",
                 }
                 for item in results
             ):

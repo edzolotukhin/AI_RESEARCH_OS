@@ -52,6 +52,11 @@ class QuantitativeSemanticEvidenceContext:
     weight_set_fingerprint: str | None
     provenance: tuple[tuple[str, str, str], ...]
     fingerprint: str
+    statistic_type: str | None = None
+    grouped_category_members: tuple[Any, ...] = ()
+    grouped_metric_semantic: str | None = None
+    grouped_category_method_version: str | None = None
+    numerator: Any | None = None
 
 
 @dataclass(frozen=True)

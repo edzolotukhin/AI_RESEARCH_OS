@@ -634,6 +634,7 @@ class QuantitativeFindingLineageService:
         )
         if result.statistic_type not in {
             "VALID_PERCENTAGE", "WEIGHTED_PERCENTAGE", "CROSS_TAB_COLUMN_PERCENTAGE",
+            "GROUPED_CATEGORY_PERCENTAGE",
         } or result.category_value is None:
             return None
         try:
@@ -646,7 +647,7 @@ class QuantitativeFindingLineageService:
             raise QuantitativeFindingLineageError(
                 "StatisticalResult variable fingerprint is stale"
             )
-        category_label = self._category_label(variable.value_labels, result.category_value)
+        category_label = result.grouped_category_label or self._category_label(variable.value_labels, result.category_value)
         if category_label is None:
             raise QuantitativeFindingLineageError(
                 "categorical StatisticalResult lacks canonical Codebook category meaning"
@@ -678,6 +679,15 @@ class QuantitativeFindingLineageService:
             "provenance": provenance,
             "version": "P1_18_SEMANTIC_EVIDENCE_V1",
         }
+        if result.statistic_type == "GROUPED_CATEGORY_PERCENTAGE":
+            if not result.grouped_category_members or not result.grouped_metric_semantic or not result.grouped_category_method_version or result.numerator is None:
+                raise QuantitativeFindingLineageError("grouped StatisticalResult lacks canonical metric authority")
+            payload["grouped_category"] = {
+                "members": tuple(canonical_scalar(item) for item in result.grouped_category_members),
+                "metric_semantic": result.grouped_metric_semantic,
+                "method_version": result.grouped_category_method_version,
+                "numerator": canonical_scalar(result.numerator),
+            }
         fingerprint = canonical_digest(payload, digest_provider=self.digest)
         return QuantitativeSemanticEvidenceContext(
             f"qi-context-{fingerprint}",
@@ -699,6 +709,11 @@ class QuantitativeFindingLineageService:
             result.weight_set_fingerprint,
             provenance,
             fingerprint,
+            statistic_type=result.statistic_type if result.statistic_type == "GROUPED_CATEGORY_PERCENTAGE" else None,
+            grouped_category_members=result.grouped_category_members,
+            grouped_metric_semantic=result.grouped_metric_semantic,
+            grouped_category_method_version=result.grouped_category_method_version,
+            numerator=result.numerator,
         )
 
     @staticmethod

@@ -13,7 +13,7 @@ from application.quantitative.fingerprints import (
     fingerprint_analysis_specification,
     fingerprint_statistical_result_payload,
 )
-from application.quantitative.one_way_statistics import QuantitativeAnalysisError, _is_missing
+from application.quantitative.one_way_statistics import QuantitativeAnalysisError, _canonical_key, _is_missing, _validate_grouped_category
 from domain.quantitative.analysis import AnalysisSpecification, StatisticalResult
 from domain.quantitative.dataset import CodebookVersion, DatasetVersion, VariableDefinition, VariableType
 from domain.quantitative.weighting import AnalyticalDatasetView, WeightSet, WeightingMode
@@ -66,6 +66,8 @@ class WeightedOneWayStatisticsService:
         index = next(i for i, item in enumerate(codebook.variables) if item.variable_id == variable.variable_id)
         observations = tuple((row[index], weights[ref]) for row, ref in zip(rows, refs))
         valid = tuple((value, weight) for value, weight in observations if not _is_missing(value, variable.missing_rules))
+        if specification.grouped_category is not None:
+            _validate_grouped_category(specification.grouped_category, variable)
         spec = replace(
             specification,
             fingerprint=fingerprint_analysis_specification(specification, digest_provider=self._digest),
@@ -109,6 +111,18 @@ class WeightedOneWayStatisticsService:
                 self._result(dataset, variable, spec, view, weight_set, "WEIGHTED_CATEGORY_BASE", base, valid_base, value, True, count, base),
                 self._result(dataset, variable, spec, view, weight_set, "WEIGHTED_PERCENTAGE", percentage, valid_base, value, percentage > spec.presentation_threshold_percent, count, base),
             ))
+        grouped = spec.grouped_category
+        if grouped is not None:
+            _validate_grouped_category(grouped, variable)
+            member_keys = {_canonical_key(item) for item in grouped.member_categories}
+            count = sum(item[1] for key, item in buckets.items() if key in member_keys)
+            numerator = sum((item[2] for key, item in buckets.items() if key in member_keys), Decimal(0))
+            percentage = Decimal(0)
+            if valid_base:
+                with localcontext() as context:
+                    context.prec = 28
+                    percentage = numerator * Decimal(100) / valid_base
+            results.append(self._result(dataset, variable, spec, view, weight_set, "GROUPED_CATEGORY_PERCENTAGE", percentage, valid_base, grouped.aggregate_category_value, percentage > spec.presentation_threshold_percent, count, numerator, numerator=numerator, grouped=grouped))
         return tuple(results)
 
     def _numeric(self, dataset, variable, spec, view, weight_set, valid):
@@ -126,7 +140,7 @@ class WeightedOneWayStatisticsService:
             results.append(self._result(dataset, variable, spec, view, weight_set, "WEIGHTED_MEAN", mean, weighted_base, None, True, len(valid), weighted_base))
         return tuple(results)
 
-    def _result(self, dataset, variable, spec, view, weight_set, statistic_type, value, denominator, category, eligible, unweighted_n, weighted_base):
+    def _result(self, dataset, variable, spec, view, weight_set, statistic_type, value, denominator, category, eligible, unweighted_n, weighted_base, *, numerator=None, grouped=None):
         missing_payload = tuple({
             "kind": rule.kind,
             "value": canonical_scalar(rule.value),
@@ -157,6 +171,8 @@ class WeightedOneWayStatisticsService:
             "computation_version": COMPUTATION_VERSION,
             "presentation_eligible": eligible,
         }
+        if grouped is not None:
+            payload["grouped_category"] = {"numerator": canonical_scalar(numerator), "members": [canonical_scalar(item) for item in grouped.member_categories], "label": grouped.aggregate_label, "metric_semantic": grouped.metric_semantic.value, "method_version": grouped.method_version}
         fingerprint = fingerprint_statistical_result_payload(payload, digest_provider=self._digest)
         return StatisticalResult(
             result_id=str(uuid5(NAMESPACE_URL, f"qc-statistical-result:{fingerprint}")),
@@ -186,4 +202,9 @@ class WeightedOneWayStatisticsService:
             analytical_view_fingerprint=view.fingerprint,
             unweighted_n=unweighted_n,
             weighted_base=weighted_base,
+            numerator=numerator,
+            grouped_category_members=grouped.member_categories if grouped else (),
+            grouped_category_label=grouped.aggregate_label if grouped else None,
+            grouped_metric_semantic=grouped.metric_semantic.value if grouped else None,
+            grouped_category_method_version=grouped.method_version if grouped else None,
         )

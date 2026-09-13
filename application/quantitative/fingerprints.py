@@ -181,6 +181,17 @@ def fingerprint_analysis_specification(
                 specification.presentation_threshold_percent
             ),
         }
+    grouped = specification.grouped_category
+    if grouped is not None:
+        if type(specification) is not AnalysisSpecification:
+            raise ValueError("grouped category requires a one-way analysis")
+        payload["grouped_category"] = {
+            "member_categories": [canonical_scalar(item) for item in grouped.member_categories],
+            "aggregate_category_value": canonical_scalar(grouped.aggregate_category_value),
+            "aggregate_label": grouped.aggregate_label,
+            "metric_semantic": grouped.metric_semantic.value,
+            "method_version": grouped.method_version,
+        }
     if specification.statistic_family == "CROSS_TAB":
         payload.update(
             {

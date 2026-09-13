@@ -13,7 +13,7 @@ from application.quantitative.fingerprints import (
     fingerprint_analysis_specification,
     fingerprint_statistical_result_payload,
 )
-from domain.quantitative.analysis import AnalysisSpecification, StatisticalResult
+from domain.quantitative.analysis import AnalysisSpecification, GroupedCategorySpecification, GroupedCategoryMetric, StatisticalResult
 from domain.quantitative.dataset import CodebookVersion, DatasetVersion, MissingValueRule, VariableDefinition, VariableType
 
 
@@ -59,6 +59,8 @@ class OneWayStatisticsService:
         values = [row[variable_index] for row in rows]
         missing = [value for value in values if _is_missing(value, variable.missing_rules)]
         valid = [value for value in values if not _is_missing(value, variable.missing_rules)]
+        if specification.grouped_category is not None:
+            _validate_grouped_category(specification.grouped_category, variable)
         spec_fingerprint = fingerprint_analysis_specification(
             specification,
             digest_provider=self._digest_provider,
@@ -139,6 +141,20 @@ class OneWayStatisticsService:
                     digest_provider,
                 )
             )
+        grouped = specification.grouped_category
+        if grouped is not None:
+            _validate_grouped_category(grouped, variable)
+            member_keys = {_canonical_key(item) for item in grouped.member_categories}
+            numerator = sum(count for key, (_, count) in counts.items() if key in member_keys)
+            with localcontext() as context:
+                context.prec = 28
+                percentage = Decimal(numerator) * Decimal(100) / Decimal(len(valid)) if valid else Decimal(0)
+            results.append(self._result(
+                dataset, variable, specification, "GROUPED_CATEGORY_PERCENTAGE",
+                percentage, len(valid), grouped.aggregate_category_value,
+                percentage > specification.presentation_threshold_percent, digest_provider,
+                numerator=numerator, grouped=grouped,
+            ))
         return tuple(results)
 
     def _numeric_results(
@@ -180,6 +196,8 @@ class OneWayStatisticsService:
         category_value: Any | None,
         presentation_eligible: bool,
         digest_provider: DeterministicDigestProvider,
+        numerator: int | Decimal | None = None,
+        grouped: GroupedCategorySpecification | None = None,
     ) -> StatisticalResult:
         missing_payload = tuple(
             {
@@ -212,6 +230,14 @@ class OneWayStatisticsService:
             "computation_version": COMPUTATION_VERSION,
             "presentation_eligible": presentation_eligible,
         }
+        if grouped is not None:
+            payload["grouped_category"] = {
+                "numerator": canonical_scalar(numerator),
+                "members": [canonical_scalar(item) for item in grouped.member_categories],
+                "label": grouped.aggregate_label,
+                "metric_semantic": grouped.metric_semantic.value,
+                "method_version": grouped.method_version,
+            }
         fingerprint = fingerprint_statistical_result_payload(
             payload,
             digest_provider=digest_provider,
@@ -239,7 +265,43 @@ class OneWayStatisticsService:
             computation_version=COMPUTATION_VERSION,
             presentation_eligible=presentation_eligible,
             reproducibility_fingerprint=fingerprint,
+            numerator=numerator,
+            grouped_category_members=grouped.member_categories if grouped else (),
+            grouped_category_label=grouped.aggregate_label if grouped else None,
+            grouped_metric_semantic=grouped.metric_semantic.value if grouped else None,
+            grouped_category_method_version=grouped.method_version if grouped else None,
         )
+
+
+def _canonical_key(value: Any) -> tuple[str, str]:
+    scalar = canonical_scalar(value)
+    return scalar["type"], scalar["value"]
+
+
+def _validate_grouped_category(grouped: GroupedCategorySpecification, variable: VariableDefinition) -> None:
+    if not isinstance(grouped, GroupedCategorySpecification) or not grouped.member_categories:
+        raise QuantitativeAnalysisError("grouped category requires members")
+    if not isinstance(grouped.metric_semantic, GroupedCategoryMetric):
+        raise QuantitativeAnalysisError("grouped category metric semantic is invalid")
+    if grouped.method_version != "GROUPED_CATEGORY_V1":
+        raise QuantitativeAnalysisError("unsupported grouped category method version")
+    if not isinstance(grouped.aggregate_label, str) or not grouped.aggregate_label or grouped.aggregate_label != grouped.aggregate_label.strip():
+        raise QuantitativeAnalysisError("grouped category label is invalid")
+    values = (grouped.aggregate_category_value,) + grouped.member_categories
+    if any(item is None or isinstance(item, bool) or not isinstance(item, (str, int, float, Decimal)) for item in values):
+        raise QuantitativeAnalysisError("grouped category contains an invalid member type")
+    if any(isinstance(item, str) and (not item or item != item.strip()) for item in values):
+        raise QuantitativeAnalysisError("grouped category contains boundary whitespace")
+    keys = tuple(_canonical_key(item) for item in grouped.member_categories)
+    if len(set(keys)) != len(keys):
+        raise QuantitativeAnalysisError("grouped category contains duplicate members")
+    if keys != tuple(sorted(keys)):
+        raise QuantitativeAnalysisError("grouped category members are not canonically ordered")
+    if _canonical_key(grouped.aggregate_category_value) in set(keys):
+        raise QuantitativeAnalysisError("grouped category identity conflicts with a member")
+    domain = {_canonical_key(value) for value, _ in variable.value_labels}
+    if domain and not set(keys).issubset(domain):
+        raise QuantitativeAnalysisError("grouped category member is outside canonical domain")
 
 
 def _is_missing(value: Any, rules: tuple[MissingValueRule, ...]) -> bool:

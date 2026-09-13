@@ -6,6 +6,7 @@ from typing import Mapping
 from uuid import NAMESPACE_URL, uuid5
 
 from application.quantitative.fingerprints import canonical_digest, canonical_scalar, fingerprint_analysis_specification
+from application.quantitative.one_way_statistics import _validate_grouped_category
 from application.quantitative.research_design_authority import resolve_study_weighting_mode
 from application.quantitative.comparison_statistics import MEAN_METHOD, PROPORTION_METHOD
 from domain.quantitative.analysis import AnalysisSpecification, CrossTabAnalysisSpecification, NumericAnalysisSpecification, NpsAnalysisSpecification, CustomIndexAnalysisSpecification, ComparisonSpecification
@@ -175,6 +176,13 @@ class QuantitativeAnalysisPlanService:
             if isinstance(spec,CustomIndexAnalysisSpecification): ids.update(x.variable_id for x in spec.terms)
             if getattr(spec,"filter_variable_id",None): ids.add(spec.filter_variable_id)
             if not ids.issubset({b.actual_variable_id for b in item.variable_bindings}): raise QuantitativeAnalysisPlanError("specification variable lacks accepted RB binding")
+            if spec.grouped_category is not None:
+                if type(spec) is not AnalysisSpecification:
+                    raise QuantitativeAnalysisPlanError("grouped category requires a one-way analysis")
+                try:
+                    _validate_grouped_category(spec.grouped_category, actual[spec.variable_id])
+                except ValueError as exc:
+                    raise QuantitativeAnalysisPlanError(str(exc)) from exc
             if item.execution_support is not AnalysisExecutionSupport.SUPPORTED: raise QuantitativeAnalysisPlanError("unsupported analysis cannot enter execution authority")
             if getattr(spec,"filter_variable_id",None) and item.category_filter is None: raise QuantitativeAnalysisPlanError("filter requires explicit CATEGORY_EQUALS authority")
             if isinstance(spec,NpsAnalysisSpecification) and not any("NPS_SOURCE_0_10" in expected[eid].semantic_hooks for eid in bindings): raise QuantitativeAnalysisPlanError("NPS requires reconciled NPS semantic authority")

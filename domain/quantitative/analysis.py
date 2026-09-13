@@ -2,7 +2,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from enum import StrEnum
 from typing import Any
+
+
+class GroupedCategoryMetric(StrEnum):
+    TOP_BOX = "TOP_BOX"
+    TOP_TWO_BOX = "TOP_TWO_BOX"
+    TOP_TWO_BOX_AGREEMENT = "TOP_TWO_BOX_AGREEMENT"
+    BOTTOM_TWO_BOX = "BOTTOM_TWO_BOX"
+    NET = "NET"
+    GROUPED_PERCENTAGE = "GROUPED_PERCENTAGE"
+
+
+@dataclass(frozen=True)
+class GroupedCategorySpecification:
+    member_categories: tuple[Any, ...]
+    aggregate_category_value: Any
+    aggregate_label: str
+    metric_semantic: GroupedCategoryMetric
+    method_version: str = "GROUPED_CATEGORY_V1"
 
 
 @dataclass(frozen=True)
@@ -15,6 +34,7 @@ class AnalysisSpecification:
     base_definition: str = "VALID_RESPONSES"
     presentation_threshold_percent: Decimal = Decimal("1.0")
     fingerprint: str = ""
+    grouped_category: GroupedCategorySpecification | None = None
 
 
 @dataclass(frozen=True)
@@ -99,6 +119,11 @@ class StatisticalResult:
     column_variable_fingerprint: str | None = None
     column_category_value: Any | None = None
     percentage_orientation: str | None = None
+    numerator: int | Decimal | None = None
+    grouped_category_members: tuple[Any, ...] = ()
+    grouped_category_label: str | None = None
+    grouped_metric_semantic: str | None = None
+    grouped_category_method_version: str | None = None
 
 
 @dataclass(frozen=True)
