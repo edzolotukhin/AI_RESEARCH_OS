@@ -145,6 +145,13 @@ class QuantitativeAnalysisPlanService:
         if len({x.planned_analysis_id for x in items})!=len(items): raise QuantitativeAnalysisPlanError("duplicate PlannedAnalysis ID")
         rq={x.question_id:x for x in design.research_questions}; req={x.requirement_id:x for x in design.analytical_requirements}; objectives={x.objective_id for x in design.objectives}; expected={x.expected_variable_id:x for x in schema.variables}; outcomes={x.expected_variable_id:x for x in r.variable_outcomes}; actual={x.variable_id:x for x in codebook.variables}; result=[]
         for item in items:
+            if item.population_description is not None and (
+                not isinstance(item.population_description, str)
+                or not item.population_description
+                or item.population_description != item.population_description.strip()
+                or len(item.population_description) > 1000
+            ):
+                raise QuantitativeAnalysisPlanError("population authority must be bounded validated text")
             if not item.research_question_ids or not item.analytical_requirement_ids or any(x not in rq for x in item.research_question_ids) or any(x not in req for x in item.analytical_requirement_ids): raise QuantitativeAnalysisPlanError("missing or dangling design lineage")
             for rid in item.analytical_requirement_ids:
                 if not set(item.research_question_ids).intersection(req[rid].research_question_ids): raise QuantitativeAnalysisPlanError("ResearchQuestion does not support AnalyticalRequirement")
@@ -234,7 +241,7 @@ class QuantitativeAnalysisPlanService:
     def _analysis_payload(self,x):
         weight=None if x.weight_set_binding is None else (x.weight_set_binding.weight_set_id,x.weight_set_binding.weight_set_fingerprint,x.weight_set_binding.dataset_version_id,x.weight_set_binding.dataset_fingerprint,x.weight_set_binding.validation_fingerprint,x.weight_set_binding.approval_fingerprint,x.weight_set_binding.effective_sample_size,x.weight_set_binding.limitations)
         category_filter=None if x.category_filter is None else (x.category_filter.variable_id,x.category_filter.variable_fingerprint,canonical_scalar(x.category_filter.category_code),x.category_filter.semantic_interpretation)
-        return (x.planned_analysis_id,x.specification_fingerprint,x.objective_ids,x.research_question_ids,x.analytical_requirement_ids,tuple((b.expected_variable_id,b.actual_variable_id,b.actual_variable_fingerprint) for b in x.variable_bindings),x.expected_result_family,x.obligation,x.weighting_policy.value,weight,category_filter,x.assumptions,x.limitations,x.execution_support.value)
+        return (x.planned_analysis_id,x.specification_fingerprint,x.objective_ids,x.research_question_ids,x.analytical_requirement_ids,tuple((b.expected_variable_id,b.actual_variable_id,b.actual_variable_fingerprint) for b in x.variable_bindings),x.expected_result_family,x.obligation,x.weighting_policy.value,weight,category_filter,x.assumptions,x.limitations,x.execution_support.value,x.population_description)
     def _require_current(self,value,project_id,run_id,dataset,codebook,weights):
         d,q,s,r,_=self._authority(project_id,run_id,dataset,codebook)
         if (value.research_design_version_id,value.research_design_fingerprint,value.questionnaire_version_id,value.questionnaire_fingerprint,value.expected_measurement_schema_fingerprint,value.reconciliation_version_id,value.reconciliation_fingerprint,value.dataset_version_id,value.dataset_fingerprint,value.data_fingerprint,value.schema_fingerprint,value.codebook_version_id,value.codebook_fingerprint)!=(d.version_id,d.fingerprint,q.version_id,q.fingerprint,s.fingerprint,r.version_id,r.fingerprint,dataset.version_id,dataset.dataset_fingerprint,dataset.data_fingerprint,dataset.schema_fingerprint,codebook.codebook_version_id,codebook.fingerprint): raise QuantitativeAnalysisPlanError("Analysis Plan upstream authority is stale")

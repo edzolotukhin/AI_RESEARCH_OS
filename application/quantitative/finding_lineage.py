@@ -196,6 +196,14 @@ class QuantitativeFindingLineageService:
                 comparison_owners[key] = entry
                 comparison_entries.append(entry)
 
+        unknown_population_results = set(populations).difference(
+            result_id for result_id, _ in result_owners
+        )
+        if unknown_population_results:
+            raise QuantitativeFindingLineageError(
+                "population authority references unavailable StatisticalResult"
+            )
+
         self._require_complete_mandatory(
             projection, outcome_statuses, result_owners, comparison_owners
         )

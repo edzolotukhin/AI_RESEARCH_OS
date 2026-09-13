@@ -45,6 +45,7 @@ class PlannedAnalysis:
     assumptions: tuple[str,...]=()
     limitations: tuple[str,...]=()
     execution_support: AnalysisExecutionSupport=AnalysisExecutionSupport.SUPPORTED
+    population_description: str | None = None
 
 @dataclass(frozen=True)
 class ComparisonResultRoleSelector:

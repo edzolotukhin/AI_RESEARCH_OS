@@ -264,6 +264,36 @@ class RealQuantitativeStageService:
         manifest = self._load(state, "analysis_manifest_record_id", project_id, QuantitativeAnalysisManifest)
         return tuple(self.state.load(item, project_id=project_id, expected_type=StatisticalResult) for item in manifest.statistical_result_record_ids)
 
+    def _population_descriptions(self, *, project_id, manifest):
+        planned = {
+            item.planned_analysis_id: item
+            for item in self.analysis_execution_projection.planned_analyses
+        }
+        descriptions = {}
+        for outcome_id in manifest.analysis_outcome_ids:
+            outcome = self.analysis_execution_service.repository.get_analysis_outcome(
+                outcome_id, project_id=project_id
+            )
+            if outcome is None or outcome.planned_analysis_id not in planned:
+                raise QuantitativeWorkflowError("design-aware RD outcome is unavailable")
+            population = planned[outcome.planned_analysis_id].population_description
+            if population is None:
+                continue
+            for artifact in outcome.artifacts:
+                if artifact.artifact_type != "STATISTICAL_RESULT":
+                    continue
+                result = self.state.load(
+                    artifact.record_id,
+                    project_id=project_id,
+                    expected_type=StatisticalResult,
+                )
+                existing = descriptions.get(result.result_id)
+                if existing is not None and existing != population:
+                    raise QuantitativeWorkflowError(
+                        "conflicting population authority for StatisticalResult"
+                    )
+                descriptions[result.result_id] = population
+        return descriptions
     def _quant_findings(self, project_id, run_id, state):
         mode = state.get("analysis_execution_mode", "DATASET_ONLY_EXPLORATORY_EXECUTION")
         if mode == "DESIGN_AWARE_EXECUTION":
@@ -280,6 +310,9 @@ class RealQuantitativeStageService:
             candidate = self.finding_lineage.build_input_authority(
                 project_id=project_id, run_id=run_id, manifest=manifest,
                 projection=self.analysis_execution_projection, dataset=dataset, codebook=codebook,
+                population_descriptions=self._population_descriptions(
+                    project_id=project_id, manifest=manifest
+                ),
             )
             existing = self.finding_lineage.repository.get_input_authority(candidate.authority_id, project_id=project_id)
             if existing is not None and existing != candidate:
@@ -393,7 +426,7 @@ class RealQuantitativeStageService:
         re_input = self._load(state, "finding_input_authority_record_id", project_id, DesignAwareFindingInputAuthority)
         re_manifest = self._load(state, "finding_lineage_manifest_record_id", project_id, QuantitativeFindingDesignLineageManifest)
         re_coverage = self._load(state, "finding_coverage_manifest_record_id", project_id, QuantitativeFindingCoverageManifest)
-        current_re = self.finding_lineage.build_input_authority(project_id=project_id, run_id=run_id, manifest=rd, projection=self.analysis_execution_projection, dataset=dataset, codebook=codebook)
+        current_re = self.finding_lineage.build_input_authority(project_id=project_id, run_id=run_id, manifest=rd, projection=self.analysis_execution_projection, dataset=dataset, codebook=codebook, population_descriptions=self._population_descriptions(project_id=project_id, manifest=rd))
         if current_re != re_input:
             raise QuantitativeWorkflowError("stale historical RE authority cannot feed current QJ")
         candidate = self.insight_lineage.build_input_authority(
@@ -531,6 +564,9 @@ class RealQuantitativeStageService:
         current_re = self.finding_lineage.build_input_authority(
             project_id=project_id, run_id=run_id, manifest=rd,
             projection=self.analysis_execution_projection, dataset=dataset, codebook=codebook,
+            population_descriptions=self._population_descriptions(
+                project_id=project_id, manifest=rd
+            ),
         )
         if current_re != re_input:
             raise QuantitativeWorkflowError("stale historical RE authority cannot feed current QK")
