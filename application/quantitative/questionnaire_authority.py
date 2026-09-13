@@ -4,7 +4,7 @@ from dataclasses import replace
 
 from application.ports.deterministic_digest_provider import DeterministicDigestProvider
 from application.ports.quantitative_questionnaire_repository import QuantitativeQuestionnaireRepository
-from application.quantitative.fingerprints import canonical_digest
+from application.quantitative.fingerprints import canonical_approval_fingerprint, canonical_digest
 from application.quantitative.questionnaire_validation import QuestionnaireAuthorityCompiler, QuestionnaireValidationError
 from application.quantitative.research_design_authority import QuantitativeResearchDesignService, QuantitativeResearchDesignError
 from domain.quantitative.questionnaire_authority import (
@@ -114,7 +114,7 @@ class QuantitativeQuestionnaireService:
         rationale = " ".join(rationale.split())
         if not rationale: raise QuantitativeQuestionnaireError("approval rationale is required")
         payload = {"contract": "RA_APPROVAL_V1", "approval_id": approval_id, "project_id": project_id, "questionnaire_version_id": approved.version_id, "questionnaire_fingerprint": approved.fingerprint, "design_version_id": design.version_id, "design_fingerprint": design.fingerprint, "validation": new_validation.fingerprint, "coverage": new_coverage.fingerprint, "actor": actor_id, "time": decided_at, "decision": "APPROVED", "rationale": rationale}
-        approval = QuantitativeQuestionnaireApproval(approval_id, project_id, "QUANTITATIVE", approved.version_id, approved.fingerprint, design.version_id, design.fingerprint, new_validation.fingerprint, new_coverage.fingerprint, actor_id, decided_at, QuestionnaireApprovalDecision.APPROVED, rationale, canonical_digest(payload, digest_provider=self._digest))
+        approval = QuantitativeQuestionnaireApproval(approval_id, project_id, "QUANTITATIVE", approved.version_id, approved.fingerprint, design.version_id, design.fingerprint, new_validation.fingerprint, new_coverage.fingerprint, actor_id, decided_at, QuestionnaireApprovalDecision.APPROVED, rationale, canonical_approval_fingerprint(contract="RA_APPROVAL_V2", project_id=project_id, subject_type="QUESTIONNAIRE", subject_id=approved.version_id, subject_fingerprint=approved.fingerprint, decision="APPROVED", actor_id=actor_id, rationale=rationale, stable_authority={"design": design.fingerprint, "validation": new_validation.fingerprint, "coverage": new_coverage.fingerprint}, digest_provider=self._digest))
         self._persist(approved, schema, new_validation, new_coverage, run_id)
         self._repository.save_approval(approval, run_id=run_id)
         return approved
@@ -127,7 +127,7 @@ class QuantitativeQuestionnaireService:
         rejected = self._transition(version_id, project_id=project_id, run_id=run_id, new_version_id=new_version_id, actor_id=actor_id, changed_at=decided_at, status=QuestionnaireLifecycle.REJECTED, approval_reference=approval_id)
         rationale = " ".join(rationale.split())
         payload = {"contract": "RA_APPROVAL_V1", "approval_id": approval_id, "project_id": project_id, "questionnaire_version_id": rejected.version_id, "questionnaire_fingerprint": rejected.fingerprint, "design_version_id": rejected.research_design_version_id, "design_fingerprint": rejected.research_design_fingerprint, "validation": rejected.validation_manifest_fingerprint, "coverage": rejected.coverage_manifest_fingerprint, "actor": actor_id, "time": decided_at, "decision": "REJECTED", "rationale": rationale}
-        approval = QuantitativeQuestionnaireApproval(approval_id, project_id, "QUANTITATIVE", rejected.version_id, rejected.fingerprint, rejected.research_design_version_id, rejected.research_design_fingerprint, rejected.validation_manifest_fingerprint, rejected.coverage_manifest_fingerprint, actor_id, decided_at, QuestionnaireApprovalDecision.REJECTED, rationale, canonical_digest(payload, digest_provider=self._digest))
+        approval = QuantitativeQuestionnaireApproval(approval_id, project_id, "QUANTITATIVE", rejected.version_id, rejected.fingerprint, rejected.research_design_version_id, rejected.research_design_fingerprint, rejected.validation_manifest_fingerprint, rejected.coverage_manifest_fingerprint, actor_id, decided_at, QuestionnaireApprovalDecision.REJECTED, rationale, canonical_approval_fingerprint(contract="RA_APPROVAL_V2", project_id=project_id, subject_type="QUESTIONNAIRE", subject_id=rejected.version_id, subject_fingerprint=rejected.fingerprint, decision="REJECTED", actor_id=actor_id, rationale=rationale, stable_authority={"design": rejected.research_design_fingerprint, "validation": rejected.validation_manifest_fingerprint, "coverage": rejected.coverage_manifest_fingerprint}, digest_provider=self._digest))
         self._repository.save_approval(approval, run_id=run_id)
         if not rationale: raise QuantitativeQuestionnaireError("rejection rationale is required")
         return rejected

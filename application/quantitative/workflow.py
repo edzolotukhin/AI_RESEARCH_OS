@@ -6,7 +6,7 @@ from typing import Mapping, Protocol
 from application.contracts.base_executor import BaseExecutor
 from application.runtime.checkpoint_context import CHECKPOINT_SERVICE_KEY
 from application.ports.deterministic_digest_provider import DeterministicDigestProvider
-from application.quantitative.fingerprints import canonical_digest
+from application.quantitative.fingerprints import canonical_approval_fingerprint
 from application.quantitative.state_persistence import QuantitativeStateService
 from domain.quantitative.workflow import (
     QuantitativeApproval,
@@ -153,19 +153,21 @@ class QuantitativeApprovalService:
         decision: QuantitativeApprovalDecision, actor_id: str,
         decided_at: str, rationale: str,
     ) -> QuantitativeApproval:
-        payload = {
-            "approval_id": approval_id, "project_id": project_id, "run_id": run_id,
-            "subject_type": subject_type, "subject_id": subject_id,
-            "subject_fingerprint": subject_fingerprint, "decision": decision.value,
-            "actor_id": actor_id, "decided_at": decided_at, "rationale": rationale,
-        }
+        authority_fingerprint = canonical_approval_fingerprint(
+            contract="QUANTITATIVE_APPROVAL_AUTHORITY_V2",
+            project_id=project_id, subject_type=subject_type,
+            subject_id=subject_id, subject_fingerprint=subject_fingerprint,
+            decision=decision.value, actor_id=actor_id, rationale=rationale,
+            stable_authority={"run_id": run_id},
+            digest_provider=self.digest_provider,
+        )
         approval = QuantitativeApproval(
             approval_id=approval_id, project_id=project_id, run_id=run_id,
             subject_type=subject_type, subject_id=subject_id,
             subject_fingerprint=subject_fingerprint, decision=decision,
             actor_id=actor_id, decided_at=decided_at, rationale=rationale,
             current=True,
-            fingerprint=canonical_digest(payload, digest_provider=self.digest_provider),
+            fingerprint=authority_fingerprint,
         )
         self.state_service.persist(
             approval, record_id=approval_id, project_id=project_id, run_id=run_id,

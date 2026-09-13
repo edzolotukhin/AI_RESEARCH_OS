@@ -6,7 +6,7 @@ from typing import Iterable
 
 from application.ports.deterministic_digest_provider import DeterministicDigestProvider
 from application.ports.quantitative_research_design_repository import QuantitativeResearchDesignRepository
-from application.quantitative.fingerprints import canonical_digest
+from application.quantitative.fingerprints import canonical_approval_fingerprint, canonical_digest
 from domain.quantitative.research_design_authority import (
     AnalyticalRequirement, ApprovedResearchDesignProjection,
     DatasetOnlyResearchAuthority, DeliverableRequirement, Hypothesis,
@@ -222,7 +222,7 @@ class QuantitativeResearchDesignService:
                         parent_version_id=current.version_id, created_at=decided_at, created_by=actor_id,
                         lifecycle_status=ResearchDesignLifecycle.APPROVED, approval_reference=approval_id)
         approval_payload = {"approval_id": approval_id, "project_id": project_id, "methodology": QUANTITATIVE, "design_version_id": new_version_id, "design_fingerprint": value.fingerprint, "actor_id": actor_id, "decided_at": decided_at, "decision": "APPROVED", "rationale": _text(rationale)}
-        approval = QuantitativeResearchDesignApproval(approval_id, project_id, QUANTITATIVE, new_version_id, value.fingerprint, actor_id, decided_at, ResearchDesignApprovalDecision.APPROVED, approval_payload["rationale"], canonical_digest(approval_payload, digest_provider=self._digest))
+        approval = QuantitativeResearchDesignApproval(approval_id, project_id, QUANTITATIVE, new_version_id, value.fingerprint, actor_id, decided_at, ResearchDesignApprovalDecision.APPROVED, approval_payload["rationale"], canonical_approval_fingerprint(contract="QZ_DESIGN_APPROVAL_V2", project_id=project_id, subject_type="RESEARCH_DESIGN", subject_id=new_version_id, subject_fingerprint=value.fingerprint, decision="APPROVED", actor_id=actor_id, rationale=approval_payload["rationale"], stable_authority={"methodology": QUANTITATIVE}, digest_provider=self._digest))
         self._repository.save_design(value, run_id=run_id)
         self._repository.save_manifest(self._manifest(value), run_id=run_id)
         self._repository.save_approval(approval, run_id=run_id)
@@ -236,7 +236,7 @@ class QuantitativeResearchDesignService:
             raise QuantitativeResearchDesignError("approval fingerprint is stale")
         value = replace(current, version_id=new_version_id, version_sequence=current.version_sequence + 1, parent_version_id=current.version_id, created_at=decided_at, created_by=actor_id, lifecycle_status=ResearchDesignLifecycle.REJECTED, approval_reference=approval_id)
         payload = {"approval_id": approval_id, "project_id": project_id, "methodology": QUANTITATIVE, "design_version_id": new_version_id, "design_fingerprint": value.fingerprint, "actor_id": actor_id, "decided_at": decided_at, "decision": "REJECTED", "rationale": _text(rationale)}
-        approval = QuantitativeResearchDesignApproval(approval_id, project_id, QUANTITATIVE, new_version_id, value.fingerprint, actor_id, decided_at, ResearchDesignApprovalDecision.REJECTED, payload["rationale"], canonical_digest(payload, digest_provider=self._digest))
+        approval = QuantitativeResearchDesignApproval(approval_id, project_id, QUANTITATIVE, new_version_id, value.fingerprint, actor_id, decided_at, ResearchDesignApprovalDecision.REJECTED, payload["rationale"], canonical_approval_fingerprint(contract="QZ_DESIGN_APPROVAL_V2", project_id=project_id, subject_type="RESEARCH_DESIGN", subject_id=new_version_id, subject_fingerprint=value.fingerprint, decision="REJECTED", actor_id=actor_id, rationale=payload["rationale"], stable_authority={"methodology": QUANTITATIVE}, digest_provider=self._digest))
         self._repository.save_design(value, run_id=run_id); self._repository.save_manifest(self._manifest(value), run_id=run_id); self._repository.save_approval(approval, run_id=run_id)
         return value
 
@@ -297,7 +297,7 @@ class QuantitativeResearchDesignService:
                    "rationale": _text(rationale)}
         approval = QuantitativeStudyBriefApproval(approval_id, project_id, QUANTITATIVE,
             new_version_id, value.fingerprint, actor_id, decided_at, decision, payload["rationale"],
-            canonical_digest(payload, digest_provider=self._digest))
+            canonical_approval_fingerprint(contract="QZ_BRIEF_APPROVAL_V2", project_id=project_id, subject_type="RESEARCH_BRIEF", subject_id=new_version_id, subject_fingerprint=value.fingerprint, decision=decision.value, actor_id=actor_id, rationale=payload["rationale"], stable_authority={"methodology": QUANTITATIVE}, digest_provider=self._digest))
         self._repository.save_brief(value, run_id=run_id)
         self._repository.save_brief_approval(approval, run_id=run_id)
         return value

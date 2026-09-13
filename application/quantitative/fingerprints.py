@@ -35,6 +35,36 @@ def canonical_digest(
     return digest_provider.sha256_hex(encoded)
 
 
+def canonical_approval_fingerprint(
+    *,
+    contract: str,
+    project_id: str,
+    subject_type: str,
+    subject_id: str,
+    subject_fingerprint: str,
+    decision: str,
+    actor_id: str,
+    rationale: str,
+    digest_provider: DeterministicDigestProvider,
+    stable_authority: Any = None,
+) -> str:
+    """Fingerprint approval authority without audit event identity or wall-clock time."""
+    return canonical_digest(
+        {
+            "contract": contract,
+            "project_id": project_id,
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+            "subject_fingerprint": subject_fingerprint,
+            "decision": decision,
+            "actor_id": actor_id,
+            "rationale": rationale,
+            "stable_authority": stable_authority,
+        },
+        digest_provider=digest_provider,
+    )
+
+
 def canonical_scalar(value: Any) -> dict[str, str]:
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return {"type": "missing", "value": ""}
