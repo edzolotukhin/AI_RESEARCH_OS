@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Mapping
 
 from application.quantitative.finding_support import QuantitativeFindingSupportValidator
 from application.quantitative.finding_generation import QuantitativeFindingGenerationService
@@ -57,8 +58,12 @@ class QuantitativeFindingLineageService:
         projection,
         dataset,
         codebook,
+        population_descriptions: Mapping[str, str] | None = None,
     ) -> DesignAwareFindingInputAuthority:
         self._preflight(project_id, run_id, manifest, projection, dataset, codebook)
+        populations = dict(population_descriptions or {})
+        for result_id, description in populations.items():
+            self._validate_population_authority(result_id, description)
         coverage = self.execution_repository.get_coverage(
             manifest.coverage_manifest_id, project_id=project_id
         )
@@ -122,11 +127,12 @@ class QuantitativeFindingLineageService:
                     planned.obligation,
                     planned.assumptions,
                     tuple(dict.fromkeys(planned.limitations + outcome.limitations)),
-                    self._semantic_context(
+                    self.semantic_context(
                         result=result,
                         codebook=codebook,
                         manifest=manifest,
                         projection=projection,
+                        population_description=populations.get(result.result_id),
                     ),
                 )
                 result_owners[key] = entry
@@ -606,7 +612,18 @@ class QuantitativeFindingLineageService:
             "presentation_eligible": item.presentation_eligible,
         }
 
-    def _semantic_context(self, *, result, codebook, manifest, projection):
+    def semantic_context(
+        self,
+        *,
+        result,
+        codebook,
+        manifest,
+        projection,
+        population_description=None,
+    ):
+        self._validate_population_authority(
+            result.result_id, population_description
+        )
         if result.statistic_type not in {
             "VALID_PERCENTAGE", "WEIGHTED_PERCENTAGE", "CROSS_TAB_COLUMN_PERCENTAGE",
         } or result.category_value is None:
@@ -646,7 +663,7 @@ class QuantitativeFindingLineageService:
             "filter": result.filter_definition,
             "base": result.base_definition,
             "denominator": canonical_scalar(result.denominator),
-            "population_description": None,
+            "population_description": population_description,
             "value": canonical_scalar(result.value),
             "display_value": display_value,
             "weighting": (result.weighting_status, result.weight_set_fingerprint),
@@ -667,7 +684,7 @@ class QuantitativeFindingLineageService:
             result.filter_definition,
             result.base_definition,
             result.denominator,
-            None,
+            population_description,
             Decimal(str(result.value)),
             display_value,
             result.weighting_status,
@@ -675,6 +692,24 @@ class QuantitativeFindingLineageService:
             provenance,
             fingerprint,
         )
+
+    @staticmethod
+    def _validate_population_authority(result_id, population_description):
+        if not isinstance(result_id, str) or not result_id:
+            raise QuantitativeFindingLineageError(
+                "population authority result identity is invalid"
+            )
+        if population_description is None:
+            return
+        if (
+            not isinstance(population_description, str)
+            or not population_description
+            or population_description != population_description.strip()
+            or len(population_description) > 1000
+        ):
+            raise QuantitativeFindingLineageError(
+                "population authority must be bounded validated text"
+            )
 
     @staticmethod
     def _category_label(value_labels, category_code):
