@@ -97,6 +97,9 @@ class FabricatedDesignGenerator(RecordingFindingGenerator):
 
 
 class _AuthorizedSemanticBoundary:
+    def require_semantic_pipeline(self, **_):
+        return None
+
     def require_and_consume_semantic_pipeline(self, **_):
         return None
 

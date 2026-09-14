@@ -295,7 +295,7 @@ class RealQuantitativeStageService:
                 descriptions[result.result_id] = population
         return descriptions
     def _quant_findings(self, project_id, run_id, state):
-        self.approvals.require_and_consume_semantic_pipeline(
+        self.approvals.require_semantic_pipeline(
             project_id=project_id, run_id=run_id, safe_state=state
         )
         mode = state.get("analysis_execution_mode", "DATASET_ONLY_EXPLORATORY_EXECUTION")
@@ -349,13 +349,24 @@ class RealQuantitativeStageService:
                         state["zero_supported_findings"] = "true"
                     return state
                 raise QuantitativeWorkflowError("indeterminate design-aware QI provider boundary; semantic retry forbidden")
+            results, comparisons = self.finding_lineage.load_results(candidate)
+            contexts = self.finding_lineage.semantic_contexts(candidate)
+            limitations = self.finding_lineage.generation_limitations(candidate)
+            self.findings.preflight(
+                statistical_results=results,
+                comparison_results=comparisons,
+                semantic_evidence_contexts=contexts,
+                limitations=limitations,
+            )
             authority = self.finding_lineage.repository.save_input_authority(candidate)
-            results, comparisons = self.finding_lineage.load_results(authority)
             generated = self.findings.generate(
                 statistical_results=results,
                 comparison_results=comparisons,
-                semantic_evidence_contexts=self.finding_lineage.semantic_contexts(authority),
-                limitations=self.finding_lineage.generation_limitations(authority),
+                semantic_evidence_contexts=contexts,
+                limitations=limitations,
+                before_dispatch=lambda: self.approvals.require_and_consume_semantic_pipeline(
+                    project_id=project_id, run_id=run_id, safe_state=state
+                ),
             )
             generation_record_id = self._persist(generated, "finding-generation", project_id, run_id)
             lineage, coverage = self.finding_lineage.finalize(authority=authority, generation_record_id=generation_record_id, generation=generated)
@@ -364,7 +375,14 @@ class RealQuantitativeStageService:
             state["finding_lineage_manifest_record_id"] = lineage.manifest_id
             state["finding_coverage_manifest_record_id"] = coverage.coverage_id
         elif mode == "DATASET_ONLY_EXPLORATORY_EXECUTION":
-            generated = self.findings.generate(statistical_results=self._results(state, project_id))
+            results = self._results(state, project_id)
+            self.findings.preflight(statistical_results=results)
+            generated = self.findings.generate(
+                statistical_results=results,
+                before_dispatch=lambda: self.approvals.require_and_consume_semantic_pipeline(
+                    project_id=project_id, run_id=run_id, safe_state=state
+                ),
+            )
             generation_record_id = self._persist(generated, "finding-generation", project_id, run_id)
             state["finding_generation_record_id"] = generation_record_id
             if self.finding_lineage is not None:

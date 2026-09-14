@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import json
 import unittest
+from unittest.mock import patch
 from copy import deepcopy
 from dataclasses import replace
 from decimal import Decimal
@@ -71,6 +72,36 @@ class PropertyQILLMAssistedFindingGenerationTests(unittest.TestCase):
             support_validator=QuantitativeFindingSupportValidator(digest_provider=digest),
             digest_provider=digest,
         ), generator
+
+    def test_p1_25d_preflight_is_deterministic_and_consumption_precedes_dispatch(self):
+        authority = result("bounded", "42")
+        service, generator = self.service({"proposals": []})
+        first = service.preflight(statistical_results=(authority,))
+        second = service.preflight(statistical_results=(authority,))
+        self.assertEqual(first, second)
+        self.assertLessEqual(len(first), 60_000)
+        events = []
+        original = generator.generate
+        generator.generate = lambda prompt: (events.append("dispatch"), original(prompt))[1]
+        with self.assertRaisesRegex(Exception, "selector abstained"):
+            service.generate(
+                statistical_results=(authority,),
+                before_dispatch=lambda: events.append("consumed"),
+            )
+        self.assertEqual(events, ["consumed", "dispatch"])
+
+    def test_p1_25d_oversized_preflight_fails_before_consumption_or_dispatch(self):
+        authority = replace(result("oversized", "42"), filter_definition="X" * 2_000)
+        service, generator = self.service({"proposals": []})
+        events = []
+        with patch("application.quantitative.finding_generation.MAX_PROMPT_CHARACTERS", 512):
+            with self.assertRaisesRegex(Exception, "prompt exceeds bounded size"):
+                service.generate(
+                    statistical_results=(authority,),
+                    before_dispatch=lambda: events.append("consumed"),
+                )
+        self.assertEqual(events, [])
+        self.assertEqual(generator.prompts, [])
 
     def test_p1_18_benchmark_semantic_context_is_bound_and_fail_closed(self):
         digest = Sha256DigestProvider()

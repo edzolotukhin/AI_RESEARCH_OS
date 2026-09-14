@@ -198,7 +198,7 @@ class QuantitativeApprovalService:
         self.state_service.persist(value, record_id=value.authorization_id, project_id=project_id, run_id=run_id, accepted=True)
         return value
 
-    def require_and_consume_semantic_pipeline(self, *, project_id: str, run_id: str, safe_state: Mapping[str, str]) -> QuantitativeSemanticAuthorizationConsumption:
+    def require_semantic_pipeline(self, *, project_id: str, run_id: str, safe_state: Mapping[str, str]) -> QuantitativeSemanticAuthorization:
         fingerprint = self.semantic_authority_fingerprint(project_id=project_id, run_id=run_id, safe_state=safe_state)
         declared = safe_state.get(SEMANTIC_AUTHORITY_FINGERPRINT_KEY)
         if declared is not None and declared != fingerprint:
@@ -210,6 +210,11 @@ class QuantitativeApprovalService:
         grant = matching[0]
         if self.state_service.list_for_run(run_id, project_id=project_id, expected_type=QuantitativeSemanticAuthorizationConsumption):
             raise QuantitativeWorkflowError("semantic authorization was already consumed")
+        return grant
+
+    def require_and_consume_semantic_pipeline(self, *, project_id: str, run_id: str, safe_state: Mapping[str, str]) -> QuantitativeSemanticAuthorizationConsumption:
+        grant = self.require_semantic_pipeline(project_id=project_id, run_id=run_id, safe_state=safe_state)
+        fingerprint = self.semantic_authority_fingerprint(project_id=project_id, run_id=run_id, safe_state=safe_state)
         consumption_fingerprint = canonical_digest({"contract": "QUANTITATIVE_SEMANTIC_AUTHORIZATION_CONSUMPTION_V1", "authorization": grant.fingerprint, "project_id": project_id, "run_id": run_id, "boundary": SEMANTIC_PIPELINE_BOUNDARY, "quantitative_authority_fingerprint": fingerprint, "state": QuantitativeSemanticAuthorizationState.CONSUMED.value}, digest_provider=self.digest_provider)
         value = QuantitativeSemanticAuthorizationConsumption(f"{run_id}:semantic-consumption:{consumption_fingerprint}", grant.authorization_id, grant.fingerprint, project_id, run_id, SEMANTIC_PIPELINE_BOUNDARY, fingerprint, QuantitativeSemanticAuthorizationState.CONSUMED, datetime.now(timezone.utc).isoformat(), consumption_fingerprint)
         self.state_service.persist(value, record_id=value.consumption_id, project_id=project_id, run_id=run_id, accepted=True)

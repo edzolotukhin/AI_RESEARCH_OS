@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from decimal import Decimal, InvalidOperation
-from typing import Any, Mapping, Protocol, Sequence
+from typing import Any, Callable, Mapping, Protocol, Sequence
 from uuid import NAMESPACE_URL, uuid5
 
 from application.ports.deterministic_digest_provider import DeterministicDigestProvider
@@ -57,6 +57,7 @@ class QuantitativeFindingGenerationService:
         display_labels: Mapping[str, str] | None = None,
         semantic_evidence_contexts: Mapping[str, QuantitativeSemanticEvidenceContext] | None = None,
         limitations: Sequence[str] = (),
+        before_dispatch: Callable[[], None] | None = None,
     ) -> QuantitativeFindingGenerationResult:
         results = self._authoritative_results(statistical_results)
         comparisons = self._authoritative_comparisons(comparison_results, results)
@@ -100,12 +101,16 @@ class QuantitativeFindingGenerationService:
         bundle_fingerprint = canonical_digest(
             authority_bundle, digest_provider=self._digest
         )
-        prompt = self._prompt(bundle)
+        prompt = self._prompt(self._provider_bundle(bundle))
         prompt_fingerprint = canonical_digest(
             {"version": PROMPT_VERSION, "prompt": prompt},
             digest_provider=self._digest,
         )
 
+        # Persist the external at-most-once boundary after deterministic preparation
+        # and immediately before the only provider-capable operation.
+        if before_dispatch is not None:
+            before_dispatch()
         # QI V1 permits exactly one proposal-generation pass and no repair call.
         raw_output = self._generator.generate(prompt)
         raw_proposals = self._proposal_list(raw_output)
@@ -193,6 +198,51 @@ class QuantitativeFindingGenerationService:
             acceptance_summary=summary,
             generation_fingerprint=generation_fingerprint,
         )
+
+    def preflight(
+        self,
+        *,
+        statistical_results: Sequence[StatisticalResult],
+        comparison_results: Sequence[AnalyticalComparisonResult] = (),
+        display_labels: Mapping[str, str] | None = None,
+        semantic_evidence_contexts: Mapping[str, QuantitativeSemanticEvidenceContext] | None = None,
+        limitations: Sequence[str] = (),
+    ) -> str | None:
+        """Construct and validate the bounded provider request without dispatch."""
+        results = self._authoritative_results(statistical_results)
+        comparisons = self._authoritative_comparisons(comparison_results, results)
+        labels = self._safe_text_mapping(display_labels or {}, "display label")
+        contexts = dict(semantic_evidence_contexts or {})
+        if any(key != value.result_id for key, value in contexts.items()):
+            raise QuantitativeAnalysisError("semantic evidence context result identity mismatch")
+        safe_limitations = tuple(self._safe_text(item, "limitation") for item in limitations)
+        materiality = self._selection_materiality(results)
+        eligible_results = tuple(
+            item for item in results
+            if item.presentation_eligible and self._allowed_claim_types(item.statistic_type)
+        )
+        selectable_comparisons = tuple(
+            item for item in comparisons
+            if item.group_a_result_id in {result.result_id for result in results}
+            and item.group_b_result_id in {result.result_id for result in results}
+        )
+        selectable_ids = {item.result_id for item in eligible_results} | {
+            result_id for item in selectable_comparisons
+            for result_id in (item.group_a_result_id, item.group_b_result_id)
+        }
+        selectable_results = tuple(item for item in results if item.result_id in selectable_ids)
+        if not eligible_results and not selectable_comparisons:
+            return None
+        bundle = self._bundle(
+            selectable_results,
+            selectable_comparisons,
+            labels,
+            safe_limitations,
+            contexts,
+            selector_contract=True,
+            materiality=materiality,
+        )
+        return self._prompt(self._provider_bundle(bundle))
 
     def _empty_generation(self, *, authority_bundle, reason):
         bundle_fingerprint = canonical_digest(
@@ -376,6 +426,51 @@ class QuantitativeFindingGenerationService:
                 "numerator": canonical_scalar(context.numerator),
             }
         return projection
+
+    @staticmethod
+    def _provider_bundle(bundle):
+        """Project canonical authority into the bounded provider reasoning surface."""
+        projected_results = []
+        for item in bundle["statistical_results"]:
+            context = item.get("semantic_evidence_context")
+            common_keys = (
+                "result_id", "display_label", "allowed_claim_types", "display_value_1dp",
+            )
+            evidence_keys = (
+                "category_value", "row_category_value", "column_category_value",
+                "denominator", "filter_definition", "base_definition",
+                "weighting_status", "unweighted_n",
+            )
+            projected = {
+                key: item[key]
+                for key in common_keys + (() if context is not None else evidence_keys)
+                if item[key] is not None
+            }
+            projected["selection_materiality"] = {
+                key: item["selection_materiality"][key]
+                for key in ("rank_within_distribution", "is_dominant")
+            }
+            if context is not None:
+                semantic = {
+                    key: context[key] for key in (
+                        "variable_id", "variable_label", "question_context",
+                        "category_code", "category_label", "filter_definition",
+                        "base_definition", "denominator", "population_description",
+                        "display_value", "weighting_status",
+                    )
+                }
+                grouped = context.get("grouped_category")
+                if grouped is not None:
+                    semantic["grouped_category"] = {
+                        key: grouped[key] for key in ("members", "metric_semantic", "numerator")
+                    }
+                projected["semantic_evidence_context"] = semantic
+            projected_results.append(projected)
+        return {
+            "statistical_results": tuple(projected_results),
+            "comparison_results": bundle["comparison_results"],
+            "limitations": bundle["limitations"],
+        }
 
     def _selection_materiality(self, results):
         ranked = {}
