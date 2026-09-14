@@ -613,6 +613,8 @@ class QuantitativeUiService:
                 safe_state=safe,
             )
             context = self._run_engine(study, run, service, safe)
+            if run.status is WorkflowStatus.PAUSED and context.current_task is not None and context.current_task.definition_id == "quant_findings":
+                return self._save(replace(study, state="ANALYZING"))
             if not run.is_terminal or run.status.value != "completed":
                 raise QuantitativeUiError("Quantitative workflow did not reach a terminal result")
             terminal_record_id = context.shared_state[QUANTITATIVE_SAFE_STATE_KEY]["terminal_result_record_id"]
@@ -671,6 +673,60 @@ class QuantitativeUiService:
                 )
             raise QuantitativeUiError("Quantitative workflow failed safely") from exc
         return self._save(replace(study, state="COMPLETED", terminal_result_record_id=terminal_record_id))
+
+    def authorize_semantic_execution(
+        self, study_id: str, *, owner_id: str, actor_id: str,
+        expected_authority_fingerprint: str, rationale: str,
+    ) -> QuantitativeStudyProjection:
+        """Authorize one durable entry into the QI -> QJ -> QK pipeline."""
+        study = self.get(study_id, owner_id=owner_id)
+        run = self.workflows.get_workflow_run(study.run_id)
+        if run.status is not WorkflowStatus.PAUSED:
+            raise QuantitativeUiError("Quantitative workflow is not awaiting semantic authorization")
+        paused = tuple(task for task in run.tasks if task.status is TaskStatus.PAUSED)
+        if len(paused) != 1 or paused[0].definition_id != "quant_findings":
+            raise QuantitativeUiError("Quantitative workflow is not at the pre-semantic boundary")
+        snapshot = self.workflows.get_task_results(run.id).get(paused[0].id)
+        shared = snapshot.get("shared_state") if isinstance(snapshot, Mapping) else None
+        safe = shared.get(QUANTITATIVE_SAFE_STATE_KEY) if isinstance(shared, Mapping) else None
+        if not isinstance(safe, Mapping):
+            raise QuantitativeUiError("Durable pre-semantic authority is unavailable")
+        approvals = QuantitativeApprovalService(self.state, self.digest)
+        actual = approvals.semantic_authority_fingerprint(project_id=study.project_id, run_id=study.run_id, safe_state=safe)
+        if actual != expected_authority_fingerprint:
+            raise QuantitativeUiError("Stale semantic authorization authority")
+        approvals.grant_semantic_pipeline(project_id=study.project_id, run_id=study.run_id, quantitative_authority_fingerprint=actual, actor_id=actor_id, authorized_at=datetime.now(timezone.utc).isoformat(), rationale=rationale)
+        if self.durable_workflow_service is not None:
+            self.durable_workflow_service.resume_paused_task(
+                run.id, expected_task_definition_id="quant_findings"
+            )
+            return self._save(replace(study, state="ANALYZING"))
+        paused[0].resume()
+        paused[0].requeue_after_interrupt()
+        run.resume()
+        service = self.stage_service_factory.create(
+            project_id=study.project_id, run_id=study.run_id, safe_state=safe
+        )
+        try:
+            context = self._run_engine(study, run, service, dict(safe))
+        except _QuantitativeWorkflowExecutionFailure as exc:
+            raise QuantitativeUiError("Quantitative semantic workflow failed safely") from exc.error
+        if not run.is_terminal or run.status is not WorkflowStatus.COMPLETED:
+            raise QuantitativeUiError("Quantitative semantic workflow did not reach a terminal result")
+        completed_safe = context.shared_state[QUANTITATIVE_SAFE_STATE_KEY]
+        task_results = self.workflows.get_task_results(run.id)
+        task_results[QUANTITATIVE_SAFE_STATE_KEY] = completed_safe
+        task_results["_run_usage_summary"] = context.shared_state.get("run_usage_summary", {})
+        self.workflows.save_workflow_run(
+            run,
+            expected_version=self.workflows.get_workflow_run_version(run.id),
+            task_results=task_results,
+        )
+        return self._save(replace(
+            study,
+            state="COMPLETED",
+            terminal_result_record_id=completed_safe["terminal_result_record_id"],
+        ))
 
     def activate_design_aware_workflow(
         self, study_id: str, *, owner_id: str

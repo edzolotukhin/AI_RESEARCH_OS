@@ -10,11 +10,13 @@ from application.quantitative.vertical_service import RealQuantitativeStageServi
 from application.quantitative.workflow import (
     QUANTITATIVE_SAFE_STATE_KEY,
     QUANTITATIVE_STAGE_SERVICE_KEY,
+    SEMANTIC_AUTHORITY_FINGERPRINT_KEY,
 )
 from domain.quantitative.workflow import QuantitativeTerminalResult
 from domain.quantitative.dataset import DatasetVersion
 from domain.quantitative.quality import QualityControlRun
 from domain.quantitative.weighting import WeightSet
+from domain.value_objects.task_status import TaskStatus
 from domain.workflow_status import WorkflowStatus
 from infrastructure.quantitative.llm_generators import (
     LLMQuantitativeFindingGenerator,
@@ -143,6 +145,19 @@ class PropertyQsDurableWorkerResolutionTests(ApiTestCase):
             ),
         )
 
+    def _authorize_semantics(self, study):
+        service = self.container.quantitative_ui_service
+        service.durable_workflow_service = self.container.durable_workflow_service
+        run = self.container.workflow_service.get_workflow_run(study.run_id)
+        paused = next(task for task in run.tasks if task.status is TaskStatus.PAUSED)
+        snapshot = self.container.workflow_service.get_task_results(study.run_id)[paused.id]
+        safe = snapshot["shared_state"][QUANTITATIVE_SAFE_STATE_KEY]
+        service.authorize_semantic_execution(
+            study.study_id, owner_id=self._principal(), actor_id=self._principal(),
+            expected_authority_fingerprint=safe[SEMANTIC_AUTHORITY_FINGERPRINT_KEY],
+            rationale="semantic pipeline approved",
+        )
+
     def test_paused_run_is_not_claimed_then_authorized_worker_runs_real_service(self):
         study = self._ready_study("qs-worker")
         self.assertIs(
@@ -167,6 +182,10 @@ class PropertyQsDurableWorkerResolutionTests(ApiTestCase):
         self.assertTrue(
             self.container.worker_execution_service.process_once("qs-worker")
         )
+        paused = self.container.workflow_service.get_workflow_run(study.run_id)
+        self.assertIs(paused.status, WorkflowStatus.PAUSED)
+        self._authorize_semantics(study)
+        self.assertTrue(self.container.worker_execution_service.process_once("qs-worker-semantic"))
         completed = self.container.workflow_service.get_workflow_run(study.run_id)
         self.assertIs(completed.status, WorkflowStatus.COMPLETED)
         terminals = self.container.quantitative_ui_service.state.list_for_run(
@@ -226,6 +245,10 @@ class PropertyQsDurableWorkerResolutionTests(ApiTestCase):
         self.assertTrue(
             self.container.worker_execution_service.process_once("qs-qo-worker")
         )
+        paused = self.container.workflow_service.get_workflow_run(study.run_id)
+        self.assertIs(paused.status, WorkflowStatus.PAUSED)
+        self._authorize_semantics(study)
+        self.assertTrue(self.container.worker_execution_service.process_once("qs-qo-semantic"))
         result = self.client.get(
             f"/ui/quantitative/studies/{study.study_id}/result.json"
         )

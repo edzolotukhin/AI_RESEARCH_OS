@@ -161,6 +161,28 @@ class DurableWorkflowService:
         self._notify_runnable(run_id)
         return context
 
+    def resume_paused_task(
+        self, run_id: str, *, expected_task_definition_id: str,
+    ) -> WorkflowContext:
+        """Durably resume one explicitly authorized paused task."""
+        workflow_run = self._workflow_service.get_workflow_run(run_id)
+        if workflow_run.status is not WorkflowStatus.PAUSED:
+            raise RuntimeError("WorkflowRun is not paused")
+        paused = tuple(task for task in workflow_run.tasks if task.status is TaskStatus.PAUSED)
+        if len(paused) != 1 or paused[0].definition_id != expected_task_definition_id:
+            raise RuntimeError("WorkflowRun is not paused at the authorized boundary")
+        version = self._workflow_service.get_workflow_run_version(run_id)
+        paused[0].resume()
+        paused[0].requeue_after_interrupt()
+        workflow_run.resume()
+        self._workflow_service.save_workflow_run(
+            workflow_run, expected_version=version,
+            task_results=self._workflow_service.get_task_results(run_id),
+        )
+        self._audit.workflow_resumed(run_id, resume_version=version)
+        self._notify_runnable(run_id)
+        return self._load_context(run_id)
+
     def execute_claimed_run(
         self,
         run_id: str,

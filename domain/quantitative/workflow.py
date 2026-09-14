@@ -10,6 +10,11 @@ class QuantitativeApprovalDecision(StrEnum):
     SUPERSEDED = "SUPERSEDED"
 
 
+class QuantitativeSemanticAuthorizationState(StrEnum):
+    AUTHORIZED = "AUTHORIZED"
+    CONSUMED = "CONSUMED"
+
+
 class QuantitativeTerminalOutcome(StrEnum):
     COMPLETED = "COMPLETED"
     COMPLETED_WITH_NO_SUPPORTED_FINDINGS = "COMPLETED_WITH_NO_SUPPORTED_FINDINGS"
@@ -42,6 +47,34 @@ class QuantitativeApproval:
     decided_at: str
     rationale: str
     current: bool
+    fingerprint: str
+
+
+@dataclass(frozen=True)
+class QuantitativeSemanticAuthorization:
+    authorization_id: str
+    project_id: str
+    run_id: str
+    boundary: str
+    quantitative_authority_fingerprint: str
+    state: QuantitativeSemanticAuthorizationState
+    actor_id: str
+    authorized_at: str
+    rationale: str
+    fingerprint: str
+
+
+@dataclass(frozen=True)
+class QuantitativeSemanticAuthorizationConsumption:
+    consumption_id: str
+    authorization_id: str
+    authorization_fingerprint: str
+    project_id: str
+    run_id: str
+    boundary: str
+    quantitative_authority_fingerprint: str
+    state: QuantitativeSemanticAuthorizationState
+    consumed_at: str
     fingerprint: str
 
 

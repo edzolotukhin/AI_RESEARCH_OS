@@ -173,7 +173,7 @@ class P1212Study3ProductionBoundaryTests(unittest.TestCase):
         self.inner=QuantitativeFindingLineageService(repository=None,analysis_execution_repository=repo,state_service=self.state,digest_provider=Sha256DigestProvider())
     def capture(self,stage):
         lineage=_CapturingLineage(self.inner); vertical=RealQuantitativeStageService.__new__(RealQuantitativeStageService)
-        vertical.analysis_execution_projection=self.projection; vertical.analysis_execution_service=self.execution; vertical.finding_lineage=lineage; vertical.insight_lineage=object(); vertical.report_lineage=object(); vertical.state=self.state
+        vertical.analysis_execution_projection=self.projection; vertical.analysis_execution_service=self.execution; vertical.finding_lineage=lineage; vertical.insight_lineage=object(); vertical.report_lineage=object(); vertical.state=self.state; vertical.approvals=re_tests._AuthorizedSemanticBoundary()
         state={"analysis_execution_mode":"DESIGN_AWARE_EXECUTION","analysis_execution_manifest_record_id":"manifest","dataset_record_id":"dataset","codebook_record_id":"codebook","finding_input_authority_record_id":"re-input","finding_lineage_manifest_record_id":"re-manifest","finding_coverage_manifest_record_id":"re-coverage","insight_input_authority_record_id":"rf-input","insight_lineage_manifest_record_id":"rf-manifest","insight_coverage_manifest_record_id":"rf-coverage"}
         with self.assertRaises(_BoundaryCaptured):
             if stage=="initial": vertical._quant_findings(self.project,self.run,state)

@@ -95,6 +95,9 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
         if task is not None:
             if task.status == TaskStatus.COMPLETED:
                 self._task_results[task.id] = capture_task_result(context, task.id)
+            elif task.status == TaskStatus.PAUSED:
+                # A controlled methodology pause is a restart boundary.
+                self._task_results[task.id] = capture_task_progress(context, task.id)
             elif task.status == TaskStatus.FAILED and (
                 is_quantitative_diagnostic_stage(task.definition_id)
                 or has_evidence_failure_diagnostics(context)

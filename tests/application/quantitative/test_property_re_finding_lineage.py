@@ -96,6 +96,11 @@ class FabricatedDesignGenerator(RecordingFindingGenerator):
         return result
 
 
+class _AuthorizedSemanticBoundary:
+    def require_and_consume_semantic_pipeline(self, **_):
+        return None
+
+
 class PropertyREFindingLineageTests(unittest.TestCase):
     def setUp(self):
         self.rc = rc.PropertyRCAnalysisPlanAuthorityTests(methodName="runTest")
@@ -421,7 +426,7 @@ class PropertyREFindingLineageTests(unittest.TestCase):
                 None, None, None, None,
             ),
             storage=storage, digest_provider=other.digest, state_service=state,
-            approval_service=object(),
+            approval_service=_AuthorizedSemanticBoundary(),
             finding_service=QuantitativeFindingGenerationService(
                 generator=generator,
                 support_validator=QuantitativeFindingSupportValidator(digest_provider=other.digest),
@@ -490,7 +495,7 @@ class PropertyREFindingLineageTests(unittest.TestCase):
             storage=self.storage,
             digest_provider=self.rc.digest,
             state_service=self.state,
-            approval_service=object(),
+            approval_service=_AuthorizedSemanticBoundary(),
             finding_service=self.finding_service(generator),
             insight_service=object(),
             report_service=object(),

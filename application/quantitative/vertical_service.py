@@ -295,6 +295,9 @@ class RealQuantitativeStageService:
                 descriptions[result.result_id] = population
         return descriptions
     def _quant_findings(self, project_id, run_id, state):
+        self.approvals.require_and_consume_semantic_pipeline(
+            project_id=project_id, run_id=run_id, safe_state=state
+        )
         mode = state.get("analysis_execution_mode", "DATASET_ONLY_EXPLORATORY_EXECUTION")
         if mode == "DESIGN_AWARE_EXECUTION":
             if self.finding_lineage is None or self.analysis_execution_projection is None:

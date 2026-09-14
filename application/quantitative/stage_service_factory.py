@@ -46,6 +46,7 @@ from domain.quantitative.dataset import CodebookVersion, DatasetVersion, Variabl
 from domain.quantitative.quality import QualityControlRun
 from domain.quantitative.research_design_authority import StudyWeightingMode
 from domain.quantitative.weighting import WeightSet, WeightSetApproval
+from domain.value_objects.task_status import TaskStatus
 from domain.workflow_status import WorkflowStatus
 from runtime.workflow_context import WorkflowContext
 
@@ -472,11 +473,16 @@ class QuantitativeWorkflowContextServiceResolver:
     def resolve(self, context: WorkflowContext) -> Mapping[str, object]:
         if context.workflow_run.workflow_template_id != QUANTITATIVE_WORKFLOW_ID:
             return {}
-        if context.workflow_run.status is WorkflowStatus.PAUSED:
-            return {}
         safe_state = context.shared_state.get(QUANTITATIVE_SAFE_STATE_KEY, {})
         if not isinstance(safe_state, Mapping):
             raise QuantitativeWorkflowError("Durable Quantitative state is invalid")
+        if context.workflow_run.status is WorkflowStatus.PAUSED:
+            paused = tuple(
+                task for task in context.workflow_run.tasks
+                if task.status is TaskStatus.PAUSED
+            )
+            if not safe_state or len(paused) != 1 or paused[0].definition_id != "quant_findings":
+                return {}
         return {
             QUANTITATIVE_STAGE_SERVICE_KEY: self.factory.create(
                 project_id=context.project.id,

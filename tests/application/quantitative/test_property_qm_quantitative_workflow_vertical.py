@@ -352,6 +352,12 @@ class PropertyQMTests(unittest.TestCase):
             recreated_state=QuantitativeStateService(repository=self.repository,digest_provider=self.digest)
             service=RealQuantitativeStageService(plan=plan,storage=recreated_storage,digest_provider=self.digest,state_service=recreated_state,approval_service=QuantitativeApprovalService(recreated_state,self.digest),finding_service=QuantitativeFindingGenerationService(generator=_FindingGenerator(),support_validator=QuantitativeFindingSupportValidator(digest_provider=self.digest),digest_provider=self.digest),insight_service=QuantitativeInsightSynthesisService(generator=_InsightGenerator(),validator=QuantitativeInsightValidator(digest_provider=self.digest),digest_provider=self.digest),report_service=QuantitativeReportCompositionService(generator=_ReportGenerator(),validator=QuantitativeReportValidator(digest_provider=self.digest),digest_provider=self.digest),importers=(SavPyreadstatAdapter(),))
             resume_after_quantitative_approval(context); context=self._run(run,service,context.shared_state)
+            self.assertEqual(context.current_task.definition_id, "quant_findings")
+            self.assertEqual(context.workflow_run.status, WorkflowStatus.PAUSED)
+            safe=context.shared_state[QUANTITATIVE_SAFE_STATE_KEY]
+            authority_fingerprint=service.approvals.semantic_authority_fingerprint(project_id="project-1",run_id="run-real",safe_state=safe)
+            service.approvals.grant_semantic_pipeline(project_id="project-1",run_id="run-real",quantitative_authority_fingerprint=authority_fingerprint,actor_id="analyst",authorized_at="2026-08-20T00:00:00Z",rationale="semantic pipeline approved")
+            resume_after_quantitative_approval(context); context=self._run(run,service,context.shared_state)
             self.assertEqual(context.workflow_run.status, WorkflowStatus.COMPLETED)
             safe=context.shared_state[QUANTITATIVE_SAFE_STATE_KEY]
             self.assertEqual(safe["terminal_authority_status"], "COMPLETE")

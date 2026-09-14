@@ -118,6 +118,9 @@ class PropertyQoQuantitativeUiVerticalTests(ApiTestCase):
         self.assertEqual(approved.status_code,303)
         resumed=self.client.post(f"/ui/quantitative/studies/{study_id}/resume",follow_redirects=False)
         self.assertEqual(resumed.status_code,303)
+        run=service.workflows.get_workflow_run(study.run_id); paused=next(task for task in run.tasks if task.status.value=="paused")
+        snapshot=service.workflows.get_task_results(study.run_id)[paused.id]; boundary=snapshot["shared_state"]["quantitative"]
+        service.authorize_semantic_execution(study_id,owner_id=principal,actor_id=principal,expected_authority_fingerprint=boundary["semantic_authority_fingerprint"],rationale="authorized UI semantic execution")
         first=self.client.get(f"/ui/quantitative/studies/{study_id}/result.json")
         self.assertEqual(first.status_code,200)
         payload=first.json(); self.assertEqual(payload["terminal_status"],"COMPLETED")

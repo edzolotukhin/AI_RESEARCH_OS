@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Mapping, Protocol
 
 from application.contracts.base_executor import BaseExecutor
 from application.runtime.checkpoint_context import CHECKPOINT_SERVICE_KEY
 from application.ports.deterministic_digest_provider import DeterministicDigestProvider
-from application.quantitative.fingerprints import canonical_approval_fingerprint
+from application.quantitative.fingerprints import canonical_approval_fingerprint, canonical_digest
 from application.quantitative.state_persistence import QuantitativeStateService
 from domain.quantitative.workflow import (
     QuantitativeApproval,
     QuantitativeApprovalDecision,
+    QuantitativeSemanticAuthorization,
+    QuantitativeSemanticAuthorizationConsumption,
+    QuantitativeSemanticAuthorizationState,
 )
 from domain.value_objects.executor_type import ExecutorType
 from domain.value_objects.task_status import TaskStatus
@@ -23,6 +27,8 @@ from runtime.workflow_context import WorkflowContext
 QUANTITATIVE_WORKFLOW_ID = "quantitative-consumer-survey-v1"
 QUANTITATIVE_STAGE_SERVICE_KEY = "quantitative_stage_service"
 QUANTITATIVE_SAFE_STATE_KEY = "quantitative"
+SEMANTIC_PIPELINE_BOUNDARY = "PRE_QI_SEMANTIC_PIPELINE_V1"
+SEMANTIC_AUTHORITY_FINGERPRINT_KEY = "semantic_authority_fingerprint"
 
 STAGES = (
     ("quant_import", "Quantitative import"),
@@ -174,6 +180,40 @@ class QuantitativeApprovalService:
             accepted=decision is QuantitativeApprovalDecision.APPROVED,
         )
         return approval
+
+    def semantic_authority_fingerprint(self, *, project_id: str, run_id: str, safe_state: Mapping[str, str]) -> str:
+        excluded = {SEMANTIC_AUTHORITY_FINGERPRINT_KEY, "awaiting_approval_subject_type", "awaiting_approval_subject_id", "awaiting_approval_subject_fingerprint"}
+        stable = {key: value for key, value in safe_state.items() if key not in excluded and not key.startswith("semantic_authorization_")}
+        return canonical_digest({"contract": "QUANTITATIVE_PRE_SEMANTIC_AUTHORITY_V1", "project_id": project_id, "run_id": run_id, "boundary": SEMANTIC_PIPELINE_BOUNDARY, "safe_state": stable}, digest_provider=self.digest_provider)
+
+    def grant_semantic_pipeline(self, *, project_id: str, run_id: str, quantitative_authority_fingerprint: str, actor_id: str, authorized_at: str, rationale: str) -> QuantitativeSemanticAuthorization:
+        payload = {"contract": "QUANTITATIVE_SEMANTIC_AUTHORIZATION_V1", "project_id": project_id, "run_id": run_id, "boundary": SEMANTIC_PIPELINE_BOUNDARY, "quantitative_authority_fingerprint": quantitative_authority_fingerprint, "state": QuantitativeSemanticAuthorizationState.AUTHORIZED.value, "actor_id": actor_id, "rationale": rationale}
+        fingerprint = canonical_digest(payload, digest_provider=self.digest_provider)
+        value = QuantitativeSemanticAuthorization(f"{run_id}:semantic-authorization:{fingerprint}", project_id, run_id, SEMANTIC_PIPELINE_BOUNDARY, quantitative_authority_fingerprint, QuantitativeSemanticAuthorizationState.AUTHORIZED, actor_id, authorized_at, rationale, fingerprint)
+        existing = self.state_service.list_for_run(run_id, project_id=project_id, expected_type=QuantitativeSemanticAuthorization)
+        if existing:
+            if len(existing) != 1 or existing[0].fingerprint != value.fingerprint:
+                raise QuantitativeWorkflowError("conflicting semantic authorization authority")
+            return existing[0]
+        self.state_service.persist(value, record_id=value.authorization_id, project_id=project_id, run_id=run_id, accepted=True)
+        return value
+
+    def require_and_consume_semantic_pipeline(self, *, project_id: str, run_id: str, safe_state: Mapping[str, str]) -> QuantitativeSemanticAuthorizationConsumption:
+        fingerprint = self.semantic_authority_fingerprint(project_id=project_id, run_id=run_id, safe_state=safe_state)
+        declared = safe_state.get(SEMANTIC_AUTHORITY_FINGERPRINT_KEY)
+        if declared is not None and declared != fingerprint:
+            raise QuantitativeWorkflowError("stale semantic authorization boundary")
+        grants = self.state_service.list_for_run(run_id, project_id=project_id, expected_type=QuantitativeSemanticAuthorization)
+        matching = tuple(item for item in grants if item.project_id == project_id and item.run_id == run_id and item.boundary == SEMANTIC_PIPELINE_BOUNDARY and item.quantitative_authority_fingerprint == fingerprint and item.state is QuantitativeSemanticAuthorizationState.AUTHORIZED)
+        if len(matching) != 1:
+            raise QuantitativeApprovalRequired(subject_type="SEMANTIC_PIPELINE", subject_id=SEMANTIC_PIPELINE_BOUNDARY, subject_fingerprint=fingerprint, state_updates={SEMANTIC_AUTHORITY_FINGERPRINT_KEY: fingerprint})
+        grant = matching[0]
+        if self.state_service.list_for_run(run_id, project_id=project_id, expected_type=QuantitativeSemanticAuthorizationConsumption):
+            raise QuantitativeWorkflowError("semantic authorization was already consumed")
+        consumption_fingerprint = canonical_digest({"contract": "QUANTITATIVE_SEMANTIC_AUTHORIZATION_CONSUMPTION_V1", "authorization": grant.fingerprint, "project_id": project_id, "run_id": run_id, "boundary": SEMANTIC_PIPELINE_BOUNDARY, "quantitative_authority_fingerprint": fingerprint, "state": QuantitativeSemanticAuthorizationState.CONSUMED.value}, digest_provider=self.digest_provider)
+        value = QuantitativeSemanticAuthorizationConsumption(f"{run_id}:semantic-consumption:{consumption_fingerprint}", grant.authorization_id, grant.fingerprint, project_id, run_id, SEMANTIC_PIPELINE_BOUNDARY, fingerprint, QuantitativeSemanticAuthorizationState.CONSUMED, datetime.now(timezone.utc).isoformat(), consumption_fingerprint)
+        self.state_service.persist(value, record_id=value.consumption_id, project_id=project_id, run_id=run_id, accepted=True)
+        return value
 
     def require_current(
         self, approval_id: str, *, project_id: str, subject_fingerprint: str,
