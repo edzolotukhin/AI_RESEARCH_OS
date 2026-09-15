@@ -35,6 +35,7 @@ class DesignAwareInsightFindingSupportEntry:
     branches: tuple[InsightFindingLineageBranch, ...]
     limitations: tuple[str, ...]
     fingerprint: str
+    interpretive_context: Mapping[str, Any] | None = None
 
 @dataclass(frozen=True)
 class DesignAwareInsightInputAuthority:
@@ -73,6 +74,9 @@ class InsightDesignLineageEntry:
     common_research_question_ids: tuple[str, ...]
     common_scope_objective_ids: tuple[str, ...]
     fingerprint: str
+    compatibility_mode: str = ""
+    compatibility_authority_id: str = ""
+    compatibility_authority_fingerprint: str = ""
 
 @dataclass(frozen=True)
 class InsightCoverageEntry:

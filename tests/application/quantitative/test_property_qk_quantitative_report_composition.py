@@ -15,6 +15,7 @@ from domain.quantitative.finding import QuantitativeClaimType, QuantitativeSuppo
 from domain.quantitative.insight import (
     QuantitativeFindingReference,
     QuantitativeInsight,
+    QuantitativeInsightCompatibilityMode,
     QuantitativeInsightType,
     QuantitativeInsightValidationStatus,
 )
@@ -166,6 +167,48 @@ class PropertyQKQuantitativeReportCompositionTests(unittest.TestCase):
         self.assertEqual(composed.composition_metadata, {"generation_passes": 1, "repair_attempts": 0})
         self.assertNotIn("respondent", generator.prompts[0].lower())
 
+    def test_interpretively_compatible_insight_governs_cross_item_report_section(self):
+        first = self.supported_finding("first", "42", display="42.0")
+        second = self.supported_finding("second", "28", display="28.0")
+        raw = QuantitativeInsight(
+            "cross-item-insight",
+            "The accepted values were 42.0% and 28.0%.",
+            QuantitativeInsightType.SYNTHESIS,
+            (
+                QuantitativeFindingReference(first.finding_id, first.support_validation_fingerprint),
+                QuantitativeFindingReference(second.finding_id, second.support_validation_fingerprint),
+            ),
+            ("42.0", "28.0"),
+            compatibility_mode=QuantitativeInsightCompatibilityMode.INTERPRETIVE_COMPATIBILITY.value,
+            compatibility_authority_id="qj-compat-governed",
+            compatibility_authority_fingerprint="governed-cross-item-authority",
+        )
+        insight = self.qj.validate(
+            raw,
+            findings={first.finding_id: first, second.finding_id: second},
+            allow_interpretive_compatibility=True,
+        )
+        proposal = self.proposal(
+            first,
+            insight=insight,
+            narrative="The accepted values were 42.0% and 28.0%.",
+            values=("42.0", "28.0"),
+        )
+        finding_ids = [first.finding_id, second.finding_id]
+        finding_fingerprints = {
+            first.finding_id: first.support_validation_fingerprint,
+            second.finding_id: second.support_validation_fingerprint,
+        }
+        proposal["finding_refs"] = finding_ids
+        proposal["finding_fingerprints"] = finding_fingerprints
+        proposal["sections"][0]["finding_refs"] = finding_ids
+        proposal["sections"][0]["finding_fingerprints"] = finding_fingerprints
+        proposal["sections"][0]["authoritative_result_refs"] = [
+            first.statistical_result_refs[0].result_id,
+            second.statistical_result_refs[0].result_id,
+        ]
+        _, _, composed = self.compose(proposal, (first, second), (insight,))
+        self.assertIsNotNone(composed.accepted_report)
     def test_kpi_segment_and_limitation_sections_are_supported(self):
         kpi = self.supported_finding("nps", "36", claim_type=QuantitativeClaimType.KPI_VALUE, statistic_type="NPS", category=None, display="36.0")
         segment = self.supported_finding("segment", "70", claim_type=QuantitativeClaimType.DESCRIPTIVE_COMPARISON, statistic_type="CROSS_TAB_COLUMN_PERCENTAGE", display="50.0", direction="HIGHER")

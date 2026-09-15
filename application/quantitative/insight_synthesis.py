@@ -26,6 +26,7 @@ from domain.quantitative.insight import (
     QuantitativeInsightRejection,
     QuantitativeInsightType,
     QuantitativeInsightValidationStatus,
+    QuantitativeInsightCompatibilityMode,
 )
 
 
@@ -52,13 +53,34 @@ class QuantitativeInsightValidator:
         insight: QuantitativeInsight,
         *,
         findings: Mapping[str, QuantitativeFinding],
+        allow_interpretive_compatibility: bool = False,
     ) -> QuantitativeInsight:
         if insight.methodology != "QUANTITATIVE" or not insight.insight_text.strip():
             raise QuantitativeAnalysisError("invalid Quantitative Insight identity or methodology")
         supports = self._resolve(insight, findings)
         contexts = {item.analytical_context_fingerprint for item in supports}
-        if "" in contexts or len(contexts) != 1:
+        if "" in contexts:
             raise QuantitativeAnalysisError("supporting Findings have incompatible analytical contexts")
+        if len(contexts) == 1:
+            context = next(iter(contexts))
+            compatibility_mode = QuantitativeInsightCompatibilityMode.EXACT_CONTEXT.value
+            compatibility_authority_id = f"exact-context:{context}"
+            compatibility_authority_fingerprint = canonical_digest(
+                {"mode": compatibility_mode, "context": context, "version": VALIDATION_VERSION},
+                digest_provider=self._digest,
+            )
+        else:
+            compatibility_mode = insight.compatibility_mode
+            compatibility_authority_id = insight.compatibility_authority_id
+            compatibility_authority_fingerprint = insight.compatibility_authority_fingerprint
+            if (
+                not allow_interpretive_compatibility
+                or insight.insight_type is not QuantitativeInsightType.SYNTHESIS
+                or compatibility_mode != QuantitativeInsightCompatibilityMode.INTERPRETIVE_COMPATIBILITY.value
+                or not compatibility_authority_id
+                or not compatibility_authority_fingerprint
+            ):
+                raise QuantitativeAnalysisError("supporting Findings have incompatible analytical contexts")
         if self._pii_exposures(insight.insight_text) or (
             insight.limitation_note and self._pii_exposures(insight.limitation_note)
         ):
@@ -69,30 +91,39 @@ class QuantitativeInsightValidator:
         self._validate_significance(insight, supports)
         self._validate_type(insight, supports)
 
-        context = next(iter(contexts))
-        fingerprint = canonical_digest(
-            {
-                "insight_id": insight.insight_id,
-                "type": insight.insight_type.value,
-                "text": insight.insight_text,
-                "supports": tuple(
-                    (item.finding_id, item.support_validation_fingerprint)
-                    for item in supports
-                ),
-                "referenced_display_values": insight.referenced_display_values,
-                "direction": insight.direction,
-                "limitation_note": insight.limitation_note,
-                "context": context,
-                "version": VALIDATION_VERSION,
-            },
-            digest_provider=self._digest,
-        )
+        validation_payload = {
+            "insight_id": insight.insight_id,
+            "type": insight.insight_type.value,
+            "text": insight.insight_text,
+            "supports": tuple(
+                (item.finding_id, item.support_validation_fingerprint)
+                for item in supports
+            ),
+            "referenced_display_values": insight.referenced_display_values,
+            "direction": insight.direction,
+            "limitation_note": insight.limitation_note,
+        }
+        if len(contexts) == 1:
+            # Preserve the accepted qj-2 fingerprint contract for exact-context Insights.
+            validation_payload["context"] = context
+        else:
+            validation_payload["contexts"] = tuple(sorted(contexts))
+            validation_payload["compatibility"] = (
+                compatibility_mode,
+                compatibility_authority_id,
+                compatibility_authority_fingerprint,
+            )
+        validation_payload["version"] = VALIDATION_VERSION
+        fingerprint = canonical_digest(validation_payload, digest_provider=self._digest)
         return replace(
             insight,
-            support_context_fingerprint=context,
+            support_context_fingerprint=(context if len(contexts) == 1 else compatibility_authority_fingerprint),
             validation_status=QuantitativeInsightValidationStatus.SUPPORTED,
             validation_fingerprint=fingerprint,
             validation_version=VALIDATION_VERSION,
+            compatibility_mode=compatibility_mode,
+            compatibility_authority_id=compatibility_authority_id,
+            compatibility_authority_fingerprint=compatibility_authority_fingerprint,
         )
 
     @staticmethod
@@ -220,9 +251,12 @@ class QuantitativeInsightSynthesisService:
             try:
                 insight = self._parse(proposal, ordinal, bundle_fingerprint, available)
                 parsed.append(insight)
-                validated_insight = self._validator.validate(insight, findings=available)
                 if post_validator is not None:
-                    validated_insight = post_validator(validated_insight)
+                    insight = post_validator(insight)
+                validated_insight = self._validator.validate(
+                    insight, findings=available,
+                    allow_interpretive_compatibility=post_validator is not None,
+                )
                 validated.append(validated_insight)
             except (QuantitativeAnalysisError, ValueError, TypeError, KeyError) as exc:
                 reason = f"{type(exc).__name__}: {exc}"

@@ -10,7 +10,10 @@ from application.ports.deterministic_digest_provider import DeterministicDigestP
 from application.quantitative.fingerprints import canonical_digest
 from application.quantitative.one_way_statistics import QuantitativeAnalysisError
 from domain.quantitative.finding import QuantitativeClaimType, QuantitativeFinding, QuantitativeSupportStatus
-from domain.quantitative.insight import QuantitativeInsight, QuantitativeInsightValidationStatus
+from domain.quantitative.insight import (
+    QuantitativeInsight, QuantitativeInsightCompatibilityMode,
+    QuantitativeInsightValidationStatus,
+)
 from domain.quantitative.report import (
     QuantitativeReport,
     QuantitativeReportCompositionResult,
@@ -64,7 +67,7 @@ class QuantitativeReportValidator:
             if any(item.finding_id not in finding_ids for item in section_findings) or any(item.insight_id not in insight_ids for item in section_insights):
                 raise QuantitativeAnalysisError("section references support outside the Report bundle")
             chain_findings = self._support_chain(section_findings, section_insights, findings)
-            self._validate_section(section, chain_findings)
+            self._validate_section(section, chain_findings, section_insights)
         support_fingerprint = canonical_digest(
             {
                 "findings": tuple((item.finding_id, item.support_validation_fingerprint) for item in report_findings),
@@ -136,12 +139,30 @@ class QuantitativeReportValidator:
             raise QuantitativeAnalysisError("Report section has no authoritative support")
         return tuple(chain.values())
 
-    def _validate_section(self, section, findings):
+    def _validate_section(self, section, findings, insights):
         if not section.title.strip() or not section.narrative.strip():
             raise QuantitativeAnalysisError("Report section title and narrative are required")
         contexts = {item.analytical_context_fingerprint for item in findings}
-        if "" in contexts or len(contexts) != 1:
+        if "" in contexts:
             raise QuantitativeAnalysisError("Report section combines incompatible analytical contexts")
+        if len(contexts) != 1:
+            finding_ids = {item.finding_id for item in findings}
+            governed = tuple(
+                item for item in insights
+                if (
+                    item.compatibility_mode
+                    == QuantitativeInsightCompatibilityMode.INTERPRETIVE_COMPATIBILITY.value
+                    and item.compatibility_authority_id
+                    and item.compatibility_authority_fingerprint
+                )
+            )
+            governed_support = {
+                reference.finding_id
+                for insight in governed
+                for reference in insight.supporting_finding_refs
+            }
+            if not governed or not finding_ids.issubset(governed_support):
+                raise QuantitativeAnalysisError("Report section combines incompatible analytical contexts")
         claims = tuple(item.claim for item in findings)
         first = claims[0]
         if section.weighting_status != first.weighting_status or section.filter_definition != first.filter_definition or section.base_definition != first.base_definition:

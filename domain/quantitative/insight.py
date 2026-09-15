@@ -17,6 +17,11 @@ class QuantitativeInsightValidationStatus(str, Enum):
     SUPPORTED = "SUPPORTED"
 
 
+class QuantitativeInsightCompatibilityMode(str, Enum):
+    EXACT_CONTEXT = "EXACT_CONTEXT"
+    INTERPRETIVE_COMPATIBILITY = "INTERPRETIVE_COMPATIBILITY"
+
+
 @dataclass(frozen=True)
 class QuantitativeFindingReference:
     finding_id: str
@@ -37,6 +42,9 @@ class QuantitativeInsight:
     validation_status: QuantitativeInsightValidationStatus = QuantitativeInsightValidationStatus.UNVALIDATED
     validation_fingerprint: str = ""
     validation_version: str = "qj-2"
+    compatibility_mode: str = ""
+    compatibility_authority_id: str = ""
+    compatibility_authority_fingerprint: str = ""
 
 
 @dataclass(frozen=True)

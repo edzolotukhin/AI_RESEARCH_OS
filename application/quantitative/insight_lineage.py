@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from application.quantitative.fingerprints import canonical_digest
+from dataclasses import replace
+
+from application.quantitative.fingerprints import canonical_digest, canonical_scalar
 from application.quantitative.insight_support_canonicalization import (
     canonical_finding_support_bundle,
     finding_support_projection,
@@ -11,9 +13,13 @@ from application.quantitative.insight_synthesis import (
     PROMPT_VERSION as INSIGHT_PROMPT_VERSION,
     VALIDATION_VERSION as INSIGHT_VALIDATION_VERSION,
 )
-from domain.quantitative.finding import QuantitativeSupportStatus
+from domain.quantitative.finding import QuantitativeClaimType, QuantitativeSupportStatus
 from domain.quantitative.finding_lineage import FindingCoverageStatus
-from domain.quantitative.insight import QuantitativeInsightGenerationResult
+from domain.quantitative.insight import (
+    QuantitativeInsightCompatibilityMode,
+    QuantitativeInsightGenerationResult,
+    QuantitativeInsightType,
+)
 from domain.quantitative.insight_lineage import (
     INSIGHT_LINEAGE_METHOD_VERSION,
     DatasetOnlyInsightLineageAbsence,
@@ -59,10 +65,12 @@ class QuantitativeInsightLineageService:
                 raise QuantitativeInsightLineageError("accepted Finding lacks exact current RE lineage")
             branches = []
             limitations = []
+            resolved_supports = []
             for outcome_id, outcome_fingerprint in lineage.rd_outcome_ids_and_fingerprints:
                 support = analysis.get(outcome_id) or comparisons.get(outcome_id)
                 if support is None or support.rd_outcome_fingerprint != outcome_fingerprint:
                     raise QuantitativeInsightLineageError("RE lineage branch is unavailable or altered")
+                resolved_supports.append(support)
                 branches.append(InsightFindingLineageBranch(
                     outcome_id, outcome_fingerprint,
                     getattr(support, "planned_analysis_id", None),
@@ -72,10 +80,18 @@ class QuantitativeInsightLineageService:
                 ))
                 limitations.extend(support.limitations)
             branches = tuple(sorted(branches, key=lambda item: (item.rd_outcome_id, item.planned_analysis_id or "", item.planned_comparison_id or "")))
+            interpretive_context = self._interpretive_context(
+                finding, resolved_supports, project_id=project_id, run_id=run_id,
+                dataset_version_id=re_input.dataset_version_id,
+                dataset_fingerprint=re_input.dataset_fingerprint,
+                codebook_version_id=re_input.codebook_version_id,
+                codebook_fingerprint=re_input.codebook_fingerprint,
+            )
             payload = {
                 "finding": (finding.finding_id, finding.support_validation_fingerprint),
                 "re": lineage.fingerprint,
                 "branches": tuple(self._branch_payload(item) for item in branches),
+                "interpretive_context": interpretive_context,
                 "version": INSIGHT_LINEAGE_METHOD_VERSION,
             }
             fp = canonical_digest(payload, digest_provider=self.digest)
@@ -85,22 +101,28 @@ class QuantitativeInsightLineageService:
                 lineage.statistical_result_ids_and_fingerprints,
                 lineage.comparison_result_ids_and_fingerprints,
                 branches, tuple(dict.fromkeys(limitations)), fp,
+                interpretive_context=interpretive_context,
             ))
         entries = tuple(sorted(entries, key=lambda item: item.finding_id))
         requirements = tuple(sorted({value for item in entries for branch in item.branches for value in branch.analytical_requirement_ids}))
         limitations = tuple(dict.fromkeys(re_input.limitations + tuple(value for item in entries for value in item.limitations)))
-        payload = {
-            "project": project_id, "run": run_id,
-            "generation": (generation_record_id, generation.generation_fingerprint),
-            "re_manifest": (re_manifest.manifest_id, re_manifest.fingerprint),
-            "re_input": (re_input.authority_id, re_input.fingerprint),
-            "re_coverage": (re_coverage.coverage_id, re_coverage.fingerprint),
-            "rd": (re_input.rd_execution_manifest_id, re_input.rd_execution_manifest_fingerprint),
-            "rc": (re_input.rc_plan_id, re_input.rc_plan_version_id, re_input.rc_plan_fingerprint),
-            "entries": tuple(item.fingerprint for item in entries),
-            "requirements": requirements, "limitations": limitations,
-            "version": INSIGHT_LINEAGE_METHOD_VERSION,
-        }
+        payload = self._input_authority_payload(
+            project_id=project_id, run_id=run_id,
+            generation_record_id=generation_record_id,
+            generation_fingerprint=generation.generation_fingerprint,
+            re_manifest_id=re_manifest.manifest_id,
+            re_manifest_fingerprint=re_manifest.fingerprint,
+            re_input_id=re_input.authority_id,
+            re_input_fingerprint=re_input.fingerprint,
+            re_coverage_id=re_coverage.coverage_id,
+            re_coverage_fingerprint=re_coverage.fingerprint,
+            rd_execution_manifest_id=re_input.rd_execution_manifest_id,
+            rd_execution_manifest_fingerprint=re_input.rd_execution_manifest_fingerprint,
+            rc_plan_id=re_input.rc_plan_id,
+            rc_plan_version_id=re_input.rc_plan_version_id,
+            rc_plan_fingerprint=re_input.rc_plan_fingerprint,
+            entries=entries, requirements=requirements, limitations=limitations,
+        )
         fp = canonical_digest(payload, digest_provider=self.digest)
         return DesignAwareInsightInputAuthority(
             f"rf-input-{fp}", project_id, run_id, "DESIGN_AWARE_EXECUTION",
@@ -113,18 +135,135 @@ class QuantitativeInsightLineageService:
             entries, requirements, limitations, INSIGHT_LINEAGE_METHOD_VERSION, fp,
         )
 
+    @staticmethod
+    def _input_authority_payload(
+        *, project_id, run_id, generation_record_id, generation_fingerprint,
+        re_manifest_id, re_manifest_fingerprint, re_input_id,
+        re_input_fingerprint, re_coverage_id, re_coverage_fingerprint,
+        rd_execution_manifest_id, rd_execution_manifest_fingerprint,
+        rc_plan_id, rc_plan_version_id, rc_plan_fingerprint, entries,
+        requirements, limitations,
+    ):
+        return {
+            "project": project_id, "run": run_id,
+            "generation": (generation_record_id, generation_fingerprint),
+            "re_manifest": (re_manifest_id, re_manifest_fingerprint),
+            "re_input": (re_input_id, re_input_fingerprint),
+            "re_coverage": (re_coverage_id, re_coverage_fingerprint),
+            "rd": (rd_execution_manifest_id, rd_execution_manifest_fingerprint),
+            "rc": (rc_plan_id, rc_plan_version_id, rc_plan_fingerprint),
+            "entries": tuple(item.fingerprint for item in entries),
+            "requirements": requirements, "limitations": limitations,
+            "version": INSIGHT_LINEAGE_METHOD_VERSION,
+        }
+
+    def _validate_input_authority(self, authority):
+        payload = self._input_authority_payload(
+            project_id=authority.project_id, run_id=authority.run_id,
+            generation_record_id=authority.finding_generation_record_id,
+            generation_fingerprint=authority.finding_generation_fingerprint,
+            re_manifest_id=authority.re_lineage_manifest_id,
+            re_manifest_fingerprint=authority.re_lineage_manifest_fingerprint,
+            re_input_id=authority.re_input_authority_id,
+            re_input_fingerprint=authority.re_input_authority_fingerprint,
+            re_coverage_id=authority.re_coverage_id,
+            re_coverage_fingerprint=authority.re_coverage_fingerprint,
+            rd_execution_manifest_id=authority.rd_execution_manifest_id,
+            rd_execution_manifest_fingerprint=authority.rd_execution_manifest_fingerprint,
+            rc_plan_id=authority.rc_plan_id,
+            rc_plan_version_id=authority.rc_plan_version_id,
+            rc_plan_fingerprint=authority.rc_plan_fingerprint,
+            entries=authority.finding_entries,
+            requirements=authority.analytical_requirement_ids,
+            limitations=authority.limitations,
+        )
+        fingerprint = canonical_digest(payload, digest_provider=self.digest)
+        if (
+            authority.method_version != INSIGHT_LINEAGE_METHOD_VERSION
+            or authority.fingerprint != fingerprint
+            or authority.authority_id != f"rf-input-{fingerprint}"
+        ):
+            raise QuantitativeInsightLineageError("stale or malformed RF input authority")
     def compatibility_validator(self, authority):
+        self._validate_input_authority(authority)
         available = {item.finding_id: item for item in authority.finding_entries}
 
         def validate(insight):
+            if (
+                insight.compatibility_mode
+                or insight.compatibility_authority_id
+                or insight.compatibility_authority_fingerprint
+            ):
+                raise QuantitativeInsightLineageError(
+                    "Insight contains predeclared compatibility authority"
+                )
             selected = []
             for reference in insight.supporting_finding_refs:
                 entry = available.get(reference.finding_id)
                 if entry is None or entry.qh_validation_fingerprint != reference.support_validation_fingerprint:
                     raise QuantitativeInsightLineageError("Insight references Finding outside RF authority")
                 selected.append(entry)
-            self._common_scope(selected)
-            return insight
+            common_requirements, common_questions, common_objectives = self._common_scope(selected)
+            contexts = {
+                item.safe_finding_projection.get("analytical_context_fingerprint")
+                for item in selected
+            }
+            if "" in contexts or None in contexts:
+                raise QuantitativeInsightLineageError(
+                    "supporting Findings lack analytical context authority"
+                )
+            if len(contexts) == 1:
+                return insight
+            if insight.insight_type is not QuantitativeInsightType.SYNTHESIS:
+                raise QuantitativeInsightLineageError(
+                    "cross-item compatibility is limited to descriptive synthesis"
+                )
+            dimensions = tuple(item.interpretive_context for item in selected)
+            if any(not isinstance(item, dict) or not item for item in dimensions):
+                raise QuantitativeInsightLineageError(
+                    "supporting Findings lack interpretive compatibility authority"
+                )
+            if any(
+                item.get("claim_type") != QuantitativeClaimType.DESCRIPTIVE_VALUE.value
+                for item in dimensions
+            ):
+                raise QuantitativeInsightLineageError(
+                    "cross-item compatibility is limited to descriptive Findings"
+                )
+            shared = dimensions[0]
+            if any(item != shared for item in dimensions[1:]):
+                raise QuantitativeInsightLineageError(
+                    "supporting Findings have incompatible interpretive dimensions"
+                )
+            payload = {
+                "mode": QuantitativeInsightCompatibilityMode.INTERPRETIVE_COMPATIBILITY.value,
+                "project": authority.project_id,
+                "run": authority.run_id,
+                "rf_input": (authority.authority_id, authority.fingerprint),
+                "findings": tuple(sorted(
+                    (
+                        item.finding_id,
+                        item.qh_validation_fingerprint,
+                        item.safe_finding_projection["analytical_context_fingerprint"],
+                        item.fingerprint,
+                    )
+                    for item in selected
+                )),
+                "shared_scope": (
+                    common_requirements,
+                    common_questions,
+                    common_objectives,
+                ),
+                "shared_dimensions": shared,
+                "version": "P1_29_INTERPRETIVE_COMPATIBILITY_V1",
+            }
+            fingerprint = canonical_digest(payload, digest_provider=self.digest)
+            return replace(
+                insight,
+                compatibility_mode=QuantitativeInsightCompatibilityMode.INTERPRETIVE_COMPATIBILITY.value,
+                compatibility_authority_id=f"qj-compat-{fingerprint}",
+                compatibility_authority_fingerprint=fingerprint,
+            )
         return validate
 
     def expected_generation_bundle_fingerprint(self, authority):
@@ -169,6 +308,10 @@ class QuantitativeInsightLineageService:
                 "findings": tuple((item.finding_id, item.qh_validation_fingerprint, item.re_lineage_entry_fingerprint) for item in selected),
                 "branches": tuple((item.finding_id, tuple(self._branch_payload(branch) for branch in item.branches)) for item in selected),
                 "scope": (common_requirements, common_questions, common_objectives),
+                "compatibility": (
+                    insight.compatibility_mode, insight.compatibility_authority_id,
+                    insight.compatibility_authority_fingerprint,
+                ),
                 "version": INSIGHT_LINEAGE_METHOD_VERSION,
             }
             fp = canonical_digest(payload, digest_provider=self.digest)
@@ -179,6 +322,8 @@ class QuantitativeInsightLineageService:
                 tuple(item.re_lineage_entry_fingerprint for item in selected),
                 tuple((item.finding_id, item.branches) for item in selected),
                 common_requirements, common_questions, common_objectives, fp,
+                insight.compatibility_mode, insight.compatibility_authority_id,
+                insight.compatibility_authority_fingerprint,
             ))
         entries = tuple(sorted(entries, key=lambda item: item.insight_id))
         coverage = self.repository.save_coverage(self._coverage(authority, generation, entries))
@@ -262,6 +407,45 @@ class QuantitativeInsightLineageService:
         )
         return self.repository.save_controlled_absence(value)
 
+    @staticmethod
+    def _interpretive_context(
+        finding, supports, *, project_id, run_id, dataset_version_id,
+        dataset_fingerprint, codebook_version_id, codebook_fingerprint,
+    ):
+        if (
+            finding.claim.claim_type is not QuantitativeClaimType.DESCRIPTIVE_VALUE
+            or len(supports) != 1
+            or finding.semantic_evidence_context is None
+        ):
+            return {}
+        numerical = supports[0].safe_numerical_projection
+        semantic = finding.semantic_evidence_context
+        if semantic.statistic_type != "GROUPED_CATEGORY_PERCENTAGE":
+            return {}
+        return {
+            "project_id": project_id,
+            "run_id": run_id,
+            "dataset_version_id": dataset_version_id,
+            "dataset_fingerprint": dataset_fingerprint,
+            "codebook_version_id": codebook_version_id,
+            "codebook_fingerprint": codebook_fingerprint,
+            "analysis_family": "GROUPED_CATEGORY_DESCRIPTIVE",
+            "claim_type": finding.claim.claim_type.value,
+            "population_description": semantic.population_description,
+            "base_definition": semantic.base_definition,
+            "filter_definition": semantic.filter_definition,
+            "weighting_status": semantic.weighting_status,
+            "weight_set_fingerprint": semantic.weight_set_fingerprint,
+            "missing_value_semantics": numerical.get("missing_value_semantics"),
+            "statistic_type": semantic.statistic_type,
+            "category_code": canonical_scalar(semantic.category_code),
+            "category_label": semantic.category_label,
+            "grouped_metric_semantic": semantic.grouped_metric_semantic,
+            "grouped_category_members": tuple(
+                canonical_scalar(item) for item in semantic.grouped_category_members
+            ),
+            "grouped_category_method_version": semantic.grouped_category_method_version,
+        }
     @staticmethod
     def _preflight(project_id, run_id, generation_record_id, generation, re_input, re_manifest, re_coverage):
         values = (re_input, re_manifest, re_coverage)

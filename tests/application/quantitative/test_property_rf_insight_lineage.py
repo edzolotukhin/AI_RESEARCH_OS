@@ -345,17 +345,39 @@ class PropertyRFInsightLineageTests(unittest.TestCase):
             service.generate(findings=(first, first))
 
     def test_same_rq_different_requirements_compatible_but_common_objective_only_rejected(self):
+        def seal(value):
+            payload = self.rf._input_authority_payload(
+                project_id=value.project_id, run_id=value.run_id,
+                generation_record_id=value.finding_generation_record_id,
+                generation_fingerprint=value.finding_generation_fingerprint,
+                re_manifest_id=value.re_lineage_manifest_id,
+                re_manifest_fingerprint=value.re_lineage_manifest_fingerprint,
+                re_input_id=value.re_input_authority_id,
+                re_input_fingerprint=value.re_input_authority_fingerprint,
+                re_coverage_id=value.re_coverage_id,
+                re_coverage_fingerprint=value.re_coverage_fingerprint,
+                rd_execution_manifest_id=value.rd_execution_manifest_id,
+                rd_execution_manifest_fingerprint=value.rd_execution_manifest_fingerprint,
+                rc_plan_id=value.rc_plan_id,
+                rc_plan_version_id=value.rc_plan_version_id,
+                rc_plan_fingerprint=value.rc_plan_fingerprint,
+                entries=value.finding_entries,
+                requirements=value.analytical_requirement_ids,
+                limitations=value.limitations,
+            )
+            fingerprint = canonical_digest(payload, digest_provider=self.rc.digest)
+            return replace(value, authority_id=f"rf-input-{fingerprint}", fingerprint=fingerprint)
         base = self.authority().finding_entries[0]
         branch = base.branches[0]
         same_rq = replace(branch, analytical_requirement_ids=("requirement-other",))
         second = replace(base, finding_id="finding-second", branches=(same_rq,))
-        authority = replace(self.authority(), finding_entries=(base, second))
+        authority = seal(replace(self.authority(), finding_entries=(base, second)))
         fake = replace(
             self.findings.accepted_findings[0], finding_id="finding-second",
             support_validation_fingerprint="qh-second",
         )
         second = replace(second, qh_validation_fingerprint="qh-second")
-        authority = replace(authority, finding_entries=(base, second))
+        authority = seal(replace(authority, finding_entries=(base, second)))
         from domain.quantitative.insight import QuantitativeFindingReference, QuantitativeInsight, QuantitativeInsightType
         insight = QuantitativeInsight("i", "Supported synthesis.", QuantitativeInsightType.SYNTHESIS, (
             QuantitativeFindingReference(base.finding_id, base.qh_validation_fingerprint),
@@ -365,7 +387,7 @@ class PropertyRFInsightLineageTests(unittest.TestCase):
         incompatible_branch = replace(same_rq, research_question_ids=("rq-other",), objective_ids=branch.objective_ids)
         incompatible = replace(second, branches=(incompatible_branch,))
         with self.assertRaisesRegex(QuantitativeInsightLineageError, "common requirement or ResearchQuestion"):
-            self.rf.compatibility_validator(replace(authority, finding_entries=(base, incompatible)))(insight)
+            self.rf.compatibility_validator(seal(replace(authority, finding_entries=(base, incompatible))))(insight)
 
     def test_model_design_fields_and_unknown_finding_are_rejected_without_lineage(self):
         authority = self.authority()
