@@ -25,14 +25,18 @@ def integration_tests_enabled() -> bool:
     if not database_url:
         return False
 
-    return "test" in database_url.rsplit("/", 1)[-1].lower()
+    return (
+        "test" in database_url.rsplit("/", 1)[-1].lower()
+        and os.environ.get("POSTGRESQL_DISPOSABLE_TEST_DATABASE", "0") == "1"
+    )
 
 
 def require_integration_tests() -> None:
     if not integration_tests_enabled():
         raise unittest.SkipTest(
             "PostgreSQL integration tests disabled. Set POSTGRESQL_INTEGRATION_TESTS=1 "
-            "and DATABASE_URL_TEST to a database whose name contains 'test'."
+            "and POSTGRESQL_DISPOSABLE_TEST_DATABASE=1, and set DATABASE_URL_TEST "
+            "to a database whose name contains 'test'."
         )
 
 

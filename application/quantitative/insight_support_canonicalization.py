@@ -13,6 +13,41 @@ _T = TypeVar("_T")
 SEMANTIC_EVIDENCE_VERSION = "P1_18_SEMANTIC_EVIDENCE_V1"
 
 
+def semantic_evidence_context_fingerprint_payload(context) -> Mapping[str, Any]:
+    """Return the single canonical payload used to create and verify a context."""
+    payload = {
+        "result": (context.result_id, context.result_fingerprint),
+        "variable": (context.variable_id, context.variable_fingerprint),
+        "variable_label": context.variable_label,
+        "question_context": context.question_context,
+        "category_code": canonical_scalar(context.category_code),
+        "category_label": context.category_label,
+        "filter": context.filter_definition,
+        "base": context.base_definition,
+        "denominator": canonical_scalar(context.denominator),
+        "population_description": context.population_description,
+        "value": canonical_scalar(context.value),
+        "display_value": context.display_value,
+        "weighting": (context.weighting_status, context.weight_set_fingerprint),
+        "provenance": context.provenance,
+        "version": SEMANTIC_EVIDENCE_VERSION,
+    }
+    if context.statistic_type == "GROUPED_CATEGORY_PERCENTAGE":
+        if (
+            not context.grouped_category_members
+            or not context.grouped_metric_semantic
+            or not context.grouped_category_method_version
+            or context.numerator is None
+        ):
+            raise QuantitativeAnalysisError("grouped semantic evidence context is incomplete")
+        payload["grouped_category"] = {
+            "members": tuple(canonical_scalar(item) for item in context.grouped_category_members),
+            "metric_semantic": context.grouped_metric_semantic,
+            "method_version": context.grouped_category_method_version,
+            "numerator": canonical_scalar(context.numerator),
+        }
+    return payload
+
 def semantic_evidence_context_projection(context) -> Mapping[str, Any]:
     """Return only canonical aggregate semantics already authorized by QH."""
     projection = {
@@ -35,6 +70,13 @@ def semantic_evidence_context_projection(context) -> Mapping[str, Any]:
         "weight_set_fingerprint": context.weight_set_fingerprint,
         "provenance": context.provenance,
     }
+    if context.statistic_type == "GROUPED_CATEGORY_PERCENTAGE":
+        projection["grouped_category"] = {
+            "members": tuple(canonical_scalar(item) for item in context.grouped_category_members),
+            "metric_semantic": context.grouped_metric_semantic,
+            "method_version": context.grouped_category_method_version,
+            "numerator": canonical_scalar(context.numerator),
+        }
     if context.population_description is not None:
         projection["population_description"] = context.population_description
     return projection
@@ -87,23 +129,7 @@ def validate_finding_semantic_context(
         raise QuantitativeAnalysisError(
             "semantic evidence context provenance is incomplete"
         )
-    payload = {
-        "result": (context.result_id, context.result_fingerprint),
-        "variable": (context.variable_id, context.variable_fingerprint),
-        "variable_label": context.variable_label,
-        "question_context": context.question_context,
-        "category_code": canonical_scalar(context.category_code),
-        "category_label": context.category_label,
-        "filter": context.filter_definition,
-        "base": context.base_definition,
-        "denominator": canonical_scalar(context.denominator),
-        "population_description": context.population_description,
-        "value": canonical_scalar(context.value),
-        "display_value": context.display_value,
-        "weighting": (context.weighting_status, context.weight_set_fingerprint),
-        "provenance": context.provenance,
-        "version": SEMANTIC_EVIDENCE_VERSION,
-    }
+    payload = semantic_evidence_context_fingerprint_payload(context)
     if canonical_digest(payload, digest_provider=digest_provider) != context.fingerprint:
         raise QuantitativeAnalysisError(
             "semantic evidence context fingerprint mismatch"

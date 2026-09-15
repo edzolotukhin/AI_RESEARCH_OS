@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 from typing import Mapping
 
 from application.quantitative.finding_support import QuantitativeFindingSupportValidator
 from application.quantitative.finding_generation import QuantitativeFindingGenerationService
 from application.quantitative.fingerprints import canonical_digest, canonical_scalar
+from application.quantitative.insight_support_canonicalization import (
+    semantic_evidence_context_fingerprint_payload,
+)
 from application.quantitative.state_persistence import authority_fingerprint
 from domain.quantitative.analysis import AnalyticalComparisonResult, StatisticalResult
 from domain.quantitative.analysis_execution import (
@@ -662,35 +666,17 @@ class QuantitativeFindingLineageService:
         display_value = QuantitativeFindingSupportValidator.display_value(
             Decimal(str(result.value)), decimal_places=1
         )
-        payload = {
-            "result": (result.result_id, result.reproducibility_fingerprint),
-            "variable": (variable.variable_id, variable.fingerprint),
-            "variable_label": variable.label,
-            "question_context": variable.label,
-            "category_code": canonical_scalar(result.category_value),
-            "category_label": category_label,
-            "filter": result.filter_definition,
-            "base": result.base_definition,
-            "denominator": canonical_scalar(result.denominator),
-            "population_description": population_description,
-            "value": canonical_scalar(result.value),
-            "display_value": display_value,
-            "weighting": (result.weighting_status, result.weight_set_fingerprint),
-            "provenance": provenance,
-            "version": "P1_18_SEMANTIC_EVIDENCE_V1",
-        }
-        if result.statistic_type == "GROUPED_CATEGORY_PERCENTAGE":
-            if not result.grouped_category_members or not result.grouped_metric_semantic or not result.grouped_category_method_version or result.numerator is None:
-                raise QuantitativeFindingLineageError("grouped StatisticalResult lacks canonical metric authority")
-            payload["grouped_category"] = {
-                "members": tuple(canonical_scalar(item) for item in result.grouped_category_members),
-                "metric_semantic": result.grouped_metric_semantic,
-                "method_version": result.grouped_category_method_version,
-                "numerator": canonical_scalar(result.numerator),
-            }
-        fingerprint = canonical_digest(payload, digest_provider=self.digest)
-        return QuantitativeSemanticEvidenceContext(
-            f"qi-context-{fingerprint}",
+        if result.statistic_type == "GROUPED_CATEGORY_PERCENTAGE" and (
+            not result.grouped_category_members
+            or not result.grouped_metric_semantic
+            or not result.grouped_category_method_version
+            or result.numerator is None
+        ):
+            raise QuantitativeFindingLineageError(
+                "grouped StatisticalResult lacks canonical metric authority"
+            )
+        context = QuantitativeSemanticEvidenceContext(
+            "",
             result.result_id,
             result.reproducibility_fingerprint,
             variable.variable_id,
@@ -708,12 +694,21 @@ class QuantitativeFindingLineageService:
             result.weighting_status,
             result.weight_set_fingerprint,
             provenance,
-            fingerprint,
+            "",
             statistic_type=result.statistic_type if result.statistic_type == "GROUPED_CATEGORY_PERCENTAGE" else None,
             grouped_category_members=result.grouped_category_members,
             grouped_metric_semantic=result.grouped_metric_semantic,
             grouped_category_method_version=result.grouped_category_method_version,
             numerator=result.numerator,
+        )
+        fingerprint = canonical_digest(
+            semantic_evidence_context_fingerprint_payload(context),
+            digest_provider=self.digest,
+        )
+        return replace(
+            context,
+            context_id=f"qi-context-{fingerprint}",
+            fingerprint=fingerprint,
         )
 
     @staticmethod

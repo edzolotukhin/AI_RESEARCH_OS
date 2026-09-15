@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from decimal import Decimal
 import unittest
 
+from application.quantitative.fingerprints import canonical_digest
+from application.quantitative.insight_support_canonicalization import (
+    semantic_evidence_context_fingerprint_payload,
+    semantic_evidence_context_projection,
+    validate_finding_semantic_context,
+)
+from application.quantitative.state_persistence import decode_quantitative, encode_quantitative
 from application.quantitative.insight_lineage import (
     QuantitativeInsightLineageError, QuantitativeInsightLineageService,
 )
@@ -148,6 +156,97 @@ class PropertyRFInsightLineageTests(unittest.TestCase):
         ):
             self.authority(generation=generation)
 
+    def test_grouped_semantic_context_round_trips_into_qj_authority(self):
+        finding = next(
+            item for item in self.findings.accepted_findings
+            if item.semantic_evidence_context is not None
+        )
+        context = replace(
+            finding.semantic_evidence_context,
+            context_id="",
+            fingerprint="",
+            statistic_type="GROUPED_CATEGORY_PERCENTAGE",
+            grouped_category_members=(Decimal("4"), Decimal("5")),
+            grouped_metric_semantic="TOP_TWO_BOX_AGREEMENT",
+            grouped_category_method_version="P1_22_GROUPED_CATEGORY_V1",
+            numerator=17,
+        )
+        fingerprint = canonical_digest(
+            semantic_evidence_context_fingerprint_payload(context),
+            digest_provider=self.rc.digest,
+        )
+        context = replace(
+            context,
+            context_id=f"qi-context-{fingerprint}",
+            fingerprint=fingerprint,
+        )
+        encoded = encode_quantitative(context)
+        restored = decode_quantitative(encoded)
+        self.assertEqual(context, restored)
+        self.assertEqual(
+            semantic_evidence_context_fingerprint_payload(context),
+            semantic_evidence_context_fingerprint_payload(restored),
+        )
+        self.assertEqual(
+            fingerprint,
+            canonical_digest(
+                semantic_evidence_context_fingerprint_payload(restored),
+                digest_provider=self.rc.digest,
+            ),
+        )
+        projected = semantic_evidence_context_projection(restored)
+        self.assertEqual(
+            projected["grouped_category"],
+            {
+                "members": (
+                    {"type": "decimal", "value": "4"},
+                    {"type": "decimal", "value": "5"},
+                ),
+                "metric_semantic": "TOP_TWO_BOX_AGREEMENT",
+                "method_version": "P1_22_GROUPED_CATEGORY_V1",
+                "numerator": {"type": "integer", "value": "17"},
+            },
+        )
+        validate_finding_semantic_context(
+            replace(finding, semantic_evidence_context=restored),
+            digest_provider=self.rc.digest,
+        )
+        generation = replace(
+            self.findings,
+            accepted_findings=tuple(
+                replace(item, semantic_evidence_context=restored)
+                if item.finding_id == finding.finding_id else item
+                for item in self.findings.accepted_findings
+            ),
+        )
+        self.authority(generation=generation)
+
+    def test_grouped_semantic_context_drift_still_fails_closed(self):
+        finding = next(
+            item for item in self.findings.accepted_findings
+            if item.semantic_evidence_context is not None
+        )
+        context = replace(
+            finding.semantic_evidence_context,
+            statistic_type="GROUPED_CATEGORY_PERCENTAGE",
+            grouped_category_members=(Decimal("4"), Decimal("5")),
+            grouped_metric_semantic="TOP_TWO_BOX_AGREEMENT",
+            grouped_category_method_version="P1_22_GROUPED_CATEGORY_V1",
+            numerator=17,
+        )
+        fingerprint = canonical_digest(
+            semantic_evidence_context_fingerprint_payload(context),
+            digest_provider=self.rc.digest,
+        )
+        valid = replace(context, fingerprint=fingerprint)
+        with self.assertRaisesRegex(Exception, "fingerprint mismatch"):
+            validate_finding_semantic_context(
+                replace(
+                    finding,
+                    semantic_evidence_context=replace(valid, numerator=18),
+                ),
+                digest_provider=self.rc.digest,
+            )
     def test_stale_and_wrong_scope_authority_fails_closed(self):
         cases = (
             {"project_id": "wrong"}, {"run_id": "wrong"},
