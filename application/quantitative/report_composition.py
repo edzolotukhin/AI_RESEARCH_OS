@@ -16,6 +16,8 @@ from domain.quantitative.insight import (
 )
 from domain.quantitative.report import (
     QuantitativeReport,
+    QuantitativeReportClaimSupportMode,
+    QuantitativeReportClaimUnit,
     QuantitativeReportCompositionResult,
     QuantitativeReportRejection,
     QuantitativeReportSection,
@@ -28,6 +30,7 @@ from domain.quantitative.report import (
 PROMPT_VERSION = "QK_REPORT_COMPOSITION_V1"
 DESIGN_AWARE_PROMPT_VERSION = "QK_REPORT_COMPOSITION_V2"
 VALIDATION_VERSION = "qk-1"
+CLAIM_VALIDATION_VERSION = "qk-2"
 MAX_FINDINGS = 75
 MAX_INSIGHTS = 50
 MAX_SECTIONS = 12
@@ -67,7 +70,10 @@ class QuantitativeReportValidator:
             if any(item.finding_id not in finding_ids for item in section_findings) or any(item.insight_id not in insight_ids for item in section_insights):
                 raise QuantitativeAnalysisError("section references support outside the Report bundle")
             chain_findings = self._support_chain(section_findings, section_insights, findings)
-            self._validate_section(section, chain_findings, section_insights)
+            if section.claim_units:
+                self._validate_claim_units(section, section_findings, section_insights, findings, insights)
+            else:
+                self._validate_section(section, chain_findings, section_insights)
         support_fingerprint = canonical_digest(
             {
                 "findings": tuple((item.finding_id, item.support_validation_fingerprint) for item in report_findings),
@@ -81,7 +87,7 @@ class QuantitativeReportValidator:
                 "title": report.title,
                 "sections": tuple(self._section_payload(item) for item in report.sections),
                 "support": support_fingerprint,
-                "version": VALIDATION_VERSION,
+                "version": CLAIM_VALIDATION_VERSION if any(item.claim_units for item in report.sections) else VALIDATION_VERSION,
             },
             digest_provider=self._digest,
         )
@@ -90,8 +96,41 @@ class QuantitativeReportValidator:
             analytical_support_fingerprint=support_fingerprint,
             validation_status=QuantitativeReportValidationStatus.SUPPORTED,
             validation_fingerprint=validation_fingerprint,
-            generation_version=VALIDATION_VERSION,
+            generation_version=CLAIM_VALIDATION_VERSION if any(item.claim_units for item in report.sections) else VALIDATION_VERSION,
         )
+
+    def _validate_claim_units(self, section, section_findings, section_insights, findings, insights):
+        if "".join(item.text for item in section.claim_units) != section.narrative:
+            raise QuantitativeAnalysisError("Report claim units must exactly partition section narrative")
+        if len({item.claim_id for item in section.claim_units}) != len(section.claim_units):
+            raise QuantitativeAnalysisError("Report claim unit IDs must be unique")
+        section_finding_ids = {item.finding_id for item in section_findings}
+        section_insight_ids = {item.insight_id for item in section_insights}
+        used_findings, used_insights = set(), set()
+        for unit in section.claim_units:
+            unit_findings = self._resolve_findings(unit.finding_refs, findings)
+            unit_insights = self._resolve_insights(unit.insight_refs, insights, findings)
+            finding_ids = {item.finding_id for item in unit_findings}
+            insight_ids = {item.insight_id for item in unit_insights}
+            if not finding_ids or not finding_ids.issubset(section_finding_ids) or not insight_ids.issubset(section_insight_ids):
+                raise QuantitativeAnalysisError("Report claim support falls outside section authority")
+            used_findings.update(finding_ids)
+            used_insights.update(insight_ids)
+            if unit.support_mode is QuantitativeReportClaimSupportMode.DIRECT_FINDING:
+                if len(unit_findings) != 1 or unit_insights:
+                    raise QuantitativeAnalysisError("direct Report claim requires exactly one Finding")
+            else:
+                if not unit_insights:
+                    raise QuantitativeAnalysisError("relational Report claim requires Insight authority")
+                if unit.support_mode is QuantitativeReportClaimSupportMode.INTERPRETIVE_COMPATIBILITY_INSIGHT:
+                    governing = tuple(item for item in unit_insights if item.compatibility_mode == QuantitativeInsightCompatibilityMode.INTERPRETIVE_COMPATIBILITY.value and item.compatibility_authority_id and item.compatibility_authority_fingerprint and finding_ids.issubset({ref.finding_id for ref in item.supporting_finding_refs}))
+                else:
+                    governing = tuple(item for item in unit_insights if len({finding.analytical_context_fingerprint for finding in unit_findings}) == 1 and finding_ids.issubset({ref.finding_id for ref in item.supporting_finding_refs}))
+                if not governing:
+                    raise QuantitativeAnalysisError("Report relationship lacks complete governed Insight authority")
+            self._validate_section(replace(section, narrative=unit.text, referenced_display_values=unit.referenced_display_values, authoritative_result_refs=unit.authoritative_result_refs, claim_units=()), unit_findings, unit_insights)
+        if used_findings != section_finding_ids or used_insights != section_insight_ids:
+            raise QuantitativeAnalysisError("Report section contains unattributed support")
 
     @staticmethod
     def _resolve_findings(refs, available):
@@ -221,6 +260,7 @@ class QuantitativeReportValidator:
             "filter": section.filter_definition,
             "base": section.base_definition,
             "direction": section.direction,
+            "claims": tuple((item.claim_id, item.text, item.support_mode.value, tuple((ref.authority_id, ref.validation_fingerprint) for ref in item.finding_refs), tuple((ref.authority_id, ref.validation_fingerprint) for ref in item.insight_refs), item.referenced_display_values, item.authoritative_result_refs) for item in section.claim_units),
         }
 
 
@@ -316,7 +356,7 @@ class QuantitativeReportCompositionService:
     @staticmethod
     def _prompt(bundle):
         instructions = "Compose one structured Quantitative Report using only supplied accepted Finding and Insight IDs. Do not calculate or invent numbers; every narrative number must exactly match an approved display value and be listed explicitly. Preserve significance, direction, weighting, filters, bases, and populations. Do not infer causality or cite unsupported authority. Return a title and ordered sections only; no free-form report outside the schema."
-        schema = {"title": "string", "finding_refs": ["id"], "finding_fingerprints": {"id": "fingerprint"}, "insight_refs": ["id"], "insight_fingerprints": {"id": "fingerprint"}, "sections": [{"section_id": "id", "section_type": "EXECUTIVE_SUMMARY|KEY_FINDINGS|SEGMENT_RESULTS|KPI_RESULTS|LIMITATIONS", "title": "string", "narrative": "string", "finding_refs": ["id"], "finding_fingerprints": {"id": "fingerprint"}, "insight_refs": ["id"], "insight_fingerprints": {"id": "fingerprint"}, "referenced_display_values": ["value"], "authoritative_result_refs": ["id"], "authoritative_table_refs": [], "weighting_status": "UNWEIGHTED|WEIGHTED", "filter_definition": "string", "base_definition": "string", "direction": "HIGHER|LOWER|EQUAL|null"}]}
+        schema = {"title": "string", "finding_refs": ["id"], "finding_fingerprints": {"id": "fingerprint"}, "insight_refs": ["id"], "insight_fingerprints": {"id": "fingerprint"}, "sections": [{"section_id": "id", "section_type": "EXECUTIVE_SUMMARY|KEY_FINDINGS|SEGMENT_RESULTS|KPI_RESULTS|LIMITATIONS", "title": "string", "narrative": "string", "finding_refs": ["id"], "finding_fingerprints": {"id": "fingerprint"}, "insight_refs": ["id"], "insight_fingerprints": {"id": "fingerprint"}, "referenced_display_values": ["value"], "authoritative_result_refs": ["id"], "authoritative_table_refs": [], "weighting_status": "UNWEIGHTED|WEIGHTED", "filter_definition": "string", "base_definition": "string", "direction": "HIGHER|LOWER|EQUAL|null", "claim_units": [{"claim_id": "id", "text": "exact contiguous narrative text", "support_mode": "DIRECT_FINDING|EXACT_CONTEXT_INSIGHT|INTERPRETIVE_COMPATIBILITY_INSIGHT", "finding_refs": ["id"], "insight_refs": ["id"], "referenced_display_values": ["value"], "authoritative_result_refs": ["id"]}]}]}
         prompt = instructions + "\nOUTPUT_SCHEMA=" + json.dumps(schema, sort_keys=True, separators=(",", ":")) + "\nAPPROVED_SUPPORT=" + json.dumps(bundle, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         if len(prompt) > MAX_PROMPT_CHARACTERS:
             raise QuantitativeAnalysisError("Quantitative Report prompt exceeds bounded size")
@@ -324,8 +364,8 @@ class QuantitativeReportCompositionService:
 
     @staticmethod
     def _prompt_v2(bundle):
-        instructions = "Compose one structured Quantitative Report using only supplied accepted Finding and Insight IDs. Do not return fingerprints, design IDs, lineage IDs, coverage states, answered flags, or objective-completion fields. Do not calculate or invent numbers; every narrative number must exactly match an approved display value and be listed explicitly. Preserve significance, direction, weighting, filters, bases, and populations. Do not infer causality or cite unsupported authority. Return a title and ordered sections only."
-        schema = {"title": "string", "finding_refs": ["id"], "insight_refs": ["id"], "sections": [{"section_id": "id", "section_type": "EXECUTIVE_SUMMARY|KEY_FINDINGS|SEGMENT_RESULTS|KPI_RESULTS|LIMITATIONS", "title": "string", "narrative": "string", "finding_refs": ["id"], "insight_refs": ["id"], "referenced_display_values": ["value"], "authoritative_result_refs": ["id"], "authoritative_table_refs": [], "weighting_status": "UNWEIGHTED|WEIGHTED", "filter_definition": "string", "base_definition": "string", "direction": "HIGHER|LOWER|EQUAL|null"}]}
+        instructions = "Compose one structured Quantitative Report using only supplied accepted Finding and Insight IDs. Do not return fingerprints, design IDs, lineage IDs, coverage states, answered flags, or objective-completion fields. Do not calculate or invent numbers; every narrative number must exactly match an approved display value and be listed explicitly. Preserve significance, direction, weighting, filters, bases, and populations. Do not infer causality or cite unsupported authority. Return a title and ordered sections only. For each section, claim_units must exactly concatenate in order to narrative. Attribute independent descriptive claims to DIRECT_FINDING; attribute relationships only to complete persisted Insight authority."
+        schema = {"title": "string", "finding_refs": ["id"], "insight_refs": ["id"], "sections": [{"section_id": "id", "section_type": "EXECUTIVE_SUMMARY|KEY_FINDINGS|SEGMENT_RESULTS|KPI_RESULTS|LIMITATIONS", "title": "string", "narrative": "string", "finding_refs": ["id"], "insight_refs": ["id"], "referenced_display_values": ["value"], "authoritative_result_refs": ["id"], "authoritative_table_refs": [], "weighting_status": "UNWEIGHTED|WEIGHTED", "filter_definition": "string", "base_definition": "string", "direction": "HIGHER|LOWER|EQUAL|null", "claim_units": [{"claim_id": "id", "text": "exact contiguous narrative text", "support_mode": "DIRECT_FINDING|EXACT_CONTEXT_INSIGHT|INTERPRETIVE_COMPATIBILITY_INSIGHT", "finding_refs": ["id"], "insight_refs": ["id"], "referenced_display_values": ["value"], "authoritative_result_refs": ["id"]}]}]}
         prompt = instructions + "\nOUTPUT_SCHEMA=" + json.dumps(schema, sort_keys=True, separators=(",", ":")) + "\nAPPROVED_SUPPORT=" + json.dumps(bundle, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         if len(prompt) > MAX_PROMPT_CHARACTERS:
             raise QuantitativeAnalysisError("Quantitative Report prompt exceeds bounded size")
@@ -369,7 +409,14 @@ class QuantitativeReportCompositionService:
         insight_ids = self._strings(raw.get("insight_refs", []), "section insight_refs", allow_empty=True)
         finding_fingerprints = self._fingerprints(raw.get("finding_fingerprints", {}), "section finding_fingerprints")
         insight_fingerprints = self._fingerprints(raw.get("insight_fingerprints", {}), "section insight_fingerprints")
-        return QuantitativeReportSection(self._text(raw["section_id"], "section_id"), QuantitativeReportSectionType(str(raw["section_type"])), self._text(raw["title"], "section title"), self._text(raw["narrative"], "section narrative"), tuple(self._ref(item, findings, "finding", finding_fingerprints) for item in finding_ids), tuple(self._ref(item, insights, "insight", insight_fingerprints) for item in insight_ids), self._strings(raw.get("referenced_display_values", []), "display values", allow_empty=True), self._strings(raw.get("authoritative_result_refs", []), "result refs", allow_empty=True), self._strings(raw.get("authoritative_table_refs", []), "table refs", allow_empty=True), str(raw["weighting_status"]), str(raw["filter_definition"]), str(raw["base_definition"]), None if raw.get("direction") is None else str(raw["direction"]))
+        claim_units = tuple(self._parse_claim_unit(item, findings, insights, finding_fingerprints, insight_fingerprints) for item in raw.get("claim_units", ()))
+        return QuantitativeReportSection(self._text(raw["section_id"], "section_id"), QuantitativeReportSectionType(str(raw["section_type"])), self._text(raw["title"], "section title"), self._text(raw["narrative"], "section narrative"), tuple(self._ref(item, findings, "finding", finding_fingerprints) for item in finding_ids), tuple(self._ref(item, insights, "insight", insight_fingerprints) for item in insight_ids), self._strings(raw.get("referenced_display_values", []), "display values", allow_empty=True), self._strings(raw.get("authoritative_result_refs", []), "result refs", allow_empty=True), self._strings(raw.get("authoritative_table_refs", []), "table refs", allow_empty=True), str(raw["weighting_status"]), str(raw["filter_definition"]), str(raw["base_definition"]), None if raw.get("direction") is None else str(raw["direction"]), claim_units)
+
+    def _parse_claim_unit(self, raw, findings, insights, finding_fingerprints, insight_fingerprints):
+        if not isinstance(raw, Mapping): raise QuantitativeAnalysisError("Report claim unit must be an object")
+        finding_ids = self._strings(raw.get("finding_refs", []), "claim finding_refs", allow_empty=True)
+        insight_ids = self._strings(raw.get("insight_refs", []), "claim insight_refs", allow_empty=True)
+        return QuantitativeReportClaimUnit(self._text(raw["claim_id"], "claim_id"), self._claim_text(raw["text"]), QuantitativeReportClaimSupportMode(str(raw["support_mode"])), tuple(self._ref(item, findings, "finding", finding_fingerprints) for item in finding_ids), tuple(self._ref(item, insights, "insight", insight_fingerprints) for item in insight_ids), self._strings(raw.get("referenced_display_values", []), "claim display values", allow_empty=True), self._strings(raw.get("authoritative_result_refs", []), "claim result refs", allow_empty=True))
 
     @staticmethod
     def _ref(item, available, kind, expected):
@@ -388,6 +435,11 @@ class QuantitativeReportCompositionService:
     def _strings(value, name, *, allow_empty=False):
         if not isinstance(value, list) or (not value and not allow_empty) or any(not isinstance(item, str) or not item for item in value) or len(value) != len(set(value)): raise QuantitativeAnalysisError(f"{name} must be a unique string array")
         return tuple(value)
+
+    @staticmethod
+    def _claim_text(value):
+        if not isinstance(value, str) or not value.strip() or len(value) > 4000: raise QuantitativeAnalysisError("claim text must be bounded non-empty text")
+        return value
 
     @staticmethod
     def _text(value, name):

@@ -18,10 +18,27 @@ class QuantitativeReportValidationStatus(str, Enum):
     SUPPORTED = "SUPPORTED"
 
 
+class QuantitativeReportClaimSupportMode(str, Enum):
+    DIRECT_FINDING = "DIRECT_FINDING"
+    EXACT_CONTEXT_INSIGHT = "EXACT_CONTEXT_INSIGHT"
+    INTERPRETIVE_COMPATIBILITY_INSIGHT = "INTERPRETIVE_COMPATIBILITY_INSIGHT"
+
+
 @dataclass(frozen=True)
 class QuantitativeReportSupportReference:
     authority_id: str
     validation_fingerprint: str
+
+
+@dataclass(frozen=True)
+class QuantitativeReportClaimUnit:
+    claim_id: str
+    text: str
+    support_mode: QuantitativeReportClaimSupportMode
+    finding_refs: tuple[QuantitativeReportSupportReference, ...] = ()
+    insight_refs: tuple[QuantitativeReportSupportReference, ...] = ()
+    referenced_display_values: tuple[str, ...] = ()
+    authoritative_result_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -39,6 +56,7 @@ class QuantitativeReportSection:
     filter_definition: str | None = None
     base_definition: str | None = None
     direction: str | None = None
+    claim_units: tuple[QuantitativeReportClaimUnit, ...] = ()
 
 
 @dataclass(frozen=True)
