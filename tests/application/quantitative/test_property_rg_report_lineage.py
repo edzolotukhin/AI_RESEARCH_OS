@@ -9,7 +9,7 @@ from application.quantitative.insight_synthesis import (
     QuantitativeInsightValidator,
 )
 from application.quantitative.report_composition import (
-    DESIGN_AWARE_PROMPT_VERSION,
+    DERIVED_CLAIM_PROMPT_VERSION,
     QuantitativeReportCompositionService,
     QuantitativeReportValidator,
 )
@@ -46,35 +46,29 @@ class RecordingReportGenerator:
         finding = support["findings"][0]
         insight = support["insights"][0]
         finding_id = "unknown-finding" if self.unknown else finding["finding_id"]
-        narrative = (
-            f'The authorized result was {finding["display_value"]}%.'
-            if finding.get("display_value") else "The authorized result is supported."
-        )
-        values = [finding["display_value"]] if finding.get("display_value") else []
-        if self.rejected:
-            narrative = "The unsupported result was 999.0%."
-            values = ["999.0"]
-        section_finding_refs = [] if self.support_mode == "INSIGHT_ONLY" else [finding_id]
-        section_insight_refs = [] if self.support_mode == "FINDING_ONLY" else [insight["insight_id"]]
+        direct = {
+            "claim_id": "direct-claim",
+            "text": finding["text"] if not self.rejected else "The unsupported result was 999.0%.",
+            "support_mode": "DIRECT_FINDING",
+            "finding_refs": [finding_id],
+            "insight_refs": [],
+            "referenced_display_values": [finding["display_value"]] if finding.get("display_value") else [],
+            "authoritative_result_refs": list(finding["result_refs"]),
+        }
+        insight_findings = [item for item in support["findings"] if item["finding_id"] in insight["finding_refs"]]
+        relational = {
+            "claim_id": "insight-claim",
+            "text": insight["text"] if not self.rejected else insight["text"] + " altered",
+            "support_mode": "INTERPRETIVE_COMPATIBILITY_INSIGHT" if len({item["context"] for item in insight_findings}) > 1 else "EXACT_CONTEXT_INSIGHT",
+            "finding_refs": list(insight["finding_refs"]),
+            "insight_refs": [insight["insight_id"]],
+            "referenced_display_values": list(insight["display_values"]),
+            "authoritative_result_refs": [result_id for item in insight_findings for result_id in item["result_refs"]],
+        }
+        units = {"FINDING_ONLY": [direct], "INSIGHT_ONLY": [relational], "MIXED": [relational, direct]}[self.support_mode]
         proposal = {
             "title": "Design-aware quantitative results",
-            "finding_refs": [finding_id],
-            "insight_refs": section_insight_refs,
-            "sections": [{
-                "section_id": "section-1",
-                "section_type": "KEY_FINDINGS",
-                "title": "Supported results",
-                "narrative": narrative,
-                "finding_refs": section_finding_refs,
-                "insight_refs": section_insight_refs,
-                "referenced_display_values": values,
-                "authoritative_result_refs": list(finding["result_refs"]),
-                "authoritative_table_refs": [],
-                "weighting_status": finding["weighting"],
-                "filter_definition": finding["filter"],
-                "base_definition": finding["base"],
-                "direction": finding["direction"],
-            }],
+            "sections": [{"section_id": "section-1", "section_type": "KEY_FINDINGS", "title": "Supported results", "claim_units": units}],
         }
         if self.design_fields:
             proposal["objective_ids"] = ["fabricated-objective"]
@@ -188,10 +182,10 @@ class PropertyRGReportLineageTests(unittest.TestCase):
         generator, composition = self.compose(authority)
         self.assertEqual(generator.calls, 1)
         self.assertIsNotNone(composition.accepted_report)
-        self.assertEqual(composition.prompt_version, DESIGN_AWARE_PROMPT_VERSION)
+        self.assertEqual(composition.prompt_version, DERIVED_CLAIM_PROMPT_VERSION)
         self.assertEqual(
             composition.accepted_report.generation_metadata["prompt_version"],
-            DESIGN_AWARE_PROMPT_VERSION,
+            DERIVED_CLAIM_PROMPT_VERSION,
         )
         section = composition.accepted_report.sections[0]
         self.assertEqual(
