@@ -52,8 +52,6 @@ class RecordingReportGenerator:
             "support_mode": "DIRECT_FINDING",
             "finding_refs": [finding_id],
             "insight_refs": [],
-            "referenced_display_values": [finding["display_value"]] if finding.get("display_value") else [],
-            "authoritative_result_refs": list(finding["result_refs"]),
         }
         insight_findings = [item for item in support["findings"] if item["finding_id"] in insight["finding_refs"]]
         relational = {
@@ -62,8 +60,6 @@ class RecordingReportGenerator:
             "support_mode": "INTERPRETIVE_COMPATIBILITY_INSIGHT" if len({item["context"] for item in insight_findings}) > 1 else "EXACT_CONTEXT_INSIGHT",
             "finding_refs": list(insight["finding_refs"]),
             "insight_refs": [insight["insight_id"]],
-            "referenced_display_values": list(insight["display_values"]),
-            "authoritative_result_refs": [result_id for item in insight_findings for result_id in item["result_refs"]],
         }
         units = {"FINDING_ONLY": [direct], "INSIGHT_ONLY": [relational], "MIXED": [relational, direct]}[self.support_mode]
         proposal = {

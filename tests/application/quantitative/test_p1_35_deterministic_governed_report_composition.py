@@ -43,8 +43,6 @@ class TestP135DeterministicGovernedReportComposition(PropertyQKQuantitativeRepor
             "support_mode": mode,
             "finding_refs": [item.finding_id for item in findings],
             "insight_refs": [item.insight_id for item in insights],
-            "referenced_display_values": [item.claim.display_value for item in findings if item.claim.display_value],
-            "authoritative_result_refs": [ref.result_id for item in findings for ref in item.statistical_result_refs],
         }
 
     @staticmethod
@@ -219,7 +217,10 @@ class TestP135DeterministicGovernedReportComposition(PropertyQKQuantitativeRepor
         qk1 = self.compose(PropertyQKQuantitativeReportCompositionTests.proposal(finding), (finding,))[2].accepted_report
         assert qk1.generation_version == "qk-1"
         qk2_response = PropertyQKQuantitativeReportCompositionTests.proposal(finding)
-        qk2_response["sections"][0]["claim_units"] = [self.unit("legacy", qk2_response["sections"][0]["narrative"], "DIRECT_FINDING", (finding,))]
+        qk2_unit = self.unit("legacy", qk2_response["sections"][0]["narrative"], "DIRECT_FINDING", (finding,))
+        qk2_unit["referenced_display_values"] = [finding.claim.display_value]
+        qk2_unit["authoritative_result_refs"] = [ref.result_id for ref in finding.statistical_result_refs]
+        qk2_response["sections"][0]["claim_units"] = [qk2_unit]
         qk2 = self.compose(qk2_response, (finding,))[2].accepted_report
         assert qk2.generation_version == "qk-2"
         assert decode_quantitative(encode_quantitative(qk2)) == qk2

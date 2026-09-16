@@ -66,8 +66,8 @@ class _SemanticFake(LLMClient):
             ids=max(contexts.values(),key=len)
             return LLMResponse(content=json.dumps({"proposals":[{"insight_type":"SYNTHESIS","insight_text":"The supported experience and advocacy evidence forms a coherent pattern.","supporting_finding_ids":ids,"referenced_display_values":[],"direction":None,"limitation_note":"Synthetic acceptance synthesis."}]}),output_tokens=7)
         if "APPROVED_SUPPORT=" in prompt:
-            support=json.loads(prompt.split("APPROVED_SUPPORT=",1)[1]); insight=support["insights"][0]; by_id={x["finding_id"]:x for x in support["findings"]}; selected=[by_id[x] for x in insight["finding_refs"]]; finding_ids=[x["finding_id"] for x in selected]; result_ids=list(dict.fromkeys(r for x in selected for r in x["result_refs"]))
-            unit={"claim_id":"insight-claim","text":insight["text"],"support_mode":"EXACT_CONTEXT_INSIGHT","finding_refs":finding_ids,"insight_refs":[insight["insight_id"]],"referenced_display_values":list(insight["display_values"]),"authoritative_result_refs":result_ids}
+            support=json.loads(prompt.split("APPROVED_SUPPORT=",1)[1]); insight=support["insights"][0]; by_id={x["finding_id"]:x for x in support["findings"]}; selected=[by_id[x] for x in insight["finding_refs"]]; finding_ids=[x["finding_id"] for x in selected]
+            unit={"claim_id":"insight-claim","text":insight["text"],"support_mode":"EXACT_CONTEXT_INSIGHT","finding_refs":finding_ids,"insight_refs":[insight["insight_id"]]}
             section={"section_id":"section-1","section_type":"KEY_FINDINGS","title":"Supported findings","claim_units":[unit]}
             return LLMResponse(content=json.dumps({"title":"Controlled design-aware report","sections":[section]}),output_tokens=7)
         raise AssertionError("unexpected semantic boundary")

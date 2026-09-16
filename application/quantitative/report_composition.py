@@ -29,7 +29,7 @@ from domain.quantitative.report import (
 
 PROMPT_VERSION = "QK_REPORT_COMPOSITION_V1"
 DESIGN_AWARE_PROMPT_VERSION = "QK_REPORT_COMPOSITION_V2"
-DERIVED_CLAIM_PROMPT_VERSION = "QK_REPORT_COMPOSITION_V3"
+DERIVED_CLAIM_PROMPT_VERSION = "QK_REPORT_COMPOSITION_V4"
 VALIDATION_VERSION = "qk-1"
 CLAIM_VALIDATION_VERSION = "qk-2"
 DERIVED_CLAIM_VALIDATION_VERSION = "qk-3"
@@ -405,8 +405,8 @@ class QuantitativeReportCompositionService:
 
     @staticmethod
     def _prompt_v3(bundle):
-        instructions = "Compose one structured Quantitative Report using only supplied accepted Finding and Insight IDs. Return a title and ordered supported sections. Do not return section narrative, section-level support references, fingerprints, context/base/filter/weighting fields, design IDs, lineage IDs, coverage states, answered flags, or objective-completion fields; production derives them. Every section must contain at least one claim_unit. For DIRECT_FINDING, copy exactly one supplied Finding text and reference exactly that Finding. For EXACT_CONTEXT_INSIGHT or INTERPRETIVE_COMPATIBILITY_INSIGHT, copy exactly one supplied Insight text, reference exactly that Insight, and include its complete Finding support set. Do not paraphrase claim text, infer relationships, combine unrelated Insights, or emit unsupported methodology or limitations prose. Preserve claim order only; production owns narrative separators."
-        schema = {"title": "string", "sections": [{"section_id": "id", "section_type": "EXECUTIVE_SUMMARY|KEY_FINDINGS|SEGMENT_RESULTS|KPI_RESULTS", "title": "string", "claim_units": [{"claim_id": "id", "text": "exact supplied Finding or Insight text", "support_mode": "DIRECT_FINDING|EXACT_CONTEXT_INSIGHT|INTERPRETIVE_COMPATIBILITY_INSIGHT", "finding_refs": ["id"], "insight_refs": ["id"], "referenced_display_values": ["value"], "authoritative_result_refs": ["id"]}]}]}
+        instructions = "Compose one structured Quantitative Report using only supplied accepted Finding and Insight IDs. Return a title and ordered supported sections. Do not return section narrative, section-level support references, fingerprints, context/base/filter/weighting fields, design IDs, lineage IDs, coverage states, answered flags, or objective-completion fields; production derives them. Every section must contain at least one claim_unit. For DIRECT_FINDING, copy exactly one supplied Finding text and reference exactly that Finding. For EXACT_CONTEXT_INSIGHT or INTERPRETIVE_COMPATIBILITY_INSIGHT, copy exactly one supplied Insight text, reference exactly that Insight, and include its complete Finding support set. Do not paraphrase claim text, infer relationships, combine unrelated Insights, or emit unsupported methodology or limitations prose. Do not return referenced_display_values or authoritative_result_refs; production derives those fields from validated persisted Finding/Insight authority. Preserve claim order only; production owns narrative separators."
+        schema = {"title": "string", "sections": [{"section_id": "id", "section_type": "EXECUTIVE_SUMMARY|KEY_FINDINGS|SEGMENT_RESULTS|KPI_RESULTS", "title": "string", "claim_units": [{"claim_id": "id", "text": "exact supplied Finding or Insight text", "support_mode": "DIRECT_FINDING|EXACT_CONTEXT_INSIGHT|INTERPRETIVE_COMPATIBILITY_INSIGHT", "finding_refs": ["id"], "insight_refs": ["id"]}]}]}
         prompt = instructions + "\nOUTPUT_SCHEMA=" + json.dumps(schema, sort_keys=True, separators=(",", ":")) + "\nAPPROVED_SUPPORT=" + json.dumps(bundle, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         if len(prompt) > MAX_PROMPT_CHARACTERS:
             raise QuantitativeAnalysisError("Quantitative Report prompt exceeds bounded size")
@@ -510,32 +510,50 @@ class QuantitativeReportCompositionService:
         return QuantitativeReportSection(self._text(raw["section_id"], "section_id"), QuantitativeReportSectionType(str(raw["section_type"])), self._text(raw["title"], "section title"), self._text(raw["narrative"], "section narrative"), tuple(self._ref(item, findings, "finding", finding_fingerprints) for item in finding_ids), tuple(self._ref(item, insights, "insight", insight_fingerprints) for item in insight_ids), self._strings(raw.get("referenced_display_values", []), "display values", allow_empty=True), self._strings(raw.get("authoritative_result_refs", []), "result refs", allow_empty=True), self._strings(raw.get("authoritative_table_refs", []), "table refs", allow_empty=True), str(raw["weighting_status"]), str(raw["filter_definition"]), str(raw["base_definition"]), None if raw.get("direction") is None else str(raw["direction"]), claim_units)
 
     def _parse_claim_unit_v3(self, raw, findings, insights, finding_fingerprints, insight_fingerprints):
-        if not isinstance(raw, Mapping) or set(raw) - {"claim_id", "text", "support_mode", "finding_refs", "insight_refs", "referenced_display_values", "authoritative_result_refs"}:
+        if not isinstance(raw, Mapping) or set(raw) - {"claim_id", "text", "support_mode", "finding_refs", "insight_refs"}:
             raise QuantitativeAnalysisError("qk-3 claim unit contains unsupported fields")
         finding_ids = self._strings(raw.get("finding_refs", []), "claim finding_refs", allow_empty=True)
         insight_ids = self._strings(raw.get("insight_refs", []), "claim insight_refs", allow_empty=True)
-        finding_refs = tuple(self._ref(item, findings, "finding", finding_fingerprints) for item in finding_ids)
-        insight_refs = tuple(self._ref(item, insights, "insight", insight_fingerprints) for item in insight_ids)
-        resolved_findings = tuple(findings[item] for item in finding_ids if item in findings)
-        resolved_insights = tuple(insights[item] for item in insight_ids if item in insights)
         mode = QuantitativeReportClaimSupportMode(str(raw["support_mode"]))
-        if mode is QuantitativeReportClaimSupportMode.DIRECT_FINDING:
-            expected_displays = tuple(item.claim.display_value for item in resolved_findings if item.claim.display_value)
-        else:
-            expected_displays = self._ordered_strings(item.referenced_display_values for item in resolved_insights)
-        expected_results = self._ordered_strings(
-            tuple(ref.result_id for ref in item.statistical_result_refs) for item in resolved_findings
+        resolved_findings = tuple(
+            findings[self._ref(item, findings, "finding", finding_fingerprints).authority_id]
+            for item in finding_ids
         )
-        supplied_displays = self._strings(raw.get("referenced_display_values", []), "claim display values", allow_empty=True)
-        supplied_results = self._strings(raw.get("authoritative_result_refs", []), "claim result refs", allow_empty=True)
-        if supplied_displays != expected_displays or supplied_results != expected_results:
-            raise QuantitativeAnalysisError("qk-3 claim references do not match canonical support authority")
+        resolved_insights = tuple(
+            insights[self._ref(item, insights, "insight", insight_fingerprints).authority_id]
+            for item in insight_ids
+        )
+        if mode is QuantitativeReportClaimSupportMode.DIRECT_FINDING:
+            if len(resolved_findings) != 1 or resolved_insights:
+                raise QuantitativeAnalysisError("qk-3 direct claims require exactly one Finding and no Insight")
+            canonical_findings = resolved_findings
+            canonical_finding_ids = finding_ids
+            expected_displays = tuple(
+                value for value in (resolved_findings[0].claim.display_value,) if value
+            )
+        else:
+            if len(resolved_insights) != 1:
+                raise QuantitativeAnalysisError("qk-3 relational claims require exactly one Insight")
+            required_finding_ids = tuple(
+                reference.finding_id
+                for reference in resolved_insights[0].supporting_finding_refs
+            )
+            if len(finding_ids) != len(required_finding_ids) or set(finding_ids) != set(required_finding_ids):
+                raise QuantitativeAnalysisError(
+                    "qk-3 relational claims require the complete persisted Insight support set"
+                )
+            canonical_finding_ids = required_finding_ids
+            canonical_findings = tuple(findings[item] for item in canonical_finding_ids)
+            expected_displays = tuple(resolved_insights[0].referenced_display_values)
+        expected_results = self._ordered_strings(
+            tuple(ref.result_id for ref in item.statistical_result_refs) for item in canonical_findings
+        )
         return QuantitativeReportClaimUnit(
             self._text(raw["claim_id"], "claim_id"),
             self._claim_text(raw["text"]),
             mode,
-            finding_refs,
-            insight_refs,
+            tuple(self._ref(item, findings, "finding", finding_fingerprints) for item in canonical_finding_ids),
+            tuple(self._ref(item, insights, "insight", insight_fingerprints) for item in insight_ids),
             expected_displays,
             expected_results,
         )
