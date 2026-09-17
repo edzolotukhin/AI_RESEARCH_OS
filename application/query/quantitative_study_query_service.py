@@ -120,6 +120,8 @@ class QuantitativeStudyQueryService:
         taskmap = {task.definition_id: task for task in run.tasks}
         def stage(label, definition, href):
             task = taskmap.get(definition)
+            if definition == "quant_report" and report is None:
+                return (label, report_status, href)
             return (label, present_quantitative_status(task.status.value if task else "waiting"), href)
         stages = (
             stage("Дизайн дослідження", "quant_research_design", f"{base}/overview"),
