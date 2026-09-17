@@ -15,3 +15,11 @@ class InMemoryQuantitativeStateRepository:
         return copy.deepcopy(value) if value is not None and value.project_id == project_id else None
     def list_for_run(self, run_id: str, *, project_id: str, record_type: str | None = None):
         return tuple(copy.deepcopy(value) for _, value in sorted(self._records.items()) if value.run_id == run_id and value.project_id == project_id and (record_type is None or value.record_type == record_type))
+    def find_study_projection(self, study_id: str, *, project_id: str | None = None):
+        matches = [value for value in self._records.values()
+                   if value.record_type.endswith(".QuantitativeStudyProjection")
+                   and (project_id is None or value.project_id == project_id)
+                   and value.payload.get("fields", {}).get("study_id") == study_id]
+        if not matches:
+            return None
+        return copy.deepcopy(max(matches, key=lambda item: item.payload.get("fields", {}).get("revision", 0)))

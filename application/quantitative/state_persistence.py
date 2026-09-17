@@ -187,6 +187,19 @@ class QuantitativeStateService:
             values.append(value)
         return tuple(values)
 
+    def find_study_projection(self, study_id: str, *, project_id: str | None = None):
+        from domain.quantitative.workflow import QuantitativeStudyProjection
+        if not hasattr(self._repository, "find_study_projection"):
+            return None
+        record = self._repository.find_study_projection(study_id, project_id=project_id)
+        if record is None:
+            return None
+        return self.load(
+            record.record_id,
+            project_id=record.project_id,
+            expected_type=QuantitativeStudyProjection,
+        )
+
 
 def validate_recovered_dataset(*, dataset: DatasetVersion, codebook: CodebookVersion, storage, digest_provider: DeterministicDigestProvider) -> None:
     raw = storage.get_raw_file(dataset.source_file_id)

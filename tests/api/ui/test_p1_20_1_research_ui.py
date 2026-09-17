@@ -499,7 +499,7 @@ class ResearchUiTests(ApiTestCase):
     def test_ui_root_redirect(self) -> None:
         response = self.ui.get("/ui", follow_redirects=False)
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.headers["location"], "/ui/research/new")
+        self.assertEqual(response.headers["location"], "/ui/projects")
 
     def test_status_json_endpoint(self) -> None:
         facade = self._mock_facade()

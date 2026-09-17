@@ -154,6 +154,69 @@ class QuantitativeUiService:
         self._submission_ids[(owner_id, submission_key)] = study_id
         return persisted
 
+    def create_quantitative_study_for_project(self, *, project_id: str, owner_id: str,
+                                               title: str, description: str,
+                                               submission_key: str) -> QuantitativeStudyProjection:
+        title, description, submission_key = title.strip(), description.strip(), submission_key.strip()
+        if not title or not submission_key:
+            raise QuantitativeUiError("title and submission_key are required")
+        try:
+            project = self.projects.get_project(project_id)
+        except Exception as exc:
+            raise QuantitativeUiError("Project not found") from exc
+        if project.owner_principal_id != owner_id:
+            raise QuantitativeUiError("Project not found")
+        study_id = str(uuid5(NAMESPACE_URL, f"quantitative-study:{project_id}:{owner_id}:{submission_key}"))
+        run_id = str(uuid5(NAMESPACE_URL, f"quantitative-run:{project_id}:{owner_id}:{submission_key}"))
+        replay = self._existing_project_submission(
+            study_id=study_id, project_id=project_id, owner_id=owner_id,
+            title=title, description=description,
+        )
+        if replay is not None:
+            return replay
+        # PF-01 supports one current study per project.
+        for candidate_run in self.workflows.list_workflow_runs_for_project(project_id):
+            snapshots = self.state.list_for_run(candidate_run.id, project_id=project_id,
+                                                expected_type=QuantitativeStudyProjection)
+            if snapshots:
+                raise QuantitativeUiError("This Project already has a Quantitative study")
+        expected_template = build_quantitative_workflow_template()
+        template = self._compatible_template(expected_template)
+        run_created = False
+        try:
+            if template is None:
+                try:
+                    self.workflows.publish_template_snapshot(expected_template, project_id=project_id)
+                    template = expected_template
+                except DuplicateEntityError:
+                    template = self._compatible_template(expected_template)
+                    if template is None:
+                        raise
+            self.workflows.create_workflow_run(template, project_id=project_id,
+                                               run_id=run_id, initially_paused=True)
+            run_created = True
+            return self._persist_study(QuantitativeStudyProjection(
+                study_id, project_id, run_id, title, description, "WAITING_FOR_DATASET"
+            ))
+        except Exception:
+            self._studies.pop(study_id, None)
+            if run_created:
+                self.workflows.delete_workflow_run(run_id)
+            raise
+
+    def _existing_project_submission(self, *, study_id: str, project_id: str,
+                                     owner_id: str, title: str, description: str):
+        study = self.state.find_study_projection(study_id, project_id=project_id)
+        if study is None:
+            return None
+        project = self.projects.get_project(project_id)
+        if project.owner_principal_id != owner_id:
+            raise QuantitativeUiError("Quantitative study not found")
+        if (study.title, study.description) != (title, description):
+            raise QuantitativeUiError("submission key was already used for different content")
+        self._studies[study_id] = study
+        return study
+
     def _compatible_template(self, expected):
         try:
             existing = self.workflows.get_template(expected.id)
@@ -205,8 +268,11 @@ class QuantitativeUiService:
 
     def get(self, study_id: str, *, owner_id: str) -> QuantitativeStudyProjection:
         study = self._studies.get(study_id)
+        if study is None:
+            study = self.state.find_study_projection(study_id)
+        project_id = study.project_id if study is not None else study_id
         try:
-            project = self.projects.get_project(study_id)
+            project = self.projects.get_project(project_id)
         except Exception as exc:
             raise QuantitativeUiError("Quantitative study not found") from exc
         if project.owner_principal_id != owner_id:

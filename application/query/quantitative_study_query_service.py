@@ -142,6 +142,7 @@ class QuantitativeStudyQueryService:
             report_status, limitations, warnings, run.status.value == "paused", study.state == "IMPORTED",
             run.status.value == "paused" and study.state == "READY_TO_ANALYZE",
             sum(1 for item in analyses if item.result_count), len(results), len(findings), len(insights),
+            study.project_id,
         )
 
     @staticmethod

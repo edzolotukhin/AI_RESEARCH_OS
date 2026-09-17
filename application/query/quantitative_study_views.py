@@ -53,3 +53,4 @@ class QuantitativeStudyView:
     limitations: tuple[str, ...]; warnings: tuple[str, ...]
     can_upload: bool; can_run_qc: bool; can_resume: bool
     completed_analysis_count: int = 0; result_count: int = 0; finding_count: int = 0; insight_count: int = 0
+    project_id: str = ""

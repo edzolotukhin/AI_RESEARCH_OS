@@ -24,7 +24,7 @@ from api.ui.presentation import (
     safe_external_url,
     safe_text,
 )
-from api.ui.research_facade import build_research_ui_facade
+from api.ui.research_facade import ResearchUiFacade, build_research_ui_facade
 from application.persistence.exceptions import (
     AccessDeniedError,
     AuthenticationRequiredError,
@@ -61,7 +61,7 @@ def _template_context(request: Request, **extra):
 
 @router.get("", include_in_schema=False)
 def ui_root() -> RedirectResponse:
-    return RedirectResponse(url="/ui/research/new", status_code=status.HTTP_302_FOUND)
+    return RedirectResponse(url="/ui/projects", status_code=status.HTTP_302_FOUND)
 
 
 @router.get("/research/new", response_class=HTMLResponse, include_in_schema=False)
@@ -244,6 +244,10 @@ def research_detail_page(request: Request, research_id: str) -> Response:
     try:
         facade = build_research_ui_facade(request.app.state.container)
         status_payload = facade.get_status(research_id)
+        project_id = status_payload.get("project_id")
+        if project_id is None and isinstance(facade, ResearchUiFacade):
+            workflow_run, _ = request.app.state.container.authorization_service.require_run(facade._principal, research_id)
+            project_id = workflow_run.project_id
         detail_payload = None
         if status_payload.get("execution_status") == ResearchExecutionStatus.TERMINAL.value:
             try:
@@ -256,6 +260,7 @@ def research_detail_page(request: Request, research_id: str) -> Response:
             _template_context(
                 request,
                 research_id=research_id,
+                project_id=project_id,
                 status=status_payload,
                 detail=build_result_view_model(detail_payload) if detail_payload else None,
                 current_phase_index=phase_index(status_payload.get("phase", "QUEUED")),

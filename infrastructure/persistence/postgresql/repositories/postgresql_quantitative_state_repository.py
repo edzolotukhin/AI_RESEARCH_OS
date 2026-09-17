@@ -32,3 +32,17 @@ class PostgreSQLQuantitativeStateRepository:
             query = select(QuantitativeStateModel).where(QuantitativeStateModel.run_id == run_id, QuantitativeStateModel.project_id == project_id)
             if record_type is not None: query = query.where(QuantitativeStateModel.record_type == record_type)
             return tuple(self._record(item) for item in session.scalars(query.order_by(QuantitativeStateModel.record_id)).all())
+
+    def find_study_projection(self, study_id: str, *, project_id: str | None = None):
+        with self._sessions.session() as session:
+            query = select(QuantitativeStateModel).where(
+                QuantitativeStateModel.record_type.like("%.QuantitativeStudyProjection"),
+                QuantitativeStateModel.payload["fields"]["study_id"].as_string() == study_id,
+            )
+            if project_id is not None:
+                query = query.where(QuantitativeStateModel.project_id == project_id)
+            models = session.scalars(query).all()
+            if not models:
+                return None
+            model = max(models, key=lambda item: item.payload.get("fields", {}).get("revision", 0))
+            return self._record(model)
