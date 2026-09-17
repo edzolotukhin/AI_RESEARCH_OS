@@ -60,16 +60,49 @@ class Agency:
         *,
         owner_principal_id: str | None = None,
         project_id: str | None = None,
+        selected_methods: tuple[str, ...] | list[str] | None = None,
     ) -> Project:
         if project_id is None:
             return self._project_service.create_project(
                 name,
                 owner_principal_id=owner_principal_id,
+                selected_methods=selected_methods,
             )
         return self._project_service.create_project(
             name,
             owner_principal_id=owner_principal_id,
             project_id=project_id,
+            selected_methods=selected_methods,
+        )
+
+    def start_research_from_template(
+        self,
+        project: Project,
+        workflow_template,
+        *,
+        run_id: str | None = None,
+    ) -> WorkflowContext:
+        """Activate an already-approved design without invoking Planner."""
+        if not self.initialized:
+            self.initialize()
+        self._project_service.save_project(project)
+        if self._durable_workflow_service is not None:
+            if self._background_execution_enabled:
+                return self._durable_workflow_service.submit_research(
+                    project, workflow_template, run_id=run_id,
+                )
+            return self._durable_workflow_service.start_research(
+                project, workflow_template, run_id=run_id,
+            )
+        workflow_run = self._workflow_run_factory.create(
+            template=workflow_template,
+            run_id=run_id,
+            project_id=project.id,
+        )
+        return self._workflow_engine.execute(
+            project=project,
+            workflow_template=workflow_template,
+            workflow_run=workflow_run,
         )
 
     def get_project(self, project_id: str) -> Project:

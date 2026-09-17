@@ -48,8 +48,10 @@ class InMemoryProjectRepository:
                 f"expected {expected_version}, found {current_version}."
             )
 
-        self._projects[project.id] = copy.deepcopy(project)
         new_version = current_version + 1
+        stored = copy.deepcopy(project)
+        stored.persistence_version = new_version
+        self._projects[project.id] = stored
         self._versions[project.id] = new_version
         return new_version
 

@@ -5,10 +5,14 @@
 <section class="form-card form-card-focused">
   <p class="eyebrow">НОВИЙ ПРОЄКТ</p>
   <h2>Створіть простір для дослідження</h2>
-  <p class="muted">Після створення проєкту ви зможете додати контекст дослідження та обрати методи.</p>
+  <p class="muted">Оберіть методи, які справді потрібні цьому проєкту. Інший метод можна додати пізніше.</p>
   {% if error %}<div class="alert">{{ error }}</div>{% endif %}
   <form method="post" action="/ui/projects">
     <label>Назва проєкту<input name="name" value="{{ name }}" required maxlength="200" placeholder="Наприклад, вихід на європейський ринок"></label>
+    <fieldset class="method-selector"><legend>Методи дослідження</legend>
+      <label class="check-option"><input type="checkbox" name="selected_methods" value="DESK" {% if 'DESK' in selected_methods %}checked{% endif %}> <span><b>Кабінетне дослідження</b><small>Пошук, перевірка та аналіз відкритих джерел.</small></span></label>
+      <label class="check-option"><input type="checkbox" name="selected_methods" value="QUANTITATIVE" {% if 'QUANTITATIVE' in selected_methods %}checked{% endif %}> <span><b>Кількісне дослідження</b><small>Робота з набором даних, статистикою та звітом.</small></span></label>
+    </fieldset>
     <div class="form-actions"><button class="button" type="submit">Створити проєкт</button><a class="text-link" href="/ui/projects">Скасувати</a></div>
   </form>
 </section>

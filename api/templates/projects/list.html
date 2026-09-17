@@ -11,8 +11,8 @@
         {% if item.attention %}<span class="status-chip status-attention">Потребує уваги</span>{% endif %}
       </div>
       <div class="project-methods">
-        <div class="method-state"><span>Кабінетне дослідження</span><b class="status-chip status-{{ 'inactive' if item.desk_state == 'Не розпочато' else 'attention' if 'уваги' in item.desk_state or 'обмеженнями' in item.desk_state else 'success' if item.desk_state == 'Завершено' else 'active' }}">{{ item.desk_state }}</b></div>
-        <div class="method-state"><span>Кількісне дослідження</span><b class="status-chip status-{{ 'inactive' if item.quantitative_state == 'Не розпочато' else 'attention' if 'уваги' in item.quantitative_state or 'обмеженнями' in item.quantitative_state else 'success' if item.quantitative_state == 'Завершено' else 'active' }}">{{ item.quantitative_state }}</b></div>
+        {% for name, state in item.method_states %}<div class="method-state"><span>{{ name }}</span><b class="status-chip status-{{ 'attention' if 'уваги' in state or 'обмеженнями' in state else 'success' if state == 'Завершено' else 'active' }}">{{ state }}</b></div>{% endfor %}
+        {% if not item.method_states %}<div class="method-state"><span>Методи ще не обрано</span></div>{% endif %}
       </div>
     </div>
     <a class="button button-quiet" href="/ui/projects/{{ item.project_id }}">Відкрити проєкт</a>

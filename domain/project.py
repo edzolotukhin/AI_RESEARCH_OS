@@ -7,6 +7,7 @@ from domain.research_brief import ResearchBrief
 from domain.legacy.methodology_proposal import MethodologyProposal
 from domain.workflow_run import WorkflowRun
 from domain.value_objects.project_status import ProjectStatus
+from domain.planning.research_design import ResearchDesign
 
 
 @dataclass
@@ -30,6 +31,22 @@ class Project:
     updated_at: str = ""
 
     owner_principal_id: str | None = None
+
+    # None identifies a historical Project without explicit PF-02 selection.
+    selected_methods: tuple[str, ...] | None = None
+
+    current_research_design: ResearchDesign | None = None
+
+    research_design_status: str | None = None
+
+    research_design_input_fingerprint: str | None = None
+
+    research_design_approved_by: str | None = None
+
+    research_design_approved_at: str | None = None
+
+    # Repository concurrency token; excluded from business equality/repr.
+    persistence_version: int = field(default=0, compare=False, repr=False)
 
     runs: list[WorkflowRun] = field(default_factory=list)
 

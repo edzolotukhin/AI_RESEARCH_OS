@@ -7,15 +7,17 @@ from application.query.project_workspace_views import (
 )
 from application.quantitative.workflow import build_quantitative_workflow_template
 from domain.value_objects.task_status import TaskStatus
+from domain.research_method import DESK, QUANTITATIVE
 
 
 class ProjectWorkspaceQueryService:
     def __init__(self, *, project_service, workflow_service, quantitative_ui_service,
-                 research_result_service) -> None:
+                 research_result_service, project_planning_service) -> None:
         self.projects = project_service
         self.workflows = workflow_service
         self.quantitative = quantitative_ui_service
         self.research_results = research_result_service
+        self.planning = project_planning_service
 
     def list(self, *, owner_id: str) -> ProjectListView:
         items = []
@@ -23,7 +25,7 @@ class ProjectWorkspaceQueryService:
             view = self.get(project.id, owner_id=owner_id)
             items.append(ProjectListItemView(
                 project.id, project.name, self._humanize(project.status),
-                view.desk.state_label, view.quantitative.state_label,
+                tuple((method.name, method.state_label) for method in view.methods),
                 bool(view.attention_items),
             ))
         return ProjectListView(tuple(items))
@@ -48,26 +50,36 @@ class ProjectWorkspaceQueryService:
             elif run.workflow_template_id != quant_template_id:
                 desk_runs.append(run)
         desk_run = desk_runs[-1] if desk_runs else None
-        desk = self._desk(project_id, desk_run)
-        quant = self._quant(project_id, quant_study, quant_run)
+        selected = self.planning.explicit_or_inferred_methods(project)
+        desk = self._desk(project_id, desk_run, project) if DESK in selected else None
+        quant = self._quant(project_id, quant_study, quant_run, project) if QUANTITATIVE in selected else None
+        methods = tuple(item for item in (desk, quant) if item is not None)
         brief = None if project.research_brief is None else ProjectBriefSummaryView(
             project.research_brief.title, project.research_brief.business_question,
             project.research_brief.objectives,
         )
-        attention = tuple(x.name for x in (desk, quant) if x.state is WorkspaceMethodState.ATTENTION)
+        attention = tuple(x.name for x in methods if x.state is WorkspaceMethodState.ATTENTION)
         return ProjectWorkspaceView(project.id, project.name, self._humanize(project.status),
-                                    brief, desk, quant, attention)
+                                    brief, desk, quant, methods,
+                                    self.planning.available_methods(project),
+                                    project.research_design_status,
+                                    self.planning.design_is_current(project),
+                                    attention)
 
     @staticmethod
     def _study_type():
         from domain.quantitative.workflow import QuantitativeStudyProjection
         return QuantitativeStudyProjection
 
-    def _desk(self, project_id, run):
+    def _desk(self, project_id, run, project):
         if run is None:
-            return MethodWorkspaceView("Кабінетне дослідження", WorkspaceMethodState.NOT_STARTED,
-                "Не розпочато", "Додайте дослідницький бриф, щоб розпочати кабінетне дослідження.", None,
-                MethodOutputAvailabilityView(), WorkspaceActionView("Розпочати кабінетне дослідження", f"/ui/projects/{project_id}/desk/new"))
+            approved = project.research_design_status == "APPROVED" and self.planning.design_is_current(project)
+            return MethodWorkspaceView("Кабінетне дослідження", WorkspaceMethodState.READY if approved else WorkspaceMethodState.NOT_STARTED,
+                "Готове до запуску" if approved else "Очікує затвердження дизайну",
+                "Дизайн затверджено; метод можна активувати." if approved else "Збережіть бриф, сформуйте та затвердьте дизайн дослідження.", None,
+                MethodOutputAvailabilityView(), WorkspaceActionView(
+                    "Розпочати кабінетне дослідження" if approved else "Перейти до дизайну",
+                    f"/ui/projects/{project_id}/methods/DESK/activate" if approved else f"/ui/projects/{project_id}/design"))
         status = run.status.value
         total = len(run.tasks)
         complete = sum(task.status in {TaskStatus.COMPLETED, TaskStatus.SKIPPED} for task in run.tasks)
@@ -94,11 +106,15 @@ class ProjectWorkspaceQueryService:
         return MethodWorkspaceView("Кабінетне дослідження", state, label, explanation, progress, output,
                                    open_action, open_action)
 
-    def _quant(self, project_id, study, run):
+    def _quant(self, project_id, study, run, project):
         if study is None:
-            return MethodWorkspaceView("Кількісне дослідження", WorkspaceMethodState.NOT_STARTED,
-                "Не розпочато", "Налаштуйте кількісне дослідження для роботи з набором даних.", None,
-                MethodOutputAvailabilityView(), WorkspaceActionView("Налаштувати кількісне дослідження", f"/ui/projects/{project_id}/quantitative/new"))
+            approved = project.research_design_status == "APPROVED" and self.planning.design_is_current(project)
+            return MethodWorkspaceView("Кількісне дослідження", WorkspaceMethodState.READY if approved else WorkspaceMethodState.NOT_STARTED,
+                "Готове до налаштування" if approved else "Очікує затвердження дизайну",
+                "Дизайн затверджено; метод можна налаштувати." if approved else "Збережіть бриф, сформуйте та затвердьте дизайн дослідження.", None,
+                MethodOutputAvailabilityView(), WorkspaceActionView(
+                    "Налаштувати кількісне дослідження" if approved else "Перейти до дизайну",
+                    f"/ui/projects/{project_id}/methods/QUANTITATIVE/activate" if approved else f"/ui/projects/{project_id}/design"))
         state_value = study.state
         state, label, explanation = WorkspaceMethodState.READY, "Готове до налаштування", "Завантажте та перевірте набір даних, щоб продовжити."
         if run and run.status.value == "running": state, label, explanation = WorkspaceMethodState.RUNNING, "Виконується", "Виконується кількісний аналіз даних."
@@ -122,9 +138,12 @@ class ProjectWorkspaceQueryService:
         key = str(getattr(value, "value", value)).casefold()
         return {
             "lead": "Новий",
-            "research_design": "Дизайн дослідження",
-            "client_approval": "Очікує підтвердження",
+            "research design": "Дизайн дослідження",
+            "client approval": "Очікує підтвердження",
             "approved": "Підтверджено",
+            "project setup": "Налаштування проєкту",
+            "data processing": "Обробка даних",
+            "reporting": "Підготовка звіту",
             "fieldwork": "Польовий етап",
             "closed": "Завершено",
             "archived": "В архіві",

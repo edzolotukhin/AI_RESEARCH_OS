@@ -13,7 +13,11 @@ class Pf01ProjectWorkspaceTests(ApiTestCase):
         return resolve_ui_principal(self.container).principal_id
 
     def _project(self, name="Workspace Project"):
-        response = self.client.post("/ui/projects", data={"name": name}, follow_redirects=False)
+        response = self.client.post(
+            "/ui/projects",
+            data={"name": name, "selected_methods": ["DESK", "QUANTITATIVE"]},
+            follow_redirects=False,
+        )
         self.assertEqual(response.status_code, 303)
         return response.headers["location"].rsplit("/", 1)[-1]
 
@@ -23,16 +27,15 @@ class Pf01ProjectWorkspaceTests(ApiTestCase):
         self.assertIn("Створити проєкт", project_list)
         create_page = self.client.get("/ui/projects/new").text
         self.assertIn("Назва проєкту", create_page)
-        self.assertIn("Після створення проєкту ви зможете додати контекст дослідження та обрати методи.", create_page)
+        self.assertIn("Методи дослідження", create_page)
         project_id = self._project()
         project = self.container.project_service.get_project(project_id)
         self.assertEqual(project.owner_principal_id, self.owner_id)
         page = self.client.get(f"/ui/projects/{project_id}")
         self.assertEqual(page.status_code, 200)
         self.assertIn("Дослідницький бриф ще не додано", page.text)
-        self.assertEqual(page.text.count("Не розпочато"), 2)
-        self.assertIn("Розпочати кабінетне дослідження", page.text)
-        self.assertIn("Налаштувати кількісне дослідження", page.text)
+        self.assertEqual(page.text.count("Очікує затвердження дизайну"), 2)
+        self.assertIn("Перейти до дизайну", page.text)
 
     def test_foreign_project_is_not_listed_or_disclosed(self):
         foreign = self.container.project_service.create_project("Foreign", owner_principal_id="foreign-owner")
@@ -40,7 +43,10 @@ class Pf01ProjectWorkspaceTests(ApiTestCase):
         self.assertEqual(self.client.get(f"/ui/projects/{foreign.id}").status_code, 404)
 
     def test_project_bound_quantitative_has_three_distinct_ids_and_return_link(self):
-        project_id = self._project()
+        project = self.container.project_service.create_project(
+            "Legacy Project", owner_principal_id=self.owner_id,
+        )
+        project_id = project.id
         response = self.client.post(f"/ui/projects/{project_id}/quantitative", data={
             "title": "Bound study", "description": "Independent identity", "submission_key": "pf-01-key"
         }, follow_redirects=False)

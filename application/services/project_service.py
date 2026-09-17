@@ -13,6 +13,7 @@ from application.persistence.exceptions import EntityNotFoundError
 from application.ports.project_repository import ProjectRepository
 from domain.factories.project_factory import ProjectFactory
 from domain.project import Project
+from domain.research_method import canonicalize_research_methods
 
 
 class ProjectService:
@@ -38,12 +39,18 @@ class ProjectService:
         *,
         owner_principal_id: str | None = None,
         project_id: str | None = None,
+        selected_methods: tuple[str, ...] | list[str] | None = None,
     ) -> Project:
         if project_id is None:
             project = self._project_factory.create(name)
         else:
             project = self._project_factory.create(name, project_id=project_id)
         project.owner_principal_id = owner_principal_id
+        project.selected_methods = (
+            None
+            if selected_methods is None
+            else canonicalize_research_methods(selected_methods)
+        )
         self._project_repository.create(project)
         return project
 
@@ -72,10 +79,17 @@ class ProjectService:
         *,
         expected_version: int | None = None,
     ) -> int:
-        return self._project_repository.save(
-            project,
-            expected_version=expected_version,
+        resolved_version = (
+            project.persistence_version
+            if expected_version is None
+            else expected_version
         )
+        new_version = self._project_repository.save(
+            project,
+            expected_version=resolved_version,
+        )
+        project.persistence_version = new_version
+        return new_version
 
     def delete_project(
         self,

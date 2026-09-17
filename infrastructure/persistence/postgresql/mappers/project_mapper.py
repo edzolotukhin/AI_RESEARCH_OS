@@ -15,6 +15,7 @@ from domain.legacy.methodology_proposal import (
     SamplingPlan,
 )
 from domain.project import Project
+from domain.planning.research_design import ResearchDesign
 from domain.research_brief import ResearchBrief
 from domain.value_objects.project_status import ProjectStatus
 from infrastructure.persistence.postgresql.models.project_model import ProjectModel
@@ -32,6 +33,12 @@ def project_to_model(project: Project, *, version: int) -> ProjectModel:
         created_at=project.created_at,
         updated_at=project.updated_at,
         owner_principal_id=project.owner_principal_id,
+        selected_methods=(list(project.selected_methods) if project.selected_methods is not None else None),
+        planning_design=(project.current_research_design.to_dict() if project.current_research_design else None),
+        planning_design_status=project.research_design_status,
+        planning_design_input_fingerprint=project.research_design_input_fingerprint,
+        planning_design_approved_by=project.research_design_approved_by,
+        planning_design_approved_at=project.research_design_approved_at,
         version=version,
     )
 
@@ -47,6 +54,12 @@ def project_to_update_values(project: Project) -> dict:
         "created_at": project.created_at,
         "updated_at": project.updated_at,
         "owner_principal_id": project.owner_principal_id,
+        "selected_methods": list(project.selected_methods) if project.selected_methods is not None else None,
+        "planning_design": project.current_research_design.to_dict() if project.current_research_design else None,
+        "planning_design_status": project.research_design_status,
+        "planning_design_input_fingerprint": project.research_design_input_fingerprint,
+        "planning_design_approved_by": project.research_design_approved_by,
+        "planning_design_approved_at": project.research_design_approved_at,
     }
 
 
@@ -62,6 +75,13 @@ def project_from_model(model: ProjectModel) -> Project:
         created_at=model.created_at or "",
         updated_at=model.updated_at or "",
         owner_principal_id=model.owner_principal_id,
+        selected_methods=(tuple(model.selected_methods) if model.selected_methods is not None else None),
+        current_research_design=ResearchDesign.from_dict(model.planning_design),
+        research_design_status=model.planning_design_status,
+        research_design_input_fingerprint=model.planning_design_input_fingerprint,
+        research_design_approved_by=model.planning_design_approved_by,
+        research_design_approved_at=model.planning_design_approved_at,
+        persistence_version=model.version,
         runs=[],
     )
 

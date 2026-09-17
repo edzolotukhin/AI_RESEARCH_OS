@@ -53,8 +53,12 @@ class ProjectWorkspaceView:
     project_name: str
     lifecycle: str
     brief: ProjectBriefSummaryView | None
-    desk: MethodWorkspaceView
-    quantitative: MethodWorkspaceView
+    desk: MethodWorkspaceView | None
+    quantitative: MethodWorkspaceView | None
+    methods: tuple[MethodWorkspaceView, ...]
+    available_methods: tuple[str, ...]
+    design_status: str | None
+    design_current: bool
     attention_items: tuple[str, ...]
 
 
@@ -63,8 +67,7 @@ class ProjectListItemView:
     project_id: str
     project_name: str
     lifecycle: str
-    desk_state: str
-    quantitative_state: str
+    method_states: tuple[tuple[str, str], ...]
     attention: bool
 
 

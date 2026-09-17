@@ -85,6 +85,7 @@ from application.services.artifact_service import ArtifactService
 from application.services.execution_log_service import ExecutionLogService
 from application.services.knowledge_service import KnowledgeService
 from application.services.project_service import ProjectService
+from application.services.project_planning_service import ProjectPlanningService
 from application.services.durable_workflow_service import DurableWorkflowService
 from application.services.workflow_service import WorkflowService
 from application.services.research_submission_service import ResearchSubmissionService
@@ -640,6 +641,15 @@ def create_application_container(
             ),
         )
 
+    project_planning_service = ProjectPlanningService(
+        project_service=project_service,
+        workflow_service=workflow_service,
+        planner_agent=planner_agent,
+        workflow_mapper=workflow_template_mapper,
+        agency=agency,
+        quantitative_ui_service=quantitative_ui_service,
+    )
+
     return ApplicationContainer(
         config=config,
         agency=agency,
@@ -664,6 +674,7 @@ def create_application_container(
         background_execution=background_execution,
         readiness_check=readiness_check,
         quantitative_ui_service=quantitative_ui_service,
+        project_planning_service=project_planning_service,
         quantitative_objective_coverage_service=quantitative_objective_coverage_service,
         quantitative_authority_chain_service=quantitative_authority_chain_service,
         quantitative_authority_chain_selection_service=quantitative_authority_chain_selection_service,

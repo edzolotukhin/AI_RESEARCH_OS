@@ -14,6 +14,7 @@ from application.persistence.exceptions import (
 from application.ports.project_repository import ProjectRepository
 from domain.project import Project
 from domain.research_brief import ResearchBrief
+from domain.planning.research_design import ResearchDesign
 from domain.value_objects.project_status import ProjectStatus
 
 
@@ -100,7 +101,9 @@ class FileProjectRepository:
         with open(project_file, encoding="utf-8") as handle:
             payload = json.load(handle)
 
-        return self._project_from_dict(payload)
+        project = self._project_from_dict(payload)
+        project.persistence_version = self._read_version(project_id)
+        return project
 
     def list(
         self,
@@ -187,6 +190,7 @@ class FileProjectRepository:
     def _project_to_dict(project: Project) -> dict[str, Any]:
         payload = asdict(project)
         payload["runs"] = []
+        payload.pop("persistence_version", None)
         if project.research_brief is not None:
             payload["research_brief"] = project.research_brief.to_dict()
         return payload
@@ -203,5 +207,11 @@ class FileProjectRepository:
             created_at=payload.get("created_at", ""),
             updated_at=payload.get("updated_at", ""),
             research_brief=research_brief,
+            selected_methods=(tuple(payload["selected_methods"]) if payload.get("selected_methods") is not None else None),
+            current_research_design=ResearchDesign.from_dict(payload.get("current_research_design")),
+            research_design_status=payload.get("research_design_status"),
+            research_design_input_fingerprint=payload.get("research_design_input_fingerprint"),
+            research_design_approved_by=payload.get("research_design_approved_by"),
+            research_design_approved_at=payload.get("research_design_approved_at"),
             runs=[],
         )

@@ -1,0 +1,9 @@
+{% extends "projects/base.html" %}
+{% block heading %}Дослідницький бриф{% endblock %}
+{% block header_action %}{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/ui/projects/{{ project.id }}">← До проєкту</a><span>{{ project.name }}</span></div>
+<section class="form-card"><p class="eyebrow">КОНТЕКСТ ДОСЛІДЖЕННЯ</p><h2>Дослідницький бриф</h2><p class="muted">Збереження брифу не запускає жоден метод. На його основі окремо формується дизайн дослідження.</p>
+{% if error %}<div class="alert">{{ error }}</div>{% endif %}{% set brief = project.research_brief %}
+<form method="post" action="/ui/projects/{{ project.id }}/brief"><label>Назва дослідження<input name="title" required value="{{ brief.title if brief else project.name }}"></label><label>Бізнес-питання<textarea name="business_question" required>{{ brief.business_question if brief else '' }}</textarea></label><label>Цілі дослідження<textarea name="objectives" placeholder="Одна ціль у кожному рядку">{{ brief.objectives|join('\n') if brief else '' }}</textarea></label><div class="form-grid"><label>Географія<input name="geography" value="{{ brief.geography|join(', ') if brief else '' }}"></label><label>Ринок / категорія<input name="market" value="{{ brief.market if brief else '' }}"></label><label>Часові межі<input name="timeframe" value="{{ brief.timeframe if brief else '' }}"></label></div><input type="hidden" name="language" value="{{ brief.language if brief else 'uk' }}"><div class="form-actions"><button class="button" type="submit">Зберегти бриф</button><a class="text-link" href="/ui/projects/{{ project.id }}">Скасувати</a></div></form></section>
+{% endblock %}
