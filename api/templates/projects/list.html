@@ -1,1 +1,25 @@
-{% extends "projects/base.html" %}{% block content %}{% if view.projects %}<div class="project-grid">{% for item in view.projects %}<article class="card"><div class="row"><span class="pill">{{ item.lifecycle }}</span>{% if item.attention %}<span class="warning">Needs attention</span>{% endif %}</div><h2>{{ item.project_name }}</h2><div class="method-row"><span>Desk Research</span><b>{{ item.desk_state }}</b></div><div class="method-row"><span>Quantitative Research</span><b>{{ item.quantitative_state }}</b></div><a class="button" href="/ui/projects/{{ item.project_id }}">Open project</a></article>{% endfor %}</div>{% else %}<section class="empty"><h2>No projects yet</h2><p>Create a Project to bring independent research methods into one workspace.</p><a class="button" href="/ui/projects/new">Create Project</a></section>{% endif %}{% endblock %}
+{% extends "projects/base.html" %}
+{% block content %}
+{% if view.projects %}
+<div class="project-list">
+  {% for item in view.projects %}
+  <article class="project-card">
+    <div class="project-main">
+      <div class="project-title-row">
+        <h2>{{ item.project_name }}</h2>
+        <span class="lifecycle-chip">{{ item.lifecycle }}</span>
+        {% if item.attention %}<span class="status-chip status-attention">Потребує уваги</span>{% endif %}
+      </div>
+      <div class="project-methods">
+        <div class="method-state"><span>Кабінетне дослідження</span><b class="status-chip status-{{ 'inactive' if item.desk_state == 'Не розпочато' else 'attention' if 'уваги' in item.desk_state or 'обмеженнями' in item.desk_state else 'success' if item.desk_state == 'Завершено' else 'active' }}">{{ item.desk_state }}</b></div>
+        <div class="method-state"><span>Кількісне дослідження</span><b class="status-chip status-{{ 'inactive' if item.quantitative_state == 'Не розпочато' else 'attention' if 'уваги' in item.quantitative_state or 'обмеженнями' in item.quantitative_state else 'success' if item.quantitative_state == 'Завершено' else 'active' }}">{{ item.quantitative_state }}</b></div>
+      </div>
+    </div>
+    <a class="button button-quiet" href="/ui/projects/{{ item.project_id }}">Відкрити проєкт</a>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<section class="empty compact-empty"><h2>Проєктів ще немає</h2><p>Створіть проєкт, щоб об’єднати незалежні методи в одному дослідницькому просторі.</p><a class="button" href="/ui/projects/new">Створити проєкт</a></section>
+{% endif %}
+{% endblock %}

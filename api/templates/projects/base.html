@@ -1,1 +1,31 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{% block title %}Projects — AI Research OS{% endblock %}</title><link rel="stylesheet" href="/static/project-workspace.css"></head><body><div class="shell"><aside><a class="brand" href="/ui/projects"><b>AI</b> AI RESEARCH OS</a><nav><span>WORKSPACE</span><a href="/ui/projects">Projects</a><a href="/ui/projects/new">Create Project</a><span>METHODS</span><a href="/ui/research/new">Desk Research</a><a href="/ui/quantitative/new">Quantitative Research</a></nav></aside><main><header><div><small>RESEARCH WORKSPACE</small><h1>{% block heading %}Projects{% endblock %}</h1></div><a class="button" href="/ui/projects/new">New Project</a></header><div class="content">{% block content %}{% endblock %}</div></main></div></body></html>
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}Проєкти — AI Research OS{% endblock %}</title>
+  <link rel="stylesheet" href="/static/project-workspace.css">
+</head>
+<body>
+  <div class="shell">
+    <aside>
+      <a class="brand" href="/ui/projects"><b>AI</b> AI RESEARCH OS</a>
+      <nav>
+        <span>РОБОЧИЙ ПРОСТІР</span>
+        <a href="/ui/projects">Проєкти</a>
+        <a href="/ui/projects/new">Створити проєкт</a>
+        <span>МЕТОДИ</span>
+        <a href="/ui/research/new">Кабінетне дослідження</a>
+        <a href="/ui/quantitative/new">Кількісне дослідження</a>
+      </nav>
+    </aside>
+    <main>
+      <header>
+        <div><small>ДОСЛІДНИЦЬКИЙ ПРОСТІР</small><h1>{% block heading %}Проєкти{% endblock %}</h1></div>
+        {% block header_action %}<a class="button button-quiet" href="/ui/projects/new">Новий проєкт</a>{% endblock %}
+      </header>
+      <div class="content">{% block content %}{% endblock %}</div>
+    </main>
+  </div>
+</body>
+</html>

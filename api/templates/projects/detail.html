@@ -1,1 +1,28 @@
-{% extends "projects/base.html" %}{% block heading %}{{ view.project_name }}{% endblock %}{% block content %}<div class="breadcrumb"><a href="/ui/projects">Projects</a> / {{ view.project_name }}</div><section class="hero"><div><span class="pill">{{ view.lifecycle }}</span><h2>Project Workspace</h2><p>Independent methods, one authorized research context.</p></div>{% if view.attention_items %}<div class="attention">Attention needed: {{ view.attention_items|join(', ') }}</div>{% endif %}</section><section class="context"><p class="eyebrow">RESEARCH CONTEXT</p>{% if view.brief %}<h3>{{ view.brief.title }}</h3><p>{{ view.brief.business_question }}</p>{% if view.brief.objectives %}<ul>{% for item in view.brief.objectives %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}{% else %}<h3>No research brief yet</h3><p class="muted">Start Desk Research to add a structured brief, or begin Quantitative Research independently.</p>{% endif %}</section><h2>Methods</h2><div class="method-grid">{% for method in (view.desk, view.quantitative) %}<article class="method card state-{{ method.state.value|lower }}"><div class="row"><p class="eyebrow">{{ method.name|upper }}</p><span class="pill">{{ method.state_label }}</span></div><h3>{{ method.explanation }}</h3>{% if method.progress is not none %}<div class="progress"><i style="width:{{ method.progress }}%"></i></div><small>{{ method.progress }}% complete</small>{% endif %}<div class="outputs"><span>Findings <b>{{ method.output.findings_count if method.output.findings_count is not none else '—' }}</b></span><span>Insights <b>{{ method.output.insights_count if method.output.insights_count is not none else '—' }}</b></span><span>Report <b>{{ 'Available' if method.output.report_available else '—' }}</b></span></div><a class="button" href="{{ method.primary_action.href }}">{{ method.primary_action.label }}</a></article>{% endfor %}</div><section class="context"><p class="eyebrow">PROJECT OUTPUT SUMMARY</p><p>Outputs remain method-specific. This workspace does not combine findings, insights, recommendations, or reports.</p></section>{% endblock %}
+{% extends "projects/base.html" %}
+{% block heading %}{{ view.project_name }}{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/ui/projects">Проєкти</a><span>/</span><span>{{ view.project_name }}</span></div>
+<section class="project-header">
+  <div><span class="lifecycle-chip">{{ view.lifecycle }}</span><p>Простір проєкту для незалежних методів у спільному контексті дослідження.</p></div>
+  {% if view.attention_items %}<div class="attention">Потребує уваги: {{ view.attention_items|join(', ') }}</div>{% endif %}
+</section>
+<section class="context compact-section">
+  <p class="eyebrow">КОНТЕКСТ ДОСЛІДЖЕННЯ</p>
+  {% if view.brief %}<h2>{{ view.brief.title }}</h2><p class="research-question">{{ view.brief.business_question }}</p>{% if view.brief.objectives %}<ul>{% for item in view.brief.objectives %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+  {% else %}<h2>Дослідницький бриф ще не додано</h2><p class="muted">Розпочніть кабінетне дослідження, щоб додати структурований бриф, або окремо налаштуйте кількісне дослідження.</p>{% endif %}
+</section>
+<div class="section-heading"><div><p class="eyebrow">МЕТОДИ</p><h2>Дослідження в межах проєкту</h2></div><p>Кожен метод має власний стан і результати.</p></div>
+<div class="method-grid">
+  {% for method in (view.desk, view.quantitative) %}
+  <article class="method card state-{{ method.state.value|lower }}">
+    <div class="method-head"><h3>{{ method.name }}</h3><span class="status-chip status-{{ 'inactive' if method.state.value == 'NOT_STARTED' else 'attention' if method.state.value in ('ATTENTION','LIMITED') else 'success' if method.state.value == 'COMPLETED' else 'active' }}">{{ method.state_label }}</span></div>
+    <p class="method-explanation">{{ method.explanation }}</p>
+    {% if method.progress is not none %}<div class="progress"><i style="width:{{ method.progress }}%"></i></div><small>Виконано: {{ method.progress }}%</small>{% endif %}
+    <div class="outputs-label">РЕЗУЛЬТАТИ</div>
+    <div class="outputs"><span>Висновки <b>{{ method.output.findings_count if method.output.findings_count is not none else '—' }}</b></span><span>Інсайти <b>{{ method.output.insights_count if method.output.insights_count is not none else '—' }}</b></span><span>Звіт <b>{{ 'Доступний' if method.output.report_available else '—' }}</b></span></div>
+    <a class="button" href="{{ method.primary_action.href }}">{{ method.primary_action.label }}</a>
+  </article>
+  {% endfor %}
+</div>
+<section class="context compact-section output-note"><p class="eyebrow">РЕЗУЛЬТАТИ ПРОЄКТУ</p><p>Результати залишаються окремими для кожного методу. Простір проєкту не об’єднує висновки, інсайти, рекомендації чи звіти.</p></section>
+{% endblock %}

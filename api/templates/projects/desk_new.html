@@ -1,1 +1,18 @@
-{% extends "projects/base.html" %}{% block heading %}Start Desk Research{% endblock %}{% block content %}<div class="breadcrumb"><a href="/ui/projects/{{ view.project_id }}">← {{ view.project_name }}</a></div><section class="form-card"><h2>Research brief</h2>{% if error %}<div class="alert">{{ error }}</div>{% endif %}<form method="post" action="/ui/projects/{{ view.project_id }}/desk"><label>Title<input name="title" required value="{{ view.project_name }}"></label><label>Business question<textarea name="business_question" required></textarea></label><label>Objectives<textarea name="objectives" placeholder="One objective per line"></textarea></label><label>Geography<input name="geography"></label><label>Market<input name="market"></label><label>Timeframe<input name="timeframe"></label><input type="hidden" name="language" value="en"><button class="button" type="submit">Start Desk Research</button></form></section>{% endblock %}
+{% extends "projects/base.html" %}
+{% block heading %}Розпочати кабінетне дослідження{% endblock %}
+{% block header_action %}{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/ui/projects/{{ view.project_id }}">← До проєкту</a><span>{{ view.project_name }}</span></div>
+<section class="form-card">
+  <p class="eyebrow">КАБІНЕТНЕ ДОСЛІДЖЕННЯ</p><h2>Дослідницький бриф</h2>
+  {% if error %}<div class="alert">{{ error }}</div>{% endif %}
+  <form method="post" action="/ui/projects/{{ view.project_id }}/desk">
+    <label>Назва дослідження<input name="title" required value="{{ view.project_name }}"></label>
+    <label>Бізнес-питання<textarea name="business_question" required></textarea></label>
+    <label>Цілі дослідження<textarea name="objectives" placeholder="Одна ціль у кожному рядку"></textarea></label>
+    <div class="form-grid"><label>Географія<input name="geography"></label><label>Ринок<input name="market"></label><label>Часові межі<input name="timeframe"></label></div>
+    <input type="hidden" name="language" value="en">
+    <div class="form-actions"><button class="button" type="submit">Розпочати кабінетне дослідження</button><a class="text-link" href="/ui/projects/{{ view.project_id }}">Скасувати</a></div>
+  </form>
+</section>
+{% endblock %}

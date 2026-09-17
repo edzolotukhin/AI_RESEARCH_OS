@@ -1,1 +1,17 @@
-{% extends "projects/base.html" %}{% block heading %}Start Quantitative Research{% endblock %}{% block content %}<div class="breadcrumb"><a href="/ui/projects/{{ view.project_id }}">← {{ view.project_name }}</a></div><section class="form-card"><h2>Create project-bound study</h2><p class="muted">The study and workflow retain independent identities inside this Project.</p>{% if error %}<div class="alert">{{ error }}</div>{% endif %}<form method="post" action="/ui/projects/{{ view.project_id }}/quantitative"><label>Study title<input name="title" required value="{{ view.project_name }} — Quantitative"></label><label>Description<textarea name="description"></textarea></label><input type="hidden" name="submission_key" value="{{ submission_key }}"><button class="button" type="submit">Create Quantitative Study</button></form></section>{% endblock %}
+{% extends "projects/base.html" %}
+{% block heading %}Налаштувати кількісне дослідження{% endblock %}
+{% block header_action %}{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/ui/projects/{{ view.project_id }}">← До проєкту</a><span>{{ view.project_name }}</span></div>
+<section class="form-card form-card-focused">
+  <p class="eyebrow">КІЛЬКІСНЕ ДОСЛІДЖЕННЯ</p><h2>Нове дослідження</h2>
+  <p class="muted">Дослідження та його виконання матимуть окремі ідентичності в межах цього проєкту.</p>
+  {% if error %}<div class="alert">{{ error }}</div>{% endif %}
+  <form method="post" action="/ui/projects/{{ view.project_id }}/quantitative">
+    <label>Назва дослідження<input name="title" required value="{{ view.project_name }} — кількісне дослідження"></label>
+    <label>Опис<textarea name="description"></textarea></label>
+    <input type="hidden" name="submission_key" value="{{ submission_key }}">
+    <div class="form-actions"><button class="button" type="submit">Створити кількісне дослідження</button><a class="text-link" href="/ui/projects/{{ view.project_id }}">Скасувати</a></div>
+  </form>
+</section>
+{% endblock %}

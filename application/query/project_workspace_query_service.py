@@ -32,7 +32,7 @@ class ProjectWorkspaceQueryService:
         project = self.projects.get_project(project_id)
         if project.owner_principal_id != owner_id:
             from application.persistence.exceptions import AccessDeniedError
-            raise AccessDeniedError(f"Project not found: {project_id}")
+            raise AccessDeniedError(f"Проєкт не знайдено: {project_id}")
         runs = self.workflows.list_workflow_runs_for_project(project_id)
         quant_template_id = build_quantitative_workflow_template().id
         quant_study = None
@@ -65,19 +65,19 @@ class ProjectWorkspaceQueryService:
 
     def _desk(self, project_id, run):
         if run is None:
-            return MethodWorkspaceView("Desk Research", WorkspaceMethodState.NOT_STARTED,
-                "Not started", "Add a research brief to begin Desk Research.", None,
-                MethodOutputAvailabilityView(), WorkspaceActionView("Start Desk Research", f"/ui/projects/{project_id}/desk/new"))
+            return MethodWorkspaceView("Кабінетне дослідження", WorkspaceMethodState.NOT_STARTED,
+                "Не розпочато", "Додайте дослідницький бриф, щоб розпочати кабінетне дослідження.", None,
+                MethodOutputAvailabilityView(), WorkspaceActionView("Розпочати кабінетне дослідження", f"/ui/projects/{project_id}/desk/new"))
         status = run.status.value
         total = len(run.tasks)
         complete = sum(task.status in {TaskStatus.COMPLETED, TaskStatus.SKIPPED} for task in run.tasks)
         progress = round(complete * 100 / total) if total else None
         state = WorkspaceMethodState.RUNNING
-        label = "In progress"
-        explanation = "Desk Research is working through the approved brief."
-        if status == "paused": state, label, explanation = WorkspaceMethodState.ATTENTION, "Needs attention", "Desk Research is paused and needs attention."
-        elif status == "completed": state, label, explanation = WorkspaceMethodState.COMPLETED, "Completed", "Desk Research completed and its supported outputs are available."
-        elif status in {"failed", "cancelled"}: state, label, explanation = WorkspaceMethodState.LIMITED, "Limited", "Desk Research ended without a complete supported result."
+        label = "Виконується"
+        explanation = "Кабінетне дослідження виконується за визначеним брифом."
+        if status == "paused": state, label, explanation = WorkspaceMethodState.ATTENTION, "Потребує уваги", "Кабінетне дослідження призупинено та потребує уваги."
+        elif status == "completed": state, label, explanation = WorkspaceMethodState.COMPLETED, "Завершено", "Кабінетне дослідження завершено; підтримані результати доступні."
+        elif status in {"failed", "cancelled"}: state, label, explanation = WorkspaceMethodState.LIMITED, "Завершено з обмеженнями", "Кабінетне дослідження завершилося без повного підтриманого результату."
         output = MethodOutputAvailabilityView()
         try:
             payload = self.research_results.get_detail_for_run(run.id).to_dict()
@@ -90,23 +90,23 @@ class ProjectWorkspaceQueryService:
             )
         except Exception:
             pass
-        open_action = WorkspaceActionView("Open Desk Research", f"/ui/research/{run.id}")
-        return MethodWorkspaceView("Desk Research", state, label, explanation, progress, output,
+        open_action = WorkspaceActionView("Відкрити кабінетне дослідження", f"/ui/research/{run.id}")
+        return MethodWorkspaceView("Кабінетне дослідження", state, label, explanation, progress, output,
                                    open_action, open_action)
 
     def _quant(self, project_id, study, run):
         if study is None:
-            return MethodWorkspaceView("Quantitative Research", WorkspaceMethodState.NOT_STARTED,
-                "Not started", "Create a quantitative study when a dataset-led method is needed.", None,
-                MethodOutputAvailabilityView(), WorkspaceActionView("Start Quantitative Research", f"/ui/projects/{project_id}/quantitative/new"))
+            return MethodWorkspaceView("Кількісне дослідження", WorkspaceMethodState.NOT_STARTED,
+                "Не розпочато", "Налаштуйте кількісне дослідження для роботи з набором даних.", None,
+                MethodOutputAvailabilityView(), WorkspaceActionView("Налаштувати кількісне дослідження", f"/ui/projects/{project_id}/quantitative/new"))
         state_value = study.state
-        state, label, explanation = WorkspaceMethodState.READY, "Ready for setup", "Upload and review a dataset to continue."
-        if run and run.status.value == "running": state, label, explanation = WorkspaceMethodState.RUNNING, "In progress", "Quantitative analysis is running."
-        elif state_value in {"AWAITING_QC_APPROVAL", "AWAITING_WEIGHT_APPROVAL"}: state, label, explanation = WorkspaceMethodState.ATTENTION, "Needs attention", "A methodological review or approval is required."
-        elif state_value == "COMPLETED": state, label, explanation = WorkspaceMethodState.COMPLETED, "Completed", "Quantitative analysis completed with supported outputs."
+        state, label, explanation = WorkspaceMethodState.READY, "Готове до налаштування", "Завантажте та перевірте набір даних, щоб продовжити."
+        if run and run.status.value == "running": state, label, explanation = WorkspaceMethodState.RUNNING, "Виконується", "Виконується кількісний аналіз даних."
+        elif state_value in {"AWAITING_QC_APPROVAL", "AWAITING_WEIGHT_APPROVAL"}: state, label, explanation = WorkspaceMethodState.ATTENTION, "Потребує уваги", "Потрібна методологічна перевірка або підтвердження."
+        elif state_value == "COMPLETED": state, label, explanation = WorkspaceMethodState.COMPLETED, "Завершено", "Кількісний аналіз завершено; підтримані результати доступні."
         elif state_value.startswith("COMPLETED_WITH"):
-            state, label, explanation = WorkspaceMethodState.LIMITED, "Completed with limitations", "Analysis completed; a supported report or insight was not formed."
-        elif run and run.status.value in {"failed", "cancelled"}: state, label, explanation = WorkspaceMethodState.LIMITED, "Limited", "The study ended without a complete supported result."
+            state, label, explanation = WorkspaceMethodState.LIMITED, "Завершено з обмеженнями", "Аналіз завершено; підтриманий звіт або інсайт не сформовано."
+        elif run and run.status.value in {"failed", "cancelled"}: state, label, explanation = WorkspaceMethodState.LIMITED, "Завершено з обмеженнями", "Дослідження завершилося без повного підтриманого результату."
         output = MethodOutputAvailabilityView()
         try:
             view = self.quantitative and __import__("application.query.quantitative_study_query_service", fromlist=["QuantitativeStudyQueryService"]).QuantitativeStudyQueryService(ui_service=self.quantitative).get(study.study_id, owner_id=self.projects.get_project(project_id).owner_principal_id, active="overview")
@@ -114,9 +114,18 @@ class ProjectWorkspaceQueryService:
                                                   view.analysis_count, bool(view.report_sections))
         except Exception:
             pass
-        action = WorkspaceActionView("Open Quantitative Research", f"/ui/quantitative/studies/{study.study_id}/overview")
-        return MethodWorkspaceView("Quantitative Research", state, label, explanation, None, output, action, action)
+        action = WorkspaceActionView("Відкрити кількісне дослідження", f"/ui/quantitative/studies/{study.study_id}/overview")
+        return MethodWorkspaceView("Кількісне дослідження", state, label, explanation, None, output, action, action)
 
     @staticmethod
     def _humanize(value):
-        return str(getattr(value, "value", value)).replace("_", " ").title()
+        key = str(getattr(value, "value", value)).casefold()
+        return {
+            "lead": "Новий",
+            "research_design": "Дизайн дослідження",
+            "client_approval": "Очікує підтвердження",
+            "approved": "Підтверджено",
+            "fieldwork": "Польовий етап",
+            "closed": "Завершено",
+            "archived": "В архіві",
+        }.get(key, "Стан не визначено")

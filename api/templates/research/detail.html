@@ -2,7 +2,7 @@
 {% block title %}Research {{ research_id[:8] }}… — AI Research OS{% endblock %}
 {% block content %}
 <section class="panel page-intro">
-  <p class="breadcrumb">{% if project_id %}<a href="/ui/projects/{{ project_id }}">← Project Workspace</a>{% else %}<a href="/ui/research/new">Research</a>{% endif %} / <span>{{ research_id[:8] }}…</span></p>
+  <p class="breadcrumb">{% if project_id %}<a href="/ui/projects/{{ project_id }}">← До проєкту</a>{% else %}<a href="/ui/research/new">Дослідження</a>{% endif %} / <span>{{ research_id[:8] }}…</span></p>
   {% if page_state == 'not_found' %}
   <div class="alert alert-error" role="alert">{{ error_message }}</div>
   {% elif page_state == 'auth_error' %}
