@@ -24,11 +24,11 @@ class AnalysisItemView:
 
 @dataclass(frozen=True)
 class ResultItemView:
-    variable: str; statistic: str; value: str; numerator: str; denominator: str; population: str; base: str; filter_definition: str; weighting: str; grouped_categories: str = ""
+    variable: str; statistic: str; value: str; numerator: str; denominator: str; population: str; base: str; filter_definition: str; weighting: str; grouped_categories: str = ""; percent_width: str = "0"
 
 @dataclass(frozen=True)
 class FindingView:
-    text: str; support_count: int; method: str
+    text: str; support_count: int; method: str; key_value: str = ""; question: str = ""; population: str = ""; base: str = ""; denominator: str = ""; weighting: str = ""; category: str = ""
 
 @dataclass(frozen=True)
 class InsightView:
@@ -52,3 +52,4 @@ class QuantitativeStudyView:
     report_title: str; report_sections: tuple[ReportSectionView, ...]; report_status: ProductStatusView
     limitations: tuple[str, ...]; warnings: tuple[str, ...]
     can_upload: bool; can_run_qc: bool; can_resume: bool
+    completed_analysis_count: int = 0; result_count: int = 0; finding_count: int = 0; insight_count: int = 0
