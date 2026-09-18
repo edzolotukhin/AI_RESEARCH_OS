@@ -283,11 +283,15 @@ class CompositionRootTests(unittest.TestCase):
             ),
         )
 
-        result = agency.create_project("Override Project")
+        result = agency.create_project(
+            "Override Project",
+            selected_methods=("DESK", "QUANTITATIVE"),
+        )
 
         custom_service.create_project.assert_called_once_with(
             "Override Project",
             owner_principal_id=None,
+            selected_methods=("DESK", "QUANTITATIVE"),
         )
         self.assertIs(result, expected_project)
 
