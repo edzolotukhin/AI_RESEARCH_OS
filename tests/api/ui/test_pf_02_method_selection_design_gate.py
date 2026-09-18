@@ -118,6 +118,40 @@ class Pf02MethodSelectionDesignGateTests(ApiTestCase):
         project_id = self.create(("DESK",))
         self.save_brief(project_id)
         self.assertEqual(self.container.workflow_service.list_workflow_runs_for_project(project_id), [])
+
+    def test_project_planning_passes_each_selected_method_shape(self):
+        for methods in (("QUANTITATIVE",), ("DESK",), ("DESK", "QUANTITATIVE")):
+            with self.subTest(methods=methods):
+                project_id = self.create(methods, f"Methods {'-'.join(methods)}")
+                self.save_brief(project_id)
+                self.container._test_llm_client.reset_mock()
+                self.container.project_planning_service.generate_design(
+                    self.container.project_service.get_project(project_id)
+                )
+                prompt = self.container._test_llm_client.generate.call_args.args[0]
+                combined = prompt.system + prompt.user
+                self.assertIn(f"Selected methods: {', '.join(methods)}", combined)
+                self.assertIn("Required output language: uk", combined)
+                self.assertEqual(
+                    self.container.workflow_service.list_workflow_runs_for_project(project_id),
+                    [],
+                )
+
+    def test_old_profile_fingerprint_does_not_reuse_stale_design(self):
+        project_id = self.create(("QUANTITATIVE",))
+        self.save_brief(project_id)
+        service = self.container.project_planning_service
+        project = self.container.project_service.get_project(project_id)
+        design = service.generate_design(project)
+        current = self.container.project_service.get_project(project_id)
+        current.research_design_input_fingerprint = "pre-pf02b1-fingerprint"
+        self.container.project_service.save_project(current)
+        self.container._test_llm_client.reset_mock()
+        regenerated = service.generate_design(
+            self.container.project_service.get_project(project_id)
+        )
+        self.assertNotEqual(regenerated.id, design.id)
+        self.container._test_llm_client.generate.assert_called_once()
         service = self.container.project_planning_service
         project = self.container.project_service.get_project(project_id)
         first = service.generate_design(project)

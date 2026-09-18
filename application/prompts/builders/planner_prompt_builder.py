@@ -9,6 +9,11 @@ from application.prompts.template_loader import TemplateLoader
 from domain.ai.prompt import Prompt
 
 from runtime.workflow_context import WorkflowContext
+from application.planner.project_planning_profile import (
+    PROJECT_PLANNING_PROFILE_KEY,
+    ProjectPlanningProfile,
+    project_planning_instructions,
+)
 
 
 class PlannerPromptBuilder(PromptBuilder):
@@ -85,6 +90,17 @@ class PlannerPromptBuilder(PromptBuilder):
             user_template,
             variables,
         )
+
+        profile_data = context.execution_metadata.get(PROJECT_PLANNING_PROFILE_KEY)
+        if profile_data:
+            profile = ProjectPlanningProfile(
+                methods=tuple(profile_data["methods"]),
+                language=str(profile_data["language"]),
+                version=str(profile_data["version"]),
+            )
+            project_instructions = project_planning_instructions(profile)
+            system_prompt = f"{system_prompt}\n\n{project_instructions}"
+            user_prompt = f"{user_prompt}\n\n{project_instructions}"
 
         return Prompt(
             system=system_prompt,

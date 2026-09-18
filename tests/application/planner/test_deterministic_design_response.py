@@ -8,6 +8,10 @@ import unittest
 from application.planner.deterministic_design_response import (
     build_deterministic_design_response,
 )
+from application.planner.project_planning_profile import (
+    PROJECT_PLANNING_PROFILE_KEY,
+    ProjectPlanningProfile,
+)
 from application.prompts.builders.planner_prompt_builder import PlannerPromptBuilder
 from application.prompts.file_template_loader import FileTemplateLoader
 from application.prompts.python_format_prompt_renderer import (
@@ -21,6 +25,25 @@ from tests.helpers.executor_catalog import make_test_executor_catalog
 
 
 class DeterministicDesignResponseTests(unittest.TestCase):
+    def _project_prompt(self, methods):
+        brief = sample_research_brief(
+            objectives=["Оцінити потенціал ринку."],
+            geography=["Україна"],
+            timeframe="2026",
+            language="uk",
+        )
+        project = Project(id="pf02", name="Проєкт", selected_methods=methods)
+        project.research_brief = brief
+        context = WorkflowContext(workflow_run=WorkflowRun(id="plan"), project=project)
+        context.execution_metadata[PROJECT_PLANNING_PROFILE_KEY] = (
+            ProjectPlanningProfile(methods=methods, language="uk").to_metadata()
+        )
+        return PlannerPromptBuilder(
+            template_loader=FileTemplateLoader(),
+            prompt_renderer=PythonFormatPromptRenderer(),
+            executor_catalog=make_test_executor_catalog(),
+        ).build(context)
+
     def test_objective_refs_match_brief_objectives(self) -> None:
         brief = sample_research_brief(
             objectives=["Identify competitors.", "Estimate market size."],
@@ -53,6 +76,52 @@ class DeterministicDesignResponseTests(unittest.TestCase):
             expectation = need["evidence_expectation"]
             self.assertTrue(expectation["required_aspects"])
             self.assertIn(expectation["nature"], {"quantitative", "qualitative", "mixed"})
+
+    def test_project_prompt_carries_methods_language_and_high_level_boundary(self):
+        prompt = self._project_prompt(("QUANTITATIVE",))
+        combined = prompt.system + prompt.user
+        self.assertIn("Selected methods: QUANTITATIVE", combined)
+        self.assertIn("Required output language: uk", combined)
+        self.assertIn("HIGH-LEVEL PROJECT RESEARCH CONTRACT", combined)
+        self.assertIn("Detailed target population", combined)
+
+    def test_quantitative_project_response_is_ukrainian_and_not_desk_centric(self):
+        payload = json.loads(build_deterministic_design_response(
+            self._project_prompt(("QUANTITATIVE",))
+        ))
+        rendered = json.dumps(payload, ensure_ascii=False).lower()
+        self.assertEqual(payload["language"], "uk")
+        self.assertIn("первинні структуровані дані", rendered)
+        self.assertNotIn("desk research", rendered)
+        self.assertNotIn("publicly available", rendered)
+        self.assertNotIn("no primary survey", rendered)
+        self.assertNotIn("what evidence is required", rendered)
+        self.assertNotIn("derived from brief", rendered)
+
+    def test_desk_and_mixed_project_responses_reflect_selected_methods(self):
+        desk = json.loads(build_deterministic_design_response(
+            self._project_prompt(("DESK",))
+        ))
+        mixed = json.loads(build_deterministic_design_response(
+            self._project_prompt(("DESK", "QUANTITATIVE"))
+        ))
+        self.assertIn("відкриті джерела", " ".join(desk["source_strategy"]))
+        mixed_sources = " ".join(mixed["source_strategy"])
+        self.assertIn("відкриті джерела", mixed_sources)
+        self.assertIn("структуровані дані респондентів", mixed_sources)
+
+    def test_legacy_desk_response_remains_unchanged_without_project_profile(self):
+        brief = sample_research_brief(objectives=["Identify competitors."])
+        project = Project(id="legacy", name="Legacy")
+        project.research_brief = brief
+        prompt = PlannerPromptBuilder(
+            template_loader=FileTemplateLoader(),
+            prompt_renderer=PythonFormatPromptRenderer(),
+            executor_catalog=make_test_executor_catalog(),
+        ).build(WorkflowContext(workflow_run=WorkflowRun(id="plan"), project=project))
+        payload = json.loads(build_deterministic_design_response(prompt))
+        self.assertIn("What evidence is required", payload["research_questions"][0]["question"])
+        self.assertIn("Desk research sources", payload["information_needs"][0]["description"])
 
 
 if __name__ == "__main__":

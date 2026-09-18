@@ -6,6 +6,11 @@ import json
 from uuid import NAMESPACE_URL, uuid5
 
 from application.quantitative.workflow import build_quantitative_workflow_template
+from application.planner.project_planning_profile import (
+    PROJECT_PLANNING_PROFILE_VERSION,
+    PROJECT_PLANNING_PROFILE_KEY,
+    ProjectPlanningProfile,
+)
 from domain.project import Project
 from domain.research_brief import ResearchBrief
 from domain.research_method import (
@@ -114,6 +119,12 @@ class ProjectPlanningService:
             project=project,
             workflow_run=WorkflowRun(id="planning"),
         )
+        context.execution_metadata[PROJECT_PLANNING_PROFILE_KEY] = (
+            ProjectPlanningProfile(
+                methods=methods,
+                language=project.research_brief.language,
+            ).to_metadata()
+        )
         planned = self.planner.run(context)
         template = planned.workflow_template
         if template is None or template.research_design_snapshot is None:
@@ -183,7 +194,11 @@ class ProjectPlanningService:
     def input_fingerprint(brief, methods: tuple[str, ...]) -> str:
         if brief is None:
             return ""
-        payload = {"brief": brief.to_fingerprint_dict(), "selected_methods": list(methods)}
+        payload = {
+            "brief": brief.to_fingerprint_dict(),
+            "selected_methods": list(methods),
+            "planning_profile_version": PROJECT_PLANNING_PROFILE_VERSION,
+        }
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 

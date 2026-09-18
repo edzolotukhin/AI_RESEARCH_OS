@@ -58,6 +58,7 @@ class AgencyFacadeTests(unittest.TestCase):
         project_service.create_project.assert_called_once_with(
             "Test Project",
             owner_principal_id=None,
+            selected_methods=None,
         )
         self.assertIs(result, expected_project)
 
