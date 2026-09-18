@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from domain.research_method import DESK, QUANTITATIVE
 
 
-PROJECT_PLANNING_PROFILE_VERSION = "pf02-project-contract-v2"
+PROJECT_PLANNING_PROFILE_VERSION = "pf02-project-contract-v4"
 PROJECT_PLANNING_PROFILE_KEY = "project_planning_profile"
 
 
@@ -43,9 +43,28 @@ brief and write it in the required output language.
 {method_contract}
 
 Generate genuine research questions that address the business question and
-objectives. Do not expose planning scaffolding such as "derived from brief"
-or "what evidence is required to address". Do not fabricate sources,
-sample sizes, questionnaires, weighting, statistical tests, or datasets.
+objectives. First reason from the business question, objective, geography,
+market/category, timeframe, and context. Decompose an objective into multiple
+non-duplicative questions only when it contains distinct answer dimensions
+such as magnitude, change, composition, drivers, barriers, behavior, or group
+differences. Each question must name the substantive phenomenon to establish,
+not wrap or paraphrase the objective.
+
+For every question, specify concrete information needs: the measure,
+classification, comparison, trend, distribution, or contextual fact needed to
+answer it. Source strategy must follow those needs. Analysis steps must explain
+how the evidence answers the questions. Deliverables must reflect the resulting
+questions and analysis rather than a fixed generic list.
+
+Do not expose planning scaffolding such as "derived from brief" or "what
+evidence is required to address". Do not fabricate sources, sample sizes,
+questionnaires, weighting, statistical tests, models, codebooks, datasets, or
+respondent counts. Keep Quantitative content at the level of evidence required;
+do not specify TAM/SAM/SOM or CAGR calculations, sample design, questionnaire
+modules, scales, price-research techniques, weighting, significance tests,
+regression/SEM, elasticity models, or other downstream QZ methodology. This
+restriction applies to questions, needs, sources, analysis, deliverables,
+assumptions, and limitations in every output language.
 """.strip()
 
 

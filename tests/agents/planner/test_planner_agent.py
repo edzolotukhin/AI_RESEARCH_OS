@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest.mock import Mock
 
@@ -8,6 +9,10 @@ from application.parsers.research_design_parser import ResearchDesignParser
 from application.planner.design_service import PlannerDesignServiceImpl
 from application.planner.research_design_payload_contract import (
     ResearchDesignPayloadContract,
+)
+from application.planner.project_planning_profile import (
+    PROJECT_PLANNING_PROFILE_KEY,
+    ProjectPlanningProfile,
 )
 from application.planner.research_design_workflow_mapper import (
     ResearchDesignWorkflowMapper,
@@ -135,6 +140,37 @@ class PlannerAgentTests(unittest.TestCase):
         )
         self.assertEqual(result.execution_metadata["state"], "completed")
         self.assertEqual(self.llm_client.generate.call_count, 2)
+
+    def test_project_profile_retries_shallow_design_with_depth_correction(self):
+        shallow = json.loads(VALID_RESEARCH_DESIGN_JSON)
+        shallow["research_questions"][0]["question"] = (
+            "What evidence is required to address Evaluate brand awareness?"
+        )
+        shallow["information_needs"][0]["description"] = (
+            "Data required for Evaluate brand awareness."
+        )
+        corrected = json.loads(VALID_RESEARCH_DESIGN_JSON)
+        corrected["source_strategy"] = ["primary structured respondent evidence"]
+        corrected["analysis_plan"] = ["Estimate awareness and compare relevant groups"]
+        corrected["assumptions"] = ["Detailed method design remains downstream"]
+        corrected["limitations"] = ["Project design remains high-level"]
+        for need in corrected["information_needs"]:
+            need["preferred_source_types"] = ["primary structured respondent evidence"]
+        self.context.execution_metadata[PROJECT_PLANNING_PROFILE_KEY] = (
+            ProjectPlanningProfile(methods=("QUANTITATIVE",), language="en").to_metadata()
+        )
+        self.llm_client.generate.side_effect = [
+            LLMResponse(content=json.dumps(shallow)),
+            LLMResponse(content=json.dumps(corrected)),
+        ]
+
+        result = self.agent.run(self.context)
+
+        self.assertIsNotNone(result.workflow_template)
+        self.assertEqual(self.llm_client.generate.call_count, 2)
+        correction_prompt = self.llm_client.generate.call_args_list[1].args[0]
+        self.assertIn("PROJECT DESIGN DEPTH CORRECTION", correction_prompt.user)
+        self.assertIn("remove all downstream QZ methodology", correction_prompt.user)
 
     def test_agent_accepts_planner_design_service_protocol(self):
         planner_design_service = Mock()

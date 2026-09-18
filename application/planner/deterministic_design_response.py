@@ -44,6 +44,9 @@ def build_deterministic_design_response(prompt: Prompt) -> str:
         heading="Language:",
         stop_before=("Context:", "Known Information:", "Exclusions:", "---"),
     ) or "en"
+    business_question = _parse_scalar(
+        prompt.user, heading="Business Question:", stop_before=("Objectives:",),
+    )
     methods = _parse_csv_scalar(prompt.user, heading="Selected methods:")
     project_profile = bool(methods)
 
@@ -53,30 +56,36 @@ def build_deterministic_design_response(prompt: Prompt) -> str:
     geo_label = geography[0] if geography else "Not specified"
     time_label = timeframe if timeframe and timeframe != "Not specified" else "Current period"
 
-    questions = []
-    for index, objective in enumerate(objectives, start=1):
-        question, rationale = _question_text(
-            objective, language=language, project_profile=project_profile,
-        )
-        questions.append(
-            {
-                "id": f"rq-{index}",
-                "question": question,
-                "objective_refs": [objective],
-                "priority": min(index, 5),
-                "rationale": rationale,
-            }
-        )
+    specs = []
+    for objective in objectives:
+        if project_profile:
+            specs.extend(_decompose_objective(
+                objective, business_question=business_question, language=language,
+            ))
+        else:
+            question, rationale = _question_text(objective)
+            specs.append((question, rationale, "Desk research sources relevant to the linked objective.",
+                          "objective_coverage", objective))
+    specs = specs[:6]
+
+    questions = [
+        {
+            "id": f"rq-{index}",
+            "question": spec[0],
+            "objective_refs": [_objective_for_spec(spec, objectives)],
+            "priority": min(index, 5),
+            "rationale": spec[1],
+        }
+        for index, spec in enumerate(specs, start=1)
+    ]
 
     needs = []
-    for question in questions:
+    for question, spec in zip(questions, specs):
         needs.append(
             {
                 "id": f"in-{question['id']}",
                 "research_question_id": question["id"],
-                "description": _information_need_text(
-                    question["objective_refs"][0], methods=methods, language=language,
-                ),
+                "description": spec[2],
                 "priority": question["priority"],
                 "preferred_source_types": _source_strategy(
                     methods=methods, language=language, template=template,
@@ -86,7 +95,7 @@ def build_deterministic_design_response(prompt: Prompt) -> str:
                 "evidence_expectation": {
                     "nature": _evidence_nature(methods),
                     "required_aspects": [
-                        f"objective_coverage_{question['id'].replace('-', '_')}",
+                        spec[3],
                     ],
                     "geography": geo_label,
                     "timeframe": time_label,
@@ -102,41 +111,50 @@ def build_deterministic_design_response(prompt: Prompt) -> str:
         "language": language,
     }
     if project_profile:
-        payload.update(_project_level_sections(methods=methods, language=language))
+        payload.update(_project_level_sections(
+            methods=methods, language=language, specs=specs, objectives=objectives,
+        ))
     return json.dumps(payload, indent=2)
 
 
-def _question_text(objective: str, *, language: str, project_profile: bool) -> tuple[str, str]:
-    if not project_profile:
-        return (
-            f"What evidence is required to address: {objective}?",
-            "Derived from brief objective.",
-        )
-    if language == "uk":
-        return (
-            f"Що необхідно встановити для досягнення цілі «{objective}»?",
-            "Питання безпосередньо пов’язане з ціллю дослідження.",
-        )
+def _question_text(objective: str) -> tuple[str, str]:
     return (
-        f"What must the research establish to achieve the objective '{objective}'?",
-        "The question directly supports the research objective.",
+        f"What evidence is required to address: {objective}?",
+        "Derived from brief objective.",
     )
 
 
-def _information_need_text(objective: str, *, methods: list[str], language: str) -> str:
-    if language == "uk":
-        if methods == ["QUANTITATIVE"]:
-            return f"Вимірювані дані респондентів, необхідні для цілі «{objective}»."
-        if methods == ["DESK"]:
-            return f"Вторинні дані та відкриті свідчення, релевантні цілі «{objective}»."
-        return f"Вторинні джерела й структуровані вимірювання для цілі «{objective}»."
-    if methods == ["QUANTITATIVE"]:
-        return f"Measurable respondent evidence required for the objective '{objective}'."
-    if methods == ["DESK"]:
-        return f"Secondary and open evidence relevant to the objective '{objective}'."
-    if methods:
-        return f"Secondary evidence and structured measurement for the objective '{objective}'."
-    return "Desk research sources relevant to the linked objective."
+def _decompose_objective(objective: str, *, business_question: str, language: str):
+    lowered = objective.casefold()
+    uk = language == "uk"
+    if any(term in lowered for term in ("розмір", "динамік", "market size", "growth")):
+        return [
+            _spec(objective, "Який поточний масштаб релевантного ринку?" if uk else "What is the current scale of the relevant market?", "Поточний обсяг і розподіл ключових ринкових показників." if uk else "Current magnitude and distribution of key market measures.", "market_magnitude", uk),
+            _spec(objective, "Як змінювався ринок у визначеному часовому горизонті?" if uk else "How has the market changed over the defined timeframe?", "Темпи, напрям і переломні моменти зміни ринку в часі." if uk else "Rate, direction, and turning points of market change over time.", "market_trend", uk),
+            _spec(objective, "Які сегменти формують структуру ринку та відрізняються за динамікою?" if uk else "Which segments shape the market and differ in their dynamics?", "Розмір, частка та динаміка релевантних сегментів або категорій." if uk else "Size, share, and trajectory of relevant segments or categories.", "market_structure", uk),
+        ]
+    if any(term in lowered for term in ("драйвер", "бар'єр", "бар’єр", "driver", "barrier")):
+        return [
+            _spec(objective, "Які фактори підтримують попит, вибір або використання?" if uk else "Which factors support demand, choice, or usage?", "Поширеність і відносна роль мотиваторів попиту, вибору або використання." if uk else "Prevalence and relative role of demand, choice, or usage drivers.", "demand_drivers", uk),
+            _spec(objective, "Які фактори стримують вибір, купівлю або використання?" if uk else "Which factors constrain choice, purchase, or usage?", "Поширеність і значущість функціональних, цінових та поведінкових бар’єрів." if uk else "Prevalence and importance of functional, price, and behavioral barriers.", "adoption_barriers", uk),
+            _spec(objective, "Як драйвери та бар’єри відрізняються між релевантними групами?" if uk else "How do drivers and barriers differ across relevant groups?", "Відмінності у драйверах і бар’єрах між релевантними сегментами або групами." if uk else "Differences in drivers and barriers across relevant segments or groups.", "group_differences", uk),
+        ]
+    subject = objective.rstrip(".?!")
+    question = (f"Які характеристики, масштаби та відмінності визначають напрям «{subject}»?" if uk else
+                f"Which characteristics, magnitudes, and differences define '{subject}'?")
+    need = (f"Конкретні показники, категорії та порівняння, що характеризують «{subject}»." if uk else
+            f"Concrete measures, categories, and comparisons that characterize '{subject}'.")
+    return [_spec(objective, question, need, "objective_dimensions", uk)]
+
+
+def _spec(objective, question, need, aspect, uk):
+    rationale = ("Питання розкладає ціль на окремий вимір, який можна дослідити." if uk else
+                 "The question isolates a researchable dimension of the objective.")
+    return (question, rationale, need, aspect, objective)
+
+
+def _objective_for_spec(spec, objectives):
+    return spec[4] if len(spec) > 4 else objectives[0]
 
 
 def _source_strategy(*, methods: list[str], language: str, template: dict) -> list[str]:
@@ -155,22 +173,47 @@ def _source_strategy(*, methods: list[str], language: str, template: dict) -> li
     return [*desk, *quant]
 
 
-def _project_level_sections(*, methods: list[str], language: str) -> dict:
+def _project_level_sections(*, methods: list[str], language: str, specs, objectives) -> dict:
     sources = _source_strategy(methods=methods, language=language, template={})
     uk = language == "uk"
+    aspects = {spec[3] for spec in specs}
     if methods == ["QUANTITATIVE"]:
-        analysis = ["Оцінити ключові показники та відмінності між релевантними групами."] if uk else ["Assess key measures and relevant group differences."]
+        analysis = _quant_analysis(aspects, uk)
     elif methods == ["DESK"]:
-        analysis = ["Зіставити та узагальнити релевантні вторинні свідчення."] if uk else ["Compare and synthesize relevant secondary evidence."]
+        analysis = _desk_analysis(aspects, uk)
     else:
-        analysis = ["Окремо спланувати контекстний аналіз і кількісне вимірювання."] if uk else ["Plan contextual analysis and quantitative measurement as distinct streams."]
+        analysis = _desk_analysis(aspects, uk) + _quant_analysis(aspects, uk)
     return {
         "source_strategy": sources,
         "analysis_plan": analysis,
-        "deliverable_plan": (["Підсумок результатів за цілями дослідження"] if uk else ["Research objective findings summary"]),
+        "deliverable_plan": _deliverables(aspects, uk),
         "assumptions": (["Детальний дизайн кожного методу формується у відповідному методному процесі."] if uk else ["Detailed method design is completed in its downstream method flow."]),
         "limitations": (["Проєктний дизайн не визначає детальну методологію виконання окремих методів."] if uk else ["The project design does not specify detailed downstream method execution."]),
     }
+
+
+def _quant_analysis(aspects, uk):
+    items = []
+    if aspects & {"market_magnitude", "market_trend", "market_structure"}:
+        items.append("Оцінити масштаб, структуру та зміну ключових показників у часі." if uk else "Estimate magnitude, structure, and change in key measures over time.")
+    if aspects & {"demand_drivers", "adoption_barriers", "group_differences"}:
+        items.append("Порівняти поширеність драйверів і бар’єрів між релевантними групами." if uk else "Compare the prevalence of drivers and barriers across relevant groups.")
+    return items or (["Оцінити розподіл ключових показників і відмінності між релевантними групами."] if uk else ["Estimate key-measure distributions and relevant group differences."])
+
+
+def _desk_analysis(aspects, uk):
+    if aspects & {"market_magnitude", "market_trend", "market_structure"}:
+        return ["Зіставити оцінки масштабу, структури й динаміки та перевірити їх узгодженість між джерелами." if uk else "Compare market scale, structure, and trend estimates and assess consistency across sources."]
+    return ["Зіставити та триангулювати вторинні свідчення за визначеними вимірами." if uk else "Compare and triangulate secondary evidence across the defined dimensions."]
+
+
+def _deliverables(aspects, uk):
+    items = []
+    if aspects & {"market_magnitude", "market_trend", "market_structure"}:
+        items.append("Оцінка масштабу, структури та динаміки ринку" if uk else "Market scale, structure, and dynamics assessment")
+    if aspects & {"demand_drivers", "adoption_barriers", "group_differences"}:
+        items.append("Карта драйверів, бар’єрів і відмінностей між групами" if uk else "Driver, barrier, and group-difference map")
+    return items or (["Висновки за ключовими вимірами бізнес-питання"] if uk else ["Findings across the key dimensions of the business question"])
 
 
 def _evidence_nature(methods: list[str]) -> str:

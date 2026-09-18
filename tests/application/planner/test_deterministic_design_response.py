@@ -25,9 +25,9 @@ from tests.helpers.executor_catalog import make_test_executor_catalog
 
 
 class DeterministicDesignResponseTests(unittest.TestCase):
-    def _project_prompt(self, methods):
+    def _project_prompt(self, methods, objectives=None):
         brief = sample_research_brief(
-            objectives=["Оцінити потенціал ринку."],
+            objectives=objectives or ["Оцінити потенціал ринку."],
             geography=["Україна"],
             timeframe="2026",
             language="uk",
@@ -84,6 +84,9 @@ class DeterministicDesignResponseTests(unittest.TestCase):
         self.assertIn("Required output language: uk", combined)
         self.assertIn("HIGH-LEVEL PROJECT RESEARCH CONTRACT", combined)
         self.assertIn("Detailed target population", combined)
+        self.assertIn("Decompose an objective", combined)
+        self.assertIn("not wrap or paraphrase", combined)
+        self.assertIn("Source strategy must follow those needs", combined)
 
     def test_quantitative_project_response_is_ukrainian_and_not_desk_centric(self):
         payload = json.loads(build_deterministic_design_response(
@@ -109,6 +112,30 @@ class DeterministicDesignResponseTests(unittest.TestCase):
         mixed_sources = " ".join(mixed["source_strategy"])
         self.assertIn("відкриті джерела", mixed_sources)
         self.assertIn("структуровані дані респондентів", mixed_sources)
+
+    def test_multiple_objectives_are_materially_decomposed(self):
+        objectives = [
+            "Оцінити розмір і динаміку ринку",
+            "Визначити драйвери та бар'єри",
+        ]
+        payload = json.loads(build_deterministic_design_response(
+            self._project_prompt(("QUANTITATIVE",), objectives=objectives)
+        ))
+        questions = payload["research_questions"]
+        needs = payload["information_needs"]
+        self.assertEqual(len(questions), 6)
+        self.assertEqual(len({item["question"] for item in questions}), 6)
+        self.assertTrue(all(item["question"] not in objectives for item in questions))
+        rendered_questions = " ".join(item["question"] for item in questions)
+        self.assertIn("поточний масштаб", rendered_questions)
+        self.assertIn("змінювався ринок", rendered_questions)
+        self.assertIn("стримують вибір", rendered_questions)
+        rendered_needs = " ".join(item["description"] for item in needs)
+        self.assertIn("Темпи, напрям", rendered_needs)
+        self.assertIn("Поширеність і значущість", rendered_needs)
+        self.assertNotIn("необхідні для цілі", rendered_needs)
+        self.assertGreaterEqual(len(payload["analysis_plan"]), 2)
+        self.assertEqual(len(payload["deliverable_plan"]), 2)
 
     def test_legacy_desk_response_remains_unchanged_without_project_profile(self):
         brief = sample_research_brief(objectives=["Identify competitors."])

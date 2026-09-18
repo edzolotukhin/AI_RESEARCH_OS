@@ -215,6 +215,31 @@ class Pf02MethodSelectionDesignGateTests(ApiTestCase):
             refreshed,
         )
 
+    def test_activated_quantitative_is_preserved_when_desk_is_added(self):
+        project_id = self.create(("QUANTITATIVE",))
+        self.approve(project_id)
+        service = self.container.project_planning_service
+        activated = service.activate_quantitative(
+            self.container.project_service.get_project(project_id), owner_id=self.owner_id,
+        )
+        service.add_method(self.container.project_service.get_project(project_id), "DESK")
+        changed = self.container.project_service.get_project(project_id)
+        self.assertEqual(changed.selected_methods, ("DESK", "QUANTITATIVE"))
+        self.assertIsNone(changed.current_research_design)
+        self.assertIsNone(service._desk_run(project_id))
+        self.assertEqual(
+            self.container.workflow_service.get_workflow_run(activated.run_id).id,
+            activated.run_id,
+        )
+        projections = service.quantitative.state.list_for_run(
+            activated.run_id, project_id=project_id, expected_type=service._study_type(),
+        )
+        self.assertEqual(projections[0].study_id, activated.study_id)
+        refreshed = service.generate_design(
+            self.container.project_service.get_project(project_id)
+        )
+        self.assertIsNotNone(refreshed)
+
     def test_desk_activation_reuses_approved_design_without_planner_and_is_idempotent(self):
         project_id = self.create(("DESK",))
         self.approve(project_id)

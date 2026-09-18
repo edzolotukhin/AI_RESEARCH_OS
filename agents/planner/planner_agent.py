@@ -7,6 +7,11 @@ from agents.base_agent import BaseAgent
 
 from application.planner.contracts import PlannerDesignService, ResearchDesignWorkflowMapperProtocol
 from application.planner.objective_coverage import ObjectiveCoverageValidationError
+from application.planner.project_design_quality import (
+    ProjectDesignQualityError,
+    validate_project_design_depth,
+)
+from application.planner.project_planning_profile import PROJECT_PLANNING_PROFILE_KEY
 from application.planner.research_design_payload_contract import (
     ResearchDesignPayloadContract,
 )
@@ -71,7 +76,7 @@ class PlannerAgent(BaseAgent):
         brief = context.project.research_brief
 
         research_design = None
-        last_coverage_error: ObjectiveCoverageValidationError | None = None
+        last_semantic_error: Exception | None = None
 
         for semantic_attempt in range(1, self._semantic_max_attempts + 1):
             design_data = self._structured_output_generator.generate(
@@ -84,6 +89,11 @@ class PlannerAgent(BaseAgent):
                     context.project,
                     design_data,
                 )
+                if context.execution_metadata.get(PROJECT_PLANNING_PROFILE_KEY):
+                    profile = context.execution_metadata[PROJECT_PLANNING_PROFILE_KEY]
+                    validate_project_design_depth(
+                        brief, research_design, methods=tuple(profile["methods"]),
+                    )
                 self._record_semantic_diagnostics(
                     context,
                     attempt=semantic_attempt,
@@ -91,33 +101,41 @@ class PlannerAgent(BaseAgent):
                     correction_applied=semantic_attempt > 1,
                 )
                 break
-            except ObjectiveCoverageValidationError as exc:
-                last_coverage_error = exc
+            except (ObjectiveCoverageValidationError, ProjectDesignQualityError) as exc:
+                last_semantic_error = exc
                 self._record_semantic_diagnostics(
                     context,
                     attempt=semantic_attempt,
-                    uncovered_objectives=exc.uncovered_objectives,
-                    invalid_objective_refs=exc.invalid_objective_refs,
+                    uncovered_objectives=getattr(exc, "uncovered_objectives", ()),
+                    invalid_objective_refs=getattr(exc, "invalid_objective_refs", ()),
                     correction_applied=False,
                 )
 
                 if semantic_attempt >= self._semantic_max_attempts:
                     raise
 
-                current_prompt = self._correction_prompt_builder.build_objective_coverage_correction(
-                    original_prompt=original_prompt,
-                    brief=brief,
-                    failure=exc,
-                    previous_design_json=json.dumps(design_data, ensure_ascii=True),
-                    planner_bounds=self._payload_contract.bounds,
-                )
+                if isinstance(exc, ProjectDesignQualityError):
+                    current_prompt = self._correction_prompt_builder.build_project_quality_correction(
+                        original_prompt=original_prompt,
+                        failure=exc,
+                        previous_design_json=json.dumps(design_data, ensure_ascii=True),
+                        planner_bounds=self._payload_contract.bounds,
+                    )
+                else:
+                    current_prompt = self._correction_prompt_builder.build_objective_coverage_correction(
+                        original_prompt=original_prompt,
+                        brief=brief,
+                        failure=exc,
+                        previous_design_json=json.dumps(design_data, ensure_ascii=True),
+                        planner_bounds=self._payload_contract.bounds,
+                    )
                 context.execution_metadata["planner_semantic_correction"][
                     "correction_applied"
                 ] = True
 
         if research_design is None:
-            if last_coverage_error is not None:
-                raise last_coverage_error
+            if last_semantic_error is not None:
+                raise last_semantic_error
             raise RuntimeError("PlannerAgent completed without a research design.")
 
         context.workflow_template = (

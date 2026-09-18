@@ -28,6 +28,12 @@ class PlannerPromptBuilder(PromptBuilder):
     USER_TEMPLATE = Path(
         "application/prompts/templates/planner/user.md"
     )
+    PROJECT_SYSTEM_TEMPLATE = Path(
+        "application/prompts/templates/planner/project_system.md"
+    )
+    PROJECT_USER_TEMPLATE = Path(
+        "application/prompts/templates/planner/project_user.md"
+    )
 
     def __init__(
         self,
@@ -73,12 +79,13 @@ class PlannerPromptBuilder(PromptBuilder):
             "planner_compact_instruction": self._bounds.format_compact_instruction(),
         }
 
+        profile_data = context.execution_metadata.get(PROJECT_PLANNING_PROFILE_KEY)
         system_template = self._template_loader.load(
-            self.SYSTEM_TEMPLATE,
+            self.PROJECT_SYSTEM_TEMPLATE if profile_data else self.SYSTEM_TEMPLATE,
         )
 
         user_template = self._template_loader.load(
-            self.USER_TEMPLATE,
+            self.PROJECT_USER_TEMPLATE if profile_data else self.USER_TEMPLATE,
         )
 
         system_prompt = self._prompt_renderer.render(
@@ -91,7 +98,6 @@ class PlannerPromptBuilder(PromptBuilder):
             variables,
         )
 
-        profile_data = context.execution_metadata.get(PROJECT_PLANNING_PROFILE_KEY)
         if profile_data:
             profile = ProjectPlanningProfile(
                 methods=tuple(profile_data["methods"]),

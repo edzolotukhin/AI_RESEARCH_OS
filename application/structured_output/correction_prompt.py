@@ -216,6 +216,45 @@ class StructuredOutputCorrectionPromptBuilder:
             user="\n\n".join(sections),
         )
 
+    def build_project_quality_correction(
+        self,
+        *,
+        original_prompt: Prompt,
+        failure,
+        previous_design_json: str,
+        planner_bounds: PlannerBounds | None = None,
+    ) -> Prompt:
+        bounds = planner_bounds or PlannerBounds.from_env()
+        issue_lines = [
+            f"- {item.field} {item.item_id}: {item.reason}"
+            for item in failure.issues
+        ]
+        sections = [
+            original_prompt.user,
+            "PROJECT DESIGN DEPTH CORRECTION",
+            "The previous design mechanically restates brief objectives. "
+            "Replace shallow items with substantive, answerable research "
+            "questions and concrete information needs. Preserve exact "
+            "objective_refs, selected-method boundaries, and output language.",
+            "For a Quantitative project, remove all downstream QZ methodology "
+            "from every field. Do not name TAM/SAM/SOM, CAGR, sample or quota "
+            "design, questionnaires/modules/scales, weighting, significance "
+            "tests, regression/SEM, conjoint, Gabor-Granger, PSM, WTP, "
+            "elasticity models, codebooks, or respondent counts. State only "
+            "the substantive evidence, comparisons, and high-level analysis "
+            "needed to answer each project question.",
+            *issue_lines,
+            "PLANNER OUTPUT LIMITS",
+            bounds.format_for_prompt(),
+            "PREVIOUS SHALLOW DESIGN",
+            self._safe_response_preview(previous_design_json),
+            "Return only one corrected JSON object.",
+        ]
+        return Prompt(
+            system=original_prompt.system,
+            user="\n\n".join(sections),
+        )
+
     @staticmethod
     def _truncated_requirements(bounds: PlannerBounds) -> str:
         return "\n".join(
