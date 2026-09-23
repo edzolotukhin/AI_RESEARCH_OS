@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime
+import re
 from urllib.parse import urlparse
 
 from application.query.research_run_result import ResearchRunResultProjectionError
@@ -332,10 +334,40 @@ class DeskWorkbenchQueryService:
         return DeskSourceView(
             key=f"source-{index + 1}", title=source.title or parsed.netloc or "Джерело",
             publisher=source.publisher, domain=parsed.netloc,
-            source_type=source.source_type, published_at=source.published_at,
-            retrieved_at=source.retrieved_at, url=safe_url,
-            url_display=source.url or "", warning=warning,
+            source_type=source.source_type,
+            published_at=DeskWorkbenchQueryService._display_date(source.published_at),
+            retrieved_at=DeskWorkbenchQueryService._display_date(source.retrieved_at) or "Дата не вказана",
+            url=safe_url, url_display=source.url or "", warning=warning,
         )
+
+    @staticmethod
+    def _display_date(value) -> str | None:
+        """Format a stored date for Ukrainian UI without changing the source value."""
+        if value is None or not str(value).strip():
+            return None
+        text = str(value).strip()
+        months = (
+            "січня", "лютого", "березня", "квітня", "травня", "червня",
+            "липня", "серпня", "вересня", "жовтня", "листопада", "грудня",
+        )
+        month_names = (
+            "січень", "лютий", "березень", "квітень", "травень", "червень",
+            "липень", "серпень", "вересень", "жовтень", "листопад", "грудень",
+        )
+        if re.fullmatch(r"\d{4}", text):
+            return f"{text} р."
+        match = re.fullmatch(r"(\d{4})-(\d{2})", text)
+        if match:
+            year, month = int(match.group(1)), int(match.group(2))
+            return f"{month_names[month - 1]} {year} р." if 1 <= month <= 12 else "Дата не вказана"
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+        except ValueError:
+            try:
+                parsed = date.fromisoformat(text)
+            except ValueError:
+                return "Дата не вказана"
+        return f"{parsed.day} {months[parsed.month - 1]} {parsed.year} р."
 
     def _evidence(self, evidence, index, source_by_id, question_labels, need_labels):
         return DeskEvidenceItemView(

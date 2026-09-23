@@ -56,3 +56,15 @@ class DeskWorkbenchQueryTests(TestCase):
         self.container.source_service.list_sources_for_run.return_value=[]
         view=DeskWorkbenchQueryService(container=self.container).get("run-a",project=self.project)
         self.assertTrue(view.design.historical_fallback); self.assertEqual(view.design.research_questions,())
+
+    def test_source_dates_are_presented_in_ukrainian_without_mutating_source(self):
+        values = {
+            "2026-01-15T00:00:00+00:00": "15 січня 2026 р.",
+            "2025-08": "серпень 2025 р.",
+            "2024": "2024 р.",
+            "not-a-date": "Дата не вказана",
+            None: None,
+        }
+        for stored, expected in values.items():
+            with self.subTest(stored=stored):
+                self.assertEqual(DeskWorkbenchQueryService._display_date(stored), expected)

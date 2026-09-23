@@ -35,6 +35,9 @@ class ResearchUiTests(ApiTestCase):
     def test_outcome_states_are_distinct(self):
         for outcome,label in {"APPROVED":"Завершено","NOT_READY":"Завершено з обмеженнями","QUALITY_REJECTED":"Потребує уваги","EXECUTION_FAILED":"Помилка"}.items():
             with self.subTest(outcome=outcome): self.assertIn(label,self.page("overview",workbench_view(outcome=outcome)).text)
+    def test_attention_next_step_does_not_imply_report_approval(self):
+        html=self.page("overview",workbench_view(outcome="QUALITY_REJECTED")).text
+        self.assertIn("Переглянути звіт і результати перевірки",html); self.assertIn("не схвалено як фінальний",html); self.assertNotIn("<h2>Звіт доступний</h2>",html)
     def test_evidence_traceability_and_truncation_are_visible(self):
         html=self.page("evidence").text; self.assertIn("Показано 1 із 181 доказів",html); self.assertIn("Джерело доказу",html); self.assertIn("https://example.com/source",html); self.assertIn('rel="noopener noreferrer"',html)
     def test_results_keep_findings_and_insights_distinct(self):
