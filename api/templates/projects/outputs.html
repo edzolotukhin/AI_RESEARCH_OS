@@ -1,0 +1,23 @@
+{% extends "projects/base.html" %}
+{% block title %}Результати та активність — AI Research OS{% endblock %}
+{% block heading %}Результати та активність{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/ui/projects">Проєкти</a><span>/</span><a href="/ui/projects/{{ view.project_id }}">{{ view.project_name }}</a><span>/</span><span>Результати та активність</span></div>
+<section class="project-header"><div><p class="eyebrow">РЕЗУЛЬТАТИ ПРОЄКТУ</p><h2>{{ view.project_name }}</h2><p>Кожен метод має власні результати. Тут наведено лише доступні матеріали, без об’єднання висновків.</p></div></section>
+<div class="section-heading"><div><p class="eyebrow">ОБРАНІ МЕТОДИ</p><h2>Доступні результати</h2></div></div>
+<div class="method-grid">
+{% for method in view.methods %}
+<article class="method card">
+  <div class="method-head"><h3>{{ method.name }}</h3><span class="status-chip status-{{ method.tone }}">{{ method.state }}</span></div>
+  <p class="method-explanation">{{ method.explanation }}</p>
+  <div class="outputs-label">МАТЕРІАЛИ ЦЬОГО МЕТОДУ</div>
+  {% if method.outputs %}<ul class="output-categories">{% for item in method.outputs %}<li>{{ item }}</li>{% endfor %}</ul>
+  {% else %}<p class="muted">Результатів поки немає.</p>{% endif %}
+  <p class="report-state">{{ method.report }}</p>
+  {% if method.href %}<a class="button button-quiet" href="{{ method.href }}">Відкрити дослідження</a>{% endif %}
+</article>
+{% endfor %}
+</div>
+{% if not view.methods %}<section class="empty compact-empty"><h2>Методи ще не обрано</h2><p>Результати з’являться після вибору та виконання дослідження.</p></section>{% endif %}
+<section class="context compact-section output-note"><p class="eyebrow">АКТИВНІСТЬ</p><h2>Історія активності недоступна</h2><p>Наразі немає підтвердженої історії подій проєкту. Поточний стан кожного дослідження показано вище; він не є хронологією подій.</p></section>
+{% endblock %}

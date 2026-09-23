@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from api.ui.principal import resolve_ui_principal
 from application.query.project_workspace_query_service import ProjectWorkspaceQueryService
+from application.query.project_outputs_query_service import ProjectOutputsQueryService
 from application.quantitative.workflow import build_quantitative_workflow_template
 from application.quantitative.ui_service import QuantitativeUiError
 from domain.research_brief import ResearchBrief
@@ -39,6 +40,11 @@ class ProjectWorkspaceFacade:
     def get_workspace(self, project_id: str):
         self.authorization.require_project(self.principal, project_id)
         return self.query.get(project_id, owner_id=self.owner_id)
+    def get_outputs(self, project_id: str):
+        project = self.authorization.require_project(self.principal, project_id)
+        return ProjectOutputsQueryService(container=self.container).get(
+            project, owner_id=self.owner_id,
+        )
     def start_desk(self, project_id: str, brief_payload: dict):
         project = self.authorization.require_project(self.principal, project_id)
         quant_id = build_quantitative_workflow_template().id

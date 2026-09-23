@@ -33,5 +33,5 @@
 </div>
 {% if not view.methods %}<section class="empty compact-empty"><h2>Методи ще не обрано</h2><p>Додайте метод, який відповідає завданню цього проєкту.</p></section>{% endif %}
 {% if view.available_methods %}<section class="add-method compact-section"><p class="eyebrow">ДОДАТИ МЕТОД</p><form method="post" action="/ui/projects/{{ view.project_id }}/methods"><select name="method" required><option value="">Оберіть метод</option>{% if 'DESK' in view.available_methods %}<option value="DESK">Кабінетне дослідження</option>{% endif %}{% if 'QUANTITATIVE' in view.available_methods %}<option value="QUANTITATIVE">Кількісне дослідження</option>{% endif %}</select><button class="button button-quiet" type="submit">+ Додати метод</button></form></section>{% endif %}
-<section class="context compact-section output-note"><p class="eyebrow">РЕЗУЛЬТАТИ ПРОЄКТУ</p><p>Результати залишаються окремими для кожного методу. Простір проєкту не об’єднує висновки, інсайти, рекомендації чи звіти.</p></section>
+<section class="context compact-section output-note"><p class="eyebrow">РЕЗУЛЬТАТИ ПРОЄКТУ</p><p>Результати залишаються окремими для кожного методу. Простір проєкту не об’єднує висновки, інсайти, рекомендації чи звіти.</p><a class="button button-quiet" href="/ui/projects/{{ view.project_id }}/outputs">Переглянути результати та активність</a></section>
 {% endblock %}

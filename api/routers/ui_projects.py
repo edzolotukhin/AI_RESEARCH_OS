@@ -28,6 +28,17 @@ def project_detail(request: Request, project_id: str):
     try: return templates.TemplateResponse(request, "projects/detail.html", {"request": request, "view": _facade(request).get_workspace(project_id)})
     except (AccessDeniedError, EntityNotFoundError): return templates.TemplateResponse(request, "projects/error.html", {"request": request, "message": "Проєкт не знайдено"}, status_code=404)
 
+@router.get("/{project_id}/outputs", response_class=HTMLResponse, include_in_schema=False)
+def project_outputs(request: Request, project_id: str):
+    try:
+        return templates.TemplateResponse(request, "projects/outputs.html", {
+            "request": request, "view": _facade(request).get_outputs(project_id),
+        })
+    except (AccessDeniedError, EntityNotFoundError):
+        return templates.TemplateResponse(request, "projects/error.html", {
+            "request": request, "message": "Проєкт не знайдено",
+        }, status_code=404)
+
 @router.get("/{project_id}/brief", response_class=HTMLResponse, include_in_schema=False)
 def project_brief(request: Request, project_id: str):
     try:
