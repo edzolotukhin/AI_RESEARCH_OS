@@ -102,7 +102,7 @@ class ProjectWorkspaceQueryService:
             )
         except Exception:
             pass
-        open_action = WorkspaceActionView("Відкрити кабінетне дослідження", f"/ui/research/{run.id}")
+        open_action = WorkspaceActionView("Відкрити кабінетне дослідження", f"/ui/research/{run.id}/overview")
         return MethodWorkspaceView("Кабінетне дослідження", state, label, explanation, progress, output,
                                    open_action, open_action)
 

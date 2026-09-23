@@ -282,7 +282,7 @@ class PropertyADTests(unittest.TestCase):
 
     def test_case_20_reconciliation_deep_link_is_durable(self):
         self.submit()
-        self.assertRegex(self.facade.get_submission_status(self.key)["research_url"], r"^/ui/research/[0-9a-f-]+$")
+        self.assertRegex(self.facade.get_submission_status(self.key)["research_url"], r"^/ui/research/[0-9a-f-]+/overview$")
 
     def test_case_21_project_identity_is_owner_scoped(self):
         other = project_id_for_submission(principal_id="principal-b", submission_key=self.key)

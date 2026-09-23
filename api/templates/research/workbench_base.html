@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}Кабінетне дослідження — AI Research OS{% endblock %}</title>
+  <link rel="stylesheet" href="/static/desk-workbench.css">
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar">
+    <a class="brand" href="/ui/projects"><span class="brand-mark">AI</span><span>AI RESEARCH OS</span></a>
+    <div class="project-switch"><small>ПОТОЧНИЙ ПРОЄКТ</small><strong>{{ view.header.project_name }}</strong><span>Кабінетне дослідження</span></div>
+    <nav aria-label="Навігація кабінетного дослідження">
+      <a href="/ui/projects/{{ view.header.project_id }}"><span>←</span> До проєкту</a>
+      <p>РОБОЧИЙ ПРОСТІР</p>
+      <a class="{{ 'active' if active_page == 'overview' else '' }}" href="/ui/research/{{ view.header.run_id }}/overview"><span>◫</span> Огляд</a>
+      <a class="{{ 'active' if active_page == 'design' else '' }}" href="/ui/research/{{ view.header.run_id }}/design"><span>◇</span> Дизайн дослідження</a>
+      <a class="{{ 'active' if active_page == 'evidence' else '' }}" href="/ui/research/{{ view.header.run_id }}/evidence"><span>▤</span> Джерела та докази</a>
+      <a class="{{ 'active' if active_page == 'results' else '' }}" href="/ui/research/{{ view.header.run_id }}/results"><span>◆</span> Результати</a>
+      <a class="{{ 'active' if active_page == 'report' else '' }}" href="/ui/research/{{ view.header.run_id }}/report"><span>▧</span> Звіт</a>
+    </nav>
+    <div class="sidebar-status"><span class="dot dot-{{ view.header.state_tone }}"></span><div><strong>{{ view.header.state }}</strong><small>{{ view.header.activity }}</small></div></div>
+    <div class="user"><span class="avatar">Д</span><div><strong>Дослідник</strong><small>Робочий простір</small></div></div>
+  </aside>
+  <main>
+    <header class="topbar"><div><span class="eyebrow">КАБІНЕТНЕ ДОСЛІДЖЕННЯ</span><h1>{% block heading %}{{ view.design.title or view.header.project_name }}{% endblock %}</h1><small class="header-subtitle">Проєкт: {{ view.header.project_name }}</small></div><div class="topbar-state"><span class="status status-{{ view.header.state_tone }}">{{ view.header.state }}</span><small>{{ view.header.activity }}</small></div></header>
+    <div class="workspace">{% block content %}{% endblock %}</div>
+  </main>
+</div>
+{% block scripts %}{% endblock %}
+</body>
+</html>

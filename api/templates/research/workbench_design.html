@@ -1,0 +1,14 @@
+{% extends "research/workbench_base.html" %}
+{% block title %}Дизайн дослідження — AI Research OS{% endblock %}
+{% block content %}
+<section class="page-heading"><div><span class="eyebrow">ДИЗАЙН ДОСЛІДЖЕННЯ</span><h2>Контекст цього запуску</h2><p>Незмінний дослідницький контракт, за яким виконувалася робота.</p></div><span class="readonly">Лише перегляд</span></section>
+{% if view.design.historical_fallback %}<section class="notice attention"><h3>Історичний контекст</h3><p>Для цього запуску доступна лише частина сучасного дизайну. Показано тільки збережені дані без відновлення відсутніх полів.</p></section>{% endif %}
+<section class="panel"><span class="eyebrow">ЗАВДАННЯ</span><h2>{{ view.design.title }}</h2>{% if view.design.business_question %}<h3>Бізнес-питання</h3><p>{{ view.design.business_question }}</p>{% endif %}{% if view.design.context %}<h3>Контекст</h3><p>{{ view.design.context }}</p>{% endif %}</section>
+<div class="two-column">
+  <section class="panel"><h2>Цілі</h2>{% if view.design.objectives %}<ol>{% for item in view.design.objectives %}<li>{{ item }}</li>{% endfor %}</ol>{% else %}<p class="empty">Цілі не збережено.</p>{% endif %}</section>
+  <section class="panel"><h2>Межі дослідження</h2><dl class="definition-list">{% if view.design.geography %}<dt>Географія</dt><dd>{{ view.design.geography|join(', ') }}</dd>{% endif %}{% if view.design.timeframe %}<dt>Період</dt><dd>{{ view.design.timeframe }}</dd>{% endif %}{% if view.design.market %}<dt>Ринок</dt><dd>{{ view.design.market }}</dd>{% endif %}</dl></section>
+</div>
+<section class="panel"><h2>Дослідницькі питання</h2>{% if view.design.research_questions %}<ol class="numbered-cards">{% for item in view.design.research_questions %}<li>{{ item }}</li>{% endfor %}</ol>{% else %}<p class="empty">Питання не збережено для цього історичного запуску.</p>{% endif %}</section>
+<section class="panel"><h2>Інформаційні потреби</h2>{% if view.design.information_needs %}<ul>{% for item in view.design.information_needs %}<li>{{ item }}</li>{% endfor %}</ul>{% else %}<p class="empty">Інформаційні потреби не збережено.</p>{% endif %}</section>
+<div class="two-column"><section class="panel"><h2>Стратегія джерел</h2><ul>{% for item in view.design.source_strategy %}<li>{{ item }}</li>{% else %}<li class="empty">Не деталізовано.</li>{% endfor %}</ul></section><section class="panel"><h2>План аналізу</h2><ul>{% for item in view.design.analysis_plan %}<li>{{ item }}</li>{% else %}<li class="empty">Не деталізовано.</li>{% endfor %}</ul></section></div>
+{% endblock %}

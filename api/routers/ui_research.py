@@ -241,63 +241,79 @@ def research_submission_status_json(
         )
 @router.get("/research/{research_id}", response_class=HTMLResponse, include_in_schema=False)
 def research_detail_page(request: Request, research_id: str) -> Response:
+    """Compatibility entry point for historical links."""
     try:
         facade = build_research_ui_facade(request.app.state.container)
-        status_payload = facade.get_status(research_id)
-        project_id = status_payload.get("project_id")
-        if project_id is None and isinstance(facade, ResearchUiFacade):
-            workflow_run, _ = request.app.state.container.authorization_service.require_run(facade._principal, research_id)
-            project_id = workflow_run.project_id
-        detail_payload = None
-        if status_payload.get("execution_status") == ResearchExecutionStatus.TERMINAL.value:
-            try:
-                detail_payload = facade.get_result_detail(research_id)
-            except ResearchRunResultProjectionError:
-                detail_payload = None
-        return templates.TemplateResponse(
-            request,
-            "research/detail.html",
-            _template_context(
-                request,
-                research_id=research_id,
-                project_id=project_id,
-                status=status_payload,
-                detail=build_result_view_model(detail_payload) if detail_payload else None,
-                current_phase_index=phase_index(status_payload.get("phase", "QUEUED")),
-                page_state="ready",
-                error_message=None,
-            ),
+        facade.get_status(research_id)
+        return RedirectResponse(
+            f"/ui/research/{research_id}/overview",
+            status_code=status.HTTP_302_FOUND,
         )
     except (AccessDeniedError, EntityNotFoundError):
         return templates.TemplateResponse(
             request,
-            "research/detail.html",
-            _template_context(
-                request,
-                research_id=research_id,
-                status=None,
-                detail=None,
-                current_phase_index=0,
-                page_state="not_found",
-                error_message="Research not found.",
-            ),
+            "research/workbench_error.html",
+            {"request": request, "message": "Дослідження не знайдено"},
             status_code=status.HTTP_404_NOT_FOUND,
         )
     except AuthenticationRequiredError:
         return templates.TemplateResponse(
             request,
-            "research/detail.html",
-            _template_context(
-                request,
-                research_id=research_id,
-                status=None,
-                detail=None,
-                current_phase_index=0,
-                page_state="auth_error",
-                error_message="Research UI credentials are not configured.",
-            ),
+            "research/workbench_error.html",
+            {"request": request, "message": "Доступ до робочого простору не налаштовано"},
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
+
+
+def _workbench_page(request: Request, research_id: str, page: str) -> Response:
+    try:
+        view = build_research_ui_facade(request.app.state.container).get_workbench(
+            research_id,
+        )
+        return templates.TemplateResponse(
+            request,
+            f"research/workbench_{page}.html",
+            {"request": request, "view": view, "active_page": page},
+        )
+    except (AccessDeniedError, EntityNotFoundError, ValueError):
+        return templates.TemplateResponse(
+            request,
+            "research/workbench_error.html",
+            {"request": request, "message": "Дослідження не знайдено"},
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    except AuthenticationRequiredError:
+        return templates.TemplateResponse(
+            request,
+            "research/workbench_error.html",
+            {"request": request, "message": "Доступ до робочого простору не налаштовано"},
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+
+@router.get("/research/{research_id}/overview", response_class=HTMLResponse, include_in_schema=False)
+def research_overview_page(request: Request, research_id: str) -> Response:
+    return _workbench_page(request, research_id, "overview")
+
+
+@router.get("/research/{research_id}/design", response_class=HTMLResponse, include_in_schema=False)
+def research_design_page(request: Request, research_id: str) -> Response:
+    return _workbench_page(request, research_id, "design")
+
+
+@router.get("/research/{research_id}/evidence", response_class=HTMLResponse, include_in_schema=False)
+def research_evidence_page(request: Request, research_id: str) -> Response:
+    return _workbench_page(request, research_id, "evidence")
+
+
+@router.get("/research/{research_id}/results", response_class=HTMLResponse, include_in_schema=False)
+def research_results_page(request: Request, research_id: str) -> Response:
+    return _workbench_page(request, research_id, "results")
+
+
+@router.get("/research/{research_id}/report", response_class=HTMLResponse, include_in_schema=False)
+def research_report_page(request: Request, research_id: str) -> Response:
+    return _workbench_page(request, research_id, "report")
 
 
 @router.get(

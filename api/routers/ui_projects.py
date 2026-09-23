@@ -103,7 +103,7 @@ def project_method_remove(request: Request, project_id: str, method: str):
 def project_method_activate(request: Request, project_id: str, method: str):
     try:
         kind, identity = _facade(request).activate_method(project_id, method)
-        target = f"/ui/research/{identity}" if kind == "desk" else f"/ui/quantitative/studies/{identity}/overview"
+        target = f"/ui/research/{identity}/overview" if kind == "desk" else f"/ui/quantitative/studies/{identity}/overview"
         return RedirectResponse(target, status_code=303)
     except (AccessDeniedError, EntityNotFoundError):
         return templates.TemplateResponse(request, "projects/error.html", {"request": request, "message": "Проєкт не знайдено"}, status_code=404)
@@ -125,7 +125,7 @@ def desk_create(request: Request, project_id: str, title: str = Form(""), busine
         if _facade(request).project_for_design(project_id).selected_methods is not None:
             return RedirectResponse(f"/ui/projects/{project_id}/brief", status_code=303)
         result = _facade(request).start_desk(project_id, parse_brief_form(form))
-        return RedirectResponse(f"/ui/research/{result.workflow_run.id}", status_code=303)
+        return RedirectResponse(f"/ui/research/{result.workflow_run.id}/overview", status_code=303)
     except (AccessDeniedError, EntityNotFoundError):
         return templates.TemplateResponse(request, "projects/error.html", {"request": request, "message": "Проєкт не знайдено"}, status_code=404)
     except (ValueError, QuantitativeUiError) as exc:

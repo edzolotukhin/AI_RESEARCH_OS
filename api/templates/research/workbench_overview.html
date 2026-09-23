@@ -1,0 +1,18 @@
+{% extends "research/workbench_base.html" %}
+{% block title %}Огляд — Кабінетне дослідження{% endblock %}
+{% block content %}
+<section class="page-heading"><div><span class="eyebrow">ОГЛЯД</span><h2>Стан дослідження</h2><p>{{ view.header.activity }}</p></div><span class="status status-{{ view.header.state_tone }}">{{ view.header.state }}</span></section>
+<div id="desk-live-root" data-run-id="{{ view.header.run_id }}" data-execution-status="{{ view.header.execution_status }}"></div>
+<section class="metric-grid" aria-label="Наявні матеріали">
+  <a href="/ui/research/{{ view.header.run_id }}/evidence"><span>Джерела</span><strong>{{ view.sources_total }}</strong><small>зібрано для цього запуску</small></a>
+  <a href="/ui/research/{{ view.header.run_id }}/evidence"><span>Докази</span><strong>{{ view.evidence_total }}</strong><small>виділено з джерел</small></a>
+  <a href="/ui/research/{{ view.header.run_id }}/results"><span>Висновки</span><strong>{{ view.findings_total }}</strong><small>підтверджено доказами</small></a>
+  <a href="/ui/research/{{ view.header.run_id }}/results"><span>Інсайти</span><strong>{{ view.insights_total }}</strong><small>сформовано з висновків</small></a>
+</section>
+{% if view.header.outcome == 'NOT_READY' %}<section class="notice attention"><h3>Дослідження завершено з обмеженнями</h3><p>Зібраних доказів недостатньо, щоб безпечно сформувати всі заплановані результати. Доступні матеріали залишаються для перегляду.</p></section>
+{% elif view.header.outcome == 'QUALITY_REJECTED' %}<section class="notice attention"><h3>Результат потребує уваги</h3><p>Звіт сформовано, але перевірка якості не схвалила його як фінальний результат.</p></section>
+{% elif view.header.outcome == 'EXECUTION_FAILED' %}<section class="notice error"><h3>Дослідження не вдалося завершити</h3><p>Перегляньте доступні матеріали. Технічні подробиці збережено для діагностики й не показано в робочому просторі.</p></section>{% endif %}
+{% if view.limitations %}<section class="panel"><span class="eyebrow">ОБМЕЖЕННЯ</span><h2>Що варто врахувати</h2><ul>{% for item in view.limitations %}<li>{{ item }}</li>{% endfor %}</ul></section>{% endif %}
+<section class="panel next-panel"><span class="eyebrow">НАСТУПНИЙ КРОК</span>{% if not view.header.is_terminal %}<h2>Робота триває у фоновому режимі</h2><p id="polling-note">Сторінка автоматично оновиться після зміни стану. Її можна безпечно закрити або оновити.</p>{% elif view.report.available %}<h2>Звіт доступний</h2><p>Перейдіть до структурованого звіту та перевірки якості.</p><a class="button" href="/ui/research/{{ view.header.run_id }}/report">Відкрити звіт</a>{% else %}<h2>Перегляньте наявні матеріали</h2><p>Доступні джерела, докази та результати показано у відповідних розділах.</p>{% endif %}</section>
+{% endblock %}
+{% block scripts %}<script src="/static/desk-workbench.js"></script>{% endblock %}

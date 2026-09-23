@@ -1,0 +1,25 @@
+{% macro bounded(field) -%}
+  {{ field.text }}{% if field.truncated %}<span class="truncation-note"> Текст скорочено для перегляду.</span>{% endif %}
+{%- endmacro %}
+
+{% macro source_card(source) -%}
+<article class="source-card">
+  <div><span class="type-label">{{ source.source_type }}</span><h3>{{ source.title }}</h3></div>
+  {% if source.publisher or source.domain %}<p class="muted">{{ source.publisher or source.domain }}</p>{% endif %}
+  <div class="source-meta">
+    {% if source.published_at %}<span>Опубліковано: {{ source.published_at }}</span>{% endif %}
+    {% if source.warning %}<span class="warning-text">{{ source.warning }}</span>{% endif %}
+  </div>
+  {% if source.url %}<a class="source-link" href="{{ source.url }}" target="_blank" rel="noopener noreferrer">Відкрити джерело ↗</a>{% elif source.url_display %}<span class="muted">Посилання недоступне</span>{% endif %}
+</article>
+{%- endmacro %}
+
+{% macro evidence_card(item, compact=false) -%}
+<article class="evidence-card">
+  <h3>{{ bounded(item.statement) }}</h3>
+  {% if not compact and item.excerpt.text %}<blockquote>{{ bounded(item.excerpt) }}</blockquote>{% endif %}
+  {% if item.research_questions %}<p class="trace-label">Дослідницьке питання</p><p>{{ item.research_questions|join('; ') }}</p>{% endif %}
+  {% if item.information_needs %}<p class="trace-label">Інформаційна потреба</p><p>{{ item.information_needs|join('; ') }}</p>{% endif %}
+  {% if item.source %}<details><summary>Джерело доказу</summary>{{ source_card(item.source) }}</details>{% endif %}
+</article>
+{%- endmacro %}

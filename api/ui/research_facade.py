@@ -18,6 +18,10 @@ from application.persistence.exceptions import (
 )
 from application.persistence.records import ResearchSubmissionStatus
 from application.query.research_run_result import ResearchRunResultProjectionError
+from application.query.desk_workbench_query_service import (
+    DeskWorkbenchQueryService,
+    DeskWorkbenchView,
+)
 from application.query.research_status import ResearchExecutionStatus
 from application.runtime.background_execution_capability import (
     requires_http_background_submission,
@@ -182,7 +186,7 @@ class ResearchUiFacade:
             {
                 "research_id": workflow_run.id,
                 "run_id": workflow_run.id,
-                "research_url": f"/ui/research/{workflow_run.id}",
+                "research_url": f"/ui/research/{workflow_run.id}/overview",
             }
         )
         return payload
@@ -192,6 +196,16 @@ class ResearchUiFacade:
         return self._container.research_status_query_service.get_status(
             research_id,
         ).to_dict()
+
+    def get_workbench(self, research_id: str) -> DeskWorkbenchView:
+        _workflow_run, project = self._authorization.require_run(
+            self._principal,
+            research_id,
+        )
+        return DeskWorkbenchQueryService(container=self._container).get(
+            research_id,
+            project=project,
+        )
 
     def get_result_detail(self, research_id: str) -> dict[str, Any]:
         workflow_run, _ = self._authorization.require_run(

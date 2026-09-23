@@ -62,7 +62,7 @@ class PropertyADPendingTests(unittest.TestCase):
         )
         materialized = self.facade.get_submission_status(self.key)
         self.assertEqual(pending["run_id"], materialized["run_id"])
-        self.assertEqual(f"/ui/research/{reservation.run_id}", materialized["research_url"])
+        self.assertEqual(f"/ui/research/{reservation.run_id}/overview", materialized["research_url"])
 
     def test_p_case_03_materialized_to_terminal_preserves_identity(self):
         agency = self.agency
