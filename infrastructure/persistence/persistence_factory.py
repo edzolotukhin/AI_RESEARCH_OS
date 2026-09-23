@@ -11,6 +11,7 @@ from infrastructure.persistence.file.file_project_repository import (
 from infrastructure.persistence.memory.in_memory_api_key_repository import (
     InMemoryApiKeyRepository,
 )
+from infrastructure.persistence.memory.activation_lock import InMemoryActivationCoordinator
 from infrastructure.persistence.memory.in_memory_artifact_repository import (
     InMemoryArtifactRepository,
 )
@@ -124,6 +125,7 @@ class PersistenceBundle:
     execution_log_store: object
     quantitative_state_repository: object | None = None
     engine: Engine | None = None
+    activation_sessions: object | None = None
 
 
 def resolve_persistence_backend() -> str:
@@ -159,6 +161,7 @@ def build_persistence_bundle(
             review_repository=InMemoryReviewRepository(),
             execution_log_store=InMemoryExecutionLogStore(),
             quantitative_state_repository=InMemoryQuantitativeStateRepository(),
+            activation_sessions=InMemoryActivationCoordinator(),
         )
 
     if backend == "file":
@@ -212,6 +215,7 @@ def build_persistence_bundle(
             execution_log_store=PostgreSQLExecutionLogStore(session_factory),
             quantitative_state_repository=PostgreSQLQuantitativeStateRepository(session_factory),
             engine=engine,
+            activation_sessions=session_factory,
         )
 
     raise ValueError(

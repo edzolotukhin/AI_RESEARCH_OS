@@ -49,6 +49,7 @@ class DurableWorkflowService:
         run_queue: RunQueue | None = None,
         lease_config: LeaseConfig | None = None,
         context_service_resolver: WorkflowContextServiceResolver | None = None,
+        activation_sessions: object | None = None,
     ) -> None:
         self._workflow_service = workflow_service
         self._project_service = project_service
@@ -58,6 +59,7 @@ class DurableWorkflowService:
         self._run_queue = run_queue
         self._lease_config = lease_config or LeaseConfig()
         self._context_service_resolver = context_service_resolver
+        self._activation_sessions = activation_sessions
 
     def activate_paused_run(
         self,
@@ -301,6 +303,13 @@ class DurableWorkflowService:
 
     def _notify_runnable(self, run_id: str) -> None:
         if self._run_queue is not None:
+            if (
+                self._activation_sessions is not None
+                and self._activation_sessions.defer_until_commit(
+                    lambda: self._notify_runnable(run_id)
+                )
+            ):
+                return
             try:
                 self._run_queue.notify_runnable(run_id)
             except Exception:

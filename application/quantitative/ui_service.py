@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from contextlib import nullcontext
 from pathlib import Path
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -62,7 +63,7 @@ class QuantitativeUiService:
                  digest_provider, storage_factory, importers: tuple[Any, ...],
                  finding_generator, insight_generator, report_generator,
                  generation_mode: str, stage_service_factory=None,
-                 durable_workflow_service=None) -> None:
+                 durable_workflow_service=None, activation_sessions=None) -> None:
         if generation_mode not in {"offline", "production"}:
             raise ValueError("Quantitative generation mode is not configured")
         if any(item is None for item in (finding_generator, insight_generator, report_generator)):
@@ -81,6 +82,7 @@ class QuantitativeUiService:
         self.generation_mode = generation_mode
         self.stage_service_factory = stage_service_factory
         self.durable_workflow_service = durable_workflow_service
+        self.activation_sessions = activation_sessions
         self._studies: dict[str, QuantitativeStudyProjection] = {}
         self._submission_ids: dict[tuple[str, str], str] = {}
 
@@ -157,6 +159,28 @@ class QuantitativeUiService:
     def create_quantitative_study_for_project(self, *, project_id: str, owner_id: str,
                                                title: str, description: str,
                                                submission_key: str) -> QuantitativeStudyProjection:
+        boundary = (
+            self.activation_sessions.activation(project_id)
+            if self.activation_sessions is not None else nullcontext()
+        )
+        study_id = str(uuid5(
+            NAMESPACE_URL, f"quantitative-study:{project_id}:{owner_id}:{submission_key.strip()}"
+        ))
+        try:
+            with boundary:
+                return self._create_quantitative_study_for_project(
+                    project_id=project_id, owner_id=owner_id, title=title,
+                    description=description, submission_key=submission_key,
+                )
+        except BaseException:
+            # _persist_study caches before commit; never retain an uncommitted
+            # projection after a failed flush or commit.
+            self._studies.pop(study_id, None)
+            raise
+
+    def _create_quantitative_study_for_project(self, *, project_id: str, owner_id: str,
+                                               title: str, description: str,
+                                               submission_key: str) -> QuantitativeStudyProjection:
         title, description, submission_key = title.strip(), description.strip(), submission_key.strip()
         if not title or not submission_key:
             raise QuantitativeUiError("title and submission_key are required")
@@ -200,7 +224,7 @@ class QuantitativeUiService:
             ))
         except Exception:
             self._studies.pop(study_id, None)
-            if run_created:
+            if run_created and not getattr(self.activation_sessions, "transactional", False):
                 self.workflows.delete_workflow_run(run_id)
             raise
 
@@ -1174,5 +1198,11 @@ class QuantitativeUiService:
         authoritative = replace(study, fingerprint=canonical_digest(payload, digest_provider=self.digest))
         self.state.persist(authoritative, record_id=f"{study.run_id}:ui-study:{study.revision}:{authoritative.fingerprint}",
                            project_id=study.project_id, run_id=study.run_id)
-        self._studies[study.study_id] = authoritative
+        if not (
+            self.activation_sessions is not None
+            and self.activation_sessions.defer_until_commit(
+                lambda: self._studies.__setitem__(study.study_id, authoritative)
+            )
+        ):
+            self._studies[study.study_id] = authoritative
         return authoritative

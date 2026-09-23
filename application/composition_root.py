@@ -561,6 +561,7 @@ def create_application_container(
             workflow_engine=workflow_engine,
             execution_port=persistence.workflow_run_execution_repository,
             run_queue=NoOpRunQueue(),
+            activation_sessions=persistence.activation_sessions,
             lease_config=lease_config,
             context_service_resolver=(
                 QuantitativeWorkflowContextServiceResolver(
@@ -639,6 +640,7 @@ def create_application_container(
                 if background_execution.multi_process_worker
                 else None
             ),
+            activation_sessions=persistence.activation_sessions,
         )
 
     project_planning_service = ProjectPlanningService(
@@ -648,6 +650,8 @@ def create_application_container(
         workflow_mapper=workflow_template_mapper,
         agency=agency,
         quantitative_ui_service=quantitative_ui_service,
+        activation_sessions=persistence.activation_sessions,
+        file_activation_unavailable=config.persistence_backend.lower() == "file",
     )
 
     return ApplicationContainer(

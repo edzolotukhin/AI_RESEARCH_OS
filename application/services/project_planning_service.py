@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from contextlib import nullcontext
 import hashlib
 import json
 from uuid import NAMESPACE_URL, uuid5
@@ -32,13 +33,16 @@ class ProjectPlanningService:
     """Owns PF-02 project intent, design gate, and method activation."""
 
     def __init__(self, *, project_service, workflow_service, planner_agent,
-                 workflow_mapper, agency, quantitative_ui_service) -> None:
+                 workflow_mapper, agency, quantitative_ui_service,
+                 activation_sessions=None, file_activation_unavailable=False) -> None:
         self.projects = project_service
         self.workflows = workflow_service
         self.planner = planner_agent
         self.workflow_mapper = workflow_mapper
         self.agency = agency
         self.quantitative = quantitative_ui_service
+        self.activation_sessions = activation_sessions
+        self.file_activation_unavailable = file_activation_unavailable
 
     def explicit_or_inferred_methods(self, project: Project) -> tuple[str, ...]:
         if project.selected_methods is not None:
@@ -159,6 +163,27 @@ class ProjectPlanningService:
         return project
 
     def activate_desk(self, project: Project):
+        if self.file_activation_unavailable:
+            raise ProjectPlanningError(
+                "Атомарна активація недоступна у файловому режимі зберігання"
+            )
+        if (
+            getattr(self.activation_sessions, "transactional", False)
+            and not self.agency._background_execution_enabled
+        ):
+            raise ProjectPlanningError(
+                "Атомарна активація кабінетного дослідження потребує фонового виконання"
+            )
+        boundary = (
+            self.activation_sessions.activation(project.id)
+            if self.activation_sessions is not None else nullcontext()
+        )
+        with boundary:
+            if self.activation_sessions is not None:
+                project = self.projects.get_project(project.id)
+            return self._activate_desk_locked(project)
+
+    def _activate_desk_locked(self, project: Project):
         self._require_activation(project, DESK)
         existing = self._desk_run(project.id)
         if existing is not None:
@@ -173,14 +198,25 @@ class ProjectPlanningService:
         ).workflow_run
 
     def activate_quantitative(self, project: Project, *, owner_id: str):
-        self._require_activation(project, QUANTITATIVE)
-        return self.quantitative.create_quantitative_study_for_project(
-            project_id=project.id,
-            owner_id=owner_id,
-            title=f"{project.name} — кількісне дослідження",
-            description="Кількісне дослідження в межах проєкту",
-            submission_key="pf02-project-activation",
+        if self.file_activation_unavailable:
+            raise ProjectPlanningError(
+                "Атомарна активація недоступна у файловому режимі зберігання"
+            )
+        boundary = (
+            self.activation_sessions.activation(project.id)
+            if self.activation_sessions is not None else nullcontext()
         )
+        with boundary:
+            if self.activation_sessions is not None:
+                project = self.projects.get_project(project.id)
+            self._require_activation(project, QUANTITATIVE)
+            return self.quantitative.create_quantitative_study_for_project(
+                project_id=project.id,
+                owner_id=owner_id,
+                title=f"{project.name} — кількісне дослідження",
+                description="Кількісне дослідження в межах проєкту",
+                submission_key="pf02-project-activation",
+            )
 
     def design_is_current(self, project: Project) -> bool:
         if project.current_research_design is None or project.research_brief is None:
