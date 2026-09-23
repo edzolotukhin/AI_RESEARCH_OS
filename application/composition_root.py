@@ -654,6 +654,11 @@ def create_application_container(
         file_activation_unavailable=config.persistence_backend.lower() == "file",
     )
 
+    activity_reader = None
+    if config.persistence_backend.lower() == "postgresql":
+        from infrastructure.persistence.postgresql.project_activity_reader import PostgreSQLProjectActivityReader
+        activity_reader = PostgreSQLProjectActivityReader(persistence.activation_sessions)
+
     return ApplicationContainer(
         config=config,
         agency=agency,
@@ -679,6 +684,7 @@ def create_application_container(
         readiness_check=readiness_check,
         quantitative_ui_service=quantitative_ui_service,
         project_planning_service=project_planning_service,
+        activity_reader=activity_reader,
         quantitative_objective_coverage_service=quantitative_objective_coverage_service,
         quantitative_authority_chain_service=quantitative_authority_chain_service,
         quantitative_authority_chain_selection_service=quantitative_authority_chain_selection_service,

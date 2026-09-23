@@ -87,6 +87,25 @@ class QuantitativeUiService:
         self._submission_ids: dict[tuple[str, str], str] = {}
 
     def create_study(self, *, owner_id: str, title: str, description: str, submission_key: str) -> QuantitativeStudyProjection:
+        if getattr(self.activation_sessions, "transactional", False):
+            try:
+                with self.activation_sessions.transaction():
+                    return self._create_study_locked(
+                        owner_id=owner_id, title=title, description=description,
+                        submission_key=submission_key,
+                    )
+            except BaseException:
+                study_id = str(uuid5(NAMESPACE_URL, f"quantitative-study:{owner_id}:{submission_key.strip()}"))
+                self._studies.pop(study_id, None)
+                self._submission_ids.pop((owner_id, submission_key.strip()), None)
+                raise
+        return self._create_study_locked(
+            owner_id=owner_id, title=title, description=description,
+            submission_key=submission_key,
+        )
+
+    def _create_study_locked(self, *, owner_id: str, title: str, description: str,
+                             submission_key: str) -> QuantitativeStudyProjection:
         title, description, submission_key = (
             title.strip(), description.strip(), submission_key.strip()
         )
@@ -145,12 +164,19 @@ class QuantitativeUiService:
                 "WAITING_FOR_DATASET",
             )
             persisted = self._persist_study(study)
+            if getattr(self.activation_sessions, "transactional", False):
+                self.activation_sessions.record_activity(
+                    project_id=project_id,
+                    semantic_key=f"method-activated:QUANTITATIVE:{study_id}",
+                    event_type="METHOD_ACTIVATED", source_kind="study",
+                    source_id=study_id, run_id=run_id, method="QUANTITATIVE",
+                )
         except Exception:
             self._studies.pop(study_id, None)
             self._submission_ids.pop((owner_id, submission_key), None)
-            if run_created:
+            if run_created and not getattr(self.activation_sessions, "transactional", False):
                 self.workflows.delete_workflow_run(run_id)
-            if project_created:
+            if project_created and not getattr(self.activation_sessions, "transactional", False):
                 self.projects.delete_project(project_id)
             raise
         self._submission_ids[(owner_id, submission_key)] = study_id
@@ -219,9 +245,17 @@ class QuantitativeUiService:
             self.workflows.create_workflow_run(template, project_id=project_id,
                                                run_id=run_id, initially_paused=True)
             run_created = True
-            return self._persist_study(QuantitativeStudyProjection(
+            persisted = self._persist_study(QuantitativeStudyProjection(
                 study_id, project_id, run_id, title, description, "WAITING_FOR_DATASET"
             ))
+            if getattr(self.activation_sessions, "transactional", False):
+                self.activation_sessions.record_activity(
+                    project_id=project_id,
+                    semantic_key=f"method-activated:QUANTITATIVE:{study_id}",
+                    event_type="METHOD_ACTIVATED", source_kind="study",
+                    source_id=study_id, run_id=run_id, method="QUANTITATIVE",
+                )
+            return persisted
         except Exception:
             self._studies.pop(study_id, None)
             if run_created and not getattr(self.activation_sessions, "transactional", False):

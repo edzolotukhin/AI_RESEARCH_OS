@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from application.query.project_activity_views import ActivityTimeline
 
 from application.persistence.exceptions import AccessDeniedError
 from application.query.desk_workbench_query_service import DeskWorkbenchQueryService
@@ -28,6 +29,7 @@ class ProjectOutputsView:
     project_id: str
     project_name: str
     methods: tuple[MethodOutputsView, ...]
+    activity: ActivityTimeline = ActivityTimeline(state="unavailable")
 
 
 class ProjectOutputsQueryService:
@@ -61,7 +63,14 @@ class ProjectOutputsQueryService:
             result.append(self._desk(project, desk_runs[-1] if desk_runs else None))
         if QUANTITATIVE in methods:
             result.append(self._quant(project, owner_id, quant_matches[-1] if quant_matches else None))
-        return ProjectOutputsView(project.id, project.name, tuple(result))
+        activity = ActivityTimeline(state="unavailable")
+        reader = getattr(self.container, "activity_reader", None)
+        if reader is not None:
+            try:
+                activity = reader.list_for_project(project.id)
+            except Exception:
+                activity = ActivityTimeline(state="error")
+        return ProjectOutputsView(project.id, project.name, tuple(result), activity)
 
     def _desk(self, project, run) -> MethodOutputsView:
         name = "Кабінетне дослідження"

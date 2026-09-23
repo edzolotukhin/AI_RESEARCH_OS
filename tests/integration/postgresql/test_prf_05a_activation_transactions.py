@@ -51,6 +51,10 @@ class ActivationTransactions(TestCase):
         )
         return service.get_project(project.id)
 
+    def activity_count(self, project_id: str, label: str) -> int:
+        return sum(event.label == label for event in
+                   self.container.activity_reader.list_for_project(project_id, limit=50).events)
+
     def test_quantitative_run_and_study_commit_together_and_replay(self):
         project = self.project("QUANTITATIVE")
         planner = self.container.project_planning_service
@@ -63,6 +67,7 @@ class ActivationTransactions(TestCase):
         self.assertEqual(len(self.container.quantitative_ui_service.state.list_for_run(
             study.run_id, project_id=project.id,
         )), 1)
+        self.assertEqual(self.activity_count(project.id, "Кількісне дослідження активовано"), 1)
 
     def test_quantitative_projection_failure_rolls_back_run(self):
         project = self.project("QUANTITATIVE")
@@ -106,6 +111,7 @@ class ActivationTransactions(TestCase):
             studies = [item.result(timeout=20) for item in futures]
         self.assertEqual(studies[0].study_id, studies[1].study_id)
         self.assertEqual(len(self.container.workflow_service.list_workflow_runs_for_project(project.id)), 1)
+        self.assertEqual(self.activity_count(project.id, "Кількісне дослідження активовано"), 1)
 
     def test_desk_run_is_pollable_after_commit_and_replayed(self):
         project = self.project("DESK")
@@ -119,6 +125,7 @@ class ActivationTransactions(TestCase):
         )
         self.assertIsNotNone(claimed)
         self.assertEqual(claimed.run_id, run.id)
+        self.assertEqual(self.activity_count(project.id, "Кабінетне дослідження активовано"), 1)
 
     def test_desk_run_insertion_failure_rolls_back_project_change(self):
         project = self.project("DESK")
@@ -130,6 +137,14 @@ class ActivationTransactions(TestCase):
         self.assertEqual(self.container.workflow_service.list_workflow_runs_for_project(project.id), [])
         self.assertEqual(self.container.project_service.get_project(project.id).persistence_version, initial_version)
 
+    def test_desk_commit_failure_rolls_back_run_and_activity(self):
+        project = self.project("DESK")
+        with patch.object(Session, "commit", side_effect=RuntimeError("commit failure")):
+            with self.assertRaisesRegex(RuntimeError, "commit failure"):
+                self.container.project_planning_service.activate_desk(project)
+        self.assertEqual(self.container.workflow_service.list_workflow_runs_for_project(project.id), [])
+        self.assertEqual(self.activity_count(project.id, "Кабінетне дослідження активовано"), 0)
+
     def test_concurrent_desk_activation_is_one_run(self):
         project = self.project("DESK")
         planner = self.container.project_planning_service
@@ -138,6 +153,22 @@ class ActivationTransactions(TestCase):
             runs = [item.result(timeout=20) for item in futures]
         self.assertEqual(runs[0].id, runs[1].id)
         self.assertEqual(len(self.container.workflow_service.list_workflow_runs_for_project(project.id)), 1)
+        self.assertEqual(self.activity_count(project.id, "Кабінетне дослідження активовано"), 1)
+
+    def test_activity_insert_failure_rolls_back_both_activations(self):
+        desk = self.project("DESK")
+        with patch("infrastructure.persistence.postgresql.repositories.postgresql_workflow_run_repository.record_activity", side_effect=RuntimeError("activity failed")):
+            with self.assertRaisesRegex(RuntimeError, "activity failed"):
+                self.container.project_planning_service.activate_desk(desk)
+        self.assertEqual(self.container.workflow_service.list_workflow_runs_for_project(desk.id), [])
+        self.assertEqual(self.activity_count(desk.id, "Кабінетне дослідження активовано"), 0)
+
+        quantitative = self.project("QUANTITATIVE")
+        with patch.object(self.container.quantitative_ui_service.activation_sessions, "record_activity", side_effect=RuntimeError("activity failed")):
+            with self.assertRaisesRegex(RuntimeError, "activity failed"):
+                self.container.project_planning_service.activate_quantitative(quantitative, owner_id="owner")
+        self.assertEqual(self.container.workflow_service.list_workflow_runs_for_project(quantitative.id), [])
+        self.assertEqual(self.activity_count(quantitative.id, "Кількісне дослідження активовано"), 0)
 
     def test_failed_notification_does_not_lose_committed_desk_run(self):
         project = self.project("DESK")

@@ -93,9 +93,42 @@ class DatabaseSessionFactory:
             for callback in callbacks:
                 callback()
 
+    @contextmanager
+    def transaction(self) -> Iterator[Session]:
+        """Share one commit for a new project and its first study."""
+        active = self._active.get()
+        if active is not None:
+            yield active
+            return
+        session = self._session_factory()
+        token = self._active.set(session)
+        callbacks: list[Callable[[], None]] = []
+        callback_token = self._after_commit.set(callbacks)
+        committed = False
+        try:
+            yield session
+            session.flush()
+            session.commit()
+            committed = True
+        except BaseException:
+            session.rollback()
+            raise
+        finally:
+            self._active.reset(token)
+            self._after_commit.reset(callback_token)
+            session.close()
+        if committed:
+            for callback in callbacks:
+                callback()
+
     def defer_until_commit(self, callback: Callable[[], None]) -> bool:
         callbacks = self._after_commit.get()
         if callbacks is None:
             return False
         callbacks.append(callback)
         return True
+
+    def record_activity(self, **kwargs) -> None:
+        from infrastructure.persistence.postgresql.project_activity import record_activity
+        with self.session() as session:
+            record_activity(session, **kwargs)

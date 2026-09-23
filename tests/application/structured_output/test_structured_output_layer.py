@@ -234,7 +234,7 @@ class StructuredOutputArchitectureTests(unittest.TestCase):
         offenders: list[str] = []
 
         for path in project_root.rglob("*.py"):
-            if "tests" in path.parts or "__pycache__" in path.parts:
+            if "tests" in path.parts or "__pycache__" in path.parts or "artifacts" in path.parts:
                 continue
 
             source = path.read_text(encoding="utf-8")

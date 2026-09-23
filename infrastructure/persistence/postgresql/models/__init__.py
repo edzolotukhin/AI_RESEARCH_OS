@@ -8,6 +8,7 @@ from infrastructure.persistence.postgresql.models.knowledge_model import (
     KnowledgeItemModel,
 )
 from infrastructure.persistence.postgresql.models.project_model import ProjectModel
+from infrastructure.persistence.postgresql.models.project_activity_model import ProjectActivityModel
 from infrastructure.persistence.postgresql.models.task_model import WorkflowTaskModel
 from infrastructure.persistence.postgresql.models.workflow_run_model import (
     WorkflowRunModel,
@@ -26,6 +27,7 @@ __all__ = [
     "ExecutionLogEntryModel",
     "KnowledgeItemModel",
     "ProjectModel",
+    "ProjectActivityModel",
     "EvidenceModel",
     "FindingModel",
     "InsightModel",

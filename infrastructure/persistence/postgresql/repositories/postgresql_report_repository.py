@@ -11,6 +11,7 @@ from infrastructure.persistence.postgresql.mappers.report_mapper import (
     report_to_model,
 )
 from infrastructure.persistence.postgresql.models.report_model import ReportModel
+from infrastructure.persistence.postgresql.project_activity import record_activity
 from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
 
 
@@ -22,6 +23,13 @@ class PostgreSQLReportRepository(ReportRepository):
         with self._session_factory.session() as session:
             try:
                 session.add(report_to_model(report, version=1))
+                record_activity(
+                    session, project_id=report.project_id,
+                    semantic_key=f"desk-report:{report.id}",
+                    event_type="DESK_REPORT_DRAFT_CREATED", source_kind="report",
+                    source_id=report.id, run_id=report.workflow_run_id, method="DESK",
+                    occurred_at=report.created_at,
+                )
                 session.flush()
             except IntegrityError as exc:
                 session.rollback()

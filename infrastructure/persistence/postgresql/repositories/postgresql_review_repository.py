@@ -11,6 +11,7 @@ from infrastructure.persistence.postgresql.mappers.review_mapper import (
     review_to_model,
 )
 from infrastructure.persistence.postgresql.models.review_model import ReviewModel
+from infrastructure.persistence.postgresql.project_activity import record_activity
 from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
 
 
@@ -22,6 +23,15 @@ class PostgreSQLReviewRepository(ReviewRepository):
         with self._session_factory.session() as session:
             try:
                 session.add(review_to_model(review, version=1))
+                if review.verdict.value in ("revise", "reject"):
+                    record_activity(
+                        session, project_id=review.project_id,
+                        semantic_key=f"desk-review:{review.id}",
+                        event_type="DESK_REVIEW_ATTENTION", source_kind="review",
+                        source_id=review.id, run_id=review.workflow_run_id,
+                        method="DESK", verdict=review.verdict.value.upper(),
+                        occurred_at=review.created_at,
+                    )
                 session.flush()
             except IntegrityError as exc:
                 session.rollback()

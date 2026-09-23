@@ -24,7 +24,9 @@ from infrastructure.persistence.postgresql.models.task_model import WorkflowTask
 from infrastructure.persistence.postgresql.models.workflow_run_model import (
     WorkflowRunModel,
 )
+from infrastructure.persistence.postgresql.models.workflow_template_model import WorkflowTemplateModel
 from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
+from infrastructure.persistence.postgresql.project_activity import record_activity
 
 
 class PostgreSQLWorkflowRunRepository:
@@ -55,6 +57,15 @@ class PostgreSQLWorkflowRunRepository:
             if not workflow_run.project_id:
                 stored.project_id = project_id
             session.add(stored)
+            template = session.get(WorkflowTemplateModel, workflow_run.workflow_template_id)
+            snapshot = template.snapshot_data if template and template.project_id == project_id else None
+            if isinstance(snapshot, dict) and snapshot.get("research_design"):
+                record_activity(
+                    session, project_id=project_id,
+                    semantic_key=f"method-activated:DESK:{workflow_run.id}",
+                    event_type="METHOD_ACTIVATED", source_kind="run",
+                    source_id=workflow_run.id, run_id=workflow_run.id, method="DESK",
+                )
 
     def get_by_id(self, run_id: str) -> WorkflowRun | None:
         with self._session_factory.session() as session:
