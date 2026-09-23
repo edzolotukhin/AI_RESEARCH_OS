@@ -35,6 +35,7 @@ jobs:
       POSTGRES_PASSWORD: ai_research_os_dev
       POSTGRES_DB: ai_research_os
       POSTGRES_TEST_DB: ai_research_os_test
+      POSTGRES_MIGRATION_TEST_DB: ai_research_os_migration_test
       POSTGRES_HOST: localhost
       POSTGRES_PORT: "5432"
 
@@ -122,9 +123,19 @@ jobs:
           host = os.environ["POSTGRES_HOST"]
           port = os.environ["POSTGRES_PORT"]
 
-          if "test" not in test_db.lower():
+          migration_db = os.environ["POSTGRES_MIGRATION_TEST_DB"]
+          if (
+              host not in {"localhost", "127.0.0.1"}
+              or port != "5432"
+              or user != "ai_research_os"
+              or password != "ai_research_os_dev"
+              or main_db != "ai_research_os"
+              or test_db != "ai_research_os_test"
+              or migration_db != "ai_research_os_migration_test"
+              or len({main_db, test_db, migration_db}) != 3
+          ):
               sys.exit(
-                  "Refusing to use integration database without 'test' in the name."
+                  "Refusing to create databases outside the isolated CI PostgreSQL service."
               )
 
           conn = psycopg.connect(
@@ -137,14 +148,16 @@ jobs:
           )
           try:
               with conn.cursor() as cur:
-                  cur.execute(
-                      "SELECT 1 FROM pg_database WHERE datname = %s",
-                      (test_db,),
-                  )
-                  if cur.fetchone() is None:
+                  cur.execute("SELECT current_database()")
+                  if cur.fetchone()[0] != main_db:
+                      sys.exit("Refusing an unexpected PostgreSQL database")
+                  for name in (test_db, migration_db):
+                      cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (name,))
+                      if cur.fetchone() is not None:
+                          sys.exit(f"Refusing to reuse existing database: {name}")
                       cur.execute(
                           psycopg.sql.SQL("CREATE DATABASE {}").format(
-                              psycopg.sql.Identifier(test_db)
+                              psycopg.sql.Identifier(name)
                           )
                       )
           finally:
@@ -164,20 +177,28 @@ jobs:
       - name: PostgreSQL repository contract tests
         env:
           POSTGRESQL_INTEGRATION_TESTS: "1"
+          POSTGRESQL_DISPOSABLE_TEST_DATABASE: "1"
+          CI_POSTGRESQL_TEST_DATABASE: ${{ env.POSTGRES_TEST_DB }}
           DATABASE_URL_TEST: postgresql+psycopg://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_TEST_DB }}
           DATABASE_URL: postgresql+psycopg://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_TEST_DB }}
-        run: >-
-          python -W error::ResourceWarning -m unittest
-          tests.application.ports.test_postgresql_repository_contracts -v
+        run: |
+          python -c "from tests.integration.postgresql.helpers import require_integration_tests; require_integration_tests()"
+          python -W error::ResourceWarning -m unittest \
+            tests.application.ports.test_postgresql_repository_contracts -v
 
       - name: PostgreSQL integration tests
         env:
           POSTGRESQL_INTEGRATION_TESTS: "1"
+          POSTGRESQL_DISPOSABLE_TEST_DATABASE: "1"
+          CI_POSTGRESQL_TEST_DATABASE: ${{ env.POSTGRES_TEST_DB }}
+          CI_POSTGRESQL_MIGRATION_DATABASE: ${{ env.POSTGRES_MIGRATION_TEST_DB }}
+          DATABASE_URL_MIGRATION_TEST: postgresql+psycopg://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_MIGRATION_TEST_DB }}
           DATABASE_URL_TEST: postgresql+psycopg://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_TEST_DB }}
           DATABASE_URL: postgresql+psycopg://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_TEST_DB }}
-        run: >-
-          python -W error::ResourceWarning -m unittest discover
-          -s tests/integration/postgresql -p "test_*.py" -v
+        run: |
+          python -c "from tests.integration.postgresql.helpers import require_integration_tests; require_integration_tests()"
+          python -W error::ResourceWarning -m unittest discover \
+            -s tests/integration/postgresql -p "test_*.py" -v
 
       - name: API tests
         run: >-
@@ -187,32 +208,41 @@ jobs:
       - name: PostgreSQL API integration tests
         env:
           POSTGRESQL_INTEGRATION_TESTS: "1"
+          POSTGRESQL_DISPOSABLE_TEST_DATABASE: "1"
+          CI_POSTGRESQL_TEST_DATABASE: ${{ env.POSTGRES_TEST_DB }}
           DATABASE_URL_TEST: postgresql+psycopg://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_TEST_DB }}
           DATABASE_URL: postgresql+psycopg://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_TEST_DB }}
-        run: >-
-          python -W error::ResourceWarning -m unittest discover
-          -s tests/integration/api -p "test_*.py" -v
+        run: |
+          python -c "from tests.integration.postgresql.helpers import require_integration_tests; require_integration_tests()"
+          python -W error::ResourceWarning -m unittest discover \
+            -s tests/integration/api -p "test_*.py" -v
 
       - name: Worker integration tests
         env:
           POSTGRESQL_INTEGRATION_TESTS: "1"
+          POSTGRESQL_DISPOSABLE_TEST_DATABASE: "1"
+          CI_POSTGRESQL_TEST_DATABASE: ${{ env.POSTGRES_TEST_DB }}
           DATABASE_URL_TEST: postgresql+psycopg://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_TEST_DB }}
           DATABASE_URL: postgresql+psycopg://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_TEST_DB }}
-        run: >-
-          python -W error::ResourceWarning -m unittest
-          tests.integration.postgresql.test_worker_execution
-          tests.integration.postgresql.test_claim_matrix
-          tests.application.execution.test_lease_guards
-          tests.integration.worker.test_process_crash_recovery -v
+        run: |
+          python -c "from tests.integration.postgresql.helpers import require_integration_tests; require_integration_tests()"
+          python -W error::ResourceWarning -m unittest \
+            tests.integration.postgresql.test_worker_execution \
+            tests.integration.postgresql.test_claim_matrix \
+            tests.application.execution.test_lease_guards \
+            tests.integration.worker.test_process_crash_recovery -v
 
       - name: External orchestration integration tests
         env:
           POSTGRESQL_INTEGRATION_TESTS: "1"
+          POSTGRESQL_DISPOSABLE_TEST_DATABASE: "1"
+          CI_POSTGRESQL_TEST_DATABASE: ${{ env.POSTGRES_TEST_DB }}
           DATABASE_URL_TEST: postgresql+psycopg://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_TEST_DB }}
           DATABASE_URL: postgresql+psycopg://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_TEST_DB }}
-        run: >-
-          python -W error::ResourceWarning -m unittest
-          tests.integration.api.test_external_orchestration -v
+        run: |
+          python -c "from tests.integration.postgresql.helpers import require_integration_tests; require_integration_tests()"
+          python -W error::ResourceWarning -m unittest \
+            tests.integration.api.test_external_orchestration -v
 
       - name: OpenAPI smoke test
         run: >-

@@ -5,9 +5,11 @@ import unittest
 
 from alembic import command
 from alembic.config import Config
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
+from sqlalchemy.pool import NullPool
 
 from tests.integration.postgresql.helpers import (
-    PostgreSQLIntegrationTestCase,
     integration_tests_enabled,
 )
 
@@ -17,17 +19,47 @@ from tests.integration.postgresql.helpers import (
     "PostgreSQL migration tests require POSTGRESQL_INTEGRATION_TESTS=1 "
     "and DATABASE_URL_TEST with 'test' in the database name.",
 )
-class PostgreSQLMigrationSmokeTests(PostgreSQLIntegrationTestCase):
+class PostgreSQLMigrationSmokeTests(unittest.TestCase):
     def setUp(self) -> None:
-        super().setUp()
-        self.database_url = os.environ["DATABASE_URL_TEST"]
+        self.database_url = os.environ.get("DATABASE_URL_MIGRATION_TEST")
+        if not self.database_url:
+            self.fail("DATABASE_URL_MIGRATION_TEST must name an isolated migration database")
+        integration_url = make_url(os.environ["DATABASE_URL_TEST"])
+        migration_url = make_url(self.database_url)
+        if (
+            migration_url.drivername != integration_url.drivername
+            or migration_url.host != integration_url.host
+            or migration_url.port != integration_url.port
+            or not migration_url.database
+            or "test" not in migration_url.database.lower()
+            or migration_url.database == integration_url.database
+        ):
+            self.fail("Migration database must be a separate PostgreSQL test database on the same server")
+        if os.environ.get("CI") == "true" and migration_url.database != os.environ.get(
+            "CI_POSTGRESQL_MIGRATION_DATABASE"
+        ):
+            self.fail("Migration database does not match the CI isolated database")
+        self.engine = create_engine(self.database_url, future=True, poolclass=NullPool)
+        self.addCleanup(self.engine.dispose)
 
     def test_upgrade_and_downgrade_head(self) -> None:
         alembic_cfg = Config("alembic.ini")
+        with self.engine.connect() as connection:
+            existing = connection.execute(text(
+                "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
+            )).scalars().all()
+        self.assertEqual(existing, [], "Migration smoke requires a pristine database")
+        previous_url = os.environ.get("DATABASE_URL")
         os.environ["DATABASE_URL"] = self.database_url
-
-        command.downgrade(alembic_cfg, "base")
-        command.upgrade(alembic_cfg, "head")
+        try:
+            command.upgrade(alembic_cfg, "head")
+            command.downgrade(alembic_cfg, "base")
+            command.upgrade(alembic_cfg, "head")
+        finally:
+            if previous_url is None:
+                os.environ.pop("DATABASE_URL", None)
+            else:
+                os.environ["DATABASE_URL"] = previous_url
 
         with self.engine.connect() as connection:
             tables = connection.exec_driver_sql(

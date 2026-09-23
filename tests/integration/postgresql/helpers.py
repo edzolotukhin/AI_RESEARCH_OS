@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import NullPool
+from sqlalchemy.engine import make_url
 
 from application.config import ApplicationConfig
 from infrastructure.persistence.postgresql.database import Base
@@ -18,17 +19,25 @@ from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
 def integration_tests_enabled() -> bool:
     if os.environ.get("POSTGRESQL_INTEGRATION_TESTS", "0") != "1":
         return False
-
-    database_url = os.environ.get("DATABASE_URL_TEST") or os.environ.get(
-        "DATABASE_URL",
-    )
+    database_url = os.environ.get("DATABASE_URL_TEST")
     if not database_url:
         return False
-
-    return (
-        "test" in database_url.rsplit("/", 1)[-1].lower()
-        and os.environ.get("POSTGRESQL_DISPOSABLE_TEST_DATABASE", "0") == "1"
-    )
+    if os.environ.get("POSTGRESQL_DISPOSABLE_TEST_DATABASE", "0") != "1":
+        return False
+    try:
+        url = make_url(database_url)
+    except Exception:
+        return False
+    if not url.drivername.startswith("postgresql") or "test" not in (url.database or "").lower():
+        return False
+    if os.environ.get("CI") == "true":
+        return (
+            url.host in {"localhost", "127.0.0.1", "::1"}
+            and url.database == os.environ.get("CI_POSTGRESQL_TEST_DATABASE")
+            and os.environ.get("DATABASE_URL") == database_url
+            and bool(url.database)
+        )
+    return True
 
 
 def require_integration_tests() -> None:
@@ -42,9 +51,7 @@ def require_integration_tests() -> None:
 
 def get_test_database_url() -> str:
     require_integration_tests()
-    database_url = os.environ.get("DATABASE_URL_TEST") or os.environ.get(
-        "DATABASE_URL",
-    )
+    database_url = os.environ.get("DATABASE_URL_TEST")
     assert database_url is not None
     return database_url
 
