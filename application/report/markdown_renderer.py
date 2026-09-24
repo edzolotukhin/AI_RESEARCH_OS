@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from domain.reports.report import Report
+from application.report.source_display import source_display
 
 
 def render_report_markdown(report: Report) -> str:
@@ -37,9 +38,7 @@ def render_report_markdown(report: Report) -> str:
         lines.extend(["## References", ""])
         for citation_id in sorted(report.citation_registry):
             entry = report.citation_registry[citation_id]
-            title = entry.get("title", "")
-            url = entry.get("canonical_url", "")
-            lines.append(f"[{citation_id}] {title} — {url}")
+            lines.append(f"[{citation_id}] {source_display(entry)}")
         lines.append("")
 
     return "\n".join(lines).strip() + "\n"

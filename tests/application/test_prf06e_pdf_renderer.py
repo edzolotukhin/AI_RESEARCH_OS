@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from dataclasses import replace
 import os
 import unittest
 
@@ -58,3 +59,14 @@ class PdfRendererTests(unittest.TestCase):
     def test_oversized_input_rejected_before_render(self):
         with self.assertRaisesRegex(ValueError, "допустимий обсяг"):
             self.renderer.render(self._document("А" * 210_000))
+
+    def test_human_readable_registry_survives_pdf_text_extraction(self):
+        from pypdf import PdfReader
+
+        document = replace(self._document("Синтетичний текст."),
+            citation_registry=(("S1", "Вигадане джерело — https://example.invalid/source"),))
+        text = "\n".join(page.extract_text() for page in
+                         PdfReader(BytesIO(self.renderer.render(document))).pages)
+        self.assertIn("S1: Вигадане джерело", text)
+        self.assertIn("https://example.invalid/source", text)
+        self.assertNotIn("canonical_url", text)

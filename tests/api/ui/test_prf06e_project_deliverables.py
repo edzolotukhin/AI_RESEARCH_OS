@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
@@ -35,7 +36,7 @@ class DeliverableUiTests(ApiTestCase):
         return _create_run(self.container, self.owner, project_id=project_id,
                            run_id=run_id, title="Синтетичне дослідження")
 
-    def _report(self, project, run, revision=1, status="draft", report_id=None):
+    def _report(self, project, run, revision=1, status="draft", report_id=None, citations=None):
         report = Report(
             id=report_id or f"{run.id}-report-{revision}", project_id=project.id,
             workflow_run_id=run.id, research_design_id="design-1",
@@ -43,7 +44,8 @@ class DeliverableUiTests(ApiTestCase):
             sections=(ReportSection(f"section-{revision}", "Висновки", f"Збережений текст {revision}"),),
             executive_summary="Точне резюме", limitations=("Обмеження доказів",),
             created_at=f"2026-09-{revision:02}T00:00:00Z", generation_method="test",
-            finding_refs=(), insight_refs=(), evidence_refs=(), citation_registry={},
+            finding_refs=(), insight_refs=(), evidence_refs=(),
+            citation_registry=citations or {},
             revision_number=revision, previous_report_id=None if revision == 1 else f"{run.id}-report-{revision-1}",
             approval_status=status, deduplication_key=f"{run.id}-{revision}",
         )
@@ -92,6 +94,30 @@ class DeliverableUiTests(ApiTestCase):
             f"/ui/projects/{project.id}/reports/DESK/{report.id}").text)
         self.assertEqual(self.container.report_query_service.get_report(report.id).sections[0].content,
                          "Збережений текст 1")
+
+    def test_source_registry_is_readable_and_old_pdf_version_remains_downloadable(self):
+        project, run = self._desk()
+        report = self._report(project, run, citations={
+            "S1": {"title": "Вигадане джерело", "canonical_url": "https://example.invalid/a"}
+        })
+        service = self.container.project_deliverables_service
+        document = service.source(project.id, "DESK", report.id, owner_id=self.owner).document
+        self.assertEqual(document.citation_registry,
+                         (("S1", "Вигадане джерело — https://example.invalid/a"),))
+        page = self.client.get(f"/ui/projects/{project.id}/reports/DESK/{report.id}")
+        self.assertIn("Вигадане джерело — https://example.invalid/a", page.text)
+        self.assertNotIn("canonical_url", page.text)
+        current = service.generate(project.id, "DESK", report.id, owner_id=self.owner)
+        data = service.store.get(current.id)[1]
+        legacy = replace(current, id="legacy-pdf-test", storage_key="legacy-pdf-test",
+                         renderer_version="prf06e-reportlab-1")
+        service.store.complete(legacy, data)
+        record, old_data = service.download(
+            project.id, "DESK", report.id, legacy.id, owner_id=self.owner)
+        self.assertEqual(record.id, legacy.id)
+        self.assertEqual(old_data, data)
+        self.assertEqual(service.source(
+            project.id, "DESK", report.id, owner_id=self.owner).pdf.id, current.id)
 
     def test_review_after_draft_export_keeps_old_snapshot_downloadable(self):
         project, run = self._desk()

@@ -1,5 +1,6 @@
 import PptxGenJS from "pptxgenjs";
 import JSZip from "jszip";
+import { paginateText } from "./paginate.mjs";
 
 const FONT = "DejaVu Sans";
 const LIMITS = { chars: 200_000, sections: 100, rows: 1_000, cols: 12,
@@ -47,32 +48,35 @@ function makePresentation(doc) {
     return slide;
   }
   function textPages(title, value) {
-    // Slice only at the layout layer; every character appears on a slide.
-    const chunks = value.match(/[\s\S]{1,850}/gu) || [""];
+    // Content is unchanged; only safe paragraph/sentence/word boundaries
+    // determine slide transitions. Tokens too wide to fit fail closed.
+    const chunks = paginateText(value);
     chunks.forEach((chunk, index) => {
       const slide = addSlide(title, index > 0);
-      slide.addText(chunk, { x: 0.8, y: 1.35, w: 11.7, h: 5.35,
-        fontFace: FONT, fontSize: 17, color: "233248", margin: 0, valign: "top" });
+      slide.addText(chunk.text, { x: 0.8, y: 1.35, w: 11.7, h: 5.35,
+        fontFace: FONT, fontSize: chunk.fontSize, color: "233248", margin: 0, valign: "top" });
     });
   }
-  const first = addSlide(doc.title.length <= 70 ? doc.title : "Презентація звіту");
+  const first = addSlide(doc.title.length <= 55 ? doc.title : "Презентація звіту");
   first.addText(`Джерело: ${doc.source_id}\nВерсія: ${doc.source_version}\nСтатус джерела: ${doc.status}`,
     { x: 0.8, y: 2.15, w: 11.5, h: 2.4, fontFace: FONT,
       fontSize: 20, color: "296579", margin: 0 });
-  if (doc.title.length > 70) textPages("Повна назва звіту", doc.title);
+  if (doc.title.length > 55) textPages("Повна назва звіту", doc.title);
   if (`${doc.source_id}${doc.source_version}${doc.status}`.length > 120)
     textPages("Ідентифікатори джерела",
       `Джерело: ${doc.source_id}\nВерсія: ${doc.source_version}\nСтатус джерела: ${doc.status}`);
   if (doc.summary) textPages("Резюме", doc.summary);
   for (const section of doc.sections) {
-    const heading = section.title.length <= 70 ? section.title : "Розділ звіту";
-    if (section.title.length > 70) textPages("Назва розділу", section.title);
+    const heading = section.title.length <= 55 ? section.title : "Розділ звіту";
+    if (section.title.length > 55) textPages("Назва розділу", section.title);
     for (const paragraph of section.paragraphs) textPages(heading, paragraph);
-    if (section.citations?.length) textPages(`Посилання: ${section.title}`, section.citations.join("\n"));
+    if (section.citations?.length)
+      textPages(section.title.length <= 43 ? `Посилання: ${section.title}` : "Посилання до розділу",
+        section.citations.join("\n"));
   }
   for (const table of doc.tables || []) {
-    const heading = table.title.length <= 70 ? table.title : "Таблиця звіту";
-    if (table.title.length > 70) textPages("Назва таблиці", table.title);
+    const heading = table.title.length <= 55 ? table.title : "Таблиця звіту";
+    if (table.title.length > 55) textPages("Назва таблиці", table.title);
     for (let start = 0; start < Math.max(1, table.rows.length); start += 11) {
       const slide = addSlide(heading, start > 0);
       slide.addTable([table.headers, ...table.rows.slice(start, start + 11)], {
@@ -89,8 +93,8 @@ function makePresentation(doc) {
     if (!chart.supported || !chart.base || !chart.unit ||
         !chart.labels?.length || chart.labels.length !== chart.values?.length ||
         !chart.values.every(Number.isFinite)) continue;
-    const heading = chart.title.length <= 70 ? chart.title : "Графік звіту";
-    if (chart.title.length > 70) textPages("Назва графіка", chart.title);
+    const heading = chart.title.length <= 55 ? chart.title : "Графік звіту";
+    if (chart.title.length > 55) textPages("Назва графіка", chart.title);
     const slide = addSlide(heading);
     slide.addChart(pptx.ChartType.bar,
       [{ name: chart.unit, labels: chart.labels, values: chart.values }],

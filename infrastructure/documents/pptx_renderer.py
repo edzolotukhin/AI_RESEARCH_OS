@@ -16,7 +16,7 @@ class PptxRenderError(RuntimeError):
 
 
 class PptxRenderer:
-    version = "pptxgenjs-4.0.1-1"
+    version = "pptxgenjs-4.0.1-2"
     template_version = "neutral-corporate-1"
     media_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 

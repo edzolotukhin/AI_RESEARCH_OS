@@ -77,4 +77,4 @@ class PdfDeliverable:
     template_version: str = "pdf-v1"
 
 
-RENDERER_VERSION = "prf06e-reportlab-1"
+RENDERER_VERSION = "prf07c-reportlab-2"

@@ -14,6 +14,7 @@ from domain.quantitative.report import QuantitativeReportCompositionResult, Quan
 from domain.quantitative.workflow import QuantitativeStudyProjection
 from domain.reviews.review_verdict import ReviewVerdict
 from application.quantitative.workflow import build_quantitative_workflow_template
+from application.report.source_display import source_display
 
 
 @dataclass(frozen=True)
@@ -80,7 +81,8 @@ class ProjectDeliverablesService:
             status, review_digest = self._desk_status(report, reviews)
             sections = tuple(PdfSection(item.title, (item.content,), item.citation_ids)
                              for item in report.sections)
-            registry = tuple((key, str(value)) for key, value in sorted(report.citation_registry.items()))
+            registry = tuple((key, source_display(value))
+                             for key, value in sorted(report.citation_registry.items()))
             links = tuple(str(value.get("canonical_url")) for value in report.citation_registry.values()
                           if isinstance(value, dict) and isinstance(value.get("canonical_url"), str))
             documents.append(PdfSourceDocument(
@@ -213,9 +215,11 @@ class ProjectDeliverablesService:
         record, data = stored
         document = item.document
         if (record.project_id, record.method, record.run_id, record.study_id,
-            record.source_id, record.renderer_version) != (
+            record.source_id) != (
             project_id, method, document.run_id, document.study_id,
-            source_id, RENDERER_VERSION):
+            source_id):
+            raise AccessDeniedError("PDF не знайдено")
+        if record.renderer_version not in {RENDERER_VERSION, "prf06e-reportlab-1"}:
             raise AccessDeniedError("PDF не знайдено")
         if method == "QUANTITATIVE" and record.source_version != document.source_version:
             raise AccessDeniedError("PDF не знайдено")
