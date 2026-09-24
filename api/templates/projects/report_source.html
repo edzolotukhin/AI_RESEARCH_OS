@@ -1,0 +1,18 @@
+{% extends "projects/base.html" %}
+{% block title %}Збережений звіт — AI Research OS{% endblock %}
+{% block heading %}Збережений звіт{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="/ui/projects/{{ item.document.project_id|urlencode }}/outputs">Результати проєкту</a><span>/</span><span>{{ item.document.title }}</span></div>
+<section class="project-header"><div><p class="eyebrow">{{ item.document.method }}</p><h2>{{ item.document.title }}</h2>
+<p>{{ item.document.status }} · {{ item.document.source_id }}{% if item.document.revision_number %} · Редакція {{ item.document.revision_number }}{% endif %}</p>
+<p class="muted">Дослідження: {{ item.document.run_id }}{% if item.document.study_id %} · Студія: {{ item.document.study_id }}{% endif %}</p></div></section>
+{% if item.document.summary %}<section class="context compact-section"><h3>Резюме</h3><p class="report-content">{{ item.document.summary }}</p></section>{% endif %}
+{% for section in item.document.sections %}<section class="context compact-section"><h3>{{ section.title }}</h3>
+{% for paragraph in section.paragraphs %}<p class="report-content">{{ paragraph }}</p>{% endfor %}
+{% if section.citations %}<p>Цитати: {{ section.citations|join(', ') }}</p>{% endif %}</section>{% endfor %}
+{% if item.document.citation_registry %}<section class="context compact-section"><h3>Реєстр джерел</h3><ul>{% for key, value in item.document.citation_registry %}<li>{{ key }}: {{ value }}</li>{% endfor %}</ul></section>{% endif %}
+{% if item.document.limitations %}<section class="context compact-section"><h3>Обмеження</h3><ul>{% for value in item.document.limitations %}<li>{{ value }}</li>{% endfor %}</ul></section>{% endif %}
+{% for value in item.document.unavailable %}<p class="muted">{{ value }}</p>{% endfor %}
+{% if item.pdf %}<a class="button button-quiet" href="/ui/projects/{{ item.document.project_id|urlencode }}/reports/{{ item.document.method }}/{{ item.document.source_id|urlencode }}/pdf/{{ item.pdf.id|urlencode }}">Завантажити PDF</a>
+{% else %}<p class="muted">PDF ще не створено.</p>{% endif %}
+{% endblock %}

@@ -104,6 +104,8 @@ from infrastructure.persistence.postgresql.repositories.postgresql_workflow_temp
 )
 from infrastructure.persistence.postgresql.repositories.postgresql_quantitative_state_repository import PostgreSQLQuantitativeStateRepository
 from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
+from application.deliverables.store import InMemoryPdfStore
+from infrastructure.persistence.postgresql.repositories.postgresql_pdf_store import PostgreSQLPdfStore
 
 
 @dataclass(frozen=True)
@@ -123,6 +125,7 @@ class PersistenceBundle:
     report_repository: object
     review_repository: object
     execution_log_store: object
+    pdf_store: object | None = None
     quantitative_state_repository: object | None = None
     engine: Engine | None = None
     activation_sessions: object | None = None
@@ -160,6 +163,7 @@ def build_persistence_bundle(
             report_repository=InMemoryReportRepository(),
             review_repository=InMemoryReviewRepository(),
             execution_log_store=InMemoryExecutionLogStore(),
+            pdf_store=InMemoryPdfStore(),
             quantitative_state_repository=InMemoryQuantitativeStateRepository(),
             activation_sessions=InMemoryActivationCoordinator(),
         )
@@ -182,6 +186,7 @@ def build_persistence_bundle(
             report_repository=InMemoryReportRepository(),
             review_repository=InMemoryReviewRepository(),
             execution_log_store=InMemoryExecutionLogStore(),
+            pdf_store=InMemoryPdfStore(),
             quantitative_state_repository=None,
         )
 
@@ -213,6 +218,7 @@ def build_persistence_bundle(
             report_repository=PostgreSQLReportRepository(session_factory),
             review_repository=PostgreSQLReviewRepository(session_factory),
             execution_log_store=PostgreSQLExecutionLogStore(session_factory),
+            pdf_store=PostgreSQLPdfStore(session_factory),
             quantitative_state_repository=PostgreSQLQuantitativeStateRepository(session_factory),
             engine=engine,
             activation_sessions=session_factory,

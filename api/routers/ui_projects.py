@@ -1,11 +1,12 @@
 from pathlib import Path
 from uuid import uuid4
 from fastapi import APIRouter, Form, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from api.ui.presentation import parse_brief_form
+from api.ui.pdf_csrf import token as pdf_csrf_token, valid as valid_pdf_csrf
 from api.ui.project_workspace_facade import build_project_workspace_facade
-from application.persistence.exceptions import AccessDeniedError, EntityNotFoundError
+from application.persistence.exceptions import AccessDeniedError, EntityNotFoundError, AuthenticationRequiredError
 from application.quantitative.ui_service import QuantitativeUiError
 
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
@@ -31,13 +32,73 @@ def project_detail(request: Request, project_id: str):
 @router.get("/{project_id}/outputs", response_class=HTMLResponse, include_in_schema=False)
 def project_outputs(request: Request, project_id: str):
     try:
+        facade = _facade(request)
         return templates.TemplateResponse(request, "projects/outputs.html", {
-            "request": request, "view": _facade(request).get_outputs(project_id),
+            "request": request, "view": facade.get_outputs(project_id),
+            "catalog": facade.get_report_catalog(project_id),
+            "pdf_csrf": lambda method, source_id: pdf_csrf_token(
+                request.app.state.container, facade.owner_id, project_id, method, source_id),
+            "pdf_error": request.query_params.get("pdf_error") == "1",
         })
     except (AccessDeniedError, EntityNotFoundError):
         return templates.TemplateResponse(request, "projects/error.html", {
             "request": request, "message": "Проєкт не знайдено",
         }, status_code=404)
+
+
+@router.post("/{project_id}/reports/{method}/{source_id}/pdf", include_in_schema=False)
+def generate_report_pdf(request: Request, project_id: str, method: str, source_id: str,
+                        csrf_token: str = Form("")):
+    try:
+        facade = _facade(request)
+        if not valid_pdf_csrf(request.app.state.container, facade.owner_id,
+                              project_id, method, source_id, csrf_token):
+            return Response(status_code=403)
+        origin = request.headers.get("origin")
+        if origin and origin.rstrip("/") != str(request.base_url).rstrip("/"):
+            return Response(status_code=403)
+        facade.generate_report_pdf(project_id, method, source_id)
+        return RedirectResponse(f"/ui/projects/{project_id}/outputs", status_code=303)
+    except (AccessDeniedError, EntityNotFoundError):
+        return templates.TemplateResponse(request, "projects/error.html", {
+            "request": request, "message": "Звіт не знайдено",
+        }, status_code=404)
+    except AuthenticationRequiredError:
+        raise
+    except Exception:
+        # Never render internal exceptions or report content into the response.
+        return RedirectResponse(f"/ui/projects/{project_id}/outputs?pdf_error=1", status_code=303)
+
+
+@router.get("/{project_id}/reports/{method}/{source_id}", response_class=HTMLResponse,
+            include_in_schema=False)
+def view_report_source(request: Request, project_id: str, method: str, source_id: str):
+    try:
+        item = _facade(request).get_report_source(project_id, method, source_id)
+        return templates.TemplateResponse(request, "projects/report_source.html", {
+            "request": request, "item": item,
+        })
+    except (AccessDeniedError, EntityNotFoundError):
+        return templates.TemplateResponse(request, "projects/error.html", {
+            "request": request, "message": "Звіт не знайдено",
+        }, status_code=404)
+
+
+@router.get("/{project_id}/reports/{method}/{source_id}/pdf/{deliverable_id}", include_in_schema=False)
+def download_report_pdf(request: Request, project_id: str, method: str,
+                        source_id: str, deliverable_id: str):
+    try:
+        record, data = _facade(request).download_report_pdf(
+            project_id, method, source_id, deliverable_id)
+    except (AccessDeniedError, EntityNotFoundError):
+        return templates.TemplateResponse(request, "projects/error.html", {
+            "request": request, "message": "PDF не знайдено",
+        }, status_code=404)
+    return Response(data, media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="{record.filename}"',
+        "Cache-Control": "private, no-store", "Pragma": "no-cache",
+        "X-Content-Type-Options": "nosniff",
+    })
 
 @router.get("/{project_id}/brief", response_class=HTMLResponse, include_in_schema=False)
 def project_brief(request: Request, project_id: str):

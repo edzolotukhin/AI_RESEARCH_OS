@@ -45,6 +45,17 @@ class ProjectWorkspaceFacade:
         return ProjectOutputsQueryService(container=self.container).get(
             project, owner_id=self.owner_id,
         )
+    def get_report_catalog(self, project_id: str):
+        return self.container.project_deliverables_service.catalog(project_id, owner_id=self.owner_id)
+    def get_report_source(self, project_id: str, method: str, source_id: str):
+        return self.container.project_deliverables_service.source(
+            project_id, method, source_id, owner_id=self.owner_id)
+    def generate_report_pdf(self, project_id: str, method: str, source_id: str):
+        return self.container.project_deliverables_service.generate(
+            project_id, method, source_id, owner_id=self.owner_id)
+    def download_report_pdf(self, project_id: str, method: str, source_id: str, deliverable_id: str):
+        return self.container.project_deliverables_service.download(
+            project_id, method, source_id, deliverable_id, owner_id=self.owner_id)
     def start_desk(self, project_id: str, brief_payload: dict):
         project = self.authorization.require_project(self.principal, project_id)
         quant_id = build_quantitative_workflow_template().id

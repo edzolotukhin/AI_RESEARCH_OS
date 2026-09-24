@@ -12,6 +12,9 @@ terminals
 *.md
 !README.md
 agency/projects
+artifacts
+prototypes
+.worktrees
 .env
 .env.*
 !.env.example

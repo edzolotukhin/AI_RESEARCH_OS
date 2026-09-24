@@ -8,6 +8,11 @@ WORKDIR /app
 
 RUN adduser --disabled-password --gecos "" appuser
 
+# DejaVu's Debian package retains the font copyright/license notices and
+# supports offline Ukrainian PDF rendering without bundling copied font files.
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
 # Empty named volumes inherit this directory's ownership on first mount, so
 # both trusted runtime processes can use the shared protected-data root while
 # continuing to run as the unprivileged application user.

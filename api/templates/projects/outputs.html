@@ -18,6 +18,27 @@
 </article>
 {% endfor %}
 </div>
+<section class="context compact-section"><p class="eyebrow">ЗБЕРЕЖЕНІ ЗВІТИ</p><h2>Кабінетні звіти</h2>
+{% if catalog.latest_created_desk_id %}<p>Остання створена редакція: {{ catalog.latest_created_desk_id }}</p>{% endif %}
+{% if catalog.latest_approved_desk_id %}<p>Остання схвалена редакція: {{ catalog.latest_approved_desk_id }}</p>{% endif %}
+{% if not catalog.desk %}<p class="muted">Збережених звітів поки немає.</p>{% endif %}
+{% for item in catalog.desk %}
+{% if loop.first %}<article class="card">{% else %}<details class="card"><summary>Редакція {{ item.document.revision_number }} · {{ item.document.title }}</summary>{% endif %}
+<h3>{{ item.document.title }}</h3><p>Редакція {{ item.document.revision_number }} · {{ item.document.status }} · {{ item.document.source_id }}{% if item.document.created_at %} · {{ item.document.created_at }}{% endif %}</p>
+<a class="button button-quiet" href="/ui/projects/{{ view.project_id|urlencode }}/reports/DESK/{{ item.document.source_id|urlencode }}">Переглянути звіт</a>
+{% if item.pdf %}<a class="button button-quiet" href="/ui/projects/{{ view.project_id|urlencode }}/reports/DESK/{{ item.document.source_id|urlencode }}/pdf/{{ item.pdf.id|urlencode }}">Завантажити PDF</a>
+{% else %}<form method="post" action="/ui/projects/{{ view.project_id|urlencode }}/reports/DESK/{{ item.document.source_id|urlencode }}/pdf"><input type="hidden" name="csrf_token" value="{{ pdf_csrf('DESK', item.document.source_id) }}"><button class="button button-quiet" type="submit">Створити PDF</button></form>{% endif %}
+{% if loop.first %}</article>{% else %}</details>{% endif %}
+{% endfor %}</section>
+<section class="context compact-section"><p class="eyebrow">ЗБЕРЕЖЕНІ ЗВІТИ</p><h2>Кількісні звіти</h2>
+{% if not catalog.quantitative %}<p class="muted">Прийнятих збережених звітів поки немає.</p>{% endif %}
+{% for item in catalog.quantitative %}<article class="card"><h3>{{ item.document.title }}</h3>
+<p>{{ item.document.status }} · {{ item.document.source_id }}</p>
+<a class="button button-quiet" href="/ui/projects/{{ view.project_id|urlencode }}/reports/QUANTITATIVE/{{ item.document.source_id|urlencode }}">Переглянути звіт</a>
+{% if item.pdf %}<a class="button button-quiet" href="/ui/projects/{{ view.project_id|urlencode }}/reports/QUANTITATIVE/{{ item.document.source_id|urlencode }}/pdf/{{ item.pdf.id|urlencode }}">Завантажити PDF</a>
+{% else %}<form method="post" action="/ui/projects/{{ view.project_id|urlencode }}/reports/QUANTITATIVE/{{ item.document.source_id|urlencode }}/pdf"><input type="hidden" name="csrf_token" value="{{ pdf_csrf('QUANTITATIVE', item.document.source_id) }}"><button class="button button-quiet" type="submit">Створити PDF</button></form>{% endif %}
+</article>{% endfor %}</section>
+{% if pdf_error %}<p role="alert">PDF зараз недоступний. Збережений звіт можна переглянути; спробуйте створити PDF пізніше.</p>{% endif %}
 {% if not view.methods %}<section class="empty compact-empty"><h2>Методи ще не обрано</h2><p>Результати з’являться після вибору та виконання дослідження.</p></section>{% endif %}
 <section class="context compact-section output-note"><p class="eyebrow">АКТИВНІСТЬ</p><h2>{% if view.activity.state == 'unavailable' %}Історія активності недоступна{% else %}Активність проєкту{% endif %}</h2>
 {% if view.activity.events %}<ol class="activity-timeline">{% for event in view.activity.events %}<li><span>{{ event.label }}</span><time>{{ event.date_time }}</time>{% if event.method %}<small>{{ event.method }}</small>{% endif %}</li>{% endfor %}</ol>{% endif %}

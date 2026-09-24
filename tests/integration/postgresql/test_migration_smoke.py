@@ -69,6 +69,13 @@ class PostgreSQLMigrationSmokeTests(unittest.TestCase):
         table_names = {row[0] for row in tables}
         self.assertIn("projects", table_names)
         self.assertIn("workflow_runs", table_names)
+        self.assertIn("pdf_deliverables", table_names)
+        with self.engine.connect() as connection:
+            trigger_exists = connection.execute(text(
+                "SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = "
+                "'pdf_deliverables'::regclass AND tgname = 'trg_pdf_deliverable_immutable')"
+            )).scalar_one()
+        self.assertTrue(trigger_exists, "Completed PDF immutability trigger must survive migration round-trip")
 
 
 if __name__ == "__main__":

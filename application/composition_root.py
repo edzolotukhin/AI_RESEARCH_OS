@@ -108,6 +108,8 @@ from infrastructure.security.sha256_api_key_material_provider import (
 from infrastructure.security.sha256_digest_provider import Sha256DigestProvider
 from infrastructure.quantitative.importers import SavPyreadstatAdapter, XlsxOpenpyxlAdapter
 from infrastructure.quantitative.storage.protected_file_dataset_storage import ProtectedFileDatasetStorage
+from application.deliverables.service import ProjectDeliverablesService
+from infrastructure.documents.reportlab_pdf_renderer import ReportLabPdfRenderer
 
 from loaders.agent_loader import AgentLoader
 
@@ -659,6 +661,13 @@ def create_application_container(
         from infrastructure.persistence.postgresql.project_activity_reader import PostgreSQLProjectActivityReader
         activity_reader = PostgreSQLProjectActivityReader(persistence.activation_sessions)
 
+    project_deliverables_service = ProjectDeliverablesService(
+        projects=project_service, workflows=workflow_service,
+        reports=report_query_service, reviews=review_query_service,
+        quantitative_state=quantitative_ui_service.state if quantitative_ui_service else None,
+        store=persistence.pdf_store, renderer=ReportLabPdfRenderer(),
+    )
+
     return ApplicationContainer(
         config=config,
         agency=agency,
@@ -685,6 +694,7 @@ def create_application_container(
         quantitative_ui_service=quantitative_ui_service,
         project_planning_service=project_planning_service,
         activity_reader=activity_reader,
+        project_deliverables_service=project_deliverables_service,
         quantitative_objective_coverage_service=quantitative_objective_coverage_service,
         quantitative_authority_chain_service=quantitative_authority_chain_service,
         quantitative_authority_chain_selection_service=quantitative_authority_chain_selection_service,

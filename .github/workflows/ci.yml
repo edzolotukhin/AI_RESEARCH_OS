@@ -55,6 +55,13 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Install offline PDF verification dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-dejavu-core
+          python -m pip install pypdf==6.10.0
+          echo "PDF_FONT_PATH=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf" >> "$GITHUB_ENV"
+
       - name: Check whitespace and conflict markers
         shell: bash
         run: |
