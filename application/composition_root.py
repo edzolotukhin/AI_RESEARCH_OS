@@ -110,6 +110,7 @@ from infrastructure.quantitative.importers import SavPyreadstatAdapter, XlsxOpen
 from infrastructure.quantitative.storage.protected_file_dataset_storage import ProtectedFileDatasetStorage
 from application.deliverables.service import ProjectDeliverablesService
 from infrastructure.documents.reportlab_pdf_renderer import ReportLabPdfRenderer
+from infrastructure.documents.pptx_renderer import PptxRenderer
 
 from loaders.agent_loader import AgentLoader
 
@@ -666,6 +667,8 @@ def create_application_container(
         reports=report_query_service, reviews=review_query_service,
         quantitative_state=quantitative_ui_service.state if quantitative_ui_service else None,
         store=persistence.pdf_store, renderer=ReportLabPdfRenderer(),
+        presentation_jobs=persistence.presentation_jobs,
+        pptx_renderer=PptxRenderer() if persistence.presentation_jobs is not None else None,
     )
 
     return ApplicationContainer(

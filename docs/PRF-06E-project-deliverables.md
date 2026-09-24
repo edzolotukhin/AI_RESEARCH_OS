@@ -53,6 +53,11 @@ retention purge. Database byte storage is simple and atomic for the current
 5 MB cap, but capacity/backup impact needs operational monitoring before
 raising limits. Long-running synchronous PDF requests need timeout and rate
 limits at the deployment boundary; production load testing remains to be done.
+PRF-06F later extends the same immutable blob table with explicit format and
+template-version identity plus a durable PPTX job table. See
+`docs/PRF-06F-project-presentations.md`; this PRF-06E handoff describes the
+original PDF behavior and remains its historical baseline.
+
 The existing UI internal-key principal model is unchanged. Action-bound CSRF
 tokens protect the new POST; the host deployment must keep the internal key
 private and enforce its existing access boundary. No PPTX, preview, DOCX,

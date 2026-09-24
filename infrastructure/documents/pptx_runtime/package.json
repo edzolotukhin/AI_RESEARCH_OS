@@ -1,0 +1,9 @@
+{
+  "name": "ai-research-os-pptx-runtime",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "pptxgenjs": "4.0.1",
+    "jszip": "3.10.1"
+  }
+}

@@ -62,6 +62,19 @@ jobs:
           python -m pip install pypdf==6.10.0
           echo "PDF_FONT_PATH=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf" >> "$GITHUB_ENV"
 
+      - name: Set up pinned PPTX Node runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.16.0"
+
+      - name: Install pinned PPTX renderer and run synthetic qualification
+        run: |
+          npm ci --prefix infrastructure/documents/pptx_runtime --omit=dev --ignore-scripts --no-audit --no-fund
+          npm ci --prefix prototypes/prf06f_pptx_qualification --omit=dev --ignore-scripts --no-audit --no-fund
+          node prototypes/prf06f_pptx_qualification/qualify.mjs prototypes/prf06f_pptx_qualification/runs
+          node prototypes/prf06f_pptx_qualification/qualify.mjs --self-test-limits
+          python -m unittest prototypes.prf06f_pptx_qualification.validate -v
+
       - name: Check whitespace and conflict markers
         shell: bash
         run: |

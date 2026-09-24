@@ -70,6 +70,13 @@ class PostgreSQLMigrationSmokeTests(unittest.TestCase):
         self.assertIn("projects", table_names)
         self.assertIn("workflow_runs", table_names)
         self.assertIn("pdf_deliverables", table_names)
+        self.assertIn("presentation_jobs", table_names)
+        with self.engine.connect() as connection:
+            columns = set(connection.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'pdf_deliverables'"
+            )).scalars())
+        self.assertTrue({"format", "template_version"}.issubset(columns))
         with self.engine.connect() as connection:
             trigger_exists = connection.execute(text(
                 "SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = "

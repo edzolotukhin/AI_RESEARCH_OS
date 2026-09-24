@@ -1,0 +1,14 @@
+{% if presentation_enabled %}
+{% if item.pptx %}
+<p>Презентація за статусом джерела: {{ item.pptx.status_snapshot }}</p>
+<a class="button button-quiet" href="/ui/projects/{{ view.project_id|urlencode }}/reports/{{ item.document.method }}/{{ item.document.source_id|urlencode }}/pptx/{{ item.pptx.id|urlencode }}">Завантажити PPTX</a>
+<p class="muted">Попередній перегляд недоступний. Презентацію можна завантажити.</p>
+{% elif item.presentation_job and item.presentation_job.state in ('pending', 'processing') %}
+<p>Презентація створюється</p>
+{% elif item.presentation_job and item.presentation_job.state == 'failed' %}
+<p role="alert">Презентацію не вдалося створити.</p>
+{% if item.presentation_job.attempts < 3 %}<form method="post" action="/ui/projects/{{ view.project_id|urlencode }}/reports/{{ item.document.method }}/{{ item.document.source_id|urlencode }}/pptx"><input type="hidden" name="csrf_token" value="{{ pptx_csrf(item.document.method, item.document.source_id) }}"><button class="button button-quiet" type="submit">Повторити створення презентації</button></form>{% endif %}
+{% else %}
+<form method="post" action="/ui/projects/{{ view.project_id|urlencode }}/reports/{{ item.document.method }}/{{ item.document.source_id|urlencode }}/pptx"><input type="hidden" name="csrf_token" value="{{ pptx_csrf(item.document.method, item.document.source_id) }}"><button class="button button-quiet" type="submit">Створити презентацію</button></form>
+{% endif %}
+{% endif %}

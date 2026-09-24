@@ -23,6 +23,16 @@ class PdfTable:
 
 
 @dataclass(frozen=True)
+class PresentationChart:
+    title: str
+    labels: tuple[str, ...]
+    values: tuple[float, ...]
+    base: str | None
+    unit: str | None
+    supported: bool = True
+
+
+@dataclass(frozen=True)
 class PdfSourceDocument:
     project_id: str
     method: str
@@ -42,6 +52,7 @@ class PdfSourceDocument:
     created_at: str | None = None
     revision_number: int | None = None
     previous_report_id: str | None = None
+    charts: tuple[PresentationChart, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -62,6 +73,8 @@ class PdfDeliverable:
     filename: str
     media_type: str = "application/pdf"
     state: str = "completed"
+    format: str = "PDF"
+    template_version: str = "pdf-v1"
 
 
 RENDERER_VERSION = "prf06e-reportlab-1"

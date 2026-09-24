@@ -1,0 +1,8 @@
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libreoffice-impress fonts-dejavu-core poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+RUN useradd --create-home reviewer
+USER reviewer
+WORKDIR /work
+ENTRYPOINT ["libreoffice", "-env:UserInstallation=file:///tmp/prf06f-office", "--headless", "--convert-to", "pdf", "--outdir", "/work"]

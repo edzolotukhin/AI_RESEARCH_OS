@@ -39,6 +39,10 @@ def project_outputs(request: Request, project_id: str):
             "pdf_csrf": lambda method, source_id: pdf_csrf_token(
                 request.app.state.container, facade.owner_id, project_id, method, source_id),
             "pdf_error": request.query_params.get("pdf_error") == "1",
+            "pptx_error": request.query_params.get("pptx_error") == "1",
+            "presentation_enabled": request.app.state.container.project_deliverables_service.presentation_jobs is not None,
+            "pptx_csrf": lambda method, source_id: pdf_csrf_token(
+                request.app.state.container, facade.owner_id, project_id, method, source_id, "pptx"),
         })
     except (AccessDeniedError, EntityNotFoundError):
         return templates.TemplateResponse(request, "projects/error.html", {
@@ -95,6 +99,46 @@ def download_report_pdf(request: Request, project_id: str, method: str,
             "request": request, "message": "PDF не знайдено",
         }, status_code=404)
     return Response(data, media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="{record.filename}"',
+        "Cache-Control": "private, no-store", "Pragma": "no-cache",
+        "X-Content-Type-Options": "nosniff",
+    })
+
+
+@router.post("/{project_id}/reports/{method}/{source_id}/pptx", include_in_schema=False)
+def schedule_report_pptx(request: Request, project_id: str, method: str, source_id: str,
+                         csrf_token: str = Form("")):
+    try:
+        facade = _facade(request)
+        if not valid_pdf_csrf(request.app.state.container, facade.owner_id,
+                              project_id, method, source_id, csrf_token, "pptx"):
+            return Response(status_code=403)
+        origin = request.headers.get("origin")
+        if origin and origin.rstrip("/") != str(request.base_url).rstrip("/"):
+            return Response(status_code=403)
+        facade.schedule_presentation(project_id, method, source_id)
+        return RedirectResponse(f"/ui/projects/{project_id}/outputs", status_code=303)
+    except (AccessDeniedError, EntityNotFoundError):
+        return templates.TemplateResponse(request, "projects/error.html", {
+            "request": request, "message": "Звіт не знайдено",
+        }, status_code=404)
+    except AuthenticationRequiredError:
+        raise
+    except Exception:
+        return RedirectResponse(f"/ui/projects/{project_id}/outputs?pptx_error=1", status_code=303)
+
+
+@router.get("/{project_id}/reports/{method}/{source_id}/pptx/{deliverable_id}", include_in_schema=False)
+def download_report_pptx(request: Request, project_id: str, method: str,
+                         source_id: str, deliverable_id: str):
+    try:
+        record, data = _facade(request).download_presentation(
+            project_id, method, source_id, deliverable_id)
+    except (AccessDeniedError, EntityNotFoundError):
+        return templates.TemplateResponse(request, "projects/error.html", {
+            "request": request, "message": "Презентацію не знайдено",
+        }, status_code=404)
+    return Response(data, media_type=record.media_type, headers={
         "Content-Disposition": f'attachment; filename="{record.filename}"',
         "Cache-Control": "private, no-store", "Pragma": "no-cache",
         "X-Content-Type-Options": "nosniff",

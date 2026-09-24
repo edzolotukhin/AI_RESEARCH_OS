@@ -47,6 +47,9 @@ class WorkerLoop:
             while not self._stop.is_set():
                 try:
                     processed = self._service.process_once(self._worker)
+                    if self._container.project_deliverables_service is not None:
+                        processed = (self._container.project_deliverables_service
+                                     .process_next_presentation(self._worker)) or processed
                 except Exception:
                     logger.exception(
                         "worker_process_once_unexpected worker_id=%s",
@@ -61,10 +64,17 @@ class WorkerLoop:
     def run_until_idle(self, *, max_iterations: int = 100) -> int:
         """Process runnable runs until none remain. Useful in tests."""
         self._container.agency.initialize()
-        return self._service.drain_runnable_runs(
+        runs = self._service.drain_runnable_runs(
             self._worker,
             max_runs=max_iterations,
         )
+        presentations = 0
+        if self._container.project_deliverables_service is not None:
+            for _ in range(max_iterations):
+                if not self._container.project_deliverables_service.process_next_presentation(self._worker):
+                    break
+                presentations += 1
+        return runs + presentations
 
 
 def install_signal_handlers(loop: WorkerLoop) -> None:

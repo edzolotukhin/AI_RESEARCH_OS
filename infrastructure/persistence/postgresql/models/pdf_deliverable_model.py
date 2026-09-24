@@ -11,11 +11,11 @@ from infrastructure.persistence.postgresql.database import Base
 class PdfDeliverableModel(Base):
     __tablename__ = "pdf_deliverables"
     __table_args__ = (
-        UniqueConstraint("project_id", "method", "source_id", "source_version", "renderer_version",
-                         name="uq_pdf_deliverable_source_renderer"),
-        CheckConstraint("byte_size > 0 AND byte_size <= 5000000", name="ck_pdf_deliverable_size"),
+        UniqueConstraint("project_id", "method", "source_id", "source_version", "format", "template_version", "renderer_version",
+                         name="uq_project_deliverable_identity"),
+        CheckConstraint("byte_size > 0 AND ((format = 'PDF' AND byte_size <= 5000000) OR (format = 'PPTX' AND byte_size <= 10000000))", name="ck_pdf_deliverable_size"),
         CheckConstraint("method IN ('DESK', 'QUANTITATIVE')", name="ck_pdf_deliverable_method"),
-        CheckConstraint("state = 'completed' AND media_type = 'application/pdf'", name="ck_pdf_deliverable_state"),
+        CheckConstraint("state = 'completed' AND ((format = 'PDF' AND media_type = 'application/pdf') OR (format = 'PPTX' AND media_type = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'))", name="ck_pdf_deliverable_state"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     project_id: Mapped[str] = mapped_column(String(64), ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False)
@@ -31,6 +31,8 @@ class PdfDeliverableModel(Base):
     checksum: Mapped[str] = mapped_column(String(64), nullable=False)
     byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
     filename: Mapped[str] = mapped_column(String(160), nullable=False)
-    media_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    media_type: Mapped[str] = mapped_column(String(100), nullable=False)
     state: Mapped[str] = mapped_column(String(16), nullable=False)
     content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    format: Mapped[str] = mapped_column(String(8), nullable=False, default="PDF")
+    template_version: Mapped[str] = mapped_column(String(64), nullable=False, default="pdf-v1")

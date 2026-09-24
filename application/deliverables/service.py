@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from application.deliverables.contracts import PdfDeliverable, PdfSection, PdfSourceDocument, RENDERER_VERSION
+from application.deliverables.presentation_jobs import PresentationJob
 from application.persistence.exceptions import AccessDeniedError, EntityNotFoundError
 from domain.quantitative.report import QuantitativeReportCompositionResult, QuantitativeReportValidationStatus
 from domain.quantitative.workflow import QuantitativeStudyProjection
@@ -19,6 +20,8 @@ from application.quantitative.workflow import build_quantitative_workflow_templa
 class ReportCatalogItem:
     document: PdfSourceDocument
     pdf: PdfDeliverable | None
+    presentation_job: PresentationJob | None = None
+    pptx: PdfDeliverable | None = None
 
 
 @dataclass(frozen=True)
@@ -31,7 +34,7 @@ class ReportCatalog:
 
 class ProjectDeliverablesService:
     def __init__(self, *, projects, workflows, reports, reviews, quantitative_state,
-                 store, renderer) -> None:
+                 store, renderer, presentation_jobs=None, pptx_renderer=None) -> None:
         self.projects = projects
         self.workflows = workflows
         self.reports = reports
@@ -39,6 +42,8 @@ class ProjectDeliverablesService:
         self.quantitative_state = quantitative_state
         self.store = store
         self.renderer = renderer
+        self.presentation_jobs = presentation_jobs
+        self.pptx_renderer = pptx_renderer
 
     def _project(self, project_id: str, owner_id: str):
         try:
@@ -151,7 +156,21 @@ class ProjectDeliverablesService:
             pdf = self.store.find(project_id=project_id, method=document.method,
                                   source_id=document.source_id, source_version=document.source_version,
                                   renderer_version=RENDERER_VERSION)
-            return ReportCatalogItem(document, pdf)
+            job = None
+            pptx = None
+            if self.presentation_jobs is not None and self.pptx_renderer is not None:
+                job = self.presentation_jobs.find(
+                    project_id=project_id, method=document.method,
+                    source_id=document.source_id, source_version=document.source_version,
+                    template_version=self.pptx_renderer.template_version,
+                    renderer_version=self.pptx_renderer.version)
+                if job is not None and job.state == "completed":
+                    pptx = self.store.find(
+                        project_id=project_id, method=document.method,
+                        source_id=document.source_id, source_version=document.source_version,
+                        renderer_version=self.pptx_renderer.version,
+                        format="PPTX", template_version=self.pptx_renderer.template_version)
+            return ReportCatalogItem(document, pdf, job, pptx)
 
         return ReportCatalog(tuple(map(item, desk)), tuple(map(item, quant)),
                              desk[0].source_id if desk else None,
@@ -205,4 +224,86 @@ class ProjectDeliverablesService:
             raise AccessDeniedError("PDF не знайдено")
         if len(data) != record.byte_size or hashlib.sha256(data).hexdigest() != record.checksum:
             raise AccessDeniedError("PDF не знайдено")
+        return record, data
+
+    def schedule_presentation(self, project_id: str, method: str, source_id: str,
+                              *, owner_id: str) -> PresentationJob:
+        if self.presentation_jobs is None or self.pptx_renderer is None:
+            raise ValueError("Створення презентації недоступне")
+        document = self.source(project_id, method, source_id, owner_id=owner_id).document
+        job = self.presentation_jobs.schedule(
+            project_id=project_id, method=method, run_id=document.run_id,
+            study_id=document.study_id, source_id=source_id,
+            source_version=document.source_version, status_snapshot=document.status,
+            template_version=self.pptx_renderer.template_version,
+            renderer_version=self.pptx_renderer.version)
+        if job.state == "failed":
+            return self.presentation_jobs.retry(job.id) or job
+        return job
+
+    def process_next_presentation(self, worker_id: str) -> bool:
+        if self.presentation_jobs is None or self.pptx_renderer is None:
+            return False
+        job = self.presentation_jobs.claim_next(worker_id)
+        if job is None:
+            return False
+        try:
+            project = self.projects.get_project(job.project_id)
+            document = self.source(job.project_id, job.method, job.source_id,
+                                   owner_id=project.owner_principal_id).document
+            if (document.run_id, document.study_id, document.source_version,
+                document.status) != (job.run_id, job.study_id, job.source_version,
+                                     job.status_snapshot):
+                raise ValueError("source identity changed")
+            existing = self.store.find(
+                project_id=job.project_id, method=job.method, source_id=job.source_id,
+                source_version=job.source_version, renderer_version=job.renderer_version,
+                format="PPTX", template_version=job.template_version)
+            if existing is None:
+                data = self.pptx_renderer.render(document)
+                identifier = str(uuid4())
+                record = PdfDeliverable(
+                    id=identifier, project_id=job.project_id, method=job.method,
+                    run_id=job.run_id, study_id=job.study_id, source_id=job.source_id,
+                    source_version=job.source_version, status_snapshot=job.status_snapshot,
+                    renderer_version=job.renderer_version, created_at=datetime.now(timezone.utc),
+                    storage_key=identifier, checksum=hashlib.sha256(data).hexdigest(),
+                    byte_size=len(data), filename=f"research-{job.method.lower()}-{identifier}.pptx",
+                    media_type=self.pptx_renderer.media_type, format="PPTX",
+                    template_version=job.template_version,
+                )
+                existing = self.store.complete(record, data)
+            self.presentation_jobs.complete(job.id, worker_id, existing.id)
+        except Exception:
+            # The failure code is deliberately content-free; the user may retry.
+            self.presentation_jobs.fail(job.id, worker_id, "generation_failed")
+        return True
+
+    def download_presentation(self, project_id: str, method: str, source_id: str,
+                              deliverable_id: str, *, owner_id: str) -> tuple[PdfDeliverable, bytes]:
+        if self.pptx_renderer is None or self.presentation_jobs is None:
+            raise AccessDeniedError("Презентацію не знайдено")
+        document = self.source(project_id, method, source_id, owner_id=owner_id).document
+        stored = self.store.get(deliverable_id)
+        if stored is None:
+            raise AccessDeniedError("Презентацію не знайдено")
+        record, data = stored
+        job = self.presentation_jobs.find(
+            project_id=project_id, method=method, source_id=source_id,
+            source_version=record.source_version,
+            template_version=record.template_version,
+            renderer_version=record.renderer_version)
+        if job is None or job.state != "completed" or job.completed_deliverable_id != deliverable_id:
+            raise AccessDeniedError("Презентацію не знайдено")
+        if (record.project_id, record.method, record.run_id, record.study_id,
+            record.source_id, record.format, record.media_type) != (
+            project_id, method, document.run_id, document.study_id, source_id,
+            "PPTX", self.pptx_renderer.media_type):
+            raise AccessDeniedError("Презентацію не знайдено")
+        if (method == "QUANTITATIVE" and record.source_version != document.source_version) or (
+            method == "DESK" and not record.source_version.startswith(
+                f"revision-{document.revision_number}-review-")):
+            raise AccessDeniedError("Презентацію не знайдено")
+        if len(data) != record.byte_size or hashlib.sha256(data).hexdigest() != record.checksum:
+            raise AccessDeniedError("Презентацію не знайдено")
         return record, data

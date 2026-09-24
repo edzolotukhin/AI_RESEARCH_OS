@@ -106,6 +106,7 @@ from infrastructure.persistence.postgresql.repositories.postgresql_quantitative_
 from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
 from application.deliverables.store import InMemoryPdfStore
 from infrastructure.persistence.postgresql.repositories.postgresql_pdf_store import PostgreSQLPdfStore
+from infrastructure.persistence.postgresql.repositories.postgresql_presentation_jobs import PostgreSQLPresentationJobs
 
 
 @dataclass(frozen=True)
@@ -126,6 +127,7 @@ class PersistenceBundle:
     review_repository: object
     execution_log_store: object
     pdf_store: object | None = None
+    presentation_jobs: object | None = None
     quantitative_state_repository: object | None = None
     engine: Engine | None = None
     activation_sessions: object | None = None
@@ -219,6 +221,7 @@ def build_persistence_bundle(
             review_repository=PostgreSQLReviewRepository(session_factory),
             execution_log_store=PostgreSQLExecutionLogStore(session_factory),
             pdf_store=PostgreSQLPdfStore(session_factory),
+            presentation_jobs=PostgreSQLPresentationJobs(session_factory),
             quantitative_state_repository=PostgreSQLQuantitativeStateRepository(session_factory),
             engine=engine,
             activation_sessions=session_factory,

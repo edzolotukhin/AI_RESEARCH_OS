@@ -1,10 +1,18 @@
-FROM python:3.11-slim
+FROM node:22.16.0-bookworm-slim AS pptx-node
+WORKDIR /opt/pptx
+COPY infrastructure/documents/pptx_runtime/package.json infrastructure/documents/pptx_runtime/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+
+FROM python:3.11-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
+
+COPY --from=pptx-node /usr/local/bin/node /usr/local/bin/node
+COPY --from=pptx-node /opt/pptx/node_modules /app/infrastructure/documents/pptx_runtime/node_modules
 
 RUN adduser --disabled-password --gecos "" appuser
 
