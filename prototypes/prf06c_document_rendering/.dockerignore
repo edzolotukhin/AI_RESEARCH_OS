@@ -1,0 +1,13 @@
+output/
+runs/
+.venv/
+node_modules/
+.validation/
+.chart-data-*/
+__pycache__/
+*.pdf
+*.pptx
+*.png
+*.tmp
+*.log
+.env*

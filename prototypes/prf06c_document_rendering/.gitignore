@@ -1,0 +1,10 @@
+/output/
+/node_modules/
+/__pycache__/
+/.validation/
+/.venv/
+/runs/
+/.chart-data-*/
+*.tmp
+*.log
+.env*

@@ -1,0 +1,8 @@
+# Prototype-only; local bundled runtime supplied these packages.
+# The Linux PDF image installs the same pinned top-level and transitive versions.
+reportlab==4.4.9
+pypdf==6.10.0
+pillow==12.3.0
+charset-normalizer==3.5.1
+# Node: @oai/artifact-tool 2.8.59, bundled INTERNAL EVALUATION ONLY.
+# This is not an installable/redistributable production PPTX dependency.

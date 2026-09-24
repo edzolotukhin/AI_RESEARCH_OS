@@ -1,0 +1,13 @@
+# Prototype-only Linux/Python 3.11 PDF qualification; not the production image.
+FROM python:3.11-slim@sha256:da047cb8f9d1d98e5c070f5300ba9f7274e33b8fc0e5be5ed88740aed1b95ba9
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /prototype
+COPY prototype-requirements.txt fixtures.py prototype.py validate.py ./
+RUN pip install --no-cache-dir -r prototype-requirements.txt
+
+ENV PRF06C_RUN_NAME=prf06d-linux
+CMD ["python", "prototype.py"]
