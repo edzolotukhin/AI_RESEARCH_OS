@@ -1,0 +1,91 @@
+name: ai_research_os_prf07b
+
+x-runtime: &runtime
+  image: ai-research-os-prf07b:4273e291
+  build: .
+  environment: &runtime-env
+    PERSISTENCE_BACKEND: postgresql
+    DATABASE_URL: postgresql+psycopg://prf07b:${PRF07B_DB_PASSWORD:?}@postgres:5432/prf07b_acceptance
+    BACKGROUND_EXECUTION_MODE: external
+    PROJECTS_ROOT: /tmp/projects
+    QUANTITATIVE_PROTECTED_STORAGE_ROOT: /var/lib/ai_research_os/quantitative-protected
+    OPENAI_API_KEY: ""
+    SEARCH_API_KEY: ""
+    DETERMINISTIC_STAGE_EXECUTORS: "1"
+  volumes:
+    - protected_data:/var/lib/ai_research_os/quantitative-protected
+  networks:
+    - acceptance
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: prf07b_acceptance
+      POSTGRES_USER: prf07b
+      POSTGRES_PASSWORD: ${PRF07B_DB_PASSWORD:?}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - acceptance
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prf07b -d prf07b_acceptance"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    mem_limit: 512m
+    restart: unless-stopped
+
+  api:
+    <<: *runtime
+    environment:
+      <<: *runtime-env
+      UI_INTERNAL_API_KEY: ${PRF07B_UI_KEY:?}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${PRF07B_PORT:-18080}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    mem_limit: 768m
+
+  worker:
+    <<: *runtime
+    command: ["python", "-m", "worker.main"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -m worker.healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    mem_limit: 1024m
+    stop_grace_period: 30s
+
+  seed:
+    <<: *runtime
+    profiles: ["seed"]
+    command: ["python", "/acceptance/seed.py"]
+    environment:
+      <<: *runtime-env
+      UI_INTERNAL_API_KEY: ${PRF07B_UI_KEY:?}
+      PYTHONPATH: /app
+    volumes:
+      - ./tools/prf07b_seed.py:/acceptance/seed.py:ro
+      - protected_data:/var/lib/ai_research_os/quantitative-protected
+    restart: "no"
+
+volumes:
+  postgres_data:
+  protected_data:
+
+networks:
+  acceptance:

@@ -19,3 +19,7 @@ prototypes
 .env
 .env.*
 !.env.example
+docker-compose.prf07b.yml
+scripts/prf07b_start.ps1
+tools/prf07b_seed.py
+tools/prf07b_verify.py
