@@ -269,4 +269,16 @@ jobs:
           python -c "from tests.api.helpers import build_test_client; c,_=build_test_client(); assert c.get('/openapi.json').status_code==200"
 
       - name: Docker image build smoke
-        run: docker build .
+        run: docker build --tag ai-research-os-ci:prf06g .
+
+      - name: Offline production-image PDF/PPTX smoke
+        run: >-
+          docker run --rm --network none --read-only
+          --tmpfs /tmp:rw,nosuid,size=32m
+          --memory 512m --pids-limit 64
+          ai-research-os-ci:prf06g
+          python -m unittest
+          tests.application.test_prf06f_pptx_renderer
+          tests.api.ui.test_prf06f_presentation_ui
+          tests.api.ui.test_prf06e_project_deliverables
+          -v
