@@ -44,14 +44,18 @@ plaintext password is needed. Do not copy that key into a browser or report.
 
 Choose “PRF-07B — Синтетична перевірка PDF/PPTX”, click
 `Відкрити проєкт`, then `Переглянути результати та активність`.
-In `Кабінетні звіти`, start with approved revision 1 (`Схвалено`);
-revision 2 is the newer draft (`Чернетка`). The `Кількісні звіти`
-section contains one `Прийнято` synthetic report.
+In `Кабінетні звіти`, start with the newer draft revision 2 (`Чернетка`):
+its PDF and PPTX have deliberately not been generated. Expand the older
+revision 1 (`Схвалено`) to compare its exact approval status. The
+`Кількісні звіти` section contains one `Прийнято` synthetic report.
 
-For each selected report, use `Переглянути звіт`, then on Outputs use
-`Створити PDF` and `Завантажити PDF`. Use
-`Створити презентацію`, refresh Outputs while
-`Презентація створюється` is shown, then `Завантажити PPTX`.
+On revision 2, use `Переглянути звіт`, then on Outputs use `Створити PDF`
+followed by `Завантажити PDF`. Use `Створити презентацію`, refresh Outputs
+while `Презентація створюється` is shown, then `Завантажити PPTX`.
+Revision 1 and the Quantitative report already have completed PDF/PPTX
+artifacts from technical verification; their cards show download buttons.
+Use them to compare source binding and repeated immutable downloads, without
+regenerating completed artifacts.
 Downloads appear in the browser's configured Downloads folder. Open PPTX in
 Microsoft PowerPoint when available and LibreOffice as a secondary check.
 Inspect Ukrainian typography, long headings, continuation slides, citations,
