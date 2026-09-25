@@ -108,7 +108,7 @@ class DeterministicSufficiencyEvaluatorTests(unittest.TestCase):
         self.assertEqual(result.independent_source_count, 1)
         self.assertEqual(result.source_ids, ("source-a",))
 
-    def test_multiple_sources_increase_independent_source_count(self) -> None:
+    def test_multiple_unknown_sources_do_not_prove_independence(self) -> None:
         evidence = (
             _evidence(evidence_id="ev-1", source_id="source-a", information_need_refs=("in-1",)),
             _evidence(evidence_id="ev-2", source_id="source-b", information_need_refs=("in-1",)),
@@ -118,8 +118,46 @@ class DeterministicSufficiencyEvaluatorTests(unittest.TestCase):
             for item in self._evaluator.evaluate(design=_design(), evidence=evidence)
             if item.information_need_id == "in-1"
         )
+        self.assertEqual(result.independent_source_count, 1)
+        self.assertEqual(result.source_ids, ("source-a",))
+        self.assertTrue(any("lineage not established" in w for w in result.warnings))
+
+    def test_established_distinct_data_origins_count_twice(self) -> None:
+        evidence = (
+            _evidence(evidence_id="ev-1", source_id="source-a", metadata={
+                "data_lineage": {"status": "established", "origin_id": "dataset-a"},
+            }),
+            _evidence(evidence_id="ev-2", source_id="source-b", metadata={
+                "data_lineage": {"status": "established", "origin_id": "dataset-b"},
+            }),
+        )
+        result = self._evaluator.evaluate(design=_design(), evidence=evidence)[0]
         self.assertEqual(result.independent_source_count, 2)
-        self.assertEqual(result.source_ids, ("source-a", "source-b"))
+
+    def test_different_publishers_shared_origin_count_once(self) -> None:
+        evidence = (
+            _evidence(evidence_id="ev-1", source_id="official", metadata={
+                "data_lineage": {"status": "established", "origin_id": "operator-feed"},
+            }),
+            _evidence(evidence_id="ev-2", source_id="specialist", metadata={
+                "data_lineage": {"status": "established", "origin_id": "operator-feed"},
+            }),
+        )
+        result = self._evaluator.evaluate(design=_design(), evidence=evidence)[0]
+        self.assertEqual(result.evidence_count, 2)
+        self.assertEqual(result.independent_source_count, 1)
+
+    def test_same_publisher_separate_origins_can_count_twice(self) -> None:
+        evidence = (
+            _evidence(evidence_id="ev-1", source_id="report-one", metadata={
+                "data_lineage": {"status": "established", "origin_id": "survey-one"},
+            }),
+            _evidence(evidence_id="ev-2", source_id="report-two", metadata={
+                "data_lineage": {"status": "established", "origin_id": "survey-two"},
+            }),
+        )
+        result = self._evaluator.evaluate(design=_design(), evidence=evidence)[0]
+        self.assertEqual(result.independent_source_count, 2)
 
     def test_duplicate_evidence_does_not_increase_unique_count(self) -> None:
         shared_key = "shared-dedup-key"

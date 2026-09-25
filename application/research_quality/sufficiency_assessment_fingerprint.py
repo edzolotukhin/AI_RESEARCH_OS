@@ -11,7 +11,7 @@ from domain.planning.research_design import InformationNeed, ResearchQuestion
 
 from application.research_quality.allowed_aspect_ids import resolve_allowed_aspect_ids
 
-SUFFICIENCY_ASSESSMENT_CONTRACT_VERSION = "p1-07-11.1"
+SUFFICIENCY_ASSESSMENT_CONTRACT_VERSION = "prf-08c.1"
 
 
 def canonical_json_digest(payload: object) -> str:
@@ -60,6 +60,8 @@ def build_sufficiency_assessment_fingerprint(
                 "confidence": item.confidence,
                 "information_need_refs": sorted(item.information_need_refs),
                 "research_question_refs": sorted(item.research_question_refs),
+                "data_lineage": item.metadata.get("data_lineage"),
+                "observation_period": item.metadata.get("observation_period"),
             }
         )
     payload = {

@@ -11,6 +11,7 @@ from domain.reviews.review_result import ReviewResult
 from domain.reviews.review_verdict import ReviewVerdict
 
 from application.persistence.exceptions import ConcurrentModificationError
+from application.evidence.temporal_scope import qualifying_evidence
 from application.persistence.records import ArtifactRecord
 from application.ports.analysis_ports import FindingRepository, InsightRepository
 from application.ports.artifact_repository import ArtifactRepository
@@ -140,6 +141,9 @@ class ReviewService:
             evidence_items = self._evidence_repository.list_for_project(
                 project_id,
                 workflow_run_id=workflow_run_id,
+            )
+            evidence_items = qualifying_evidence(
+                design=design, evidence=evidence_items, brief=brief,
             )
             # Run/design isolation: drop any foreign records that leaked into lists.
             findings = [

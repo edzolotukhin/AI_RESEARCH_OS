@@ -5,6 +5,7 @@ from dataclasses import replace
 from application.execution.budget_utils import is_sufficiency_graceful_budget_stop
 from application.execution.exceptions import BudgetExhaustedError
 from application.ports.evidence_ports import EvidenceRepository
+from application.evidence.temporal_scope import qualifying_evidence
 from application.ports.research_quality_ports import ResearchSufficiencyEvaluator
 from application.ports.source_ports import SourceRepository
 from application.execution.execution_budget_context import get_execution_budget
@@ -198,9 +199,12 @@ class ResearchLoopService:
                     cache_payload = context.read_shared(SHARED_SUFFICIENCY_CACHE_KEY)
                     result = reconcile_terminal_readiness(
                         design=design,
-                        evidence=self._evidence_repository.list_for_project(
-                            context.project.id,
-                            workflow_run_id=context.workflow_run.id,
+                        evidence=qualifying_evidence(
+                            design=design,
+                            evidence=self._evidence_repository.list_for_project(
+                                context.project.id, workflow_run_id=context.workflow_run.id,
+                            ),
+                            brief=(context.workflow_template.research_brief_snapshot if context.workflow_template else None),
                         ),
                         previous=previous,
                         cache_payload=(
@@ -410,6 +414,10 @@ class ResearchLoopService:
         evidence = self._evidence_repository.list_for_project(
             context.project.id,
             workflow_run_id=context.workflow_run.id,
+        )
+        evidence = qualifying_evidence(
+            design=design, evidence=evidence,
+            brief=(context.workflow_template.research_brief_snapshot if context.workflow_template else None),
         )
         previous = get_sufficiency_assessment_cache()
         bind_sufficiency_assessment_cache(context)

@@ -14,6 +14,7 @@ from domain.planning.research_design import ResearchDesign
 from domain.reviews.review_result import ReviewResult
 
 from application.persistence.records import ArtifactRecord
+from application.evidence.temporal_scope import qualifying_evidence
 from application.ports.analysis_ports import FindingRepository, InsightRepository
 from application.ports.artifact_repository import ArtifactRepository
 from application.ports.evidence_ports import EvidenceRepository
@@ -146,6 +147,9 @@ class ReportService:
         evidence_items = self._evidence_repository.list_for_project(
             project_id,
             workflow_run_id=workflow_run_id,
+        )
+        evidence_items = qualifying_evidence(
+            design=design, evidence=evidence_items, brief=brief,
         )
         sources = self._source_repository.list_for_project(project_id)
         run_sources = [

@@ -9,7 +9,9 @@ EXTRACTION_SYSTEM_GUIDANCE = (
     "Return JSON only with shape "
     '{"items":[{"statement":"...","source_excerpt":"...",'
     '"information_need_id":"...","evidence_type":"direct_excerpt",'
-    '"direct":true,"confidence":0.8}]}. '
+    '"direct":true,"confidence":0.8,'
+    '"observation_period":null,"data_origin_id":null,'
+    '"data_origin_excerpt":null}]}. '
     "source_excerpt MUST be an exact substring of source_text after "
     "whitespace normalization. Do not invent IDs beyond "
     "information_need_id values listed in information_needs. "
@@ -19,6 +21,15 @@ EXTRACTION_SYSTEM_GUIDANCE = (
     "Do not fabricate facts, aspect coverage, or quantitative values absent "
     "from source_text. Returning {\"items\":[]} is valid when the chunk has "
     "no relevant grounded evidence. "
+    "observation_period is the exact date/month/quarter/year or range of the "
+    "factual observation, copied verbatim from source_excerpt; use null when "
+    "unknown. It is NOT the page publication or retrieval date. "
+    "For a forecast, retain its future reference period and identify it as "
+    "a forecast in the statement. "
+    "data_origin_id is the named underlying dataset/provider for this "
+    "particular claim, not the web publisher by default. Use null when "
+    "dependency is not explicit. data_origin_excerpt must quote the exact "
+    "source_text passage establishing that relationship; otherwise null. "
     "If requires_quantitative_evidence is true, preferentially extract "
     "grounded quantitative facts when they exist; still extract useful "
     "qualitative evidence; never invent numbers. "

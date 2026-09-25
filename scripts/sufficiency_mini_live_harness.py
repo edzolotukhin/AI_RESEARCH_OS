@@ -182,6 +182,7 @@ def _base_evidence(
     statement: str,
     source_excerpt: str,
     checksum_suffix: str,
+    data_origin_id: str | None = None,
 ) -> Evidence:
     return Evidence(
         id=evidence_id,
@@ -196,6 +197,10 @@ def _base_evidence(
         source_excerpt=source_excerpt,
         created_at="2026-08-07T12:00:00+00:00",
         deduplication_key=f"dedup-{evidence_id}",
+        metadata=(
+            {"data_lineage": {"status": "established", "origin_id": data_origin_id}}
+            if data_origin_id else {}
+        ),
     )
 
 
@@ -209,6 +214,7 @@ def scenario_a_fixtures() -> MiniLiveScenario:
                 evidence_id="ev-a-1",
                 source_id="source-belgrade-supplier-a",
                 checksum_suffix="a1",
+                data_origin_id="supplier-own-order-records",
                 statement=(
                     "GreenSprout Belgrade supplies fresh microgreens to restaurants "
                     "and hotels in Belgrade on a current commercial basis."
@@ -222,6 +228,7 @@ def scenario_a_fixtures() -> MiniLiveScenario:
                 evidence_id="ev-a-2",
                 source_id="source-horeca-trade-b",
                 checksum_suffix="a2",
+                data_origin_id="trade-directory-independent-verification",
                 statement=(
                     "A 2026 HoReCa supplier directory lists active commercial "
                     "microgreens supply for Belgrade restaurant clients."
@@ -235,6 +242,7 @@ def scenario_a_fixtures() -> MiniLiveScenario:
                 evidence_id="ev-a-3",
                 source_id="source-belgrade-supplier-a",
                 checksum_suffix="a3",
+                data_origin_id="supplier-own-order-records",
                 statement=(
                     "The supplier confirms ongoing 2026 commercial availability of "
                     "fresh microgreens for Belgrade HoReCa buyers."

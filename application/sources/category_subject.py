@@ -27,7 +27,6 @@ _NON_SUBJECT_WORDS = frozenset(
     }
 )
 
-_SUBJECT_MARKERS = frozenset({"category", "industry", "market", "markets", "sector"})
 _MAX_SUBJECT_TOKENS = 5
 
 
@@ -64,7 +63,9 @@ def resolve_category_subject(
             ordered = _ordered_subject_tokens(hint, excluded=excluded)
             if question_tokens and not question_tokens.intersection(ordered):
                 continue
-            subject = _build_subject(ordered, source=source)
+            # Explicit category fields may be descriptive sentences. Bound the
+            # subject at the field boundary, never by mining exclusion prose.
+            subject = _build_subject(ordered[:_MAX_SUBJECT_TOKENS], source=source)
             if subject is not None:
                 return subject
 
@@ -72,11 +73,6 @@ def resolve_category_subject(
         if question_tokens:
             title_tokens = [token for token in title_tokens if token in question_tokens]
         subject = _build_subject(title_tokens, source="brief_title_business_question")
-        if subject is not None:
-            return subject
-
-        local = _market_phrase_tokens(brief.business_question, excluded=excluded)
-        subject = _build_subject(local, source="brief_business_question")
         if subject is not None:
             return subject
 
@@ -103,21 +99,6 @@ def _resolve_from_design(design: ResearchDesign) -> CategorySubject | None:
         if token in shared
     ]
     return _build_subject(ordered, source="research_question_intersection")
-
-
-def _market_phrase_tokens(text: str, *, excluded: frozenset[str]) -> list[str]:
-    raw = _raw_tokens(text)
-    for index, token in enumerate(raw):
-        if token not in _SUBJECT_MARKERS:
-            continue
-        before = [
-            item
-            for item in raw[max(0, index - _MAX_SUBJECT_TOKENS) : index]
-            if item not in _NON_SUBJECT_WORDS and item not in excluded and not item.isdigit()
-        ]
-        if before:
-            return before[-_MAX_SUBJECT_TOKENS:]
-    return []
 
 
 def _build_subject(tokens: list[str], *, source: str) -> CategorySubject | None:

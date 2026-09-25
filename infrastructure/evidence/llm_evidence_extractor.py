@@ -196,6 +196,11 @@ class LlmEvidenceExtractor(EvidenceExtractor):
             if evidence_type not in {member.value for member in EvidenceType}:
                 evidence_type = EvidenceType.DIRECT_EXCERPT.value
             confidence = item.get("confidence")
+            metadata: dict[str, Any] = {}
+            for field in ("observation_period", "data_origin_id", "data_origin_excerpt"):
+                value = item.get(field)
+                if isinstance(value, str) and value.strip():
+                    metadata[field] = value.strip()
             try:
                 candidates.append(
                     EvidenceCandidate(
@@ -206,6 +211,7 @@ class LlmEvidenceExtractor(EvidenceExtractor):
                         information_need_refs=(need_id,),
                         confidence=float(confidence) if confidence is not None else None,
                         direct=bool(item.get("direct", True)),
+                        metadata=metadata,
                     ),
                 )
             except (TypeError, ValueError):

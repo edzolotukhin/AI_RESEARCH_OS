@@ -93,7 +93,7 @@ class DeterministicSufficiencyEvaluator:
     ) -> DeterministicSufficiencySignals:
         unique_evidence, duplicate_count = _deduplicate_evidence(mapped)
         evidence_ids = tuple(sorted(item.id for item in unique_evidence))
-        source_ids = tuple(sorted({item.source_id for item in unique_evidence}))
+        source_ids, lineage_warnings = _independent_lineages(unique_evidence)
 
         freshness_available, freshness_score = _aggregate_score(
             unique_evidence,
@@ -115,7 +115,7 @@ class DeterministicSufficiencyEvaluator:
         if not unique_evidence:
             gap_types.append(GapType.NO_EVIDENCE)
 
-        normalized_warnings = _normalize_warnings(warnings)
+        normalized_warnings = _normalize_warnings((*warnings, *lineage_warnings))
         if not _contradiction_signal_available(unique_evidence):
             normalized_warnings = _append_warning(
                 normalized_warnings,
@@ -169,6 +169,41 @@ def _deduplicate_evidence(
         unique.append(item)
 
     return unique, duplicates
+
+
+def _independent_lineages(
+    items: Sequence[Evidence],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Count established data origins, not documents or publishers.
+
+    Unknown-origin documents can establish at most one provisional stream in
+    total. They cannot corroborate an established stream or each other.
+    The representative source IDs preserve the existing signals contract.
+    """
+    known: dict[str, str] = {}
+    unknown: set[str] = set()
+    for item in items:
+        lineage = item.metadata.get("data_lineage")
+        origin = (
+            str(lineage.get("origin_id", "")).strip().casefold()
+            if isinstance(lineage, dict) and lineage.get("status") == "established"
+            else ""
+        )
+        if origin:
+            current = known.get(origin)
+            if current is None or item.source_id < current:
+                known[origin] = item.source_id
+        else:
+            unknown.add(item.source_id)
+    representatives = set(known.values())
+    if unknown and not representatives:
+        representatives.add(min(unknown))
+    warnings = (
+        ("data lineage not established for one or more sources; "
+         "unknown sources do not establish additional independence",)
+        if unknown else ()
+    )
+    return tuple(sorted(representatives)), warnings
 
 
 def _read_unit_score(container: dict, key: str) -> float | None:

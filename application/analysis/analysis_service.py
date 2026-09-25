@@ -11,6 +11,7 @@ from domain.findings.finding import Finding
 from domain.findings.finding_type import FindingType
 from domain.findings.insight import Insight
 from domain.research_brief import ResearchBrief
+from application.evidence.temporal_scope import qualifying_evidence
 from domain.planning.research_design import ResearchDesign
 
 from application.analysis.deduplication import (
@@ -129,6 +130,9 @@ class AnalysisService:
         evidence_items = self._evidence_repository.list_for_project(
             project_id,
             workflow_run_id=workflow_run_id,
+        )
+        evidence_items = qualifying_evidence(
+            design=design, evidence=evidence_items, brief=brief,
         )
         if not evidence_items:
             raise AnalysisError(

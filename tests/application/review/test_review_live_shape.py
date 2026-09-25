@@ -291,7 +291,6 @@ class ReviewLiveShapeTests(unittest.TestCase):
         )
         report_service = Mock()
         report_service._resolve_design.return_value = design
-        report_service._resolve_brief.return_value = Mock(objectives=("Evaluate growth.",))
         template = WorkflowTemplate(
             id="template-review",
             name="Review",
@@ -307,10 +306,12 @@ class ReviewLiveShapeTests(unittest.TestCase):
             research_brief_snapshot=ResearchBrief(
                 title="T",
                 business_question="Q",
+                objectives=("Evaluate growth.",),
                 deliverables=("Summary",),
                 language="en",
             ),
         )
+        report_service._resolve_brief.return_value = template.research_brief_snapshot
         run = WorkflowRunFactory(task_factory=TaskFactory()).create(template=template)
         run.id = "run-1"
         context = WorkflowContext(

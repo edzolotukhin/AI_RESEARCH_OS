@@ -977,6 +977,25 @@ class EvidenceExtractionService:
         research_design_id: str,
     ) -> tuple[str, bool]:
         metadata = dict(candidate.metadata or {})
+        # A candidate must not self-certify a lineage group. Only the grounded
+        # source-text attribution below can establish it at this boundary.
+        metadata.pop("data_lineage", None)
+        observation_period = metadata.get("observation_period")
+        if not isinstance(observation_period, str) or " ".join(observation_period.casefold().split()) not in " ".join(candidate.source_excerpt.casefold().split()):
+            metadata.pop("observation_period", None)
+        origin_id = metadata.pop("data_origin_id", None)
+        origin_excerpt = metadata.pop("data_origin_excerpt", None)
+        if isinstance(origin_id, str) and isinstance(origin_excerpt, str) and origin_id.strip() and origin_excerpt.strip():
+            try:
+                verify_grounding(source_text=source.content_text, excerpt=origin_excerpt)
+            except UngroundedEvidenceError:
+                pass
+            else:
+                if origin_id.casefold() in origin_excerpt.casefold():
+                    metadata["data_lineage"] = {
+                        "status": "established", "origin_id": origin_id.strip(),
+                        "basis_excerpt": origin_excerpt.strip(),
+                    }
         chunk_start = metadata.get("chunk_normalized_start")
         chunk_end = metadata.get("chunk_normalized_end")
         checksum = source.content_checksum or ""

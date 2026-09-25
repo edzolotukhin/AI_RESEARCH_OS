@@ -1,0 +1,78 @@
+"""Disposable PostgreSQL round trip for PRF-08C integrity metadata."""
+
+from __future__ import annotations
+
+import unittest
+from datetime import datetime, timezone
+from uuid import uuid4
+
+from application.evidence.temporal_scope import qualifying_evidence
+from application.research_quality.deterministic_sufficiency_evaluator import DeterministicSufficiencyEvaluator
+from domain.evidence.evidence import Evidence
+from domain.factories.project_factory import ProjectFactory
+from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
+from domain.research_brief import ResearchBrief
+from domain.sources.source import Source
+from infrastructure.persistence.postgresql.repositories.postgresql_evidence_repository import PostgreSQLEvidenceRepository
+from infrastructure.persistence.postgresql.repositories.postgresql_project_repository import PostgreSQLProjectRepository
+from infrastructure.persistence.postgresql.repositories.postgresql_source_repository import PostgreSQLSourceRepository
+from tests.integration.postgresql.helpers import PostgreSQLIntegrationTestCase, integration_tests_enabled
+
+
+@unittest.skipUnless(integration_tests_enabled(), "Disposable PostgreSQL test database required")
+class Prf08cEvidenceIntegrityPostgreSQLTests(PostgreSQLIntegrationTestCase):
+    def test_lineage_and_period_survive_jsonb_roundtrip(self) -> None:
+        project = ProjectFactory().create("PRF-08C synthetic persistence")
+        PostgreSQLProjectRepository(self.session_factory).create(project)
+        source_repo = PostgreSQLSourceRepository(self.session_factory)
+        evidence_repo = PostgreSQLEvidenceRepository(self.session_factory)
+        now = datetime.now(timezone.utc).isoformat()
+        records = (
+            ("official", "1 July 2026"),
+            ("provider", "August 2026"),
+        )
+        for label, period in records:
+            source_id = str(uuid4())
+            source_repo.create(Source(
+                id=source_id, project_id=project.id,
+                url=f"https://{label}.example.test/data",
+                canonical_url=f"https://{label}.example.test/data",
+                title=label, retrieved_at=now,
+                content_text=f"Observed {period} from shared dataset.",
+                content_checksum=f"checksum-{label}",
+            ))
+            evidence_repo.create(Evidence(
+                id=str(uuid4()), project_id=project.id, source_id=source_id,
+                source_content_checksum=f"checksum-{label}",
+                workflow_run_id="synthetic-prf08c-run", research_design_id="synthetic-design",
+                statement=f"Count as at {period}", source_excerpt=f"Observed {period} from shared dataset.",
+                created_at=now, research_question_refs=("RQ1",), information_need_refs=("IN1",),
+                deduplication_key=f"dedup-{label}",
+                metadata={
+                    "observation_period": period,
+                    "data_lineage": {"status": "established", "origin_id": "shared-dataset"},
+                },
+            ))
+        loaded = evidence_repo.list_for_project(project.id, workflow_run_id="synthetic-prf08c-run")
+        self.assertEqual(len(loaded), 2)
+        self.assertEqual({item.metadata["observation_period"] for item in loaded}, {"1 July 2026", "August 2026"})
+        design = ResearchDesign(
+            id="synthetic-design",
+            research_questions=(ResearchQuestion(id="RQ1", question="What changed?"),),
+            information_needs=(InformationNeed(
+                id="IN1", research_question_id="RQ1", description="Observed count",
+                timeframe="1 January 2025 to 1 July 2026",
+            ),),
+        )
+        brief = ResearchBrief(
+            title="Synthetic study", business_question="What changed?",
+            timeframe="1 January 2025 to 1 July 2026; sources available by 25 September 2026",
+        )
+        eligible = qualifying_evidence(design=design, evidence=loaded, brief=brief)
+        self.assertEqual(len(eligible), 1)
+        signals = DeterministicSufficiencyEvaluator().evaluate(design=design, evidence=eligible)
+        self.assertEqual(signals[0].independent_source_count, 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
