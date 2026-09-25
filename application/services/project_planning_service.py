@@ -12,7 +12,9 @@ from application.planner.project_planning_profile import (
     PROJECT_PLANNING_PROFILE_KEY,
     ProjectPlanningProfile,
 )
+from application.research.design_validator import validate_research_design
 from domain.project import Project
+from domain.common.exceptions import ValidationError
 from domain.research_brief import ResearchBrief
 from domain.research_method import (
     DESK,
@@ -153,6 +155,10 @@ class ProjectPlanningService:
         )
         if project.research_design_input_fingerprint != expected:
             raise ProjectPlanningError("Дизайн потребує оновлення")
+        try:
+            validate_research_design(design, brief=project.research_brief)
+        except (ValidationError, ValueError) as exc:
+            raise ProjectPlanningError(str(exc)) from exc
         if project.research_design_status == "APPROVED":
             return project
         project.research_design_status = "APPROVED"
@@ -246,6 +252,13 @@ class ProjectPlanningService:
             or not self.design_is_current(project)
         ):
             raise ProjectPlanningError("Спочатку затвердьте актуальний дизайн дослідження")
+        if method == DESK:
+            try:
+                validate_research_design(
+                    project.current_research_design, brief=project.research_brief,
+                )
+            except (ValidationError, ValueError) as exc:
+                raise ProjectPlanningError(str(exc)) from exc
 
     def _invalidate_design(self, project: Project) -> None:
         if project.current_research_design is not None:

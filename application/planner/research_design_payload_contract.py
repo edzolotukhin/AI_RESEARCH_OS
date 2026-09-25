@@ -5,6 +5,8 @@ from typing import Any
 
 from application.exceptions.planner_parser_error import PlannerParserError
 from application.parsers.research_design_parser import ResearchDesignParser
+from application.research.design_validator import validate_research_design
+from domain.common.exceptions import ValidationError
 from application.planner.planner_bounds import PlannerBounds
 from application.structured_output.contracts import StructuredPayloadContract
 
@@ -12,6 +14,7 @@ PLANNER_PAYLOAD_VALIDATION_ERRORS = (
     PlannerParserError,
     ValueError,
     TypeError,
+    ValidationError,
 )
 
 
@@ -42,6 +45,7 @@ class ResearchDesignPayloadContract(StructuredPayloadContract):
             self._validate_unique_ids(design)
             self._validate_question_references(design)
             self._validate_cardinality_bounds(design)
+            validate_research_design(design)
             return True
         except PLANNER_PAYLOAD_VALIDATION_ERRORS as exc:
             self._last_validation_error = str(exc)

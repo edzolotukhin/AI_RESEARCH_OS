@@ -21,6 +21,42 @@ from tests.integration.postgresql.helpers import PostgreSQLIntegrationTestCase, 
 
 @unittest.skipUnless(integration_tests_enabled(), "Disposable PostgreSQL test database required")
 class Prf08cEvidenceIntegrityPostgreSQLTests(PostgreSQLIntegrationTestCase):
+    def test_prf08e_undated_definition_is_eligible_after_jsonb_roundtrip(self) -> None:
+        project = ProjectFactory().create("PRF-08E synthetic definition")
+        PostgreSQLProjectRepository(self.session_factory).create(project)
+        source_repo = PostgreSQLSourceRepository(self.session_factory)
+        evidence_repo = PostgreSQLEvidenceRepository(self.session_factory)
+        source_id = str(uuid4())
+        source_repo.create(Source(
+            id=source_id, project_id=project.id,
+            url="https://example.test/definitions",
+            canonical_url="https://example.test/definitions",
+            title="Synthetic definitions", retrieved_at=datetime.now(timezone.utc).isoformat(),
+            content_text="A connector is defined as an outlet on a device.",
+            content_checksum="synthetic-definition",
+        ))
+        evidence_repo.create(Evidence(
+            id=str(uuid4()), project_id=project.id, source_id=source_id,
+            source_content_checksum="synthetic-definition", workflow_run_id="synthetic-prf08e-run",
+            research_design_id="synthetic-design", statement="A connector is defined as an outlet",
+            source_excerpt="A connector is defined as an outlet on a device.",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            research_question_refs=("RQ1",), information_need_refs=("IN1",),
+            deduplication_key="synthetic-definition",
+        ))
+        loaded = evidence_repo.list_for_project(project.id, workflow_run_id="synthetic-prf08e-run")
+        self.assertEqual(len(loaded), 1)
+        self.assertNotIn("observation_period", loaded[0].metadata)
+        design = ResearchDesign(
+            id="synthetic-design", research_questions=(ResearchQuestion(id="RQ1", question="Definitions?"),),
+            information_needs=(InformationNeed(
+                id="IN1", research_question_id="RQ1", description="Connector definition and classification",
+            ),),
+        )
+        brief = ResearchBrief(title="Synthetic", business_question="Definitions?",
+                              timeframe="1 January 2025 to 1 July 2026")
+        self.assertEqual(len(qualifying_evidence(design=design, evidence=loaded, brief=brief)), 1)
+
     def test_lineage_and_period_survive_jsonb_roundtrip(self) -> None:
         project = ProjectFactory().create("PRF-08C synthetic persistence")
         PostgreSQLProjectRepository(self.session_factory).create(project)

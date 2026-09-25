@@ -78,6 +78,7 @@ class ResponseShapeDiagnostics:
     rejected_empty_source_excerpt: int = 0
     rejected_invalid_confidence: int = 0
     rejected_candidate_construction_error: int = 0
+    rejected_schema_invalid_item: int = 0
     item_outcomes: list[ItemFilterOutcome] = field(default_factory=list)
     parser_succeeded: bool = False
     completion_finish_reason: str | None = None
@@ -88,6 +89,7 @@ class ResponseShapeDiagnostics:
     completion_max_output_tokens: int | None = None
     completion_configured_reasoning_effort: str | None = None
     response_classification: str | None = None
+    structured_attempts: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -106,7 +108,9 @@ class ResponseShapeDiagnostics:
             "rejected_empty_source_excerpt": self.rejected_empty_source_excerpt,
             "rejected_invalid_confidence": self.rejected_invalid_confidence,
             "rejected_candidate_construction_error": self.rejected_candidate_construction_error,
+            "rejected_schema_invalid_item": self.rejected_schema_invalid_item,
             "parser_succeeded": self.parser_succeeded,
+            "structured_attempts": self.structured_attempts,
         }
         if self.parsed_root_type is not None:
             payload["parsed_root_type"] = self.parsed_root_type
@@ -237,6 +241,8 @@ class ResponseShapeDiagnostics:
             self.rejected_invalid_confidence += 1
         elif outcome == "rejected_candidate_construction_error":
             self.rejected_candidate_construction_error += 1
+        elif outcome == "rejected_schema_invalid_item":
+            self.rejected_schema_invalid_item += 1
         if len(self.item_outcomes) < MAX_ITEM_OUTCOMES:
             self.item_outcomes.append(ItemFilterOutcome(item_index=item_index, outcome=outcome))
 

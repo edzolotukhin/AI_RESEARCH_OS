@@ -117,7 +117,7 @@ def build_research_readiness_assessment(
     sorted_assessments = tuple(
         sorted(need_assessments, key=lambda item: item.information_need_id),
     )
-    ready = all(
+    ready = bool(sorted_assessments) and all(
         assessment.status == SufficiencyStatus.SUFFICIENT
         and assessment.assessment_current
         for assessment in sorted_assessments
@@ -141,7 +141,9 @@ def build_research_readiness_assessment(
                 or not assessment.assessment_current
             )
         ]
-        reason = "Blocking information needs: " + ", ".join(blocking_statuses)
+        reason = ("Research question has no information needs."
+                  if not sorted_assessments else
+                  "Blocking information needs: " + ", ".join(blocking_statuses))
     return ResearchReadinessAssessment(
         research_question_id=research_question_id,
         information_need_assessments=sorted_assessments,
@@ -157,7 +159,7 @@ def build_research_readiness_result(
     sorted_assessments = tuple(
         sorted(rq_assessments, key=lambda item: item.research_question_id),
     )
-    all_ready = all(
+    all_ready = bool(sorted_assessments) and all(
         assessment.ready_for_analysis for assessment in sorted_assessments
     )
     blocking_rq_ids = tuple(

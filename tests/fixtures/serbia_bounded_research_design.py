@@ -56,6 +56,18 @@ SERBIA_BOUNDED_RESEARCH_DESIGN: dict = {
     ],
     "information_needs": [
         {
+            "id": "in-entry",
+            "research_question_id": "rq-entry",
+            "description": "Evidence-backed entry options, constraints and trade-offs.",
+            "priority": 1,
+            "preferred_source_types": ["industry reports"],
+            "timeframe": "2025-2026",
+            "geography": "Serbia",
+            "evidence_expectation": planner_evidence_expectation(
+                "entry_options", "constraints", nature="qualitative",
+            ),
+        },
+        {
             "id": "in-market-size",
             "research_question_id": "rq-market",
             "description": "Serbia microgreens market size and growth signals.",

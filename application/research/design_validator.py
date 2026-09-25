@@ -66,6 +66,15 @@ def validate_research_design(
                 f"InformationNeed '{need.id}' must have a description.",
             )
 
+    covered_questions = {need.research_question_id for need in design.information_needs}
+    uncovered = [question.id for question in design.research_questions
+                 if question.id not in covered_questions]
+    if uncovered:
+        raise ValidationError(
+            "ResearchQuestion without a valid InformationNeed: "
+            + ", ".join(uncovered) + ". Add an information need before approval."
+        )
+
     if not design.source_strategy:
         raise ValidationError("ResearchDesign.source_strategy must not be empty.")
 

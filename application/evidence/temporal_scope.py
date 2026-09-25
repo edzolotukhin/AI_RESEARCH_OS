@@ -14,7 +14,7 @@ from datetime import date
 from typing import Sequence
 
 from domain.evidence.evidence import Evidence
-from domain.planning.research_design import ResearchDesign
+from domain.planning.research_design import InformationNeed, ResearchDesign
 from domain.research_brief import ResearchBrief
 
 _MONTHS = {name.casefold(): index for index, name in enumerate(calendar.month_name) if name}
@@ -25,6 +25,24 @@ _DAY_MONTH = re.compile(rf"\b([1-9]|[12]\d|3[01])\s+({_MONTH_PATTERN})\s+(20\d{{
 _MONTH_YEAR = re.compile(rf"\b({_MONTH_PATTERN})\s+(20\d{{2}})\b", re.I)
 _QUARTER = re.compile(r"\bQ([1-4])\s+(20\d{2})\b", re.I)
 _YEAR = re.compile(r"\b20\d{2}\b")
+_STATIC_NEED = re.compile(
+    r"\b(defin\w*|terminolog\w*|methodolog\w*|classif\w*|categor\w*|"
+    r"distinction\w*|comparab\w*|taxonomy|connector\w*|site.type\w*)\b",
+    re.I,
+)
+_STATIC_CLAIM = re.compile(
+    r"\b(?:defined as|definition of|refers to|means|classified as|"
+    r"classification of|methodology for|method for|categor(?:y|ies|ised|ized)|"
+    r"a charging device is|a connector is|a charging site is)\b",
+    re.I,
+)
+_TIME_SENSITIVE_CLAIM = re.compile(
+    r"\b(?:there (?:are|were)|number of|count of|total (?:of|was|is)|"
+    r"increas\w*|decreas\w*|grew|growth|declin\w*|share of|"
+    r"percent(?:age)?|observed|recorded|installed|operat(?:ed|ing)|"
+    r"forecast|projected|as at|as of)\b|\b\d[\d,]*\s*(?:chargers?|devices?|sites?|%)\b",
+    re.I,
+)
 
 
 def _periods(text: str) -> list[tuple[date, date, bool]]:
@@ -103,6 +121,31 @@ def observation_eligibility(evidence: Evidence, cutoff: date) -> str:
     return "eligible"
 
 
+def temporal_eligibility(
+    evidence: Evidence, need: InformationNeed, cutoff: date,
+) -> str:
+    """Claim/need-specific state; source metadata cannot waive a dated claim."""
+    claim = f"{evidence.statement} {evidence.source_excerpt}"
+    need_text = " ".join((
+        need.description,
+        *(need.evidence_expectation.required_aspects
+          if need.evidence_expectation is not None else ()),
+    ))
+    if (
+        _STATIC_NEED.search(need_text)
+        and _STATIC_CLAIM.search(claim)
+        and not _TIME_SENSITIVE_CLAIM.search(claim)
+        and not evidence.metadata.get("observation_period")
+    ):
+        return "not_applicable"
+    status = observation_eligibility(evidence, cutoff)
+    return {
+        "eligible": "applicable_satisfied",
+        "out_of_period": "applicable_failed",
+        "unknown": "applicable_unresolved",
+    }[status]
+
+
 def qualifying_evidence(
     *,
     design: ResearchDesign,
@@ -115,13 +158,14 @@ def qualifying_evidence(
         return tuple(evidence)
     # A dated frozen Brief is a run-wide observation contract. An omitted
     # per-need timeframe does not silently waive it.
-    dated_needs = {need.id for need in design.information_needs}
+    needs_by_id = {need.id: need for need in design.information_needs}
     filtered: list[Evidence] = []
     for item in evidence:
-        status = observation_eligibility(item, cutoff)
         refs = tuple(
             ref for ref in item.information_need_refs
-            if ref not in dated_needs or status == "eligible"
+            if ref not in needs_by_id or temporal_eligibility(
+                item, needs_by_id[ref], cutoff,
+            ) in {"applicable_satisfied", "not_applicable"}
         )
         if refs:
             filtered.append(replace(item, information_need_refs=refs))

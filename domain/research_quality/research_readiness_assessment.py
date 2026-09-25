@@ -82,6 +82,10 @@ class ResearchReadinessAssessment:
 
         expected_blocking = _blocking_need_ids(self.information_need_assessments)
         if self.ready_for_analysis:
+            if not self.information_need_assessments:
+                raise ValidationError(
+                    "ready_for_analysis=True requires at least one InformationNeed assessment",
+                )
             blocking_statuses = [
                 (
                     assessment.status.value
@@ -105,7 +109,7 @@ class ResearchReadinessAssessment:
                     "blocking_information_need_ids",
                 )
         else:
-            if not expected_blocking:
+            if self.information_need_assessments and not expected_blocking:
                 raise ValidationError(
                     "ready_for_analysis=False requires at least one blocking "
                     "InformationNeed assessment",
@@ -140,6 +144,18 @@ class ResearchReadinessAssessment:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> ResearchReadinessAssessment:
+        # Historical completed runs may contain the pre-PRF-08E vacuous result.
+        # Hydrate that immutable snapshot verbatim; never generate it anew.
+        if payload.get("ready_for_analysis") is True and not payload.get(
+            "information_need_assessments"
+        ):
+            historical = object.__new__(cls)
+            object.__setattr__(historical, "research_question_id", str(payload["research_question_id"]))
+            object.__setattr__(historical, "information_need_assessments", ())
+            object.__setattr__(historical, "ready_for_analysis", True)
+            object.__setattr__(historical, "blocking_information_need_ids", ())
+            object.__setattr__(historical, "reason", str(payload.get("reason", "")))
+            return historical
         return cls(
             research_question_id=str(payload["research_question_id"]),
             information_need_assessments=tuple(

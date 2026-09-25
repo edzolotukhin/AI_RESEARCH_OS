@@ -383,7 +383,18 @@ TRAILING_COMMA_PLANNER_JSON = """
       "rationale": "",
     }
   ],
-  "information_needs": [],
+  "information_needs": [
+    {
+      "id": "in-market-size",
+      "research_question_id": "rq-1",
+      "description": "Published market size estimates.",
+      "evidence_expectation": {
+        "nature": "quantitative",
+        "required_aspects": ["market_size"],
+        "requires_quantitative_evidence": true
+      },
+    },
+  ],
   "source_strategy": ["official statistics"],
   "analysis_plan": ["market sizing"],
   "deliverable_plan": ["executive summary"],

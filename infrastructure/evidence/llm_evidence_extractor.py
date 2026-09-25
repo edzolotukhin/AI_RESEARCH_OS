@@ -26,6 +26,10 @@ from application.evidence.exceptions import (
     EvidenceResponseOutcomeError,
 )
 from application.execution.exceptions import BudgetExhaustedError
+from application.execution.execution_budget_context import get_execution_budget
+from application.execution.execution_budget_retry import (
+    consume_llm_call_retry_flag, mark_llm_call_as_retry,
+)
 from application.evidence.run_scoped_provenance import RunScopedSourceContext
 from application.ports.evidence_ports import EvidenceCandidate, EvidenceExtractor
 from application.structured_output.json_extractor import JsonExtractor
@@ -47,9 +51,13 @@ class LlmEvidenceExtractor(EvidenceExtractor):
         *,
         llm_client: LLMClient,
         reasoning_effort: str = "minimal",
+        max_structured_retries: int = 1,
     ) -> None:
+        if max_structured_retries not in (0, 1):
+            raise ValueError("max_structured_retries must be 0 or 1")
         self._llm_client = llm_client
         self._reasoning_effort = reasoning_effort
+        self._max_structured_retries = max_structured_retries
         self._json_extractor = JsonExtractor()
         self._json_validator = JsonValidator()
 
@@ -75,32 +83,53 @@ class LlmEvidenceExtractor(EvidenceExtractor):
         )
         response_shape: ResponseShapeDiagnostics | None = None
         try:
-            response = self._llm_client.generate(
-                prompt,
-                options=LLMGenerationOptions(
-                    reasoning_effort=self._reasoning_effort,
-                ),
-            )
-        except BudgetExhaustedError:
-            reset_response_shape()
-            raise
-        except Exception as exc:
-            reset_response_shape()
-            raise EvidenceConfigurationError(
-                "LLM evidence extraction failed",
-            ) from exc
-
-        response_shape = ResponseShapeDiagnostics.from_llm_response(
-            response,
-            json_extractor=self._json_extractor,
-            json_validator=self._json_validator,
-        )
-        try:
-            classification, payload = classify_evidence_llm_response(
-                response,
-                json_extractor=self._json_extractor,
-                json_validator=self._json_validator,
-            )
+            for attempt in range(self._max_structured_retries + 1):
+                if attempt and get_execution_budget() is not None:
+                    mark_llm_call_as_retry()
+                try:
+                    response = self._llm_client.generate(
+                        prompt,
+                        options=LLMGenerationOptions(
+                            reasoning_effort=self._reasoning_effort,
+                        ),
+                    )
+                except BudgetExhaustedError:
+                    if attempt:
+                        consume_llm_call_retry_flag()
+                    reset_response_shape()
+                    raise
+                except Exception as exc:
+                    reset_response_shape()
+                    raise EvidenceConfigurationError(
+                        "LLM evidence extraction failed",
+                    ) from exc
+                response_shape = ResponseShapeDiagnostics.from_llm_response(
+                    response,
+                    json_extractor=self._json_extractor,
+                    json_validator=self._json_validator,
+                )
+                response_shape.structured_attempts = attempt + 1
+                classification, payload = classify_evidence_llm_response(
+                    response,
+                    json_extractor=self._json_extractor,
+                    json_validator=self._json_validator,
+                )
+                if (
+                    attempt < self._max_structured_retries
+                    and classification in {
+                        EvidenceResponseClassification.INVALID_JSON,
+                        EvidenceResponseClassification.SCHEMA_CONTRACT_MISMATCH,
+                    }
+                ):
+                    prompt = Prompt(
+                        system=prompt.system,
+                        user=prompt.user + "\nPrevious response failed JSON/items validation ("
+                        + classification.value + "). Return one complete JSON object "
+                        'with an items array, or {"items":[]}. Do not add prose.',
+                    )
+                    continue
+                break
+            assert response_shape is not None
             response_shape.record_response_classification(classification.value)
 
             if classification in FAILURE_RESPONSE_CLASSIFICATIONS:
@@ -116,6 +145,13 @@ class LlmEvidenceExtractor(EvidenceExtractor):
                 run_context=run_context,
                 response_shape=response_shape,
             )
+            if response_shape.rejected_schema_invalid_item:
+                response_shape.record_response_classification(
+                    EvidenceResponseClassification.SCHEMA_CONTRACT_MISMATCH.value,
+                )
+                raise self._outcome_error(
+                    EvidenceResponseClassification.SCHEMA_CONTRACT_MISMATCH,
+                )
             response_shape.items_count_post_filter = len(candidates)
             publish_response_shape(response_shape)
             return candidates
@@ -163,7 +199,28 @@ class LlmEvidenceExtractor(EvidenceExtractor):
                     outcome="rejected_non_object_item",
                 )
                 continue
-            need_id = str(item.get("information_need_id", "")).strip()
+            if (
+                (item.get("information_need_id") is not None
+                 and not isinstance(item["information_need_id"], str))
+                or (item.get("statement") is not None
+                    and not isinstance(item["statement"], str))
+                or (item.get("source_excerpt") is not None
+                    and not isinstance(item["source_excerpt"], str))
+                or ("direct" in item and not isinstance(item["direct"], bool))
+                or ("evidence_type" in item and (
+                    not isinstance(item["evidence_type"], str)
+                    or item["evidence_type"] not in {member.value for member in EvidenceType}
+                ))
+                or ("confidence" in item and item["confidence"] is not None and (
+                    isinstance(item["confidence"], bool)
+                    or not isinstance(item["confidence"], (int, float))
+                ))
+            ):
+                response_shape.record_item_rejection(
+                    item_index=item_index, outcome="rejected_schema_invalid_item",
+                )
+                continue
+            need_id = (item.get("information_need_id") or "").strip()
             if not need_id:
                 response_shape.record_item_rejection(
                     item_index=item_index,
@@ -176,8 +233,8 @@ class LlmEvidenceExtractor(EvidenceExtractor):
                     outcome="rejected_unknown_information_need_id",
                 )
                 continue
-            excerpt = str(item.get("source_excerpt", "")).strip()
-            statement = str(item.get("statement", "")).strip()
+            excerpt = (item.get("source_excerpt") or "").strip()
+            statement = (item.get("statement") or "").strip()
             if not statement:
                 response_shape.record_item_rejection(
                     item_index=item_index,

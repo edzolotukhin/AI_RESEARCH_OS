@@ -14,6 +14,10 @@ SERBIA_MISSING_ENTRY_OBJECTIVE_DESIGN: dict = copy.deepcopy(SERBIA_BOUNDED_RESEA
 SERBIA_MISSING_ENTRY_OBJECTIVE_DESIGN["research_questions"] = copy.deepcopy(
     SERBIA_BOUNDED_RESEARCH_DESIGN["research_questions"][:-1],
 )
+SERBIA_MISSING_ENTRY_OBJECTIVE_DESIGN["information_needs"] = [
+    need for need in SERBIA_MISSING_ENTRY_OBJECTIVE_DESIGN["information_needs"]
+    if need["research_question_id"] != "rq-entry"
+]
 SERBIA_MISSING_ENTRY_OBJECTIVE_DESIGN_JSON = json.dumps(
     SERBIA_MISSING_ENTRY_OBJECTIVE_DESIGN,
     ensure_ascii=True,

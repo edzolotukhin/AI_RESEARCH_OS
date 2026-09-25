@@ -1,14 +1,48 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from unittest.mock import patch
 
 from application.services.project_planning_service import ProjectPlanningError
 from application.persistence.exceptions import ConcurrentModificationError
 from domain.research_brief import ResearchBrief
+from domain.planning.research_design import ResearchQuestion
 from tests.api.helpers import ApiTestCase
 
 
 class Pf02MethodSelectionDesignGateTests(ApiTestCase):
+    def test_uncovered_question_blocks_approval_and_activation(self):
+        project_id = self.create(("DESK",))
+        self.save_brief(project_id)
+        service = self.container.project_planning_service
+        service.generate_design(self.container.project_service.get_project(project_id))
+        project = self.container.project_service.get_project(project_id)
+        design = project.current_research_design
+        project.current_research_design = replace(
+            design,
+            research_questions=(*design.research_questions,
+                                ResearchQuestion(id="RQ-UNCOVERED",
+                                                 question="Which constraints remain?")),
+        )
+        self.container.project_service.save_project(project)
+        response = self.client.post(
+            f"/ui/projects/{project_id}/design/approve",
+            data={"design_id": design.id}, follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("RQ-UNCOVERED", response.text)
+        self.assertNotEqual(self.container.project_service.get_project(project_id).research_design_status,
+                            "APPROVED")
+        # A stale already-approved snapshot cannot bypass the activation gate.
+        project = self.container.project_service.get_project(project_id)
+        project.research_design_status = "APPROVED"
+        self.container.project_service.save_project(project)
+        response = self.client.post(
+            f"/ui/projects/{project_id}/methods/DESK/activate", follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.container.workflow_service.list_workflow_runs_for_project(project_id), [])
+
     @property
     def owner_id(self):
         from api.ui.principal import resolve_ui_principal
