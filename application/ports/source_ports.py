@@ -27,6 +27,10 @@ class SearchProvider(ABC):
 class SourceRetriever(ABC):
     """Acquires document content for a source candidate."""
 
+    def known_unsupported_url(self, url: str) -> bool:
+        """Whether the URL unambiguously names a format this retriever cannot read."""
+        return False
+
     @abstractmethod
     def retrieve(self, candidate: SourceCandidate) -> Source:
         """

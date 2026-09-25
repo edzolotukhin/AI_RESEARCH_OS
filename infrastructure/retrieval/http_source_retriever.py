@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -57,6 +58,12 @@ class HttpSourceRetriever(SourceRetriever):
         "text/plain",
         "application/xhtml+xml",
     )
+
+    def known_unsupported_url(self, url: str) -> bool:
+        # PDF bodies are explicitly unsupported by this HTML/text/XLSX adapter.
+        # Screen only an unambiguous path extension; redirects/content types
+        # remain the responsibility of retrieve().
+        return urlsplit(url).path.casefold().endswith(".pdf")
 
     def __init__(
         self,

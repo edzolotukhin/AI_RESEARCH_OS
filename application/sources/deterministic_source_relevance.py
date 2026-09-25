@@ -526,6 +526,18 @@ def evaluate_candidate(
     need_overlap = len(context.need_tokens & candidate_tokens)
     anchor_overlap = len(context.topic_anchors & candidate_tokens)
     geo_alignment = _classify_geography(context.required_geo_tokens, candidate_tokens)
+    title_geo_tokens = geography_tokens(candidate.title)
+    conflicting_title_geography = bool(
+        context.required_geo_tokens
+        and geo_alignment == GEO_DIRECT
+        and (title_geo_tokens & _NAMED_PLACE_HINTS) - context.required_geo_tokens
+        and not (title_geo_tokens & context.required_geo_tokens)
+    )
+    if conflicting_title_geography:
+        # A query-matching snippet cannot make an explicitly foreign-titled
+        # document direct evidence for the requested geography. Keep it as a
+        # possible proxy rather than forbidding comparative context.
+        geo_alignment = GEO_PROXY
     provider_rank = int(candidate.rank or 0)
     authority_score = _authority_score(url)
     statistics_signal = _statistics_signal(candidate_tokens, url)
@@ -637,6 +649,8 @@ def evaluate_candidate(
         reason = (
             "category_not_preserved"
             if category_alignment == CATEGORY_NOT_PRESERVING
+            else "conflicting_title_geography"
+            if conflicting_title_geography
             else f"topic_aligned_geo_{geo_alignment}"
         )
 

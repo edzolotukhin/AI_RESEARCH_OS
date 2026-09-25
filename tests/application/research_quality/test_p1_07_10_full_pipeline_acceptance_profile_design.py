@@ -346,7 +346,8 @@ class ProfileEnvelopeTests(unittest.TestCase):
 class SearchSchedulerSemanticsTests(unittest.TestCase):
     def test_source_cap_is_unique_url_group_index_not_success_count(self) -> None:
         source = inspect.getsource(SourceAcquisitionService._acquire_candidates)
-        self.assertIn("index >= source_group_limit", source)
+        self.assertIn("considered >= source_group_limit", source)
+        self.assertIn("considered += 1", source)
         self.assertIn("skipped_budget += 1", source)
         self.assertIn("attempted += 1", source)
         self.assertIn("is_successful_acquisition", source)

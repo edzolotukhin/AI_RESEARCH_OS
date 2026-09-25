@@ -493,6 +493,19 @@ class SourceAcquisitionService:
         skipped_exhausted = 0
 
         for canonical, items in grouped.items():
+            if self._source_retriever.known_unsupported_url(canonical) is True:
+                skipped_ineligible += 1
+                for item in items:
+                    decisions.append({
+                        "canonical_url": canonical,
+                        "information_need_id": item.query.information_need_id,
+                        "provider_rank": item.candidate.rank,
+                        "title": item.candidate.title,
+                        "action": ACTION_REJECTED,
+                        "eligibility": ELIGIBILITY_INELIGIBLE,
+                        "reason": "retriever_known_unsupported_url",
+                    })
+                continue
             fetchable: list[SourceRelevanceDecision] = []
             exhausted_hits = 0
             ineligible_hits = 0
@@ -635,26 +648,51 @@ class SourceAcquisitionService:
         source_group_limit = max_source_groups or self._budget.max_sources_per_run
         decisions = list(selection_decisions or [])
 
-        for index, group in enumerate(groups):
-            if index >= source_group_limit:
-                skipped_budget += 1
-                skip_payload: dict[str, Any] = {
-                    "canonical_url": group.canonical_url,
-                    "action": ACTION_SKIPPED_BUDGET,
-                    "provider_rank": group.best_rank,
-                    "reason": "source_attempt_cap",
-                }
-                if group.decision is not None:
-                    skip_payload.update(group.decision.to_dict())
-                    skip_payload["action"] = ACTION_SKIPPED_BUDGET
-                    skip_payload["reason"] = "source_attempt_cap"
-                decisions.append(skip_payload)
-                continue
-
+        pending = list(groups)
+        attempted_needs: set[str] = set()
+        considered = 0
+        while pending:
+            if considered >= source_group_limit:
+                for group in pending:
+                    skipped_budget += 1
+                    skip_payload: dict[str, Any] = {
+                        "canonical_url": group.canonical_url,
+                        "action": ACTION_SKIPPED_BUDGET,
+                        "provider_rank": group.best_rank,
+                        "reason": "source_attempt_cap",
+                    }
+                    if group.decision is not None:
+                        skip_payload.update(group.decision.to_dict())
+                        skip_payload["action"] = ACTION_SKIPPED_BUDGET
+                        skip_payload["reason"] = "source_attempt_cap"
+                    decisions.append(skip_payload)
+                break
             if self._budget_remaining(started_at) <= 0:
                 budget_exhausted = True
-                skipped_budget += len(groups) - index
+                skipped_budget += len(pending)
                 break
+
+            # Preserve relevance ranking inside each tier, but give every
+            # available need one acquisition opportunity before duplicating
+            # coverage. A failed fetch leaves that need uncovered; a viable
+            # fallback remains eligible under the same attempt cap.
+            def coverage_tier(group: _CandidateGroup) -> int:
+                refs = {item.query.information_need_id for item in group.items}
+                if refs - attempted_needs:
+                    return 0
+                if refs - covered_needs:
+                    return 1
+                return 2
+
+            selected_index = min(
+                range(len(pending)),
+                key=lambda index: (coverage_tier(pending[index]), index),
+            )
+            group = pending.pop(selected_index)
+            considered += 1
+            attempted_needs.update(
+                item.query.information_need_id for item in group.items
+            )
 
             resolved, was_project_duplicate, did_fetch = self._resolve_source_for_group(
                 project_id=project_id,
@@ -714,7 +752,7 @@ class SourceAcquisitionService:
                 and acquired >= self._budget.min_successful_sources
             ):
                 coverage_complete_early_stop = True
-                skipped_budget += len(groups) - index - 1
+                skipped_budget += len(pending)
                 break
 
         if not budget_exhausted and self._budget_remaining(started_at) <= 0:
