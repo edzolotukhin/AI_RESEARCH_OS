@@ -170,7 +170,7 @@ class EvidenceRemediationPartitionTests(unittest.TestCase):
         self.assertEqual(config.evidence_remediation_reserved_llm_calls, 6)
         self.assertEqual(budget.evidence_initial_allowance, 30)
 
-    def test_lowcost_without_key_keeps_full_initial_envelope(self) -> None:
+    def test_lowcost_without_key_reserves_two_existing_calls_for_evidence_feedback(self) -> None:
         env = {
             "LLM_MAX_CALLS_PER_RUN": "24",
             "EVIDENCE_MAX_LLM_CALLS": "8",
@@ -182,8 +182,15 @@ class EvidenceRemediationPartitionTests(unittest.TestCase):
         with patch.dict(os.environ, env, clear=False):
             os.environ.pop("EVIDENCE_REMEDIATION_RESERVED_LLM_CALLS", None)
             budget = create_execution_budget(ApplicationConfig.from_env())
-        self.assertEqual(budget.evidence_remediation_reserved, 0)
-        self.assertEqual(budget.evidence_initial_allowance, 8)
+        self.assertEqual(budget.evidence_remediation_reserved, 2)
+        self.assertEqual(budget.evidence_initial_allowance, 6)
+        self.assertEqual(budget.evidence_max_llm_calls, 8)
+        with patch.dict(os.environ, env, clear=False):
+            os.environ.pop("EVIDENCE_REMEDIATION_MAX_LLM_CALLS_PER_ATTEMPT", None)
+            self.assertEqual(
+                ApplicationConfig.from_env().evidence_remediation_max_llm_calls_per_attempt,
+                1,
+            )
 
     def test_budget_enforcing_client_remaps_remediation_purpose_to_evidence(self) -> None:
         budget = ExecutionBudget(

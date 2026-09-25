@@ -29,6 +29,7 @@ class GapSchedulerDecision:
     remaining_remediation_evidence_calls: int | None
     stalled_need_ids: tuple[str, ...]
     prior_improved_need_ids: tuple[str, ...]
+    evidence_priority_by_need: dict[str, int]
 
     def to_dict(self) -> dict[str, Any]:
         selected_id = (
@@ -48,6 +49,7 @@ class GapSchedulerDecision:
             ),
             "stalled_need_ids": list(self.stalled_need_ids),
             "prior_improved_need_ids": list(self.prior_improved_need_ids),
+            "evidence_priority_by_need": dict(self.evidence_priority_by_need),
         }
 
 
@@ -59,10 +61,12 @@ def decide_next_actionable_gap(
     max_attempts_per_gap: int,
     remaining_remediation_evidence_calls: int | None = None,
     prior_improved_need_ids: set[str] | None = None,
+    evidence_priority_by_need: dict[str, int] | None = None,
 ) -> GapSchedulerDecision:
-    """Choose the next eligible gap using first-opportunity then repeat cohorts."""
+    """Choose first-opportunity gaps by Evidence state, then deterministic ID."""
     improved = tuple(sorted(prior_improved_need_ids or ()))
     stalled = tuple(sorted(stalled_need_ids))
+    priorities = evidence_priority_by_need or {}
 
     eligible: list[TargetedResearchRequest] = []
     for request in gaps:
@@ -73,7 +77,10 @@ def decide_next_actionable_gap(
             continue
         eligible.append(request)
 
-    eligible.sort(key=_tie_break_key)
+    eligible.sort(key=lambda request: (
+        priorities.get(request.information_need_id, 2),
+        *_tie_break_key(request),
+    ))
     first = [
         request
         for request in eligible
@@ -120,6 +127,10 @@ def decide_next_actionable_gap(
         remaining_remediation_evidence_calls=remaining_remediation_evidence_calls,
         stalled_need_ids=stalled,
         prior_improved_need_ids=improved,
+        evidence_priority_by_need={
+            request.information_need_id: priorities.get(request.information_need_id, 2)
+            for request in eligible
+        },
     )
 
 

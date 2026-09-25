@@ -20,9 +20,22 @@ from registry.registry import Registry
 
 
 def _default_evidence_remediation_reserve() -> str:
-    """Activate the accepted reserve only for the stock 50-call profile."""
+    """Reallocate a bounded share of Evidence calls to post-extraction gaps.
+
+    Small profiles need this as much as the stock profile: without a reserve,
+    an initial pass can exhaust the stage before any Evidence-aware feedback.
+    No call is added to the configured stage or run totals.
+    """
     configured_cap = int(os.environ.get("EVIDENCE_MAX_LLM_CALLS", "50"))
-    return "6" if configured_cap == 50 else "0"
+    if configured_cap < 4:
+        return "0"
+    return str(min(6, configured_cap // 4))
+
+
+def _default_evidence_remediation_attempt_cap() -> str:
+    """Give multiple gaps a turn in constrained profiles without extra calls."""
+    configured_cap = int(os.environ.get("EVIDENCE_MAX_LLM_CALLS", "50"))
+    return "1" if 4 <= configured_cap < 50 else "0"
 
 from application.analysis.evidence_batching import (
     DEFAULT_ANALYSIS_MAX_CHARS_PER_BATCH,
@@ -333,7 +346,7 @@ class ApplicationConfig:
                 int(
                     os.environ.get(
                         "EVIDENCE_REMEDIATION_MAX_LLM_CALLS_PER_ATTEMPT",
-                        "0",
+                        _default_evidence_remediation_attempt_cap(),
                     ),
                 ),
             ),

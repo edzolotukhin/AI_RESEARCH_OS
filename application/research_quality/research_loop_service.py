@@ -10,6 +10,7 @@ from application.ports.research_quality_ports import ResearchSufficiencyEvaluato
 from application.ports.source_ports import SourceRepository
 from application.execution.execution_budget_context import get_execution_budget
 from application.research_quality.gap_scheduler import decide_next_actionable_gap
+from application.research_quality.evidence_gap_priority import evidence_priority_by_need
 from application.research_quality.gap_selection import select_actionable_gaps
 from application.research_quality.research_loop_checkpoint import checkpoint_loop_progress
 from application.research_quality.research_loop_state import (
@@ -130,6 +131,9 @@ class ResearchLoopService:
                     ),
                     prior_improved_need_ids=self._prior_improved_need_ids(
                         loop_state,
+                    ),
+                    evidence_priority_by_need=self._evidence_priority_by_need(
+                        context, design,
                     ),
                 )
                 request = decision.selected
@@ -467,6 +471,32 @@ class ResearchLoopService:
         return (
             tuple(sorted(source.id for source in sources)),
             tuple(sorted(item.id for item in evidence)),
+        )
+
+    def _evidence_priority_by_need(
+        self,
+        context: WorkflowContext,
+        design: ResearchDesign,
+    ) -> dict[str, int]:
+        """0=no Evidence, 1=none qualifying, 2=qualifying but still a gap.
+
+        The scheduler only sees actionable (not sufficient) needs. Source
+        acquisition and candidate provenance are deliberately not counted as
+        Evidence. Recompute after each bounded attempt so feedback is current.
+        """
+        raw = self._evidence_repository.list_for_project(
+            context.project.id, workflow_run_id=context.workflow_run.id,
+        )
+        qualified = qualifying_evidence(
+            design=design,
+            evidence=raw,
+            brief=(
+                context.workflow_template.research_brief_snapshot
+                if context.workflow_template else None
+            ),
+        )
+        return evidence_priority_by_need(
+            design=design, raw=raw, qualifying=qualified,
         )
 
     @staticmethod
