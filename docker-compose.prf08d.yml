@@ -1,0 +1,112 @@
+name: ai_research_os_prf08d
+
+x-runtime: &runtime
+  image: ai-research-os-prf08d:9ffa655
+  build: .
+  environment: &runtime-env
+    PERSISTENCE_BACKEND: postgresql
+    DATABASE_URL: postgresql+psycopg://prf08d:${PRF08D_DB_PASSWORD:?}@postgres:5432/prf08d_acceptance
+    BACKGROUND_EXECUTION_MODE: external
+    PROJECTS_ROOT: /tmp/projects
+    QUANTITATIVE_PROTECTED_STORAGE_ROOT: /var/lib/ai_research_os/quantitative-protected
+    OPENAI_API_KEY: ${PRF08D_OPENAI_API_KEY:?}
+    SEARCH_API_KEY: ${PRF08D_SEARCH_API_KEY:?}
+    SEARCH_PROVIDER: tavily
+    LLM_MODEL: gpt-5
+    DETERMINISTIC_STAGE_EXECUTORS: "0"
+    DETERMINISTIC_PLANNER: "0"
+    LLM_MAX_CALLS_PER_RUN: "24"
+    PLANNER_MAX_INFORMATION_NEEDS: "6"
+    EVIDENCE_MAX_LLM_CALLS: "8"
+    SUFFICIENCY_MAX_LLM_CALLS: "6"
+    ANALYSIS_MAX_LLM_CALLS: "2"
+    REPORT_MAX_LLM_CALLS: "2"
+    REVIEW_MAX_CALLS: "1"
+    SOURCE_MAX_CANDIDATES_PER_QUERY: "3"
+    SOURCE_MAX_CANDIDATES_PER_INFORMATION_NEED: "3"
+    SOURCE_MAX_SOURCES_PER_RUN: "8"
+    SOURCE_MIN_SUCCESSFUL_SOURCES: "3"
+    RESEARCH_MAX_GAP_ROUNDS_PER_RUN: "1"
+    TARGETED_MAX_ATTEMPTS_PER_GAP: "1"
+    TARGETED_MAX_QUERIES_PER_GAP: "1"
+    TARGETED_MAX_SOURCES_PER_GAP: "1"
+    EVIDENCE_MAX_ITEMS_PER_SOURCE: "2"
+    SOURCE_ACQUISITION_MAX_SECONDS: "300"
+  volumes:
+    - protected_data:/var/lib/ai_research_os/quantitative-protected
+  networks:
+    - acceptance
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: prf08d_acceptance
+      POSTGRES_USER: prf08d
+      POSTGRES_PASSWORD: ${PRF08D_DB_PASSWORD:?}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - acceptance
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prf08d -d prf08d_acceptance"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    mem_limit: 512m
+    restart: unless-stopped
+
+  api:
+    <<: *runtime
+    environment:
+      <<: *runtime-env
+      UI_INTERNAL_API_KEY: ${PRF08D_UI_KEY:?}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${PRF08D_PORT:-18082}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    mem_limit: 768m
+
+  worker:
+    <<: *runtime
+    command: ["python", "-m", "worker.main"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -m worker.healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    mem_limit: 1024m
+    stop_grace_period: 30s
+
+  owner:
+    <<: *runtime
+    profiles: ["owner"]
+    command: ["python", "/acceptance/owner.py"]
+    environment:
+      <<: *runtime-env
+      UI_INTERNAL_API_KEY: ${PRF08D_UI_KEY:?}
+      PYTHONPATH: /app
+    volumes:
+      - ./tools/prf08d_register_owner.py:/acceptance/owner.py:ro
+      - protected_data:/var/lib/ai_research_os/quantitative-protected
+    restart: "no"
+
+volumes:
+  postgres_data:
+  protected_data:
+
+networks:
+  acceptance:
