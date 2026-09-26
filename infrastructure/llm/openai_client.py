@@ -29,6 +29,8 @@ class OpenAIClient(LLMClient):
     OpenAI implementation of the LLMClient interface.
     """
 
+    kernel_accounts_transport = True
+
     def __init__(
         self,
         configuration: LLMConfiguration,
@@ -102,7 +104,8 @@ class OpenAIClient(LLMClient):
         if recorder is not None and call_id is not None:
             recorder.dispatched(call_id)
         try:
-            response = client.responses.create(**request_kwargs)
+            from infrastructure.llm.kernel_transport import responses_create
+            response = responses_create(client, request_kwargs)
         except Exception as exc:
             if recorder is not None and call_id is not None:
                 recorder.failed(call_id, exc, after_dispatch=True)

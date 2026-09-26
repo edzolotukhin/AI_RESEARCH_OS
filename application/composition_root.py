@@ -243,7 +243,11 @@ def create_application_container(
         bounds=planner_bounds,
     )
 
-    workflow_template_mapper = ResearchDesignWorkflowMapper()
+    from application.methods.desk.profile import profile as desk_kernel_profile
+    if config.ark_desk_enabled and config.persistence_backend != "postgresql":
+        raise ValueError("ARK activation requires PostgreSQL persistence")
+    workflow_template_mapper = ResearchDesignWorkflowMapper(
+        kernel_profile=desk_kernel_profile(config) if config.ark_desk_enabled else None)
 
     structured_output_parser = StructuredOutputParser()
     planner_payload_contract = ResearchDesignPayloadContract(
@@ -295,6 +299,19 @@ def create_application_container(
         artifact_repository=persistence.artifact_repository,
         stage_llm_clients=stage_llm_clients,
     )
+
+    # Always retain support for already-pinned ARK runs, even when activation is
+    # disabled for new runs. No new executor registry IDs or second worker.
+    from application.methods.desk.executor import VersionedDeskExecutor
+    from infrastructure.persistence.postgresql.repositories.postgresql_kernel_state_store import PostgreSQLKernelStateStore
+    def kernel_store(context):
+        return PostgreSQLKernelStateStore(persistence.engine, run_id=context.workflow_run.id,
+            project_id=context.project.id, worker_id=context.execution_metadata.get("ark_worker_id", ""))
+    for stage in ("search", "evidence", "research_quality"):
+        agent_executors[stage] = VersionedDeskExecutor(agent_executors[stage], stage,
+            config=config, overrides=overrides, sources=source_repository,
+            evidence=evidence_repository, llm_client=stage_llm_clients.evidence,
+            store_factory=kernel_store if persistence.engine is not None else None)
 
     _ensure_executor_catalog_matches_registry(
         executor_catalog,

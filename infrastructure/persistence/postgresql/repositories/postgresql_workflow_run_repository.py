@@ -27,6 +27,7 @@ from infrastructure.persistence.postgresql.models.workflow_run_model import (
 from infrastructure.persistence.postgresql.models.workflow_template_model import WorkflowTemplateModel
 from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
 from infrastructure.persistence.postgresql.project_activity import record_activity
+from infrastructure.persistence.postgresql.kernel_ownership import checkpoint_results
 
 
 class PostgreSQLWorkflowRunRepository:
@@ -59,6 +60,16 @@ class PostgreSQLWorkflowRunRepository:
             session.add(stored)
             template = session.get(WorkflowTemplateModel, workflow_run.workflow_template_id)
             snapshot = template.snapshot_data if template and template.project_id == project_id else None
+            if isinstance(snapshot, dict):
+                from copy import deepcopy
+                from infrastructure.persistence.postgresql.kernel_ownership import PIN
+                markers = [d.get("metadata", {}).get("research_kernel")
+                           for d in snapshot.get("task_definitions", [])
+                           if "research_kernel" in d.get("metadata", {})]
+                if markers:
+                    if any(m != markers[0] for m in markers) or markers[0].get("version") != 1:
+                        raise ValueError("invalid activation execution version")
+                    stored.task_results = {PIN: deepcopy(markers[0])}
             if isinstance(snapshot, dict) and snapshot.get("research_design"):
                 record_activity(
                     session, project_id=project_id,
@@ -94,7 +105,11 @@ class PostgreSQLWorkflowRunRepository:
         task_results: dict[str, Any] | None = None,
     ) -> int:
         with self._session_factory.session() as session:
-            current = session.get(WorkflowRunModel, workflow_run.id)
+            # Serialize with the independently committed kernel ledger. Refresh
+            # an identity-map entry so a stale enclosing session cannot restore it.
+            current = session.scalar(select(WorkflowRunModel).where(
+                WorkflowRunModel.id == workflow_run.id,
+            ).with_for_update().execution_options(populate_existing=True))
             if current is None:
                 raise EntityNotFoundError(
                     f"WorkflowRun not found: {workflow_run.id}"
@@ -102,7 +117,7 @@ class PostgreSQLWorkflowRunRepository:
 
             stored_results = dict(current.task_results or {})
             if task_results is not None:
-                stored_results = dict(task_results)
+                stored_results = checkpoint_results(stored_results, task_results)
 
             update_values = workflow_run_to_update_values(
                 workflow_run,

@@ -12,6 +12,10 @@ def mark_llm_call_as_retry() -> None:
     _mark_retry.set(True)
 
 
+def is_llm_call_retry() -> bool:
+    return _mark_retry.get()
+
+
 def consume_llm_call_retry_flag() -> bool:
     retry = _mark_retry.get()
     _mark_retry.set(False)

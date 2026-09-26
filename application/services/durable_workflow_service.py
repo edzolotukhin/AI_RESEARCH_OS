@@ -206,6 +206,8 @@ class DurableWorkflowService:
 
         resume_version = self._workflow_service.get_workflow_run_version(run_id)
         task_results = self._workflow_service.get_task_results(run_id)
+        context.execution_metadata["ark_worker_id"] = worker_id
+        context.execution_metadata["_research_execution_v1"] = task_results.get("_research_execution_v1")
         recovered_tasks = recover_interrupted_running_tasks(
             workflow_run,
             task_results,

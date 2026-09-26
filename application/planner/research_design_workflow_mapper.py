@@ -27,6 +27,9 @@ class ResearchDesignWorkflowMapper:
     _TASK_REPORT = "task-write-report"
     _TASK_REVIEW = "task-review-report"
 
+    def __init__(self, *, kernel_profile=None):
+        self._kernel_profile = kernel_profile
+
     def from_research_design(
         self,
         design: ResearchDesign,
@@ -132,6 +135,10 @@ class ResearchDesignWorkflowMapper:
         )
 
         template = builder.build()
+        if self._kernel_profile is not None:
+            from copy import deepcopy
+            for definition in template.task_definitions:
+                definition.metadata["research_kernel"] = {"version": 1, "profile": deepcopy(self._kernel_profile)}
         return replace(
             template,
             research_brief_snapshot=brief,

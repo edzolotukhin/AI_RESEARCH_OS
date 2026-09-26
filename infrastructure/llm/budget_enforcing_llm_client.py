@@ -18,6 +18,8 @@ from application.execution.execution_budget_retry import (
 from domain.ai.prompt import Prompt
 from infrastructure.llm.generation_options import LLMGenerationOptions
 from infrastructure.llm.llm_client import LLMClient
+from application.research_kernel.dispatch import invoke
+from application.execution.execution_budget_retry import is_llm_call_retry
 
 
 class BudgetEnforcingLLMClient(LLMClient):
@@ -33,8 +35,13 @@ class BudgetEnforcingLLMClient(LLMClient):
         options: LLMGenerationOptions | None = None,
     ):
         budget = get_execution_budget()
+        def generate_delegate():
+            call = lambda: self._delegate.generate(prompt, options=options)
+            if getattr(self._delegate, "kernel_accounts_transport", False) is True:
+                return call()
+            return invoke("llm", "generate", call, retry=is_llm_call_retry())
         if budget is None:
-            return self._delegate.generate(prompt, options=options)
+            return generate_delegate()
 
         purpose = get_evidence_call_purpose()
         stage = get_execution_stage() or "unknown"
@@ -46,7 +53,7 @@ class BudgetEnforcingLLMClient(LLMClient):
 
         started = time.perf_counter()
         try:
-            response = self._delegate.generate(prompt, options=options)
+            response = generate_delegate()
         except Exception:
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             budget.record_llm_call(
