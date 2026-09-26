@@ -2,8 +2,11 @@
 import argparse
 import json
 import sys
-import urllib.parse
-import urllib.request
+
+if __package__:
+    from .acceptance_http import post_form
+else:
+    from acceptance_http import post_form
 
 
 def main():
@@ -11,14 +14,14 @@ def main():
     parser.add_argument("action", choices=("prepare", "generate", "approve", "activate"))
     parser.add_argument("--project")
     parser.add_argument("--design")
+    parser.add_argument("--diagnostics", default="artifacts/acceptance/prf08l_http_errors.log")
     args = parser.parse_args()
     base = "http://127.0.0.1:18086/ui/projects"
 
     def post(url, values):
-        request = urllib.request.Request(url, data=urllib.parse.urlencode(values).encode())
-        with urllib.request.urlopen(request, timeout=240) as response:
-            print(json.dumps({"status": response.status, "url": response.url}))
-            return response.url
+        status, final_url = post_form(url, values, stage=args.action, diagnostic_path=args.diagnostics)
+        print(json.dumps({"status": status, "url": final_url}))
+        return final_url
 
     if args.action == "prepare":
         brief = json.load(sys.stdin)
