@@ -153,20 +153,26 @@ def qualifying_evidence(
     brief: ResearchBrief | None,
 ) -> tuple[Evidence, ...]:
     """Retain only in-period need references for an explicitly dated brief."""
+    from application import research_funnel_telemetry as funnel
     cutoff = exact_observation_cutoff(brief)
     if cutoff is None:
+        for item in evidence:
+            for ref in item.information_need_refs:
+                funnel.qualification(item.id, ref, True, "no_exact_cutoff")
         return tuple(evidence)
     # A dated frozen Brief is a run-wide observation contract. An omitted
     # per-need timeframe does not silently waive it.
     needs_by_id = {need.id: need for need in design.information_needs}
     filtered: list[Evidence] = []
     for item in evidence:
-        refs = tuple(
-            ref for ref in item.information_need_refs
-            if ref not in needs_by_id or temporal_eligibility(
-                item, needs_by_id[ref], cutoff,
-            ) in {"applicable_satisfied", "not_applicable"}
-        )
+        kept = []
+        for ref in item.information_need_refs:
+            reason = temporal_eligibility(item, needs_by_id[ref], cutoff) if ref in needs_by_id else "unknown_need_passthrough"
+            qualifies = reason in {"applicable_satisfied", "not_applicable", "unknown_need_passthrough"}
+            funnel.qualification(item.id, ref, qualifies, reason)
+            if qualifies:
+                kept.append(ref)
+        refs = tuple(kept)
         if refs:
             filtered.append(replace(item, information_need_refs=refs))
     return tuple(filtered)

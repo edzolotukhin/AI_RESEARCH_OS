@@ -17,6 +17,7 @@ from application.evidence.content_chunking import (
 )
 from application.evidence.deduplication import compute_deduplication_key
 from application.evidence.content_identity_queue import distinct_content_queue
+from application import research_funnel_telemetry as funnel
 from application.sources.content_identity import acquired_content_identity
 from application.sources.source_need_exhaustion import extraction_work_items, work_item_is_valid_zero_yield
 from application.evidence.exceptions import (
@@ -128,6 +129,7 @@ class EvidenceExtractionService:
         self._evidence_repository = evidence_repository
         self._source_repository = source_repository
 
+    @funnel.observed("initial_extraction")
     def extract_for_context(self, context: WorkflowContext) -> EvidenceExtractionSummary:
         design = self._resolve_design(context)
         project_id = context.project.id
@@ -163,7 +165,9 @@ class EvidenceExtractionService:
             chunk_chars=chunk_chars,
             overlap_chars=overlap_chars,
         )
+        previous_queue = queue
         queue = distinct_content_queue(queue)
+        funnel.queue_dedup(previous_queue, queue)
         diagnostics.queue_items = len(queue)
         diagnostics.outer_chunks = len(queue)
         diagnostics.extraction_ordering = EXTRACTION_ORDERING_COVERAGE_BEFORE_DEPTH
@@ -189,6 +193,7 @@ class EvidenceExtractionService:
         finally:
             deactivate_diagnostics(token)
 
+    @funnel.observed("continuation_extraction")
     def extract_for_source_ids(
         self,
         context: WorkflowContext,
@@ -261,7 +266,9 @@ class EvidenceExtractionService:
                 for item in queue
                 if target_information_need_id in item.run_context.information_need_ids
             ]
+        previous_queue = queue
         queue = distinct_content_queue(queue)
+        funnel.queue_dedup(previous_queue, queue)
         # A URL alias does not buy another extraction of already attempted
         # identical material for the same need. Same-source depth/retry remains
         # governed by the existing scheduler and per-attempt bounds.
@@ -288,7 +295,9 @@ class EvidenceExtractionService:
                 if acquired_content_identity(old) == identity:
                     return True
             return False
+        previous_queue = queue
         queue = [item for item in queue if not alias_already_attempted(item)]
+        funnel.queue_dedup(previous_queue, queue)
         diagnostics.queue_items = len(queue)
         diagnostics.outer_chunks = len(queue)
         diagnostics.extraction_ordering = EXTRACTION_ORDERING_COVERAGE_BEFORE_DEPTH
@@ -448,6 +457,7 @@ class EvidenceExtractionService:
         finally:
             if envelope_token is not None:
                 reset_remediation_attempt_envelope(envelope_token)
+            funnel.extraction_unattempted(queue, diagnostics)
 
     def _run_extract_work_queue(
         self,
@@ -536,6 +546,8 @@ class EvidenceExtractionService:
             )
             diagnostics.work_items.append(trace)
             work_item_token = set_active_work_item(trace)
+            extraction_id = funnel.extraction_start(work_item)
+            funnel_token = funnel._extraction.set(extraction_id)
             try:
                 source_ids, source_extracted, source_failures, had_none = (
                     self._extract_work_item(
@@ -572,6 +584,8 @@ class EvidenceExtractionService:
                 break
             finally:
                 reset_active_work_item(work_item_token)
+                funnel.extraction_result(extraction_id, trace, capped=diagnostics.remediation_attempt_capped)
+                funnel._extraction.reset(funnel_token)
 
             evidence_ids.extend(source_ids)
             extracted += source_extracted
@@ -959,6 +973,7 @@ class EvidenceExtractionService:
                             statement_length=len(candidate.statement),
                         ),
                     )
+            funnel.produced(evidence_id, source.id, validated.information_need_refs, dedup_hit)
             evidence_ids.append(evidence_id)
             extracted += 1
 

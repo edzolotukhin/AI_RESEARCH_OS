@@ -68,6 +68,7 @@ from application.sources.url_canonicalizer import canonicalize_url
 from application.sources.content_identity import acquired_content_identity
 
 from runtime.workflow_context import WorkflowContext
+from application import research_funnel_telemetry as funnel
 
 logger = logging.getLogger("ai_research_os.sources")
 
@@ -188,6 +189,7 @@ class SourceAcquisitionService:
         )
         self._evidence_repository = evidence_repository
 
+    @funnel.observed("initial_search")
     def acquire_for_context(self, context: WorkflowContext) -> SourceAcquisitionSummary:
         started = time.monotonic()
         design = self._resolve_design(context)
@@ -307,6 +309,7 @@ class SourceAcquisitionService:
 
         return summary
 
+    @funnel.observed("continuation_search")
     def acquire_targeted_queries(
         self,
         context: WorkflowContext,
@@ -422,9 +425,11 @@ class SourceAcquisitionService:
         raw_count = 0
 
         for query in queries:
+            search_id = funnel.search_start(query)
             try:
                 candidates = self._search_provider.search(query)
             except SearchProviderError:
+                funnel.emit("search_result", search_id=search_id, status="failure", reason="search_provider_error")
                 if query.retrieval_arm is RetrievalArm.LOCALIZED:
                     logger.warning(
                         "localized_retrieval_arm_failed",
@@ -438,6 +443,7 @@ class SourceAcquisitionService:
                     )
                     continue
                 raise
+            funnel.search_results(search_id, query, candidates, self._budget.max_candidates_per_information_need)
             raw_count += len(candidates)
             for candidate in candidates[: self._budget.max_candidates_per_information_need]:
                 if not _is_supported_scheme(candidate.url):
@@ -736,6 +742,8 @@ class SourceAcquisitionService:
             if did_fetch:
                 attempted += 1
 
+            funnel.acquired(resolved, did_fetch)
+
             identity = acquired_content_identity(resolved)
             if is_successful_acquisition(resolved.retrieval_status) and (not identity or identity not in seen_content):
                 distinct_acquired += 1
@@ -849,7 +857,12 @@ class SourceAcquisitionService:
             merged = self._merge_existing_source(existing, delta, incoming=None)
             return merged, True, False
 
-        retrieved = self._source_retriever.retrieve(primary.candidate)
+        funnel.acquisition_attempt(primary.canonical_url)
+        try:
+            retrieved = self._source_retriever.retrieve(primary.candidate)
+        except Exception:
+            funnel.acquisition_attempt(primary.canonical_url, failed=True)
+            raise
         incoming = self._finalize_source(
             retrieved=retrieved,
             project_id=project_id,

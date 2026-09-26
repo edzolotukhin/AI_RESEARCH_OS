@@ -101,6 +101,7 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
             elif task.status == TaskStatus.FAILED and (
                 is_quantitative_diagnostic_stage(task.definition_id)
                 or has_evidence_failure_diagnostics(context)
+                or bool(context.shared_state.get("research_funnel_v1"))
             ):
                 if is_quantitative_diagnostic_stage(task.definition_id):
                     diagnostic = build_stage_failure_diagnostic(

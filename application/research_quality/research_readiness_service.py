@@ -7,6 +7,7 @@ from application.execution.budget_utils import is_sufficiency_graceful_budget_st
 from application.execution.exceptions import BudgetExhaustedError
 from application.ports.evidence_ports import EvidenceRepository
 from application.evidence.temporal_scope import qualifying_evidence
+from application import research_funnel_telemetry as funnel
 from application.ports.research_quality_ports import ResearchSufficiencyEvaluator
 from application.research_quality.research_loop_state import (
     SHARED_LOOP_STATE_KEY,
@@ -55,6 +56,7 @@ class ResearchReadinessService:
         self._gate = gate or ResearchReadinessGate()
         self._loop_service = loop_service
 
+    @funnel.observed("qualification")
     def evaluate_for_context(
         self,
         context: WorkflowContext,
@@ -83,6 +85,7 @@ class ResearchReadinessService:
             return ResearchLoopState.from_dict(payload)
         return ResearchLoopState()
 
+    @funnel.observed("readiness")
     def assess_and_apply(
         self,
         context: WorkflowContext,
