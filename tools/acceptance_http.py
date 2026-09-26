@@ -15,6 +15,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+# Preserve direct-script callers as well as package imports.
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from application.structured_output.json_validator import JsonValidator
+
 MAX_ERROR_BYTES = 65536
 _FIELDS = {"detail", "errors", "error", "message", "msg", "type", "loc", "code"}
 _SENSITIVE = re.compile(r"authorization|cookie|password|secret|token|api.?key", re.I)
@@ -104,7 +110,11 @@ def error_diagnostic(error, *, endpoint, stage, secrets=()):
     content_type = headers.get("content-type", "").lower()
     if "json" in content_type:
         try:
-            record["validation"] = _structured(json.loads(text), secrets)
+            parsed = JsonValidator().validate(text)
+            if parsed.is_valid:
+                record["validation"] = _structured(parsed.data, secrets)
+            else:
+                record["body_omitted"] = "invalid_json"
         except (ValueError, RecursionError):
             record["body_omitted"] = "invalid_json"
     elif "text/html" in content_type:

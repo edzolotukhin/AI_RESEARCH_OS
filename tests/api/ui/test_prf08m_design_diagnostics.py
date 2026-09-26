@@ -5,6 +5,8 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import subprocess
+import sys
 import unittest
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError
@@ -23,6 +25,31 @@ def failure(body, content_type="application/json", **headers):
 
 
 class AcceptanceHttpDiagnosticTests(unittest.TestCase):
+    def test_json_diagnostics_use_shared_validator_then_redact(self):
+        from application.structured_output.json_validator import JsonValidator
+        with patch("tools.acceptance_http.JsonValidator", wraps=JsonValidator) as validator:
+            record = error_diagnostic(failure('{"detail":"Authorization: Bearer private-value"}',
+                **{"X-Correlation-ID": "correlation-123"}), endpoint="/design/generate", stage="generate")
+        validator.assert_called_once_with()
+        self.assertEqual(record["http_status"], 422)
+        self.assertEqual(record["stage"], "generate")
+        self.assertEqual(record["x-correlation-id"], "correlation-123")
+        self.assertNotIn("private-value", json.dumps(record))
+
+    def test_recursion_error_omits_body_without_disclosing_it(self):
+        with patch("tools.acceptance_http.JsonValidator.validate", side_effect=RecursionError("PRIVATE")):
+            record = error_diagnostic(failure('{"detail":"PRIVATE"}'), endpoint="/x", stage="generate")
+        self.assertEqual(record["body_omitted"], "invalid_json")
+        self.assertNotIn("PRIVATE", json.dumps(record))
+
+    def test_direct_cli_import_from_outside_repository(self):
+        script = Path(__file__).resolve().parents[3] / "tools" / "prf08l_ui.py"
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([sys.executable, str(script), "--help"], cwd=directory,
+                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--diagnostics", result.stdout)
+
     def test_structured_validation_retained_without_input_or_context(self):
         error = failure(json.dumps({"detail": [{"loc": ["body", "design_id"], "type": "missing", "msg": "Field required", "input": "PRIVATE INPUT", "ctx": {"token": "PRIVATE TOKEN"}}], "payload": "PRIVATE PAYLOAD"}), **{"X-Request-ID": "request-123"})
         record = error_diagnostic(error, endpoint="http://user:pass@localhost/design/generate?token=PRIVATE", stage="generate")

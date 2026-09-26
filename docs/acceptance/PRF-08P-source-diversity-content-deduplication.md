@@ -1,5 +1,19 @@
 # PRF-08P — Source diversity and content deduplication
 
+## PRF-08Q closure addendum
+
+The regression gate below was subsequently closed by PRF-08Q without changing
+PRF-08P deduplication, bounds or research/persistence paths. The HTTP helper now
+uses the existing shared JSON validator; architecture enforcement is unchanged.
+Targeted architecture/diagnostic tests: 46 passed. One canonical offline run:
+2891 total, 2744 passed, 147 skipped, zero failures/errors. Existing PRF-08P
+16/16 focused, 20/20 PostgreSQL/API-worker and historical integrity evidence
+remain applicable. Current status: **PRF-08P_READY_FOR_NEXT_GATE**; live benefit
+is still NOT VERIFIED. See `PRF-08Q-regression-gate-closure.md` for details.
+The original PRF-08P result below is retained unchanged as historical evidence.
+
+## Original PRF-08P result
+
 **Verdict: PRF-08P_REMEDIATION_INCOMPLETE.** Targeted remediation and historical
 integrity pass. The one canonical full-suite run exposes an unchanged baseline
 architecture-test failure, documented below. This is not a green full-suite
