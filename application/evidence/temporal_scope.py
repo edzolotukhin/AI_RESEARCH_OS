@@ -106,7 +106,26 @@ def observation_eligibility(evidence: Evidence, cutoff: date) -> str:
     """eligible, out_of_period, or unknown; never infer from publication date."""
     reference = evidence.metadata.get("observation_period")
     if not isinstance(reference, str) or not reference.strip():
-        return "unknown"
+        # A grounded, leading as-of clause in BOTH canonical claim and excerpt
+        # explicitly binds the observation. Never search arbitrary body dates,
+        # source publication metadata, or infer from a date elsewhere in prose.
+        exact_date = rf"(?:20\d{{2}}-\d{{1,2}}-\d{{1,2}}|\d{{1,2}}\s+(?:{_MONTH_PATTERN})\s+20\d{{2}})"
+        pattern = rf"^\s*as of\s+({exact_date})(?=[,:\s])"
+        claim = re.match(pattern, evidence.statement, re.I)
+        excerpt = re.match(pattern, evidence.source_excerpt, re.I)
+        if not claim or not excerpt:
+            return "unknown"
+        observation = r"^\s*[, :]?\s*(?:in [^.;:]+?\s+)?(?:there (?:were|was)|measured|recorded|stood at|totalled|totaled)\b"
+        if not re.search(observation, evidence.statement[claim.end():], re.I) or not re.search(observation, evidence.source_excerpt[excerpt.end():], re.I):
+            return "unknown"
+        if re.search(r"\b(?:published|publication|released|forecast|projected)\b", evidence.statement, re.I):
+            return "unknown"
+        reference = claim[1].strip()
+        if reference.casefold() != excerpt[1].strip().casefold():
+            return "unknown"
+        exact = _periods(reference)
+        if len(exact) != 1 or not exact[0][2]:
+            return "unknown"
     # An extractor-supplied period is usable only when grounded in the actual
     # source excerpt. Free-form model metadata alone cannot establish a date.
     if " ".join(reference.casefold().split()) not in " ".join(evidence.source_excerpt.casefold().split()):

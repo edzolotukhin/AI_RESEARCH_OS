@@ -675,6 +675,7 @@ def selection_sort_key(
     # need_coverage retains cross-IN fairness.
     return (
         -getattr(decision, "category_rank", 1),
+        int(decision.geo_penalty >= 2),
         -decision.expectation_boost,
         -decision.tier_rank,
         -need_coverage,

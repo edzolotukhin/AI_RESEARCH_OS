@@ -66,6 +66,7 @@ from application.sources.source_need_exhaustion import (
 )
 from application.sources.url_canonicalizer import canonicalize_url
 from application.sources.content_identity import acquired_content_identity
+from application.sources.query_opportunities import KEY as QUERY_HISTORY, fingerprint
 
 from runtime.workflow_context import WorkflowContext
 from application import research_funnel_telemetry as funnel
@@ -206,7 +207,8 @@ class SourceAcquisitionService:
                 supports_arm=self._search_provider.supports_retrieval_arm,
             )
         ]
-        raw_count, grouped = self._collect_candidates(portfolio_queries)
+        raw_count, grouped = self._collect_candidates(portfolio_queries,
+            execution_history=context.shared_state.setdefault(QUERY_HISTORY, []))
         unique_count = len(grouped)
         eligible, selection_decisions, skipped_ineligible, skipped_exhausted = (
             self._select_groups(
@@ -335,7 +337,8 @@ class SourceAcquisitionService:
         project_id = context.project.id
         workflow_run_id = context.workflow_run.id
 
-        raw_count, grouped = self._collect_candidates(queries)
+        raw_count, grouped = self._collect_candidates(queries,
+            execution_history=context.shared_state.setdefault(QUERY_HISTORY, []))
         unique_count = len(grouped)
         exhausted_pairs = self._exhausted_pairs_for_queries(context, queries)
         exhausted_content = {
@@ -420,11 +423,14 @@ class SourceAcquisitionService:
     def _collect_candidates(
         self,
         queries: list[SearchQuery],
+        *, execution_history: list[str] | None = None,
     ) -> tuple[int, dict[str, list[_PendingCandidate]]]:
         grouped: dict[str, list[_PendingCandidate]] = {}
         raw_count = 0
 
         for query in queries:
+            if execution_history is not None and fingerprint(query) not in execution_history:
+                execution_history.append(fingerprint(query))
             search_id = funnel.search_start(query)
             try:
                 candidates = self._search_provider.search(query)
@@ -681,6 +687,22 @@ class SourceAcquisitionService:
                     "action": "skipped_duplicate_content", "reason": "known_exhausted_content",
                     "content_identity": acquired_content_identity(known)})
         attempted_needs: set[str] = set()
+        evidence_counts: Counter[str] = Counter()
+        if self._evidence_repository is not None:
+            for row in self._evidence_repository.list_for_project(project_id, workflow_run_id=workflow_run_id):
+                evidence_counts.update(row.information_need_refs)
+
+        def evidence_priority(group: _CandidateGroup) -> int:
+            return min((evidence_counts[item.query.information_need_id]
+                        for item in group.items), default=0)
+
+        def category_mismatch(group: _CandidateGroup) -> bool:
+            # Legacy thin-context discovery retains its established fail-open
+            # coverage contract; require an explicit expectation for this gate.
+            return bool(group.decision and group.decision.category_alignment == 'not_preserving'
+                        and any(n.id == group.decision.information_need_id and n.evidence_expectation is not None
+                                for n in design.information_needs))
+
         considered = 0
         while pending:
             if considered >= source_group_limit:
@@ -723,7 +745,10 @@ class SourceAcquisitionService:
 
             selected_index = min(
                 range(len(pending)),
-                key=lambda index: (known_duplicate(pending[index]), coverage_tier(pending[index]), index),
+                key=lambda index: (known_duplicate(pending[index]),
+                                   category_mismatch(pending[index]),
+                                   evidence_priority(pending[index]),
+                                   coverage_tier(pending[index]), index),
             )
             group = pending.pop(selected_index)
             considered += 1
@@ -788,11 +813,14 @@ class SourceAcquisitionService:
                 decision_payload["action"] = ACTION_SELECTED
             decisions.append(decision_payload)
 
-            _update_coverage_from_source(
-                resolved,
-                covered_needs,
-                covered_questions,
-            )
+            # A known category mismatch can remain a fallback Source, but is
+            # not proof that the target's acquisition coverage has been met.
+            if not category_mismatch(group):
+                _update_coverage_from_source(
+                    resolved,
+                    covered_needs,
+                    covered_questions,
+                )
             if (
                 self._coverage_target_satisfied(
                     design,

@@ -23,6 +23,7 @@ from application.research_quality.targeted_search_query_builder import (
     TargetedSearchQueryBuilder,
 )
 from application.sources.source_acquisition_service import SourceAcquisitionService
+from application.sources.query_opportunities import KEY as QUERY_HISTORY, focus_repeated_queries
 from domain.planning.research_design import ResearchDesign
 from domain.research_quality.targeted_research_request import TargetedResearchRequest
 
@@ -60,6 +61,8 @@ class ProductionTargetedResearchRunner:
             max_results=self._config.source_max_candidates_per_query,
             brief=context.project.research_brief,
         )
+        queries = focus_repeated_queries(queries, design=design, request=request,
+            history=context.shared_state.get(QUERY_HISTORY, ()))
         acquisition = self._source_acquisition.acquire_targeted_queries(
             context,
             queries,

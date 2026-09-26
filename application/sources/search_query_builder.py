@@ -9,6 +9,7 @@ from application.sources.expectation_aware_query_intent import (
     build_expectation_aware_query_text,
 )
 from application.sources.category_subject import resolve_category_subject
+from application.sources.query_temporal_intent import observation_window
 from application.sources.provider_query_projector import project_provider_query_text
 
 
@@ -69,6 +70,7 @@ class SearchQueryBuilder:
         )
         subject_context = question.question if question is not None else ""
         category = resolve_category_subject(brief=brief, design=design)
+        timeframe = observation_window(need, brief)
         semantic_targets: tuple[str, ...] = ()
         if need.evidence_expectation is not None:
             semantic_targets = need.evidence_expectation.required_aspects
@@ -77,7 +79,7 @@ class SearchQueryBuilder:
             category_context=category.text if category is not None else "",
             description=need.description,
             geography=need.geography,
-            timeframe=need.timeframe,
+            timeframe=timeframe,
             semantic_targets=semantic_targets,
         )
 
@@ -98,7 +100,7 @@ class SearchQueryBuilder:
             query_text=query_text,
             language=design.language,
             geography=need.geography,
-            timeframe=need.timeframe,
+            timeframe=timeframe,
             preferred_source_types=need.preferred_source_types,
             max_results=self._max_results,
             rationale="; ".join(rationale_parts),
@@ -107,7 +109,7 @@ class SearchQueryBuilder:
                     category_subject=category.text if category is not None else None,
                     geography=need.geography,
                     core_intent=need.description,
-                    timeframe=need.timeframe,
+                    timeframe=timeframe,
                 )
                 or ""
             ),

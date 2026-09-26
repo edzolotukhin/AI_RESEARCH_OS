@@ -110,7 +110,7 @@ def adaptive_depth_selection_key(
     )
     productivity_rank = 0 if state.productive_calls > 0 else 1
     return (
-        1 if state.repeated_zero_yield else 0,
+        1 if state.valid_empty_calls and not state.productive_calls else 0,
         state.depth_calls,
         -uncovered,
         productivity_rank,

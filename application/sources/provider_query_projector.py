@@ -38,6 +38,13 @@ def project_provider_query_text(
         return None
 
     units = list(required_units)
+    time = normalize_query_text(timeframe or "")
+    if time and _YEAR_RE.search(time):
+        # A represented observation constraint is not an optional decoration.
+        # Fall back to the complete internal query rather than silently lose it.
+        if len(time) > MAX_TIMEFRAME_CHARS or len(normalize_query_text(" ".join((*units, time)))) > MAX_PROVIDER_QUERY_CHARS:
+            return None
+        units.append(time)
     target = _core_intent(targeted_intent or "")
     if target:
         target = _remove_duplicate_phrase(target, category)
@@ -45,15 +52,6 @@ def project_provider_query_text(
         target = _remove_duplicate_phrase(target, intent)
         if target and len(normalize_query_text(" ".join((*units, target)))) <= MAX_PROVIDER_QUERY_CHARS:
             units.append(target)
-
-    time = normalize_query_text(timeframe or "")
-    if (
-        time
-        and len(time) <= MAX_TIMEFRAME_CHARS
-        and _YEAR_RE.search(time)
-        and len(normalize_query_text(" ".join((*units, time)))) <= MAX_PROVIDER_QUERY_CHARS
-    ):
-        units.append(time)
 
     projected = normalize_query_text(" ".join(units))
     return projected or None
