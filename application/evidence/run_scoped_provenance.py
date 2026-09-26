@@ -17,6 +17,7 @@ class RunScopedSourceContext:
     information_need_ids: tuple[str, ...]
     research_question_ids: tuple[str, ...]
     query_ids: tuple[str, ...]
+    target_information_need_id: str | None = None
 
 
 def _need_id_from_query_id(query_id: str) -> str | None:

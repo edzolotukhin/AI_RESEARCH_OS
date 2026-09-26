@@ -78,8 +78,16 @@ class LlmEvidenceExtractor(EvidenceExtractor):
             return []
 
         prompt = Prompt(
-            system=EXTRACTION_SYSTEM_GUIDANCE,
-            user=self._build_user_payload(source=source, needs_payload=needs_payload),
+            system=EXTRACTION_SYSTEM_GUIDANCE + (
+                " This is targeted continuation. Prioritize the explicit target_information_need_id. "
+                "Do not substitute another need for an unsupported target. Cross-need facts may "
+                "be retained with their true listed IDs; they do not repair the target."
+                if run_context.target_information_need_id else ""
+            ),
+            user=self._build_user_payload(source=source, needs_payload=needs_payload) + (
+                f"\ntarget_information_need_id: {run_context.target_information_need_id}"
+                if run_context.target_information_need_id else ""
+            ),
         )
         response_shape: ResponseShapeDiagnostics | None = None
         try:

@@ -179,7 +179,32 @@ class ResearchLoopService:
                 loop_state.pending_attempt = request.attempt
                 self._persist_loop_state(context, loop_state)
                 checkpoint_loop_progress(context)
+                evidence_before = self._qualified_evidence(context, design)
                 iteration = self._runner.run(context, request)
+                evidence_after = self._qualified_evidence(context, design)
+                target_before = {e.id for e in evidence_before if need_id in e.information_need_refs}
+                target_after = {e.id for e in evidence_after if need_id in e.information_need_refs}
+                cross_only = (
+                    bool({e.id for e in evidence_after} - {e.id for e in evidence_before})
+                    and target_before == target_after
+                )
+                # Do not spend scarce semantic calls reassessing incidental
+                # cross-IN gains before a viable zero-Evidence target gets its
+                # bounded turn. Changed positive-IN assessments become stale,
+                # never silently sufficient; terminal reconciliation remains.
+                defer_cross_assessment = (
+                    cross_only
+                    and evidence_remediation_unavailable_reason() is None
+                    and any(
+                        gap.information_need_id != need_id
+                        and gap.information_need_id not in stalled_need_ids
+                        and loop_state.gap_attempt_counts.get(gap.information_need_id, 0)
+                            < self._bounds.max_attempts_per_gap
+                        and not any(gap.information_need_id in e.information_need_refs
+                                    for e in evidence_after)
+                        for gap in gaps
+                    )
+                )
                 if (
                     iteration.extraction_processing_state != EXTRACTION_BOUNDED_PARTIAL
                     and iteration.budget_stop_reason
@@ -196,7 +221,13 @@ class ResearchLoopService:
                     )
                     return self._finalize(context, result, loop_state)
                 try:
-                    result = self._evaluate_for_context(context, design)
+                    if defer_cross_assessment:
+                        result = reconcile_terminal_readiness(
+                            design=design, evidence=evidence_after, previous=previous,
+                            cache_payload=context.read_shared(SHARED_SUFFICIENCY_CACHE_KEY),
+                        )
+                    else:
+                        result = self._evaluate_for_context(context, design)
                 except BudgetExhaustedError as exc:
                     if not is_sufficiency_graceful_budget_stop(exc):
                         raise
@@ -295,7 +326,7 @@ class ResearchLoopService:
                     loop_state.pending_attempt = 0
                     return self._finalize(context, result, loop_state)
 
-                gap_improved = need_readiness_improved(previous, result, need_id)
+                gap_improved = not cross_only and need_readiness_improved(previous, result, need_id)
                 if gap_improved:
                     round_had_improvement = True
                 else:
@@ -319,7 +350,11 @@ class ResearchLoopService:
                         "attempt_number": request.attempt,
                         "attempt_completed": True,
                         "improved": gap_improved,
-                        "sufficiency_reassessed": bool(
+                        "target_qualifying_before": len(target_before),
+                        "target_qualifying_after": len(target_after),
+                        "target_qualifying_delta": len(target_after - target_before),
+                        "cross_need_reassessment_deferred": defer_cross_assessment,
+                        "sufficiency_reassessed": not defer_cross_assessment and bool(
                             cache_payload.get("reassessed_need_ids"),
                         ),
                         "fingerprint_changed": int(
@@ -471,6 +506,15 @@ class ResearchLoopService:
         return (
             tuple(sorted(source.id for source in sources)),
             tuple(sorted(item.id for item in evidence)),
+        )
+
+    def _qualified_evidence(self, context: WorkflowContext, design: ResearchDesign):
+        return qualifying_evidence(
+            design=design,
+            evidence=self._evidence_repository.list_for_project(
+                context.project.id, workflow_run_id=context.workflow_run.id),
+            brief=(context.workflow_template.research_brief_snapshot
+                   if context.workflow_template else None),
         )
 
     def _evidence_priority_by_need(

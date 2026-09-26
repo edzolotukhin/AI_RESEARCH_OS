@@ -230,9 +230,9 @@ class IncrementalSufficiencyRegressionTests(unittest.TestCase):
         clear_sufficiency_assessment_cache()
 
     def test_case_9_fingerprint_and_reuse_unchanged_for_six_aspect_expectation(self) -> None:
-        # PRF-08C changed the cached-assessment identity: lineage and observed
-        # period now affect sufficiency, while bounded search directives do not.
-        self.assertEqual(SUFFICIENCY_ASSESSMENT_CONTRACT_VERSION, "prf-08c.1")
+        # PRF-08K changes canonical lineage independence; an earlier semantic
+        # assessment must not bypass the new rule through cached readiness.
+        self.assertEqual(SUFFICIENCY_ASSESSMENT_CONTRACT_VERSION, "prf-08k.1")
         source = inspect.getsource(build_sufficiency_assessment_fingerprint)
         self.assertNotIn("bound_targeted_search_directives", source)
         self.assertNotIn("search_directives", source)

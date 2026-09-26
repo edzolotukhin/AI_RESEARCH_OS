@@ -74,6 +74,7 @@ class ProductionTargetedResearchRunner:
                 context,
                 acquisition.source_ids,
                 allow_empty=True,
+                target_information_need_id=request.information_need_id,
                 attempt_max_llm_calls=(
                     self._config.evidence_remediation_max_llm_calls_per_attempt
                 ),

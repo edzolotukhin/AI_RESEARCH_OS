@@ -192,6 +192,7 @@ class EvidenceExtractionService:
         *,
         allow_empty: bool = False,
         attempt_max_llm_calls: int = 0,
+        target_information_need_id: str | None = None,
     ) -> EvidenceExtractionSummary:
         """Extract evidence from specific run-scoped sources (targeted append)."""
         design = self._resolve_design(context)
@@ -244,6 +245,18 @@ class EvidenceExtractionService:
             chunk_chars=chunk_chars,
             overlap_chars=overlap_chars,
         )
+        if target_information_need_id is not None:
+            if target_information_need_id not in {need.id for need in design.information_needs}:
+                raise EvidenceExtractionError("Unknown targeted InformationNeed")
+            # Retain valid cross-IN context, but never silently choose another
+            # primary IN or widen the source's authoritative run-scoped refs.
+            queue = [
+                replace(item, primary_need_id=target_information_need_id,
+                        run_context=replace(item.run_context,
+                            target_information_need_id=target_information_need_id))
+                for item in queue
+                if target_information_need_id in item.run_context.information_need_ids
+            ]
         diagnostics.queue_items = len(queue)
         diagnostics.outer_chunks = len(queue)
         diagnostics.extraction_ordering = EXTRACTION_ORDERING_COVERAGE_BEFORE_DEPTH

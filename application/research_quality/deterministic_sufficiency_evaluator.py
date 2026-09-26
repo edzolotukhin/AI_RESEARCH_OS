@@ -184,11 +184,8 @@ def _independent_lineages(
     unknown: set[str] = set()
     for item in items:
         lineage = item.metadata.get("data_lineage")
-        origin = (
-            str(lineage.get("origin_id", "")).strip().casefold()
-            if isinstance(lineage, dict) and lineage.get("status") == "established"
-            else ""
-        )
+        from application.evidence.lineage_identity import canonical_lineage_identity
+        origin = canonical_lineage_identity(lineage)
         if origin:
             current = known.get(origin)
             if current is None or item.source_id < current:

@@ -11,7 +11,7 @@ from domain.planning.research_design import InformationNeed, ResearchQuestion
 
 from application.research_quality.allowed_aspect_ids import resolve_allowed_aspect_ids
 
-SUFFICIENCY_ASSESSMENT_CONTRACT_VERSION = "prf-08c.1"
+SUFFICIENCY_ASSESSMENT_CONTRACT_VERSION = "prf-08k.1"
 
 
 def canonical_json_digest(payload: object) -> str:
