@@ -113,7 +113,8 @@ def _source(*, source_id: str, run_id: str, content: str = SOURCE_TEXT) -> Sourc
         title=source_id,
         retrieved_at=now,
         retrieval_status=RetrievalStatus.ACQUIRED,
-        content_text=content,
+        # These fixtures model independent extraction outcomes, not mirrors.
+        content_text=content + " Document identity: " + source_id,
         content_checksum=f"checksum-{source_id}",
         workflow_run_refs=(run_id,),
         research_design_refs=("design-1",),

@@ -16,6 +16,9 @@ from application.evidence.content_chunking import (
     DEFAULT_EVIDENCE_EXTRACTION_CHUNK_OVERLAP_CHARS,
 )
 from application.evidence.deduplication import compute_deduplication_key
+from application.evidence.content_identity_queue import distinct_content_queue
+from application.sources.content_identity import acquired_content_identity
+from application.sources.source_need_exhaustion import extraction_work_items, work_item_is_valid_zero_yield
 from application.evidence.exceptions import (
     DuplicateEvidenceError,
     EvidenceExtractionError,
@@ -160,6 +163,7 @@ class EvidenceExtractionService:
             chunk_chars=chunk_chars,
             overlap_chars=overlap_chars,
         )
+        queue = distinct_content_queue(queue)
         diagnostics.queue_items = len(queue)
         diagnostics.outer_chunks = len(queue)
         diagnostics.extraction_ordering = EXTRACTION_ORDERING_COVERAGE_BEFORE_DEPTH
@@ -257,6 +261,34 @@ class EvidenceExtractionService:
                 for item in queue
                 if target_information_need_id in item.run_context.information_need_ids
             ]
+        queue = distinct_content_queue(queue)
+        # A URL alias does not buy another extraction of already attempted
+        # identical material for the same need. Same-source depth/retry remains
+        # governed by the existing scheduler and per-attempt bounds.
+        prior = extraction_work_items(context.shared_state)
+        previous_sources = {s.id: s for s in eligible.values()}
+        def alias_already_attempted(item):
+            identity = acquired_content_identity(item.source)
+            if not identity:
+                return False
+            for work in prior:
+                old = previous_sources.get(work.get("source_id"))
+                if old is None or old.id == item.source.id:
+                    continue
+                if work.get("extractor_status") not in {"success", "no_candidates"}:
+                    continue
+                if not work_item_is_valid_zero_yield({**work, "extractor_status": "no_candidates"}):
+                    continue
+                if not set(item.run_context.information_need_ids).issubset(work.get("information_need_ids", [])):
+                    continue
+                if work.get("outer_chunk_normalized_start") != item.chunk.original_normalized_start:
+                    continue
+                if work.get("outer_chunk_normalized_end") != item.chunk.original_normalized_end:
+                    continue
+                if acquired_content_identity(old) == identity:
+                    return True
+            return False
+        queue = [item for item in queue if not alias_already_attempted(item)]
         diagnostics.queue_items = len(queue)
         diagnostics.outer_chunks = len(queue)
         diagnostics.extraction_ordering = EXTRACTION_ORDERING_COVERAGE_BEFORE_DEPTH
@@ -711,6 +743,8 @@ class EvidenceExtractionService:
         chunk_source = replace(
             work_item.source,
             content_text=work_item.chunk.text,
+            metadata={**work_item.source.metadata,
+                      "acquired_content_identity": acquired_content_identity(work_item.source)},
         )
         return self._extract_from_source(
             source=chunk_source,
@@ -1012,6 +1046,14 @@ class EvidenceExtractionService:
         chunk_start = metadata.get("chunk_normalized_start")
         chunk_end = metadata.get("chunk_normalized_end")
         checksum = source.content_checksum or ""
+        identity = source.metadata.get("acquired_content_identity", "")
+        # Application-owned audit fields cannot be supplied by an extractor.
+        metadata.pop("acquired_content_identity", None)
+        metadata.pop("content_aliases", None)
+        if identity:
+            metadata["acquired_content_identity"] = identity
+        if source.metadata.get("content_aliases"):
+            metadata["content_aliases"] = list(source.metadata["content_aliases"])
         locator = verify_grounding(
             source_text=source.content_text,
             excerpt=candidate.source_excerpt,

@@ -65,6 +65,7 @@ from application.sources.source_need_exhaustion import (
     extraction_work_items,
 )
 from application.sources.url_canonicalizer import canonicalize_url
+from application.sources.content_identity import acquired_content_identity
 
 from runtime.workflow_context import WorkflowContext
 
@@ -334,6 +335,13 @@ class SourceAcquisitionService:
         raw_count, grouped = self._collect_candidates(queries)
         unique_count = len(grouped)
         exhausted_pairs = self._exhausted_pairs_for_queries(context, queries)
+        exhausted_content = {
+            (acquired_content_identity(source), query.information_need_id)
+            for source in self._source_repository.list_for_project(project_id, workflow_run_id=workflow_run_id)
+            for query in queries
+            if acquired_content_identity(source)
+            and (source.canonical_url, query.information_need_id) in exhausted_pairs
+        }
         eligible, selection_decisions, skipped_ineligible, skipped_exhausted = (
             self._select_groups(
                 grouped,
@@ -366,6 +374,7 @@ class SourceAcquisitionService:
             started_at=started,
             max_source_groups=max_sources,
             selection_decisions=selection_decisions,
+            excluded_content=exhausted_content,
         )
 
         elapsed = time.monotonic() - started
@@ -618,6 +627,7 @@ class SourceAcquisitionService:
         started_at: float,
         max_source_groups: int | None = None,
         selection_decisions: list[dict[str, Any]] | None = None,
+        excluded_content: set[tuple[str, str]] | None = None,
     ) -> tuple[
         list[str],
         int,
@@ -649,6 +659,21 @@ class SourceAcquisitionService:
         decisions = list(selection_decisions or [])
 
         pending = list(groups)
+        seen_content: set[str] = set()
+        distinct_acquired = 0
+        # Known exhausted aliases need no fetch and consume no acquisition slot.
+        # Unknown aliases still count as an attempt when fetched below.
+        for group in list(pending):
+            known = self._source_repository.get_by_canonical_url_for_project(project_id, group.canonical_url)
+            if known is not None and all(
+                (acquired_content_identity(known), item.query.information_need_id)
+                in (excluded_content or ()) for item in group.items
+            ):
+                pending.remove(group)
+                skipped_duplicate += 1
+                decisions.append({"canonical_url": group.canonical_url, "source_id": known.id,
+                    "action": "skipped_duplicate_content", "reason": "known_exhausted_content",
+                    "content_identity": acquired_content_identity(known)})
         attempted_needs: set[str] = set()
         considered = 0
         while pending:
@@ -684,9 +709,15 @@ class SourceAcquisitionService:
                     return 1
                 return 2
 
+            def known_duplicate(group: _CandidateGroup) -> bool:
+                known = self._source_repository.get_by_canonical_url_for_project(
+                    project_id, group.canonical_url,
+                )
+                return known is not None and acquired_content_identity(known) in seen_content
+
             selected_index = min(
                 range(len(pending)),
-                key=lambda index: (coverage_tier(pending[index]), index),
+                key=lambda index: (known_duplicate(pending[index]), coverage_tier(pending[index]), index),
             )
             group = pending.pop(selected_index)
             considered += 1
@@ -705,6 +736,17 @@ class SourceAcquisitionService:
             if did_fetch:
                 attempted += 1
 
+            identity = acquired_content_identity(resolved)
+            if is_successful_acquisition(resolved.retrieval_status) and (not identity or identity not in seen_content):
+                distinct_acquired += 1
+            if identity and identity in seen_content:
+                if not was_project_duplicate:
+                    skipped_duplicate += 1
+                decisions.append({"canonical_url": group.canonical_url, "source_id": resolved.id,
+                    "action": "skipped_duplicate_content", "reason": "acquired_duplicate_content",
+                    "content_identity": identity, "did_fetch": did_fetch})
+            if identity:
+                seen_content.add(identity)
             source_ids.append(resolved.id)
             decision_payload = {
                 "canonical_url": group.canonical_url,
@@ -749,7 +791,7 @@ class SourceAcquisitionService:
                     covered_needs,
                     covered_questions,
                 )
-                and acquired >= self._budget.min_successful_sources
+                and distinct_acquired >= self._budget.min_successful_sources
             ):
                 coverage_complete_early_stop = True
                 skipped_budget += len(pending)
@@ -957,6 +999,9 @@ class SourceAcquisitionService:
         )
         metadata = dict(retrieved.metadata)
         metadata["discovery_records"] = list(delta.discovery_records)
+        identity = acquired_content_identity(retrieved)
+        if identity:
+            metadata["acquired_content_identity"] = identity
         if retrieved.retrieval_status == RetrievalStatus.TRUNCATED:
             metadata["truncated"] = True
 

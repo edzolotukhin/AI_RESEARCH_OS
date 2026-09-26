@@ -145,7 +145,8 @@ class FairEvidenceExtractionIntegrationTests(unittest.TestCase):
         for item in (
             ("source-in1", "IN1", "rq-1", large),
             ("source-in2", "IN2", "rq-2", small),
-            ("source-in3", "IN3", "rq-3", small),
+            # Different documents, not aliases of the same acquired text.
+            ("source-in3", "IN3", "rq-3", "T" * 20),
         ):
             source_repo.create(_source(item[0], need_id=item[1], rq_id=item[2], content=item[3]))
 
