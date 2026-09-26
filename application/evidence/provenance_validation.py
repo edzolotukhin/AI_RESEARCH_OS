@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from domain.planning.research_design import ResearchDesign
 
 from application.evidence.run_scoped_provenance import RunScopedSourceContext
 from application.ports.evidence_ports import EvidenceCandidate
+from application.evidence.relevance_validation import relevant_need_refs
 
 
 class InvalidProvenanceError(ValueError):
@@ -41,6 +44,12 @@ def validate_candidate_provenance(
         raise InvalidProvenanceError(
             "Candidate information_need_refs are outside the run-scoped context",
         )
+
+    validated_need_refs = relevant_need_refs(
+        replace(candidate, information_need_refs=validated_need_refs), design=design,
+    )
+    if not validated_need_refs:
+        raise InvalidProvenanceError("Candidate subject relevance is unsupported for assigned needs")
 
     validated_question_refs: tuple[str, ...] = ()
     for need_id in validated_need_refs:

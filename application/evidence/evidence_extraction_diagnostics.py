@@ -26,6 +26,7 @@ class EvidenceStageFailureClassification(str, Enum):
 
 
 class CandidateRejectionReason(str, Enum):
+    RELEVANCE = "relevance"
     INVALID_NEED_REF = "invalid_need_ref"
     PROVENANCE = "provenance"
     GROUNDING = "grounding"
@@ -462,6 +463,8 @@ def classify_grounding_failure(
 
 def classify_provenance_rejection(message: str) -> str:
     lowered = message.lower()
+    if "subject relevance" in lowered:
+        return CandidateRejectionReason.RELEVANCE.value
     if "information_need_refs" in lowered and "outside" in lowered:
         return CandidateRejectionReason.INVALID_NEED_REF.value
     return CandidateRejectionReason.PROVENANCE.value

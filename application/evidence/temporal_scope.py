@@ -25,6 +25,36 @@ _DAY_MONTH = re.compile(rf"\b([1-9]|[12]\d|3[01])\s+({_MONTH_PATTERN})\s+(20\d{{
 _MONTH_YEAR = re.compile(rf"\b({_MONTH_PATTERN})\s+(20\d{{2}})\b", re.I)
 _QUARTER = re.compile(r"\bQ([1-4])\s+(20\d{2})\b", re.I)
 _YEAR = re.compile(r"\b20\d{2}\b")
+_QUARTER_WORDS = {"first": "1", "second": "2", "third": "3", "fourth": "4"}
+
+
+def normalize_observation_period(text: str) -> str:
+    """Normalize explicit calendar quarters; never mine surrounding prose."""
+    text = " ".join(text.split())
+    text = re.sub(r"\b(first|second|third|fourth) quarter(?: of)? (20\d{2})\b",
+                  lambda m: f"Q{_QUARTER_WORDS[m[1].lower()]} {m[2]}", text, flags=re.I)
+    return re.sub(r"\b(20\d{2})\s+Q([1-4])\b", r"Q\2 \1", text, flags=re.I)
+
+
+def observation_interval(text: str) -> tuple[date, date] | None:
+    """Only complete supported periods or explicit ranges are authoritative."""
+    text = normalize_observation_period(text)
+    atom = rf"(?:20\d{{2}}-\d{{1,2}}-\d{{1,2}}|\d{{1,2}} (?:{_MONTH_PATTERN}) 20\d{{2}}|(?:{_MONTH_PATTERN}) 20\d{{2}}|Q[1-4] 20\d{{2}}|20\d{{2}})"
+    match = re.fullmatch(rf"({atom})(?:\s*(?:to|through|–|—)\s*({atom}))?", text, re.I)
+    if match is None:
+        return None
+    endpoints = []
+    for part in (match[1], match[2] or match[1]):
+        periods = _periods(part)
+        if len(periods) != 1:
+            return None
+        if (re.fullmatch(r"20\d{2}-\d{1,2}-\d{1,2}", part) or
+                re.fullmatch(rf"\d{{1,2}} (?:{_MONTH_PATTERN}) 20\d{{2}}", part, re.I)) and not periods[0][2]:
+            return None
+        endpoints.append(periods[0])
+    if endpoints[0][0] > endpoints[1][1]:
+        return None
+    return endpoints[0][0], endpoints[1][1]
 _STATIC_NEED = re.compile(
     r"\b(defin\w*|terminolog\w*|methodolog\w*|classif\w*|categor\w*|"
     r"distinction\w*|comparab\w*|taxonomy|connector\w*|site.type\w*)\b",
@@ -102,7 +132,7 @@ def exact_observation_cutoff(brief: ResearchBrief | None) -> date | None:
     return max(exact, default=None)
 
 
-def observation_eligibility(evidence: Evidence, cutoff: date) -> str:
+def observation_eligibility(evidence: Evidence, cutoff: date, *, start: date | None = None) -> str:
     """eligible, out_of_period, or unknown; never infer from publication date."""
     reference = evidence.metadata.get("observation_period")
     if not isinstance(reference, str) or not reference.strip():
@@ -130,10 +160,15 @@ def observation_eligibility(evidence: Evidence, cutoff: date) -> str:
     # source excerpt. Free-form model metadata alone cannot establish a date.
     if " ".join(reference.casefold().split()) not in " ".join(evidence.source_excerpt.casefold().split()):
         return "unknown"
-    periods = _periods(reference)
-    if not periods:
+    excerpt = " ".join(evidence.source_excerpt.casefold().split())
+    occurrences = list(re.finditer(re.escape(" ".join(reference.casefold().split())), excerpt))
+    if occurrences and all(re.search(r"(?:published|released|publication date)\s*(?:on|:)?\s*$",
+                                     excerpt[:match.start()]) for match in occurrences):
         return "unknown"
-    if max(end for _, end, _ in periods) > cutoff:
+    interval = observation_interval(reference)
+    if interval is None:
+        return "unknown"
+    if interval[1] > cutoff or (start is not None and interval[0] < start):
         return "out_of_period"
     if re.search(r"\b(forecast|projection|predicted|expected by)\b", evidence.source_excerpt, re.I):
         return "unknown"
@@ -141,7 +176,7 @@ def observation_eligibility(evidence: Evidence, cutoff: date) -> str:
 
 
 def temporal_eligibility(
-    evidence: Evidence, need: InformationNeed, cutoff: date,
+    evidence: Evidence, need: InformationNeed, cutoff: date, *, start: date | None = None,
 ) -> str:
     """Claim/need-specific state; source metadata cannot waive a dated claim."""
     claim = f"{evidence.statement} {evidence.source_excerpt}"
@@ -157,7 +192,7 @@ def temporal_eligibility(
         and not evidence.metadata.get("observation_period")
     ):
         return "not_applicable"
-    status = observation_eligibility(evidence, cutoff)
+    status = observation_eligibility(evidence, cutoff, start=start)
     return {
         "eligible": "applicable_satisfied",
         "out_of_period": "applicable_failed",
@@ -174,6 +209,13 @@ def qualifying_evidence(
     """Retain only in-period need references for an explicitly dated brief."""
     from application import research_funnel_telemetry as funnel
     cutoff = exact_observation_cutoff(brief)
+    start = None
+    if brief is not None:
+        clause = re.split(r";|(?=\bsources?\s+(?:available|published|retrieved)\b)",
+                          brief.timeframe, maxsplit=1, flags=re.I)[0].strip()
+        boundary = observation_interval(clause)
+        if boundary is not None:
+            start, cutoff = boundary
     if cutoff is None:
         for item in evidence:
             for ref in item.information_need_refs:
@@ -186,7 +228,7 @@ def qualifying_evidence(
     for item in evidence:
         kept = []
         for ref in item.information_need_refs:
-            reason = temporal_eligibility(item, needs_by_id[ref], cutoff) if ref in needs_by_id else "unknown_need_passthrough"
+            reason = temporal_eligibility(item, needs_by_id[ref], cutoff, start=start) if ref in needs_by_id else "unknown_need_passthrough"
             qualifies = reason in {"applicable_satisfied", "not_applicable", "unknown_need_passthrough"}
             funnel.qualification(item.id, ref, qualifies, reason)
             if qualifies:

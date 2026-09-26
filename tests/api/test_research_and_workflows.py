@@ -67,6 +67,28 @@ class ResearchEndpointTests(ApiTestCase):
             )
             import tempfile
 
+            # The real temporal gate now treats a year-only brief as a bounded
+            # interval. Supply an explicitly dated synthetic observation rather
+            # than relying on the old unknown-date pass-through.
+            from dataclasses import replace
+            from infrastructure.search.deterministic_search_adapter import DeterministicSourceRetriever
+            from infrastructure.evidence.deterministic_evidence_extractor import DeterministicEvidenceExtractor
+
+            period = BRIEF["timeframe"]
+            class DatedRetriever(DeterministicSourceRetriever):
+                def retrieve(self, candidate):
+                    source = super().retrieve(candidate)
+                    if source.content_text:
+                        source = replace(source, content_text=source.content_text + f" Observation period: {period}.")
+                    return source
+
+            class DatedExtractor(DeterministicEvidenceExtractor):
+                def extract(self, **kwargs):
+                    return [replace(item,
+                        source_excerpt=item.source_excerpt + f" Observation period: {period}.",
+                        metadata={**item.metadata, "observation_period": period})
+                        for item in super().extract(**kwargs)]
+
             with tempfile.TemporaryDirectory() as temp_dir:
                 container = create_application_container(
                     config=ApplicationConfig(
@@ -83,6 +105,8 @@ class ResearchEndpointTests(ApiTestCase):
                     ),
                     overrides=ApplicationOverrides(
                         llm_client=create_brief_aligned_llm_mock(),
+                        source_retriever=DatedRetriever(),
+                        evidence_extractor=DatedExtractor(),
                     ),
                 )
                 raw, _, context = open_test_client(container)
