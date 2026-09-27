@@ -1,0 +1,5 @@
+# Acceptance-only override. Always use the explicit ARK-07 project name.
+services:
+  worker:
+    healthcheck:
+      timeout: 15s
