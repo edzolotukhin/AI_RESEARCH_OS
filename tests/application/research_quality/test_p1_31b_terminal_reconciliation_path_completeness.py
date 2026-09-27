@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from infrastructure.persistence.memory.in_memory_source_repository import InMemorySourceRepository
 import unittest
 
 from application.execution.exceptions import BudgetExhaustedError
@@ -83,7 +84,7 @@ def _service(*, evaluator, evidence_repository, loop_service=None):
     return CountingReadinessService(
         evaluator=evaluator,
         evidence_repository=evidence_repository,
-        source_repository=getattr(evidence_repository, "fixture_sources", None),
+        source_repository=getattr(evidence_repository, "fixture_sources", None) or InMemorySourceRepository(),
         loop_service=loop_service,
     )
 

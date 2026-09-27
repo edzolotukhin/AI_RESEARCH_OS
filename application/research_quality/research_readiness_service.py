@@ -6,6 +6,7 @@ from typing import Any
 from application.execution.budget_utils import is_sufficiency_graceful_budget_stop
 from application.execution.exceptions import BudgetExhaustedError
 from application.ports.evidence_ports import EvidenceRepository
+from application.ports.source_ports import SourceRepository
 from application.evidence.temporal_scope import qualifying_evidence
 from application import research_funnel_telemetry as funnel
 from application.ports.research_quality_ports import ResearchSufficiencyEvaluator
@@ -40,6 +41,10 @@ from runtime.workflow_context import WorkflowContext
 SHARED_STATE_KEY = "research_readiness"
 
 
+class ReadinessSourceUnavailableError(RuntimeError):
+    """Operational dependency failure, never an ordinary research refusal."""
+
+
 class ResearchReadinessService:
     """Evaluates run-scoped research readiness and prepares workflow payloads."""
 
@@ -50,7 +55,7 @@ class ResearchReadinessService:
         evidence_repository: EvidenceRepository,
         gate: ResearchReadinessGate | None = None,
         loop_service: ResearchLoopService | None = None,
-        source_repository=None,
+        source_repository: SourceRepository | None = None,
     ) -> None:
         self._evaluator = evaluator
         self._evidence_repository = evidence_repository
@@ -63,6 +68,7 @@ class ResearchReadinessService:
         self,
         context: WorkflowContext,
     ) -> ResearchReadinessResult:
+        self._require_source_repository()
         design = self._require_design(context)
         evidence = self._evidence_repository.list_for_project(
             context.project.id,
@@ -152,6 +158,7 @@ class ResearchReadinessService:
         or controlled-NOT_READY result reaches this boundary before gating or
         persistence.
         """
+        self._require_source_repository()
         design = self._require_design(context)
         cache_payload = context.read_shared(SHARED_SUFFICIENCY_CACHE_KEY)
         reconciled = reconcile_terminal_readiness(
@@ -209,6 +216,7 @@ class ResearchReadinessService:
             build_research_readiness_result,
         )
 
+        self._require_source_repository()
         design = self._require_design(context)
         evidence = self._evidence_repository.list_for_project(
             context.project.id,
@@ -246,6 +254,12 @@ class ResearchReadinessService:
             for rq in sorted(design.research_questions, key=lambda item: item.id)
         ]
         return build_research_readiness_result(rq_assessments)
+
+    def _require_source_repository(self):
+        if self._source_repository is None or not callable(
+            getattr(self._source_repository, "get_by_id", None)
+        ):
+            raise ReadinessSourceUnavailableError("readiness_source_repository_unavailable")
 
     def build_shared_payload(
         self,

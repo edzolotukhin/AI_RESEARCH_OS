@@ -95,7 +95,7 @@ def _build_readiness_service(
             evidence_repository=evidence_repo,
             source_repository=source_repo,
         )
-    return ResearchReadinessService(
+    return ResearchReadinessService(source_repository=(loop_service._source_repository if loop_service else InMemorySourceRepository()),
         evaluator=evaluator,
         evidence_repository=evidence_repo,
         loop_service=loop_service,
@@ -195,7 +195,7 @@ class SufficiencyBudgetGracefulTerminationTests(unittest.TestCase):
             workflow_run=run,
             current_task=readiness_task,
         )
-        service = ResearchReadinessService(
+        service = ResearchReadinessService(source_repository=InMemorySourceRepository(),
             evaluator=ExplodingEvaluator(),
             evidence_repository=InMemoryEvidenceRepository(),
         )

@@ -884,7 +884,7 @@ class DownstreamReserveWorkflowTests(unittest.TestCase):
         class _RecordingReadinessExecutor:
             def __init__(self) -> None:
                 self._inner = ResearchReadinessExecutor(
-                    research_readiness_service=ResearchReadinessService(
+                    research_readiness_service=ResearchReadinessService(source_repository=source_repo,
                         evaluator=evaluator,
                         evidence_repository=evidence_repo,
                     ),
@@ -1115,7 +1115,7 @@ class DownstreamReserveWorkflowTests(unittest.TestCase):
         )
         evaluator = _PartialCoverageEvaluator()
         readiness = ResearchReadinessExecutor(
-            research_readiness_service=ResearchReadinessService(
+            research_readiness_service=ResearchReadinessService(source_repository=source_repo,
                 evaluator=evaluator,
                 evidence_repository=evidence_repo,
             ),

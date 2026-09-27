@@ -405,7 +405,7 @@ class P114ReadinessLoopTests(unittest.TestCase):
         budget = _stock_budget()
         context.execution_metadata["execution_budget"] = budget
         ensure_run_budget(context)
-        service = ResearchReadinessService(
+        service = ResearchReadinessService(source_repository=InMemorySourceRepository(),
             evaluator=ExplodingEvaluator(),
             evidence_repository=InMemoryEvidenceRepository(),
         )

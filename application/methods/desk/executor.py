@@ -59,7 +59,8 @@ class VersionedDeskExecutor(BaseExecutor):
         extraction = build_evidence_extraction_service(config=cfg, overrides=self.overrides,
             source_repository=self.sources, evidence_repository=self.evidence, llm_client=self.llm)
         readiness = ResearchReadinessService(evaluator=build_research_sufficiency_evaluator(
-            config=cfg, overrides=self.overrides, llm_client=self.llm), evidence_repository=self.evidence)
+            config=cfg, overrides=self.overrides, llm_client=self.llm),
+            evidence_repository=self.evidence, source_repository=self.sources)
         adapter = DeskAdapter(context, cfg, DeskPrimitives(context, acquisition, extraction), readiness, self.evidence)
         adapter.checkpoint()
         with execution_budget_scope(budget):

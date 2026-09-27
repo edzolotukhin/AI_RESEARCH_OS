@@ -153,7 +153,7 @@ class RelevanceTests(unittest.TestCase):
         extractor.extract.return_value=[candidate(text,('in-2',))]
         service=EvidenceExtractionService(evidence_extractor=extractor,source_repository=sources,evidence_repository=repo)
         result=service.extract_for_source_ids(context,(s.id,),allow_empty=True)
-        readiness=ResearchReadinessService(evaluator=DeterministicResearchSufficiencyEvaluator(),evidence_repository=repo).evaluate_for_context(context)
+        readiness=ResearchReadinessService(source_repository=sources,evaluator=DeterministicResearchSufficiencyEvaluator(),evidence_repository=repo).evaluate_for_context(context)
         return result,readiness,repo,context,extractor
 
     def test_unrelated_rejected_before_storage_coverage_and_readiness(self):

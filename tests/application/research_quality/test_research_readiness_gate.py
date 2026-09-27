@@ -1,6 +1,7 @@
 """Tests for P1-04 research readiness gate workflow integration."""
 
 from __future__ import annotations
+from infrastructure.persistence.memory.in_memory_source_repository import InMemorySourceRepository
 
 import unittest
 from typing import Sequence
@@ -324,7 +325,7 @@ class ResearchReadinessGateWorkflowTests(unittest.TestCase):
         evaluator = StubSufficiencyEvaluator(_missing_result())
         context, analysis = _desk_research_context(evaluator=evaluator)
         readiness = ResearchReadinessExecutor(
-            research_readiness_service=ResearchReadinessService(
+            research_readiness_service=ResearchReadinessService(source_repository=InMemorySourceRepository(),
                 evaluator=evaluator,
                 evidence_repository=StubEvidenceRepository(),
             ),
@@ -362,7 +363,7 @@ class ResearchReadinessGateWorkflowTests(unittest.TestCase):
     def test_research_insufficiency_does_not_raise(self) -> None:
         evaluator = StubSufficiencyEvaluator(_missing_result())
         context, _analysis = _desk_research_context(evaluator=evaluator)
-        service = ResearchReadinessService(
+        service = ResearchReadinessService(source_repository=InMemorySourceRepository(),
             evaluator=evaluator,
             evidence_repository=StubEvidenceRepository(),
         )
@@ -377,7 +378,7 @@ class ResearchReadinessGateWorkflowTests(unittest.TestCase):
         evaluator = StubSufficiencyEvaluator(_ready_result())
         context, _analysis = _desk_research_context(evaluator=evaluator)
         readiness = ResearchReadinessExecutor(
-            research_readiness_service=ResearchReadinessService(
+            research_readiness_service=ResearchReadinessService(source_repository=InMemorySourceRepository(),
                 evaluator=FailingEvaluator(),
                 evidence_repository=StubEvidenceRepository(),
             ),

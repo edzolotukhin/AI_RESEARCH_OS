@@ -49,3 +49,19 @@ class CitationIntegrityPostgreSQLTests(PostgreSQLIntegrationTestCase):
             evidence=loaded, brief=None, source_repository=sources)
         self.assertEqual([item.id for item in qualified], ids[:1])
         self.assertEqual({item.id: asdict(item) for item in evidence.list_for_project(project.id)}, before)
+
+        # ARK-06: the authoritative readiness path must use this persisted Source.
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from application.research_quality.research_readiness_service import ResearchReadinessService
+        from application.research_quality.deterministic_research_sufficiency_evaluator import DeterministicResearchSufficiencyEvaluator
+        shared = {}
+        context = SimpleNamespace(project=project, workflow_run=SimpleNamespace(id='offline-ark04'),
+            workflow_template=SimpleNamespace(research_design_snapshot=ResearchDesign('offline-ark04', research_questions=()), research_brief_snapshot=None),
+            execution_metadata={}, shared_state=shared, read_shared=shared.get,
+            write_shared=lambda key, value: shared.update({key:value}))
+        evaluator = Mock(wraps=DeterministicResearchSufficiencyEvaluator())
+        service = ResearchReadinessService(evaluator=evaluator, evidence_repository=evidence, source_repository=sources)
+        service.evaluate_for_context(context)
+        self.assertEqual([e.id for e in evaluator.evaluate.call_args.kwargs['evidence']], ids[:1])
+        self.assertEqual({item.id: asdict(item) for item in evidence.list_for_project(project.id)}, before)

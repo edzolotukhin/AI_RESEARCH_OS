@@ -237,7 +237,7 @@ class LoopAndGateSnapshotTests(unittest.TestCase):
         )
         evaluator = Mock()
         evaluator.evaluate.return_value = _missing_result()
-        service = ResearchReadinessService(
+        service = ResearchReadinessService(source_repository=source_repo,
             evaluator=evaluator,
             evidence_repository=evidence_repo,
             loop_service=ResearchLoopService(
@@ -282,7 +282,7 @@ class LoopAndGateSnapshotTests(unittest.TestCase):
         evaluator = _CountingEval()
         source_repo = InMemorySourceRepository()
         evidence_repo = InMemoryEvidenceRepository()
-        service = ResearchReadinessService(
+        service = ResearchReadinessService(source_repository=source_repo,
             evaluator=evaluator,
             evidence_repository=evidence_repo,
             loop_service=ResearchLoopService(
@@ -308,7 +308,7 @@ class LoopAndGateSnapshotTests(unittest.TestCase):
         evaluator.evaluate.return_value = _missing_result()
         context, analysis = _desk_research_context(evaluator=evaluator)
         readiness = ResearchReadinessExecutor(
-            research_readiness_service=ResearchReadinessService(
+            research_readiness_service=ResearchReadinessService(source_repository=InMemorySourceRepository(),
                 evaluator=evaluator,
                 evidence_repository=StubEvidenceRepository(),
             ),

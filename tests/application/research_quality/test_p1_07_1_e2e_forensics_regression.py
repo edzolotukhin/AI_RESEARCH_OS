@@ -164,7 +164,7 @@ class P1071ForensicsRegressionTests(unittest.TestCase):
             evidence_repository=InMemoryEvidenceRepository(),
             source_repository=InMemorySourceRepository(),
         )
-        service = ResearchReadinessService(
+        service = ResearchReadinessService(source_repository=loop_service._source_repository,
             evaluator=evaluator,
             evidence_repository=InMemoryEvidenceRepository(),
             loop_service=loop_service,
