@@ -113,6 +113,7 @@ def build_research_readiness_service(
     return ResearchReadinessService(
         evaluator=evaluator,
         evidence_repository=evidence_repository,
+        source_repository=source_repository,
         loop_service=loop_service,
     )
 

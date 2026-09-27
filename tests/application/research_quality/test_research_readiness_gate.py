@@ -304,6 +304,7 @@ class ResearchReadinessGateWorkflowTests(unittest.TestCase):
             research_readiness_service=ResearchReadinessService(
                 evaluator=evaluator,
                 evidence_repository=evidence_repository,
+                source_repository=evidence_repository.fixture_sources,
             ),
         )
         analysis_executor = AnalysisExecutor(analysis_service=analysis)

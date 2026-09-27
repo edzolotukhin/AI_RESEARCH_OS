@@ -183,6 +183,8 @@ class AnalysisLiveShapeRegressionTests(unittest.TestCase):
             max_evidence_per_batch=3,
             max_chars_per_batch=12000,
         )
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
         summary = service.analyze_for_context(
             _analysis_context(run_id=run_id, design=design),
         )
@@ -221,6 +223,8 @@ class AnalysisLiveShapeRegressionTests(unittest.TestCase):
             max_chars_per_batch=12000,
         )
         with self.assertRaises(AnalysisError) as ctx:
+            from tests.helpers.citation_fixtures import sources_for
+            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
             service.analyze_for_context(
                 _analysis_context(run_id=run_id, design=design),
             )
@@ -290,6 +294,8 @@ class AnalysisLiveShapeRegressionTests(unittest.TestCase):
             max_evidence_per_batch=3,
             max_chars_per_batch=12000,
         )
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
         summary = service.analyze_for_context(
             _analysis_context(run_id=run_id, design=design),
         )
@@ -328,6 +334,8 @@ class AnalysisLiveShapeRegressionTests(unittest.TestCase):
             max_chars_per_batch=12000,
         )
         with self.assertRaises(AnalysisError) as ctx:
+            from tests.helpers.citation_fixtures import sources_for
+            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
             service.analyze_for_context(
                 _analysis_context(run_id=run_id, design=design),
             )
@@ -360,6 +368,8 @@ class AnalysisLiveShapeRegressionTests(unittest.TestCase):
             max_chars_per_batch=12000,
         )
         with self.assertRaises(AnalysisError) as ctx:
+            from tests.helpers.citation_fixtures import sources_for
+            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
             service.analyze_for_context(
                 _analysis_context(run_id=run_id, design=design),
             )
@@ -437,6 +447,8 @@ class AnalysisLiveShapeRegressionTests(unittest.TestCase):
             max_evidence_per_batch=3,
             max_chars_per_batch=12000,
         )
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
         summary = service.analyze_for_context(
             _analysis_context(run_id=run_id, design=design),
         )

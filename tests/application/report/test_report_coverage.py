@@ -183,6 +183,10 @@ def _seed_run_data(
         )
 
 
+    from tests.helpers.citation_fixtures import sources_for
+    sources_for(service._evidence_repository.list_for_project(PROJECT_ID), service._source_repository)
+
+
 def _deterministic_service(*, max_rq_correction_attempts: int = 2) -> ReportService:
     return ReportService(
         report_engine=DeterministicReportEngine(),

@@ -68,6 +68,7 @@ class DeskAdapter:
 
     def qualified(self):
         return qualifying_evidence(design=self.design,
+            source_repository=self.primitives.extraction._source_repository,
             evidence=self.evidence.list_for_project(self.context.project.id, workflow_run_id=self.context.workflow_run.id),
             brief=self.context.workflow_template.research_brief_snapshot)
 

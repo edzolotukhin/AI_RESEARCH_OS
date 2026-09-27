@@ -762,6 +762,7 @@ class EvidenceExtractionService:
         )
         return self._extract_from_source(
             source=chunk_source,
+            canonical_source=replace(work_item.source, metadata=chunk_source.metadata),
             design=design,
             project_id=project_id,
             workflow_run_id=workflow_run_id,
@@ -787,6 +788,7 @@ class EvidenceExtractionService:
         chunk_metadata: dict | None = None,
         diagnostics: EvidenceExtractionDiagnostics | None = None,
         trace: WorkItemTrace | None = None,
+        canonical_source: Source | None = None,
     ) -> tuple[list[str], int, int, bool]:
         evidence_ids: list[str] = []
         extracted = 0
@@ -887,7 +889,7 @@ class EvidenceExtractionService:
                 validated = replace(validated, metadata=merged_metadata)
                 evidence_id, dedup_hit = self._persist_candidate(
                     candidate=validated,
-                    source=source,
+                    source=canonical_source if canonical_source is not None else source,
                     project_id=project_id,
                     workflow_run_id=workflow_run_id,
                     research_design_id=research_design_id,

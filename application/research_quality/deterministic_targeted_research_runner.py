@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from hashlib import sha256
+from application.evidence.grounding import verify_grounding
 
 from application.ports.evidence_ports import EvidenceRepository
 from application.ports.source_ports import SourceRepository
@@ -70,7 +72,7 @@ class DeterministicTargetedResearchRunner:
                 retrieved_at=datetime.now(timezone.utc).isoformat(),
                 content_text=(
                     f"Deterministic content for need {request.information_need_id} "
-                    f"attempt {request.attempt}."
+                    f"attempt {request.attempt}. Deterministic excerpt."
                 ),
                 content_checksum=f"checksum-{source_id}",
                 research_question_refs=(request.research_question_id,),
@@ -79,10 +81,12 @@ class DeterministicTargetedResearchRunner:
                 research_design_refs=(design.id,),
                 retrieval_status=RetrievalStatus.ACQUIRED,
             )
+            source.content_checksum = sha256(source.content_text.encode()).hexdigest()
             self._source_repository.create(source)
             source_ids = (source_id,)
             sources_acquired = 1
         else:
+            source = existing
             source_ids = (existing.id,)
             sources_acquired = 0
 
@@ -102,7 +106,9 @@ class DeterministicTargetedResearchRunner:
                 id=evidence_id,
                 project_id=project_id,
                 source_id=source_ids[0],
-                source_content_checksum=f"checksum-{source_ids[0]}",
+                source_content_checksum=source.content_checksum,
+                source_locator=verify_grounding(source_text=source.content_text,
+                    excerpt="Deterministic excerpt.").to_dict(),
                 workflow_run_id=workflow_run_id,
                 research_design_id=design.id,
                 statement=(

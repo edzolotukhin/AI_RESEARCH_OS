@@ -3,6 +3,7 @@ import unittest
 from dataclasses import replace
 from datetime import date
 from unittest.mock import Mock
+from tests.helpers.citation_fixtures import sources_for
 
 from application.evidence.temporal_scope import observation_interval, qualifying_evidence
 from application.evidence.provenance_validation import validate_candidate_provenance, InvalidProvenanceError
@@ -45,6 +46,7 @@ class TemporalTests(unittest.TestCase):
     def qualified(self, period, *, excerpt=None, timeframe='1 January 2025 to 1 July 2026'):
         fact = _evidence('e','s',period,excerpt=excerpt,need='in-1')
         return qualifying_evidence(design=design(), evidence=(fact,),
+            source_repository=sources_for((fact,)),
             brief=ResearchBrief(title='Meters',business_question='Meter counts',timeframe=timeframe))
 
     def test_pre_window_year_does_not_qualify(self):

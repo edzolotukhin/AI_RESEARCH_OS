@@ -79,6 +79,7 @@ def build_analysis_service(
     finding_repository: FindingRepository,
     insight_repository: InsightRepository,
     llm_client,
+    source_repository=None,
 ) -> AnalysisService:
     return AnalysisService(
         analysis_engine=build_analysis_engine(
@@ -87,6 +88,7 @@ def build_analysis_service(
             llm_client=llm_client,
         ),
         evidence_repository=evidence_repository,
+        source_repository=source_repository,
         finding_repository=finding_repository,
         insight_repository=insight_repository,
         max_evidence_per_batch=config.analysis_max_evidence_per_batch,
@@ -107,9 +109,11 @@ def build_analysis_executor(
     finding_repository: FindingRepository,
     insight_repository: InsightRepository,
     llm_client,
+    source_repository=None,
 ) -> AnalysisExecutor:
     return AnalysisExecutor(
         analysis_service=build_analysis_service(
+            source_repository=source_repository,
             config=config,
             overrides=overrides,
             evidence_repository=evidence_repository,

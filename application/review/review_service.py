@@ -144,6 +144,7 @@ class ReviewService:
             )
             evidence_items = qualifying_evidence(
                 design=design, evidence=evidence_items, brief=brief,
+                source_repository=self._report_service._source_repository,
             )
             # Run/design isolation: drop any foreign records that leaked into lists.
             findings = [

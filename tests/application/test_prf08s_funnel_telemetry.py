@@ -86,7 +86,8 @@ def run_fixture(enabled=True, *, fail_fetch=False, fail_extract=False, target=No
                 if not fail_extract:
                     raise
                 extracted = None
-    readiness = ResearchReadinessService(evaluator=DeterministicResearchSufficiencyEvaluator(), evidence_repository=evidence)
+    readiness = ResearchReadinessService(evaluator=DeterministicResearchSufficiencyEvaluator(),
+                                        evidence_repository=evidence, source_repository=sources)
     result = readiness.evaluate_for_context(context)
     return context, acquired, extracted, result, retriever, extractor, evidence, readiness
 
@@ -153,6 +154,8 @@ class FunnelTests(unittest.TestCase):
         evidence = f[6].list_for_project("project-1", workflow_run_id="run-1")[0]
         f[6].create(replace(evidence, id="future", deduplication_key="future", source_excerpt="1 July 2027",
             metadata={"observation_period": "1 July 2027"}))
+        from tests.helpers.citation_fixtures import sources_for
+        sources_for(f[6].list_for_project("project-1"), f[7]._source_repository)
         f[0].workflow_template.research_brief_snapshot = ResearchBrief(title="Synthetic", business_question="Synthetic", timeframe="1 July 2026")
         f[7].evaluate_for_context(f[0])
         rejected = [e for e in self.events(f, "qualification") if e["evidence_id"] == "future"]

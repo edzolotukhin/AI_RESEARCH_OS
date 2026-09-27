@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import unittest
+from hashlib import sha256
+from application.evidence.grounding import verify_grounding
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -27,17 +29,20 @@ class Prf08cEvidenceIntegrityPostgreSQLTests(PostgreSQLIntegrationTestCase):
         source_repo = PostgreSQLSourceRepository(self.session_factory)
         evidence_repo = PostgreSQLEvidenceRepository(self.session_factory)
         source_id = str(uuid4())
+        content = "A connector is defined as an outlet on a device."
+        checksum = sha256(content.encode()).hexdigest()
         source_repo.create(Source(
             id=source_id, project_id=project.id,
             url="https://example.test/definitions",
             canonical_url="https://example.test/definitions",
             title="Synthetic definitions", retrieved_at=datetime.now(timezone.utc).isoformat(),
             content_text="A connector is defined as an outlet on a device.",
-            content_checksum="synthetic-definition",
+            content_checksum=checksum,
         ))
         evidence_repo.create(Evidence(
             id=str(uuid4()), project_id=project.id, source_id=source_id,
-            source_content_checksum="synthetic-definition", workflow_run_id="synthetic-prf08e-run",
+            source_content_checksum=checksum, workflow_run_id="synthetic-prf08e-run",
+            source_locator=verify_grounding(source_text=content, excerpt=content).to_dict(),
             research_design_id="synthetic-design", statement="A connector is defined as an outlet",
             source_excerpt="A connector is defined as an outlet on a device.",
             created_at=datetime.now(timezone.utc).isoformat(),
@@ -55,7 +60,8 @@ class Prf08cEvidenceIntegrityPostgreSQLTests(PostgreSQLIntegrationTestCase):
         )
         brief = ResearchBrief(title="Synthetic", business_question="Definitions?",
                               timeframe="1 January 2025 to 1 July 2026")
-        self.assertEqual(len(qualifying_evidence(design=design, evidence=loaded, brief=brief)), 1)
+        self.assertEqual(len(qualifying_evidence(design=design, evidence=loaded, brief=brief,
+                                               source_repository=source_repo)), 1)
 
     def test_lineage_and_period_survive_jsonb_roundtrip(self) -> None:
         project = ProjectFactory().create("PRF-08C synthetic persistence")
@@ -69,17 +75,20 @@ class Prf08cEvidenceIntegrityPostgreSQLTests(PostgreSQLIntegrationTestCase):
         )
         for label, period in records:
             source_id = str(uuid4())
+            content = f"Observed {period} from shared dataset."
+            checksum = sha256(content.encode()).hexdigest()
             source_repo.create(Source(
                 id=source_id, project_id=project.id,
                 url=f"https://{label}.example.test/data",
                 canonical_url=f"https://{label}.example.test/data",
                 title=label, retrieved_at=now,
                 content_text=f"Observed {period} from shared dataset.",
-                content_checksum=f"checksum-{label}",
+                content_checksum=checksum,
             ))
             evidence_repo.create(Evidence(
                 id=str(uuid4()), project_id=project.id, source_id=source_id,
-                source_content_checksum=f"checksum-{label}",
+                source_content_checksum=checksum,
+                source_locator=verify_grounding(source_text=content, excerpt=content).to_dict(),
                 workflow_run_id="synthetic-prf08c-run", research_design_id="synthetic-design",
                 statement=f"Count as at {period}", source_excerpt=f"Observed {period} from shared dataset.",
                 created_at=now, research_question_refs=("RQ1",), information_need_refs=("IN1",),
@@ -104,7 +113,7 @@ class Prf08cEvidenceIntegrityPostgreSQLTests(PostgreSQLIntegrationTestCase):
             title="Synthetic study", business_question="What changed?",
             timeframe="1 January 2025 to 1 July 2026; sources available by 25 September 2026",
         )
-        eligible = qualifying_evidence(design=design, evidence=loaded, brief=brief)
+        eligible = qualifying_evidence(design=design, evidence=loaded, brief=brief, source_repository=source_repo)
         self.assertEqual(len(eligible), 1)
         signals = DeterministicSufficiencyEvaluator().evaluate(design=design, evidence=eligible)
         self.assertEqual(signals[0].independent_source_count, 1)

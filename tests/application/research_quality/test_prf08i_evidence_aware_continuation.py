@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from tests.helpers.citation_fixtures import sources_for
 from unittest.mock import patch
 
 from application.config import ApplicationConfig
@@ -115,7 +116,7 @@ class EvidenceAwareContinuationTests(unittest.TestCase):
         design = _design()
         raw = (_evidence("later", "IN1", "There were 100 devices",
                          "There were 100 devices in August 2026.", "August 2026"),)
-        eligible = qualifying_evidence(design=design, evidence=raw, brief=_brief())
+        eligible = qualifying_evidence(design=design, evidence=raw, brief=_brief(), source_repository=sources_for(raw))
         self.assertEqual(len(eligible), 0)
         ranks = evidence_priority_by_need(design=design, raw=raw, qualifying=eligible)
         self.assertEqual(ranks["IN1"], NO_QUALIFYING_EVIDENCE)
@@ -125,7 +126,7 @@ class EvidenceAwareContinuationTests(unittest.TestCase):
         design = _design()
         raw = (_evidence("definition", "IN2", "Connector means an outlet",
                          "A connector is defined as an outlet on a device."),)
-        eligible = qualifying_evidence(design=design, evidence=raw, brief=_brief())
+        eligible = qualifying_evidence(design=design, evidence=raw, brief=_brief(), source_repository=sources_for(raw))
         self.assertEqual(len(eligible), 1)
         ranks = evidence_priority_by_need(design=design, raw=raw, qualifying=eligible)
         self.assertEqual(ranks["IN2"], BELOW_SUFFICIENCY)

@@ -38,6 +38,14 @@ class _MeteredPort:
         return invoke("retriever", "retrieve", lambda: self.delegate.retrieve(candidate))
 
 
+def _acquisition_phase(*_args, **_kwargs):
+    scope = current_dispatch()
+    if scope is None:
+        return "unknown_acquisition"
+    resources = dict(scope.state.pending.resources)
+    return "initial_acquisition" if "initial_acquisitions" in resources else "continuation_acquisition"
+
+
 class DeskPrimitives:
     def __init__(self, context, acquisition, extraction):
         self.context, self.acquisition, self.extraction = context, acquisition, extraction
@@ -51,7 +59,7 @@ class DeskPrimitives:
                 for arm in derive_initial_retrieval_portfolio(query,
                     supports_arm=self.acquisition._search_provider.supports_retrieval_arm)]
 
-    @funnel.observed("initial_search")
+    @funnel.observed("initial_search", selection="deferred")
     def search(self, context, query):
         _, grouped = self.acquisition._collect_candidates(
             [query], execution_history=context.shared_state.setdefault(QUERY_HISTORY, []))
@@ -83,7 +91,7 @@ class DeskPrimitives:
         return self.acquisition._select_groups(grouped, design=self.design, brief=self.brief,
             exhausted_pairs=self.acquisition._exhausted_pairs_for_queries(self.context, list(queries.values())))[0]
 
-    @funnel.observed("continuation_search")
+    @funnel.observed(_acquisition_phase, selection="attempted")
     def acquire(self, context, group):
         # Existing selection/retrieval/persistence/dedup path, capped to one group.
         remaining = max(0, context.shared_state["ark_acquisition_deadline"] - time.time())
@@ -110,7 +118,8 @@ class DeskPrimitives:
             evidence_counts_by_need=counts or {}))
         return first + depth
 
-    @funnel.observed("continuation_extraction")
+    @funnel.observed(lambda self, context, item, target:
+                     "initial_extraction" if target is None else "continuation_extraction")
     def extract(self, context, item, target):
         if target and target not in item.run_context.information_need_ids:
             raise ValueError("target is not in authoritative source provenance")

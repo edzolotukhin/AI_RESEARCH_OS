@@ -236,6 +236,7 @@ class ResearchLoopService:
                         design=design,
                         evidence=qualifying_evidence(
                             design=design,
+                            source_repository=self._source_repository,
                             evidence=self._evidence_repository.list_for_project(
                                 context.project.id, workflow_run_id=context.workflow_run.id,
                             ),
@@ -456,6 +457,7 @@ class ResearchLoopService:
         )
         evidence = qualifying_evidence(
             design=design, evidence=evidence,
+            source_repository=self._source_repository,
             brief=(context.workflow_template.research_brief_snapshot if context.workflow_template else None),
         )
         previous = get_sufficiency_assessment_cache()
@@ -511,6 +513,7 @@ class ResearchLoopService:
     def _qualified_evidence(self, context: WorkflowContext, design: ResearchDesign):
         return qualifying_evidence(
             design=design,
+            source_repository=self._source_repository,
             evidence=self._evidence_repository.list_for_project(
                 context.project.id, workflow_run_id=context.workflow_run.id),
             brief=(context.workflow_template.research_brief_snapshot
@@ -533,6 +536,7 @@ class ResearchLoopService:
         )
         qualified = qualifying_evidence(
             design=design,
+            source_repository=self._source_repository,
             evidence=raw,
             brief=(
                 context.workflow_template.research_brief_snapshot

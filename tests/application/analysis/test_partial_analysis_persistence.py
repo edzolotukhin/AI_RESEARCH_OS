@@ -120,6 +120,8 @@ class PartialAnalysisPersistenceTests(unittest.TestCase):
         )
 
         with self.assertRaises(AnalysisError):
+            from tests.helpers.citation_fixtures import sources_for
+            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
             service.analyze_for_context(context)
 
         persisted = finding_repo.list_for_project("p1", workflow_run_id=run.id)

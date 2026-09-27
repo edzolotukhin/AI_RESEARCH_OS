@@ -231,6 +231,8 @@ class FindingEntailmentGateTests(unittest.TestCase):
             evidence_repo=evidence_repo,
             validator=validator,
         )
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
         summary = service.analyze_for_context(context)
         self.assertEqual(len(summary.finding_ids), 1)
         self.assertEqual(
@@ -273,6 +275,8 @@ class FindingEntailmentGateTests(unittest.TestCase):
             evidence_repo=evidence_repo,
             validator=ScriptedFindingEntailmentValidator(),
         )
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
         summary = service.analyze_for_context(context)
         self.assertEqual(len(summary.finding_ids), 1)
         self.assertIn("improved", finding_repo.get_by_id(summary.finding_ids[0]).statement)
@@ -309,6 +313,8 @@ class FindingEntailmentGateTests(unittest.TestCase):
             ),
         )
         with self.assertRaises(AnalysisError):
+            from tests.helpers.citation_fixtures import sources_for
+            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
             service.analyze_for_context(context)
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
         self.assertEqual(insight_repo.list_for_project("p1", workflow_run_id=run_id), [])
@@ -343,6 +349,8 @@ class FindingEntailmentGateTests(unittest.TestCase):
             ),
         )
         with self.assertRaises(AnalysisError):
+            from tests.helpers.citation_fixtures import sources_for
+            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
             service.analyze_for_context(context)
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
 
@@ -376,6 +384,8 @@ class FindingEntailmentGateTests(unittest.TestCase):
             ),
         )
         with self.assertRaises(AnalysisError):
+            from tests.helpers.citation_fixtures import sources_for
+            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
             service.analyze_for_context(context)
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
 
@@ -411,6 +421,8 @@ class FindingEntailmentGateTests(unittest.TestCase):
             ),
         )
         with self.assertRaises(AnalysisError):
+            from tests.helpers.citation_fixtures import sources_for
+            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
             service.analyze_for_context(context)
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
 
@@ -451,6 +463,8 @@ class FindingEntailmentGateTests(unittest.TestCase):
             ),
         )
         with self.assertRaises(AnalysisError):
+            from tests.helpers.citation_fixtures import sources_for
+            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
             service.analyze_for_context(context)
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
 
@@ -484,6 +498,8 @@ class FindingEntailmentGateTests(unittest.TestCase):
             ),
         )
         with self.assertRaises(AnalysisError):
+            from tests.helpers.citation_fixtures import sources_for
+            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
             service.analyze_for_context(context)
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
 
@@ -516,6 +532,8 @@ class FindingEntailmentGateTests(unittest.TestCase):
             validator=validator,
         )
         with self.assertRaises(AnalysisError):
+            from tests.helpers.citation_fixtures import sources_for
+            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
             service.analyze_for_context(context)
         self.assertEqual(validator.calls, [])
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
@@ -549,6 +567,8 @@ class FindingEntailmentGateTests(unittest.TestCase):
             validator=validator,
         )
         with self.assertRaises(AnalysisError):
+            from tests.helpers.citation_fixtures import sources_for
+            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
             service.analyze_for_context(context)
         self.assertEqual(validator.calls, [])
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
@@ -583,6 +603,8 @@ class FindingEntailmentGateTests(unittest.TestCase):
             ),
         )
         with self.assertRaises(AnalysisError) as ctx:
+            from tests.helpers.citation_fixtures import sources_for
+            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
             service.analyze_for_context(context)
         self.assertIn("entailment", str(ctx.exception).lower())
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
@@ -629,6 +651,8 @@ class FindingEntailmentGateTests(unittest.TestCase):
             ),
         )
         with self.assertRaises(AnalysisError):
+            from tests.helpers.citation_fixtures import sources_for
+            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
             service.analyze_for_context(context)
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
 
@@ -680,6 +704,8 @@ class FindingEntailmentGateTests(unittest.TestCase):
             ),
         )
         with self.assertRaises(AnalysisError):
+            from tests.helpers.citation_fixtures import sources_for
+            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
             service.analyze_for_context(context)
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
 
@@ -732,6 +758,8 @@ class FindingEntailmentGateTests(unittest.TestCase):
             ),
         )
         with self.assertRaises(AnalysisError):
+            from tests.helpers.citation_fixtures import sources_for
+            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
             service.analyze_for_context(context)
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
 
@@ -773,6 +801,8 @@ class FindingEntailmentGateTests(unittest.TestCase):
                 },
             ),
         )
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
         summary = service.analyze_for_context(context)
         self.assertEqual(len(summary.finding_ids), 1)
         persisted = finding_repo.list_for_project("p1", workflow_run_id=run_id)
@@ -822,6 +852,8 @@ class FindingEntailmentGateTests(unittest.TestCase):
                 },
             ),
         )
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
         summary = service.analyze_for_context(context)
         insights = insight_repo.list_for_project("p1", workflow_run_id=run_id)
         self.assertEqual(len(insights), 1)
@@ -861,6 +893,8 @@ class FindingEntailmentGateTests(unittest.TestCase):
             ),
         )
         with self.assertRaises(AnalysisError) as ctx:
+            from tests.helpers.citation_fixtures import sources_for
+            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
             service.analyze_for_context(context)
         self.assertIn("entailment", str(ctx.exception))
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
@@ -899,6 +933,8 @@ class FindingEntailmentGateTests(unittest.TestCase):
         )
         # Truncated SUPPORTED is coerced to INSUFFICIENT → no persist.
         with self.assertRaises(AnalysisError):
+            from tests.helpers.citation_fixtures import sources_for
+            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
             service.analyze_for_context(context)
         projection = validator.calls[0][0]
         self.assertTrue(projection.truncated)
@@ -938,6 +974,8 @@ class FindingEntailmentGateTests(unittest.TestCase):
             validator=validator,
             max_entailment_candidates_per_batch=2,
         )
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
         summary = service.analyze_for_context(context)
         self.assertEqual(len(summary.finding_ids), 4)
         self.assertEqual(len(validator.calls), 2)
@@ -975,6 +1013,8 @@ class FindingEntailmentGateTests(unittest.TestCase):
             ),
         )
         with self.assertRaises(AnalysisError) as ctx:
+            from tests.helpers.citation_fixtures import sources_for
+            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
             service.analyze_for_context(context)
         self.assertIn("budget", str(ctx.exception).lower())
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
@@ -1123,6 +1163,8 @@ class BrandAClaimGradeEntailmentRegressionTests(unittest.TestCase):
             workflow_run=run,
             workflow_template=template,
         )
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
         summary = service.analyze_for_context(context)
         self.assertEqual(len(summary.finding_ids), 3)
         self.assertEqual(summary.entailment_diagnostics.entailment_accepted_count, 3)

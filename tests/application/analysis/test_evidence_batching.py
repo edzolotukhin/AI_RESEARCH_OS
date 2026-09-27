@@ -194,6 +194,8 @@ class MultiQuestionFindingDedupTests(unittest.TestCase):
             workflow_template=template,
         )
 
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
         summary = service.analyze_for_context(context)
         self.assertEqual(len(summary.finding_ids), 1)
         self.assertEqual(

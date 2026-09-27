@@ -50,11 +50,13 @@ class ResearchReadinessService:
         evidence_repository: EvidenceRepository,
         gate: ResearchReadinessGate | None = None,
         loop_service: ResearchLoopService | None = None,
+        source_repository=None,
     ) -> None:
         self._evaluator = evaluator
         self._evidence_repository = evidence_repository
         self._gate = gate or ResearchReadinessGate()
         self._loop_service = loop_service
+        self._source_repository = source_repository
 
     @funnel.observed("qualification")
     def evaluate_for_context(
@@ -68,6 +70,7 @@ class ResearchReadinessService:
         )
         evidence = qualifying_evidence(
             design=design, evidence=evidence,
+            source_repository=self._source_repository,
             brief=(context.workflow_template.research_brief_snapshot if context.workflow_template else None),
         )
         previous = get_sufficiency_assessment_cache()
@@ -155,6 +158,7 @@ class ResearchReadinessService:
             design=design,
             evidence=qualifying_evidence(
                 design=design,
+                source_repository=self._source_repository,
                 evidence=self._evidence_repository.list_for_project(
                     context.project.id, workflow_run_id=context.workflow_run.id,
                 ),
@@ -212,6 +216,7 @@ class ResearchReadinessService:
         )
         evidence = qualifying_evidence(
             design=design, evidence=evidence,
+            source_repository=self._source_repository,
             brief=(context.workflow_template.research_brief_snapshot if context.workflow_template else None),
         )
         signals = DeterministicSufficiencyEvaluator().evaluate(

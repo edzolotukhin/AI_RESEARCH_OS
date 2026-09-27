@@ -66,7 +66,7 @@ def locate_excerpt(
             return SourceLocator(
                 normalized_start=start,
                 normalized_end=end,
-                excerpt_hash=excerpt_hash(normalized_excerpt),
+                excerpt_hash=excerpt_hash(excerpt),
             )
         start = normalized_source.find(normalized_excerpt, start + 1)
     return None

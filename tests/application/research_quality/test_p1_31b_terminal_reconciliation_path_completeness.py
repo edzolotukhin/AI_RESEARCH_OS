@@ -83,6 +83,7 @@ def _service(*, evaluator, evidence_repository, loop_service=None):
     return CountingReadinessService(
         evaluator=evaluator,
         evidence_repository=evidence_repository,
+        source_repository=getattr(evidence_repository, "fixture_sources", None),
         loop_service=loop_service,
     )
 

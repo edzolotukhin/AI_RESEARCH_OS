@@ -813,6 +813,7 @@ def _build_agent_executors(
         llm_client=stage_llm_clients.evidence,
     )
     executors["analysis"] = build_analysis_executor(
+        source_repository=source_repository,
         config=config,
         overrides=overrides,
         evidence_repository=evidence_repository,

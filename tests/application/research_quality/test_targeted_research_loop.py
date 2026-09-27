@@ -359,6 +359,9 @@ def _seed_evidence(
             deduplication_key=f"dedup-{evidence_id}",
         ),
     )
+    from tests.helpers.citation_fixtures import sources_for
+    repository.fixture_sources = sources_for(
+        repository.list_for_project(context.project.id), getattr(repository, "fixture_sources", None))
 
 
 def _design_three_needs() -> ResearchDesign:
@@ -496,6 +499,10 @@ def _build_service(
 ) -> ResearchReadinessService:
     source_repo = source_repository or InMemorySourceRepository()
     evidence_repo = evidence_repository or InMemoryEvidenceRepository()
+    from tests.helpers.citation_fixtures import sources_for
+    existing = list(getattr(evidence_repo, "_evidence", {}).values())
+    sources_for(existing, source_repo)
+    evidence_repo.fixture_sources = source_repo
     bounds = TargetedResearchBounds(
         max_gap_rounds_per_run=max_rounds,
         max_attempts_per_gap=max_attempts_per_gap,
@@ -516,6 +523,7 @@ def _build_service(
     return ResearchReadinessService(
         evaluator=evaluator,
         evidence_repository=evidence_repo,
+        source_repository=source_repo,
         loop_service=loop_service,
     )
 
@@ -1094,6 +1102,7 @@ class GapStarvationRegressionTests(unittest.TestCase):
         service = _build_service(
             SequentialSufficiencyEvaluator([missing_both, ready_both]),
             runner=runner,
+            source_repository=runner._inner._source_repository,
             evidence_repository=evidence_repo,
             max_rounds=2,
         )

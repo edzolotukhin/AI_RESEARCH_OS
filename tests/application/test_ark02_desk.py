@@ -92,7 +92,8 @@ def fixture(*, invalid_first=False):
         source_repository=sources, evidence_repository=evidence)
     extraction = build_evidence_extraction_service(config=config, overrides=overrides,
         source_repository=sources, evidence_repository=evidence, llm_client=client)
-    readiness = ResearchReadinessService(evaluator=DeterministicResearchSufficiencyEvaluator(), evidence_repository=evidence)
+    readiness = ResearchReadinessService(evaluator=DeterministicResearchSufficiencyEvaluator(),
+        evidence_repository=evidence, source_repository=sources)
     adapter = DeskAdapter(context, config, DeskPrimitives(context, acquisition, extraction), readiness, evidence)
     return config, context, sources, evidence, llm, adapter, overrides, client
 

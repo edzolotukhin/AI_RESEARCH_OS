@@ -71,7 +71,7 @@ def emit(kind, **fields):
     return identifier
 
 
-def observed(stage):
+def observed(stage, *, selection="normal"):
     """Bind only around existing entry points; normal checkpointing persists it."""
     def decorate(fn):
         @wraps(fn)
@@ -84,18 +84,25 @@ def observed(stage):
                     _active.reset(token)
             journal = context.shared_state.setdefault(KEY, {"version": 1, "sequence": 0,
                 "events": [], "dropped_events": 0, "observer_errors": 0})
+            try:
+                actual_stage = stage(self, context, *args, **kwargs) if callable(stage) else stage
+            except Exception:
+                actual_stage = "unknown_phase"
+                journal["observer_errors"] += 1
             state = {"journal": journal, "run_id": context.workflow_run.id,
-                     "stage": stage, "candidates": [], "sources": {}}
+                     "stage": actual_stage, "candidates": [], "sources": {}}
+            if selection == "attempted":
+                state["candidates"] = [e for e in journal["events"] if e.get("kind") == "candidate"]
             token = _active.set(state)
             result = None
             try:
                 result = fn(self, context, *args, **kwargs)
-                if stage in {"qualification", "readiness"}:
+                if actual_stage in {"qualification", "readiness"}:
                     readiness_result(result)
                 return result
             finally:
-                if stage in {"initial_search", "continuation_search"}:
-                    finish_selection(result)
+                if selection == "attempted" or actual_stage in {"initial_search", "continuation_search"}:
+                    finish_selection(result, mode=selection)
                 _active.reset(token)
         return wrapper
     return decorate
@@ -168,18 +175,22 @@ def acquired(source, did_fetch):
 
 
 @guarded
-def finish_selection(summary):
+def finish_selection(summary, *, mode="normal"):
     state = _active.get()
     decisions = getattr(summary, "selection_decisions", ())
     primary = set()
     for candidate in state["candidates"]:
         identity = candidate["canonical_identity"]
         source = state["sources"].get(identity)
+        if mode == "attempted" and source is None:
+            continue
         matching = [d for d in decisions if digest(d.get("canonical_url", "")) == identity]
         reason = candidate["reason"]
         selected = False
         if reason == "pending":
-            if source:
+            if mode == "deferred":
+                reason = "selection_deferred"
+            elif source:
                 selected = identity not in primary
                 reason = "selected" if selected else "duplicate_url"
                 primary.add(identity)
@@ -256,9 +267,9 @@ def produced(evidence_id, source_id, refs, dedup_hit):
 
 
 @guarded
-def qualification(evidence_id, need_id, qualifies, reason):
+def qualification(evidence_id, need_id, qualifies, reason, *, policy="canonical_temporal_filter"):
     emit("qualification", evidence_id=safe_text(evidence_id), supported_in=safe_text(need_id),
-         qualifying=qualifies, reason=reason, policy="canonical_temporal_filter")
+         qualifying=qualifies, reason=reason, policy=policy)
 
 
 @guarded

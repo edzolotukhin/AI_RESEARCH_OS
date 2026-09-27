@@ -143,8 +143,10 @@ class ClaimTemporalTests(unittest.TestCase):
         for item in (definition, method):
             self.assertEqual(temporal_eligibility(item, need, self.cutoff), "not_applicable")
         self.assertEqual(temporal_eligibility(count, need, self.cutoff), "applicable_failed")
+        from tests.helpers.citation_fixtures import sources_for
         qualified = qualifying_evidence(design=self.design,
-                                        evidence=(definition, method, count), brief=_brief())
+                                        evidence=(definition, method, count), brief=_brief(),
+                                        source_repository=sources_for((definition, method, count)))
         self.assertEqual({item.id for item in qualified}, {"definition", "method"})
 
     def test_page_label_cannot_make_an_undated_statistic_eligible(self):
@@ -236,8 +238,10 @@ class Prf08dPatternTests(unittest.TestCase):
             }
         later = _evidence("later", "IN1", "There were 100 devices",
                           "There were 100 devices in August 2026.", "August 2026")
+        from tests.helpers.citation_fixtures import sources_for
         eligible = qualifying_evidence(design=design,
-                                        evidence=(definition, dependent, later), brief=_brief())
+                                        evidence=(definition, dependent, later), brief=_brief(),
+                                        source_repository=sources_for((definition, dependent, later)))
         self.assertEqual({item.id for item in eligible}, {"def-1", "def-2"})
         signals = DeterministicSufficiencyEvaluator().evaluate(
             design=design, evidence=eligible,

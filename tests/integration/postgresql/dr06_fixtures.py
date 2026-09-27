@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from hashlib import sha256
+from application.evidence.grounding import verify_grounding
 from uuid import uuid4
 
 from domain.evidence.evidence import Evidence
@@ -111,6 +113,8 @@ def seed_report_prerequisites(
     finding_id = str(uuid4())
     insight_id = str(uuid4())
     source_url = f"https://example.com/market-report/{run.id}"
+    content = "Market share increased in 2026."
+    checksum = sha256(content.encode()).hexdigest()
 
     source_repo = PostgreSQLSourceRepository(session_factory)
     evidence_repo = PostgreSQLEvidenceRepository(session_factory)
@@ -127,7 +131,7 @@ def seed_report_prerequisites(
             retrieved_at=now,
             retrieval_status=RetrievalStatus.ACQUIRED,
             content_text="Market share increased in 2026.",
-            content_checksum="checksum-source",
+            content_checksum=checksum,
             query_refs=("sq-in-a",),
             research_question_refs=("rq-a",),
             information_need_refs=("in-a",),
@@ -140,7 +144,9 @@ def seed_report_prerequisites(
             id=evidence_id,
             project_id=project.id,
             source_id=source_id,
-            source_content_checksum="checksum-source",
+            source_content_checksum=checksum,
+            source_locator=verify_grounding(source_text=content, excerpt=content).to_dict(),
+            metadata={"observation_period": "2026"},
             workflow_run_id=run.id,
             research_design_id=design.id,
             statement="Market share increased in 2026.",

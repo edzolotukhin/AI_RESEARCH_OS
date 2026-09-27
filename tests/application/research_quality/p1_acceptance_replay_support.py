@@ -529,6 +529,9 @@ def build_readiness_service(
 ) -> ResearchReadinessService:
     source_repo = source_repository or InMemorySourceRepository()
     evidence_repo = evidence_repository or InMemoryEvidenceRepository()
+    from tests.helpers.citation_fixtures import sources_for
+    sources_for(list(evidence_repo._evidence.values()), source_repo)
+    evidence_repo.fixture_sources = source_repo
     bounds = TargetedResearchBounds(
         max_gap_rounds_per_run=max_rounds,
         max_attempts_per_gap=max_attempts_per_gap,
@@ -549,6 +552,7 @@ def build_readiness_service(
     return ResearchReadinessService(
         evaluator=evaluator,
         evidence_repository=evidence_repo,
+        source_repository=source_repo,
         loop_service=loop_service,
     )
 
@@ -602,6 +606,13 @@ def seed_initial_status_evidence(
                 deduplication_key=f"initial-{need_id}",
             ),
         )
+
+
+    from tests.helpers.citation_fixtures import sources_for
+    repository.fixture_sources = sources_for(
+        repository.list_for_project(context.project.id),
+        getattr(repository, "fixture_sources", None),
+    )
 
 
 def run_rqcl_workflow(

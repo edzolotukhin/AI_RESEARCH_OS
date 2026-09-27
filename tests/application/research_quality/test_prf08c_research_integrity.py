@@ -194,7 +194,9 @@ class IntegratedFailurePatternTests(unittest.TestCase):
             _evidence("specialist", "specialist-document", "June 2026", origin="specialist-feed"),
             _evidence("late", "specialist-document", "August 2026", origin="specialist-feed"),
         )
-        eligible = qualifying_evidence(design=design, evidence=evidence, brief=brief)
+        from tests.helpers.citation_fixtures import sources_for
+        eligible = qualifying_evidence(design=design, evidence=evidence, brief=brief,
+                                       source_repository=sources_for(evidence))
         self.assertEqual({item.id for item in eligible}, {"official", "specialist"})
         signals = DeterministicSufficiencyEvaluator().evaluate(design=design, evidence=eligible)
         self.assertEqual(signals[0].evidence_count, 2)

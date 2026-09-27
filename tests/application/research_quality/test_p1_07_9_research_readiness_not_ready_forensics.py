@@ -213,6 +213,7 @@ class LoopAndGateSnapshotTests(unittest.TestCase):
         service = ResearchReadinessService(
             evaluator=evaluator,
             evidence_repository=evidence_repo,
+            source_repository=source_repo,
             loop_service=ResearchLoopService(
                 runner=runner,
                 bounds=TargetedResearchBounds(max_gap_rounds_per_run=1, max_attempts_per_gap=1),

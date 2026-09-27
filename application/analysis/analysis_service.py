@@ -106,9 +106,11 @@ class AnalysisService:
         finding_entailment_validator: FindingEntailmentValidator | None = None,
         max_entailment_candidates_per_batch: int | None = None,
         max_entailment_chars_per_batch: int | None = None,
+        source_repository=None,
     ) -> None:
         self._analysis_engine = analysis_engine
         self._evidence_repository = evidence_repository
+        self._source_repository = source_repository
         self._finding_repository = finding_repository
         self._insight_repository = insight_repository
         self._max_evidence_per_batch = max_evidence_per_batch
@@ -133,6 +135,7 @@ class AnalysisService:
         )
         evidence_items = qualifying_evidence(
             design=design, evidence=evidence_items, brief=brief,
+            source_repository=self._source_repository,
         )
         if not evidence_items:
             raise AnalysisError(

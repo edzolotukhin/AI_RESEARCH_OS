@@ -205,8 +205,11 @@ def qualifying_evidence(
     design: ResearchDesign,
     evidence: Sequence[Evidence],
     brief: ResearchBrief | None,
+    source_repository=None,
 ) -> tuple[Evidence, ...]:
-    """Retain only in-period need references for an explicitly dated brief."""
+    """Shared citation gate, then unchanged temporal qualification; fail closed."""
+    from application.evidence.citation_integrity import citation_valid_evidence
+    evidence = citation_valid_evidence(evidence, source_repository)
     from application import research_funnel_telemetry as funnel
     cutoff = exact_observation_cutoff(brief)
     start = None

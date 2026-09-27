@@ -150,6 +150,7 @@ class ReportService:
         )
         evidence_items = qualifying_evidence(
             design=design, evidence=evidence_items, brief=brief,
+            source_repository=self._source_repository,
         )
         sources = self._source_repository.list_for_project(project_id)
         run_sources = [
