@@ -11,6 +11,7 @@ from application.persistence.exceptions import (
 from application.ports.workflow_run_repository import WorkflowRunRepository
 from domain.workflow_run import WorkflowRun
 from domain.workflow_status import WorkflowStatus
+from infrastructure.persistence.postgresql.kernel_ownership import bind_quant_pins
 
 
 class InMemoryWorkflowRunRepository:
@@ -64,6 +65,7 @@ class InMemoryWorkflowRunRepository:
         *,
         expected_version: int | None = None,
         task_results: dict[str, Any] | None = None,
+        quant_pin_binding: dict[str, Any] | None = None,
     ) -> int:
         current_version = self._versions.get(workflow_run.id)
         if current_version is None:
@@ -83,6 +85,12 @@ class InMemoryWorkflowRunRepository:
         self._runs[workflow_run.id] = copy.deepcopy(workflow_run)
         if task_results is not None:
             self._task_results[workflow_run.id] = copy.deepcopy(task_results)
+        if quant_pin_binding is not None:
+            current_results = self._task_results[workflow_run.id]
+            self._task_results[workflow_run.id] = bind_quant_pins(
+                current_results, current_results, quant_pin_binding,
+                template_id=workflow_run.workflow_template_id,
+            )
 
         new_version = current_version + 1
         self._versions[workflow_run.id] = new_version

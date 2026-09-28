@@ -20,6 +20,12 @@ from application.quantitative.fingerprints import (
     fingerprint_variable,
     sha256_bytes,
 )
+from application.quantitative.dataset_limits import (
+    MAX_DATA_ROWS,
+    MAX_DATA_CELLS,
+    MAX_SOURCE_BYTES,
+    MAX_VARIABLES,
+)
 from domain.quantitative.dataset import (
     CodebookVersion,
     DatasetFormat,
@@ -83,6 +89,8 @@ class QuantitativeDatasetImportService:
     ) -> QuantitativeImportResult:
         if not data:
             raise QuantitativeImportError("dataset bytes are empty")
+        if len(data) > MAX_SOURCE_BYTES:
+            raise QuantitativeImportError("dataset source exceeds the size limit")
         importer = self._importers.get(dataset_format)
         if importer is None:
             raise QuantitativeImportError(f"no importer for {dataset_format.value}")
@@ -95,6 +103,14 @@ class QuantitativeDatasetImportService:
                 "replacement parent does not match dataset project/run authority"
             )
         parsed = importer.parse(data, filename=filename, data_sheet=data_sheet)
+        if not parsed.variables or len(parsed.variables) > MAX_VARIABLES:
+            raise QuantitativeImportError("dataset variable count is outside supported limits")
+        if not parsed.rows or len(parsed.rows) > MAX_DATA_ROWS:
+            raise QuantitativeImportError("dataset row count is outside supported limits")
+        if len(parsed.rows) * len(parsed.variables) > MAX_DATA_CELLS:
+            raise QuantitativeImportError("dataset cell count is outside supported limits")
+        if any(len(row) != len(parsed.variables) for row in parsed.rows):
+            raise QuantitativeImportError("dataset rows are not rectangular")
         variables = self._build_variables(
             parsed,
             overrides or {},

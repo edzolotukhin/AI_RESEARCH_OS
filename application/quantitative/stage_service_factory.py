@@ -5,6 +5,9 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Mapping
 
 from application.quantitative.analysis_execution import QuantitativeAnalysisExecutionService
+from application.methods.quantitative.pin import (
+    ANALYSIS_PIN, METHOD_PIN, resolve_method_pin, verify_analysis_pin,
+)
 from application.quantitative.quality_control import assess_dataset_quality
 from application.quantitative.finding_generation import (
     QuantitativeFindingGenerationService,
@@ -32,6 +35,7 @@ from application.quantitative.workflow import (
     QUANTITATIVE_SAFE_STATE_KEY,
     QUANTITATIVE_STAGE_SERVICE_KEY,
     QUANTITATIVE_WORKFLOW_ID,
+    CMF_QUANTITATIVE_WORKFLOW_ID,
     QuantitativeApprovalService,
     QuantitativeWorkflowError,
     validate_safe_workflow_state,
@@ -471,11 +475,31 @@ class QuantitativeWorkflowContextServiceResolver:
     factory: QuantitativeStageServiceFactory
 
     def resolve(self, context: WorkflowContext) -> Mapping[str, object]:
-        if context.workflow_run.workflow_template_id != QUANTITATIVE_WORKFLOW_ID:
+        if context.workflow_run.workflow_template_id not in {QUANTITATIVE_WORKFLOW_ID, CMF_QUANTITATIVE_WORKFLOW_ID}:
             return {}
         safe_state = context.shared_state.get(QUANTITATIVE_SAFE_STATE_KEY, {})
         if not isinstance(safe_state, Mapping):
             raise QuantitativeWorkflowError("Durable Quantitative state is invalid")
+        method_pin = context.execution_metadata.get(METHOD_PIN)
+        analysis_pin = context.execution_metadata.get(ANALYSIS_PIN)
+        if context.workflow_run.workflow_template_id == CMF_QUANTITATIVE_WORKFLOW_ID and method_pin is None:
+            raise QuantitativeWorkflowError("CMF Quant run has no method pin")
+        if (method_pin is not None and analysis_pin is None
+                and context.workflow_run.status is WorkflowStatus.PAUSED and not safe_state):
+            resolve_method_pin(method_pin, project_id=context.project.id,
+                               run_id=context.workflow_run.id)
+            return {}
+        if method_pin is not None or analysis_pin is not None:
+            if method_pin is None or analysis_pin is None:
+                raise QuantitativeWorkflowError("Incomplete CMF Quant run authority")
+            resolve_method_pin(method_pin, project_id=context.project.id, run_id=context.workflow_run.id)
+            dataset, codebook = self.factory._load_dataset_authority(
+                project_id=context.project.id, run_id=context.workflow_run.id,
+                state=safe_state,
+            )
+            verify_analysis_pin(analysis_pin, method_pin=method_pin,
+                                project_id=context.project.id, run_id=context.workflow_run.id,
+                                dataset=dataset, codebook=codebook, state=safe_state)
         if context.workflow_run.status is WorkflowStatus.PAUSED:
             paused = tuple(
                 task for task in context.workflow_run.tasks

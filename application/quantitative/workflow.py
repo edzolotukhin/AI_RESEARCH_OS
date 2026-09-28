@@ -9,6 +9,7 @@ from application.runtime.checkpoint_context import CHECKPOINT_SERVICE_KEY
 from application.ports.deterministic_digest_provider import DeterministicDigestProvider
 from application.quantitative.fingerprints import canonical_approval_fingerprint, canonical_digest
 from application.quantitative.state_persistence import QuantitativeStateService
+from application.methods.quantitative.pin import METHOD_PIN, ANALYSIS_PIN, resolve_method_pin, verify_analysis_state
 from domain.quantitative.workflow import (
     QuantitativeApproval,
     QuantitativeApprovalDecision,
@@ -25,6 +26,7 @@ from runtime.workflow_context import WorkflowContext
 
 
 QUANTITATIVE_WORKFLOW_ID = "quantitative-consumer-survey-v1"
+CMF_QUANTITATIVE_WORKFLOW_ID = "quantitative-consumer-survey-cmf-v1"
 QUANTITATIVE_STAGE_SERVICE_KEY = "quantitative_stage_service"
 QUANTITATIVE_SAFE_STATE_KEY = "quantitative"
 SEMANTIC_PIPELINE_BOUNDARY = "PRE_QI_SEMANTIC_PIPELINE_V1"
@@ -66,8 +68,9 @@ class QuantitativeStageService(Protocol):
     ) -> Mapping[str, str]: ...
 
 
-def build_quantitative_workflow_template() -> WorkflowTemplate:
-    workflow = Workflow(id=QUANTITATIVE_WORKFLOW_ID, name="Quantitative consumer survey V1")
+def build_quantitative_workflow_template(*, cmf: bool = False) -> WorkflowTemplate:
+    workflow = Workflow(id=CMF_QUANTITATIVE_WORKFLOW_ID if cmf else QUANTITATIVE_WORKFLOW_ID,
+                        name="Quantitative consumer survey V1")
     previous: str | None = None
     for stage_id, name in STAGES:
         depends_on = [] if previous is None else [previous]
@@ -108,6 +111,18 @@ class QuantitativeStageExecutor(BaseExecutor):
         state = validate_safe_workflow_state(
             context.shared_state.get(QUANTITATIVE_SAFE_STATE_KEY, {})
         )
+        method_pin = context.execution_metadata.get(METHOD_PIN)
+        analysis_pin = context.execution_metadata.get(ANALYSIS_PIN)
+        if context.workflow_run.workflow_template_id == CMF_QUANTITATIVE_WORKFLOW_ID and method_pin is None:
+            raise QuantitativeWorkflowError("CMF Quant run has no method pin")
+        if method_pin is not None or analysis_pin is not None:
+            if method_pin is None or analysis_pin is None:
+                raise QuantitativeWorkflowError("Incomplete CMF Quant run authority")
+            method = resolve_method_pin(method_pin, project_id=context.project.id,
+                                        run_id=context.workflow_run.id)
+            verify_analysis_state(analysis_pin, method_pin=method_pin, state=state)
+        else:
+            method = None
         try:
             if task.definition_id == "quant_analysis" and getattr(service,"supports_progress_checkpoint",False):
                 checkpoint=context.services.get(CHECKPOINT_SERVICE_KEY)
@@ -115,14 +130,19 @@ class QuantitativeStageExecutor(BaseExecutor):
                     state["analysis_execution_progress_manifest_id"]=manifest_id
                     context.shared_state[QUANTITATIVE_SAFE_STATE_KEY]=validate_safe_workflow_state(state)
                     if checkpoint is not None: checkpoint.on_task_progress(context)
-                updated=service.execute_stage(task.definition_id,project_id=context.project.id,run_id=context.workflow_run.id,safe_state=state,progress_callback=progress)
+                def execute_with_progress(_context):
+                    return service.execute_stage(task.definition_id,project_id=context.project.id,
+                                                 run_id=context.workflow_run.id,safe_state=state,
+                                                 progress_callback=progress)
+                updated = (method.run_stage(task.definition_id, context, execute_with_progress)
+                           if method else execute_with_progress(context))
             else:
-                updated = service.execute_stage(
-                    task.definition_id,
-                    project_id=context.project.id,
-                    run_id=context.workflow_run.id,
-                    safe_state=state,
-                )
+                def execute(_context):
+                    return service.execute_stage(
+                        task.definition_id, project_id=context.project.id,
+                        run_id=context.workflow_run.id, safe_state=state,
+                    )
+                updated = method.run_stage(task.definition_id, context, execute) if method else execute(context)
         except QuantitativeApprovalRequired as required:
             state.update(required.state_updates)
             state.update(

@@ -285,6 +285,9 @@ class DurableWorkflowService:
             workflow_run=workflow_run,
         )
         restore_runtime_state(context, task_results)
+        from application.methods.quantitative.pin import METHOD_PIN, ANALYSIS_PIN
+        context.execution_metadata[METHOD_PIN] = task_results.get(METHOD_PIN)
+        context.execution_metadata[ANALYSIS_PIN] = task_results.get(ANALYSIS_PIN)
         if self._context_service_resolver is not None:
             context.services.update(self._context_service_resolver.resolve(context))
         return context

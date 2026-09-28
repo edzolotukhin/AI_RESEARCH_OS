@@ -8,6 +8,7 @@ import pyreadstat
 
 from application.ports.quantitative_dataset_ports import ParsedDataset, ParsedVariable
 from domain.quantitative.dataset import DatasetFormat
+from application.quantitative.dataset_limits import MAX_DATA_CELLS, MAX_DATA_ROWS, MAX_VARIABLES
 
 
 class SavPyreadstatAdapter:
@@ -22,6 +23,14 @@ class SavPyreadstatAdapter:
     ) -> ParsedDataset:
         if data_sheet is not None:
             raise ValueError("SAV import does not accept data_sheet")
+        _, header = pyreadstat.read_sav(io.BytesIO(data), metadataonly=True)
+        header_columns = getattr(header, "number_columns", None)
+        header_rows = getattr(header, "number_rows", None)
+        if ((header_columns is not None and header_columns > MAX_VARIABLES)
+                or (header_rows is not None and header_rows > MAX_DATA_ROWS)
+                or (header_columns is not None and header_rows is not None
+                    and header_columns * header_rows > MAX_DATA_CELLS)):
+            raise ValueError("SAV dimensions exceed supported dataset limits")
         columns, metadata = pyreadstat.read_sav(
             io.BytesIO(data),
             output_format="dict",
@@ -56,6 +65,9 @@ class SavPyreadstatAdapter:
                 metadata={"multiple_response_sets": mr_by_variable.get(name, ())},
             ))
         row_count = len(next(iter(columns.values()), ()))
+        if (len(names) > MAX_VARIABLES or row_count > MAX_DATA_ROWS
+                or len(names) * row_count > MAX_DATA_CELLS):
+            raise ValueError("SAV dimensions exceed supported dataset limits")
         rows = tuple(
             tuple(_plain_value(columns[name][row_index]) for name in names)
             for row_index in range(row_count)

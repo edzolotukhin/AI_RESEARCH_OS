@@ -248,6 +248,8 @@ def create_application_container(
     methods = production_methods()
     if config.cmf_desk_enabled and not config.ark_desk_enabled:
         raise ValueError("CMF Desk activation requires ARK")
+    if config.cmf_quant_enabled and config.persistence_backend != "postgresql":
+        raise ValueError("CMF Quant activation requires PostgreSQL persistence")
     if config.ark_desk_enabled and config.persistence_backend != "postgresql":
         raise ValueError("ARK activation requires PostgreSQL persistence")
     workflow_template_mapper = ResearchDesignWorkflowMapper(
@@ -670,6 +672,7 @@ def create_application_container(
                 else None
             ),
             activation_sessions=persistence.activation_sessions,
+            cmf_quant_enabled=config.cmf_quant_enabled,
         )
 
     project_planning_service = ProjectPlanningService(

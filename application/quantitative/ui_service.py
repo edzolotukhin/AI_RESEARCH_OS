@@ -14,6 +14,11 @@ from application.persistence.exceptions import (
 )
 
 from application.quantitative.dataset_import_service import QuantitativeDatasetImportService
+from application.quantitative.dataset_limits import MAX_SOURCE_BYTES
+from application.methods.quantitative.pin import (
+    ANALYSIS_PIN, METHOD_PIN, make_analysis_pin, make_method_pin, resolve_method_pin,
+    verify_analysis_pin,
+)
 from application.quantitative.fingerprints import sha256_bytes
 from application.quantitative.state_persistence import QuantitativeStateService
 from application.quantitative.quality_control import (
@@ -25,6 +30,7 @@ from application.quantitative.workflow import QuantitativeApprovalService
 from application.quantitative.workflow import (
     QUANTITATIVE_SAFE_STATE_KEY, QUANTITATIVE_STAGE_SERVICE_KEY,
     QuantitativeStageExecutor, build_quantitative_workflow_template,
+    CMF_QUANTITATIVE_WORKFLOW_ID, QUANTITATIVE_WORKFLOW_ID,
 )
 from application.quantitative.execution_diagnostics import (
     FAILURE_DIAGNOSTIC_KEY,
@@ -57,13 +63,14 @@ class QuantitativeUiService:
     metadata and invokes the accepted Quantitative application services.
     """
 
-    MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+    MAX_UPLOAD_BYTES = MAX_SOURCE_BYTES
 
     def __init__(self, *, project_service, workflow_service, state_service: QuantitativeStateService,
                  digest_provider, storage_factory, importers: tuple[Any, ...],
                  finding_generator, insight_generator, report_generator,
                  generation_mode: str, stage_service_factory=None,
-                 durable_workflow_service=None, activation_sessions=None) -> None:
+                 durable_workflow_service=None, activation_sessions=None,
+                 cmf_quant_enabled: bool = False) -> None:
         if generation_mode not in {"offline", "production"}:
             raise ValueError("Quantitative generation mode is not configured")
         if any(item is None for item in (finding_generator, insight_generator, report_generator)):
@@ -83,6 +90,7 @@ class QuantitativeUiService:
         self.stage_service_factory = stage_service_factory
         self.durable_workflow_service = durable_workflow_service
         self.activation_sessions = activation_sessions
+        self.cmf_quant_enabled = cmf_quant_enabled
         self._studies: dict[str, QuantitativeStudyProjection] = {}
         self._submission_ids: dict[tuple[str, str], str] = {}
 
@@ -124,7 +132,7 @@ class QuantitativeUiService:
             self._submission_ids[(owner_id, submission_key)] = study_id
             return replay
 
-        expected_template = build_quantitative_workflow_template()
+        expected_template = build_quantitative_workflow_template(cmf=self.cmf_quant_enabled)
         template = self._compatible_template(expected_template)
         project_created = False
         run_created = False
@@ -148,13 +156,14 @@ class QuantitativeUiService:
                     template = self._compatible_template(expected_template)
                     if template is None:  # pragma: no cover - defensive race
                         raise
-            self.workflows.create_workflow_run(
+            created_run = self.workflows.create_workflow_run(
                 template,
                 project_id=project_id,
                 run_id=run_id,
                 initially_paused=True,
             )
             run_created = True
+            self._persist_method_pin(created_run)
             study = QuantitativeStudyProjection(
                 study_id,
                 project_id,
@@ -230,7 +239,7 @@ class QuantitativeUiService:
                                                 expected_type=QuantitativeStudyProjection)
             if snapshots:
                 raise QuantitativeUiError("This Project already has a Quantitative study")
-        expected_template = build_quantitative_workflow_template()
+        expected_template = build_quantitative_workflow_template(cmf=self.cmf_quant_enabled)
         template = self._compatible_template(expected_template)
         run_created = False
         try:
@@ -242,9 +251,10 @@ class QuantitativeUiService:
                     template = self._compatible_template(expected_template)
                     if template is None:
                         raise
-            self.workflows.create_workflow_run(template, project_id=project_id,
-                                               run_id=run_id, initially_paused=True)
+            created_run = self.workflows.create_workflow_run(template, project_id=project_id,
+                                                             run_id=run_id, initially_paused=True)
             run_created = True
+            self._persist_method_pin(created_run)
             persisted = self._persist_study(QuantitativeStudyProjection(
                 study_id, project_id, run_id, title, description, "WAITING_FOR_DATASET"
             ))
@@ -274,6 +284,19 @@ class QuantitativeUiService:
             raise QuantitativeUiError("submission key was already used for different content")
         self._studies[study_id] = study
         return study
+
+    def _persist_method_pin(self, run) -> None:
+        if run.workflow_template_id != CMF_QUANTITATIVE_WORKFLOW_ID:
+            return
+        pin = make_method_pin(project_id=run.project_id, run_id=run.id)
+        results = self.workflows.get_task_results(run.id)
+        if METHOD_PIN in results:
+            raise QuantitativeUiError("Quant CMF method pin already exists")
+        self.workflows.save_workflow_run(
+            run, expected_version=self.workflows.get_workflow_run_version(run.id),
+            task_results={**results, METHOD_PIN: pin},
+            quant_pin_binding={METHOD_PIN: pin},
+        )
 
     def _compatible_template(self, expected):
         try:
@@ -315,7 +338,9 @@ class QuantitativeUiService:
                 "submission key was already used for different content"
             )
         run = self.workflows.get_workflow_run(study.run_id)
-        expected = build_quantitative_workflow_template()
+        expected = build_quantitative_workflow_template(
+            cmf=run.workflow_template_id == CMF_QUANTITATIVE_WORKFLOW_ID
+        )
         if run.workflow_template_id != expected.id:
             raise QuantitativeUiError(
                 "Existing Quantitative workflow definition is incompatible"
@@ -919,12 +944,32 @@ class QuantitativeUiService:
     def _persist_activation_state(self, run, safe) -> dict[str, str]:
         safe = dict(safe)
         task_results = self.workflows.get_task_results(run.id)
+        method_pin = task_results.get(METHOD_PIN)
+        if getattr(run, "workflow_template_id", QUANTITATIVE_WORKFLOW_ID) == CMF_QUANTITATIVE_WORKFLOW_ID and method_pin is None:
+            raise QuantitativeUiError("CMF Quant run has no method pin")
+        if method_pin is not None:
+            resolve_method_pin(method_pin, project_id=run.project_id, run_id=run.id)
+            dataset = self.state.load(safe["dataset_record_id"], project_id=run.project_id,
+                                      expected_type=DatasetVersion)
+            codebook = self.state.load(safe["codebook_record_id"], project_id=run.project_id,
+                                       expected_type=CodebookVersion)
+            analysis_pin = make_analysis_pin(
+                method_pin=method_pin, project_id=run.project_id, run_id=run.id,
+                dataset=dataset, codebook=codebook, state=safe,
+            )
+            if ANALYSIS_PIN in task_results and task_results[ANALYSIS_PIN] != analysis_pin:
+                raise QuantitativeUiError("Quant analysis authority was already bound differently")
+            task_results[ANALYSIS_PIN] = analysis_pin
+        elif self.cmf_quant_enabled:
+            raise QuantitativeUiError("New CMF Quant run has no method pin")
         task_results[QUANTITATIVE_SAFE_STATE_KEY] = safe
-        self.workflows.save_workflow_run(
-            run,
-            expected_version=self.workflows.get_workflow_run_version(run.id),
-            task_results=task_results,
-        )
+        save_kwargs = {
+            "expected_version": self.workflows.get_workflow_run_version(run.id),
+            "task_results": task_results,
+        }
+        if method_pin is not None:
+            save_kwargs["quant_pin_binding"] = {ANALYSIS_PIN: analysis_pin}
+        self.workflows.save_workflow_run(run, **save_kwargs)
         return safe
 
     def _activate_in_process_run(
@@ -980,7 +1025,7 @@ class QuantitativeUiService:
             raise QuantitativeUiError("Quantitative rearm authority was already consumed")
         if run.project_id != study.project_id or run.id != study.run_id:
             raise QuantitativeUiError("Quantitative run is not eligible for rearm")
-        if run.workflow_template_id != build_quantitative_workflow_template().id:
+        if run.workflow_template_id not in {QUANTITATIVE_WORKFLOW_ID, CMF_QUANTITATIVE_WORKFLOW_ID}:
             raise QuantitativeUiError("Quantitative run is not eligible for rearm")
         if run.status is not WorkflowStatus.FAILED:
             raise QuantitativeUiError("Quantitative run is not eligible for rearm")
@@ -1135,7 +1180,10 @@ class QuantitativeUiService:
         from application.runtime.workflow_runtime_persister import WorkflowRuntimePersister
         class Resolver:
             def resolve(self, task): return QuantitativeStageExecutor()
-        context=WorkflowContext(project=self.projects.get_project(study.project_id),workflow_template=build_quantitative_workflow_template(),workflow_run=run,services={QUANTITATIVE_STAGE_SERVICE_KEY:service},shared_state={QUANTITATIVE_SAFE_STATE_KEY:safe})
+        context=WorkflowContext(project=self.projects.get_project(study.project_id),workflow_template=build_quantitative_workflow_template(cmf=run.workflow_template_id == CMF_QUANTITATIVE_WORKFLOW_ID),workflow_run=run,services={QUANTITATIVE_STAGE_SERVICE_KEY:service},shared_state={QUANTITATIVE_SAFE_STATE_KEY:safe})
+        stored_pins = self.workflows.get_task_results(run.id)
+        context.execution_metadata[METHOD_PIN] = stored_pins.get(METHOD_PIN)
+        context.execution_metadata[ANALYSIS_PIN] = stored_pins.get(ANALYSIS_PIN)
         persister=WorkflowRuntimePersister(workflow_service=self.workflows,audit=None,run_id=run.id,initial_version=self.workflows.get_workflow_run_version(run.id),task_results=self.workflows.get_task_results(run.id))
         try:
             return WorkflowEngine(TaskScheduler(),TaskExecutor(Resolver(),TaskLifecycleManager()),WorkflowCompletionPolicy()).run(context,checkpoint=persister)

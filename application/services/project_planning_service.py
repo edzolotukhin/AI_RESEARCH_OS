@@ -6,7 +6,7 @@ import hashlib
 import json
 from uuid import NAMESPACE_URL, uuid5
 
-from application.quantitative.workflow import build_quantitative_workflow_template
+from application.quantitative.workflow import build_quantitative_workflow_template, CMF_QUANTITATIVE_WORKFLOW_ID
 from application.planner.project_planning_profile import (
     PROJECT_PLANNING_PROFILE_VERSION,
     PROJECT_PLANNING_PROFILE_KEY,
@@ -62,7 +62,7 @@ class ProjectPlanningService:
             )
             if quantitative and QUANTITATIVE not in found:
                 found.append(QUANTITATIVE)
-            elif not quantitative and run.workflow_template_id != quant_template and DESK not in found:
+            elif not quantitative and run.workflow_template_id not in {quant_template, CMF_QUANTITATIVE_WORKFLOW_ID} and DESK not in found:
                 found.append(DESK)
         return canonicalize_research_methods(found, allow_empty=True)
 
@@ -286,7 +286,7 @@ class ProjectPlanningService:
     def _desk_run(self, project_id: str):
         quant_template = build_quantitative_workflow_template().id
         for run in self.workflows.list_workflow_runs_for_project(project_id):
-            if run.workflow_template_id == quant_template:
+            if run.workflow_template_id in {quant_template, CMF_QUANTITATIVE_WORKFLOW_ID}:
                 continue
             if self.quantitative and self.quantitative.state.list_for_run(
                 run.id, project_id=project_id, expected_type=self._study_type()

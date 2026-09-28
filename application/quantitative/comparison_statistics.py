@@ -21,6 +21,12 @@ MEAN_METHOD = "INDEPENDENT_WELCH_T_TEST"
 COMPUTATION_VERSION = "qg-1"
 
 
+def fingerprint_comparison_specification(specification: ComparisonSpecification, *, digest_provider) -> str:
+    """Canonical QG parameter identity shared by computation and read projection."""
+    spec_payload = {"comparison_id": specification.comparison_id, "method": specification.method, "variable_id": specification.variable_id, "group_variable_id": specification.group_variable_id, "group_a": canonical_scalar(specification.group_a_category), "group_b": canonical_scalar(specification.group_b_category), "outcome_category": canonical_scalar(specification.outcome_category), "alpha": canonical_scalar(specification.alpha), "sidedness": specification.sidedness, "minimum_group_base": specification.minimum_group_base, "filter": specification.filter_definition, "base": specification.base_definition, "method_version": specification.method_version}
+    return canonical_digest(spec_payload, digest_provider=digest_provider)
+
+
 class ComparisonStatisticsService:
     def __init__(self, *, storage: DatasetStorage, digest_provider: DeterministicDigestProvider) -> None:
         self._storage = storage
@@ -127,8 +133,7 @@ class ComparisonStatisticsService:
     def _variance(values, mean): return sum(((item - mean) ** 2 for item in values), Decimal(0)) / Decimal(len(values) - 1)
 
     def _result(self, dataset, specification, a, b, difference, statistic, p_value, n_a, n_b, method):
-        spec_payload = {"comparison_id": specification.comparison_id, "method": method, "variable_id": specification.variable_id, "group_variable_id": specification.group_variable_id, "group_a": canonical_scalar(specification.group_a_category), "group_b": canonical_scalar(specification.group_b_category), "outcome_category": canonical_scalar(specification.outcome_category), "alpha": canonical_scalar(specification.alpha), "sidedness": specification.sidedness, "minimum_group_base": specification.minimum_group_base, "filter": specification.filter_definition, "base": specification.base_definition, "method_version": specification.method_version}
-        spec_fp = canonical_digest(spec_payload, digest_provider=self._digest); resolved = replace(specification, fingerprint=spec_fp)
+        spec_fp = fingerprint_comparison_specification(specification, digest_provider=self._digest); resolved = replace(specification, fingerprint=spec_fp)
         outputs = {"difference": canonical_scalar(difference), "statistic": canonical_scalar(Decimal(str(statistic))), "p_value": canonical_scalar(Decimal(str(p_value)))}
         fingerprint = canonical_digest({"dataset": dataset.dataset_fingerprint, "data": dataset.data_fingerprint, "specification": spec_fp, "result_a": (a.result_id, a.reproducibility_fingerprint), "result_b": (b.result_id, b.reproducibility_fingerprint), "bases": (n_a, n_b), "outputs": outputs}, digest_provider=self._digest)
         return AnalyticalComparisonResult(str(uuid5(NAMESPACE_URL, f"qg-comparison:{fingerprint}")), dataset.version_id, dataset.dataset_fingerprint, dataset.data_fingerprint, resolved.comparison_id, spec_fp, a.result_id, a.reproducibility_fingerprint, b.result_id, b.reproducibility_fingerprint, Decimal(str(difference)), Decimal(str(statistic)), Decimal(str(p_value)), resolved.alpha, Decimal(str(p_value)) < resolved.alpha, resolved.sidedness, resolved.minimum_group_base, n_a, n_b, method, COMPUTATION_VERSION, fingerprint)

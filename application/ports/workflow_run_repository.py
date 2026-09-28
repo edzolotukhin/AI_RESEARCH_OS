@@ -46,6 +46,7 @@ class WorkflowRunRepository(Protocol):
         *,
         expected_version: int | None = None,
         task_results: dict[str, Any] | None = None,
+        quant_pin_binding: dict[str, Any] | None = None,
     ) -> int:
         """
         Persist modifications to an existing workflow run aggregate.

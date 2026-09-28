@@ -27,7 +27,14 @@ class MethodRegistry:
                 raise MethodResolutionError("Unsupported canonical support kind")
             if not set(capabilities.formats) <= {"PDF", "PPTX"}:
                 raise MethodResolutionError("Unsupported deliverable format")
-            for name in ("validate_design", "research_needs", "research_adapter", "run_stage", "report_sources"):
+            required = (
+                ("validate_design", "research_needs", "research_adapter", "run_stage", "report_sources")
+                if capabilities.research_mode == "adaptive_external"
+                else ("bind_dataset", "run_stage", "report_sources")
+            )
+            if capabilities.research_mode == "persisted_dataset" and capabilities.support_kinds != ("dataset_authority",):
+                raise MethodResolutionError("Persisted-dataset method requires canonical dataset support")
+            for name in required:
                 if not callable(getattr(method, name, None)):
                     raise MethodResolutionError(f"Incomplete method binding: {name}")
             entries[key] = method

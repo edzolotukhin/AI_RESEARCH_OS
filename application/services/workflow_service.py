@@ -110,12 +110,37 @@ class WorkflowService:
         *,
         expected_version: int | None = None,
         task_results: dict[str, Any] | None = None,
+        quant_pin_binding: dict[str, Any] | None = None,
     ) -> int:
-        return self._workflow_run_repository.save(
-            workflow_run,
-            expected_version=expected_version,
-            task_results=task_results,
-        )
+        if quant_pin_binding is not None:
+            from application.methods.quantitative.pin import (
+                METHOD_PIN, ANALYSIS_PIN, resolve_method_pin, verify_analysis_state,
+            )
+            if workflow_run.workflow_template_id != "quantitative-consumer-survey-cmf-v1":
+                raise ValueError("Quant pin binding requires a CMF Quant run")
+            if METHOD_PIN in quant_pin_binding:
+                resolve_method_pin(quant_pin_binding[METHOD_PIN], project_id=workflow_run.project_id,
+                                   run_id=workflow_run.id)
+            if ANALYSIS_PIN in quant_pin_binding:
+                existing = self._workflow_run_repository.get_task_results(workflow_run.id)
+                if METHOD_PIN not in existing:
+                    raise ValueError("Quant analysis requires a persisted method pin")
+                if task_results is None or not isinstance(task_results.get("quantitative"), dict):
+                    raise ValueError("Quant analysis requires persisted safe state")
+                analysis_pin = quant_pin_binding[ANALYSIS_PIN]
+                if (analysis_pin.get("project_id"), analysis_pin.get("run_id")) != (
+                    workflow_run.project_id, workflow_run.id
+                ) or analysis_pin.get("contract") != "CMF_QUANT_ANALYSIS_V1":
+                    raise ValueError("Quant analysis pin scope is invalid")
+                verify_analysis_state(analysis_pin, method_pin=existing[METHOD_PIN],
+                                      state=task_results["quantitative"])
+        save_kwargs: dict[str, Any] = {
+            "expected_version": expected_version,
+            "task_results": task_results,
+        }
+        if quant_pin_binding is not None:
+            save_kwargs["quant_pin_binding"] = quant_pin_binding
+        return self._workflow_run_repository.save(workflow_run, **save_kwargs)
 
     def get_task_results(self, run_id: str) -> dict[str, Any]:
         return self._workflow_run_repository.get_task_results(run_id)

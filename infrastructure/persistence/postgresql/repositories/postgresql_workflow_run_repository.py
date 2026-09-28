@@ -27,7 +27,7 @@ from infrastructure.persistence.postgresql.models.workflow_run_model import (
 from infrastructure.persistence.postgresql.models.workflow_template_model import WorkflowTemplateModel
 from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
 from infrastructure.persistence.postgresql.project_activity import record_activity
-from infrastructure.persistence.postgresql.kernel_ownership import checkpoint_results
+from infrastructure.persistence.postgresql.kernel_ownership import checkpoint_results, bind_quant_pins
 
 
 class PostgreSQLWorkflowRunRepository:
@@ -103,6 +103,7 @@ class PostgreSQLWorkflowRunRepository:
         *,
         expected_version: int | None = None,
         task_results: dict[str, Any] | None = None,
+        quant_pin_binding: dict[str, Any] | None = None,
     ) -> int:
         with self._session_factory.session() as session:
             # Serialize with the independently committed kernel ledger. Refresh
@@ -118,6 +119,11 @@ class PostgreSQLWorkflowRunRepository:
             stored_results = dict(current.task_results or {})
             if task_results is not None:
                 stored_results = checkpoint_results(stored_results, task_results)
+            if quant_pin_binding is not None:
+                stored_results = bind_quant_pins(
+                    dict(current.task_results or {}), stored_results, quant_pin_binding,
+                    template_id=current.workflow_template_id,
+                )
 
             update_values = workflow_run_to_update_values(
                 workflow_run,

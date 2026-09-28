@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import zipfile
 from collections import Counter
 from typing import Any
 
@@ -8,6 +9,7 @@ import openpyxl
 
 from application.ports.quantitative_dataset_ports import ParsedDataset, ParsedVariable
 from domain.quantitative.dataset import DatasetFormat
+from application.quantitative.dataset_limits import MAX_DATA_CELLS, MAX_DATA_ROWS, MAX_VARIABLES
 
 
 class XlsxOpenpyxlAdapter:
@@ -20,6 +22,7 @@ class XlsxOpenpyxlAdapter:
         filename: str,
         data_sheet: str | None = None,
     ) -> ParsedDataset:
+        _check_archive(data)
         formulas = openpyxl.load_workbook(
             io.BytesIO(data), read_only=False, data_only=False, keep_vba=False
         )
@@ -30,6 +33,10 @@ class XlsxOpenpyxlAdapter:
             sheet_name = _resolve_sheet(formulas, data_sheet)
             formula_sheet = formulas[sheet_name]
             value_sheet = values[sheet_name]
+            if value_sheet.max_column > MAX_VARIABLES or value_sheet.max_row > MAX_DATA_ROWS + 1:
+                raise ValueError("XLSX dimensions exceed supported dataset limits")
+            if max(value_sheet.max_row - 1, 0) * value_sheet.max_column > MAX_DATA_CELLS:
+                raise ValueError("XLSX cell count exceeds supported dataset limits")
             warnings: list[str] = []
             if formula_sheet.sheet_state != "visible":
                 warnings.append("selected_data_sheet_hidden")
@@ -88,6 +95,28 @@ class XlsxOpenpyxlAdapter:
         finally:
             formulas.close()
             values.close()
+
+
+MAX_XLSX_ZIP_MEMBERS = 1_024
+MAX_XLSX_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
+MAX_XLSX_MEMBER_BYTES = 32 * 1024 * 1024
+
+
+def _check_archive(data: bytes) -> None:
+    """Reject plainly excessive OOXML archives before openpyxl materializes them."""
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        members = archive.infolist()
+        if not members or len(members) > MAX_XLSX_ZIP_MEMBERS:
+            raise ValueError("XLSX archive member count exceeds supported limits")
+        total = 0
+        for member in members:
+            if member.flag_bits & 1:
+                raise ValueError("encrypted XLSX archives are unsupported")
+            if member.file_size > MAX_XLSX_MEMBER_BYTES:
+                raise ValueError("XLSX archive member exceeds decompression limit")
+            total += member.file_size
+            if total > MAX_XLSX_UNCOMPRESSED_BYTES:
+                raise ValueError("XLSX archive exceeds decompression limit")
 
 
 def _resolve_sheet(workbook: Any, requested: str | None) -> str:
