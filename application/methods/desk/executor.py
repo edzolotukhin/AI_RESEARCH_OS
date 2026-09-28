@@ -61,7 +61,12 @@ class VersionedDeskExecutor(BaseExecutor):
         readiness = ResearchReadinessService(evaluator=build_research_sufficiency_evaluator(
             config=cfg, overrides=self.overrides, llm_client=self.llm),
             evidence_repository=self.evidence, source_repository=self.sources)
-        adapter = DeskAdapter(context, cfg, DeskPrimitives(context, acquisition, extraction), readiness, self.evidence)
+        from application.methods.versioning import resolve_context
+        method = resolve_context(context)
+        primitives = DeskPrimitives(context, acquisition, extraction)
+        adapter = (method.research_adapter(context=context, config=cfg, primitives=primitives,
+                   readiness=readiness, evidence=self.evidence) if method is not None else
+                   DeskAdapter(context, cfg, primitives, readiness, self.evidence))
         adapter.checkpoint()
         with execution_budget_scope(budget):
             result = Controller(store, adapter, observe_decision).run(adapter.initial_state())

@@ -1,4 +1,21 @@
 """Classify Docker's actual probe result, not host command duration."""
+from pathlib import Path
+import sys
+
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from application.structured_output.json_validator import JsonValidator
+
+
+def parse_worker_state(text):
+    """Use the canonical syntax validator; never expose Docker response contents."""
+    validated = JsonValidator().validate(text)
+    if not validated.is_valid or not isinstance(validated.data, dict):
+        raise ValueError("Docker inspection unavailable")
+    return validated.data
+
+
 def classify_worker_health(state):
     if not state.get("Running"):
         return {"status": "CONTAINER NOT RUNNING", "exit_code": state.get("ExitCode")}
@@ -33,7 +50,7 @@ if __name__ == "__main__":
     try:
         raw = subprocess.run(["docker", "inspect", "--format", "{{json .State}}", args.container],
                              capture_output=True, text=True, timeout=30, check=True)
-        result = classify_worker_health(json.loads(raw.stdout))
+        result = classify_worker_health(parse_worker_state(raw.stdout))
     except (subprocess.SubprocessError, OSError, ValueError):
         result = {"status": "EXECUTION FAILURE", "reason": "Docker inspection unavailable"}
     print(json.dumps(result))

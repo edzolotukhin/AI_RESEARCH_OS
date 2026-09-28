@@ -151,7 +151,18 @@ class ProjectDeliverablesService:
             if run.project_id != project_id:
                 raise AccessDeniedError("Проєкт не знайдено")
             (quant_runs if run.workflow_template_id == quant_template else desk_runs).add(run.id)
-        desk = self._desk(project_id, desk_runs)
+        from application.methods.versioning import resolve_pin
+        from application.methods.desk.profile import PIN
+        desk = []
+        legacy_runs = set()
+        for run_id in sorted(desk_runs):
+            method = resolve_pin(self.workflows.get_task_results(run_id).get(PIN))
+            if method is None:
+                legacy_runs.add(run_id)
+            else:
+                desk.extend(method.report_sources(project_id, {run_id}, self._desk))
+        desk.extend(self._desk(project_id, legacy_runs))
+        desk.sort(key=lambda item: (item.created_at or "", item.revision_number or 0, item.source_id), reverse=True)
         quant = self._quantitative(project_id, quant_runs)
 
         def item(document):

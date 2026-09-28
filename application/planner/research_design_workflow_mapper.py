@@ -27,8 +27,11 @@ class ResearchDesignWorkflowMapper:
     _TASK_REPORT = "task-write-report"
     _TASK_REVIEW = "task-review-report"
 
-    def __init__(self, *, kernel_profile=None):
+    def __init__(self, *, kernel_profile=None, method_binding=None):
         self._kernel_profile = kernel_profile
+        self._method_binding = method_binding
+        if method_binding is not None and kernel_profile is None:
+            raise ValueError("CMF Desk activation requires an ARK profile")
 
     def from_research_design(
         self,
@@ -36,6 +39,8 @@ class ResearchDesignWorkflowMapper:
         project: Project,
     ) -> WorkflowTemplate:
         brief = project.research_brief
+        if self._method_binding is not None:
+            self._method_binding.validate_design(design, brief)
         template_name = brief.title if brief is not None else "Desk Research Workflow"
 
         builder = WorkflowTemplateBuilder(
@@ -139,6 +144,10 @@ class ResearchDesignWorkflowMapper:
             from copy import deepcopy
             for definition in template.task_definitions:
                 definition.metadata["research_kernel"] = {"version": 1, "profile": deepcopy(self._kernel_profile)}
+                if self._method_binding is not None:
+                    from application.methods.versioning import envelope
+                    definition.metadata["research_kernel"]["cmf"] = envelope(
+                        self._method_binding, design, brief, self._kernel_profile)
         return replace(
             template,
             research_brief_snapshot=brief,

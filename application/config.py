@@ -79,6 +79,7 @@ class ApplicationConfig:
     background_execution_mode: str | None = None
     deterministic_stage_executors: bool = False
     ark_desk_enabled: bool = False
+    cmf_desk_enabled: bool = False
     search_provider: str = "tavily"
     search_api_key: str | None = None
     evidence_extractor: str = "llm"
@@ -153,6 +154,7 @@ class ApplicationConfig:
 
         return cls(
             ark_desk_enabled=os.environ.get("ARK_DESK_ENABLED", "0").lower() in {"1", "true", "yes"},
+            cmf_desk_enabled=os.environ.get("CMF_DESK_ENABLED", "0").lower() in {"1", "true", "yes"},
             llm_model=os.environ.get("LLM_MODEL", "gpt-5"),
             llm_max_tokens=int(os.environ.get("LLM_MAX_TOKENS", "4096")),
             planner_reasoning_effort=os.environ.get(
