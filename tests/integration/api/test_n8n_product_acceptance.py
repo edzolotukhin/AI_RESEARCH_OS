@@ -6,7 +6,6 @@ import unittest
 from uuid import uuid4
 
 from application.composition_root import create_application_container
-from application.config import ApplicationOverrides
 
 from api.app import create_fastapi_app
 
@@ -19,6 +18,7 @@ from tests.api.helpers import (
 )
 from tests.fixtures.research_brief import CANONICAL_BRIEF_REQUEST as BRIEF
 from tests.helpers.brief_aligned_planner_llm import create_brief_aligned_llm_mock
+from tests.helpers.dated_desk_integration_fixture import dated_desk_overrides
 from tests.integration.api.n8n_orchestration_harness import (
     N8N_ACCEPTANCE_BRIEF,
     N8nOrchestrationHarness,
@@ -47,7 +47,7 @@ class N8nProductAcceptanceTests(PostgreSQLIntegrationTestCase):
                 report_engine="deterministic",
                 review_engine="deterministic",
             ),
-            overrides=ApplicationOverrides(llm_client=mock_llm),
+            overrides=dated_desk_overrides(llm_client=mock_llm),
         )
         bootstrap_test_api_key(container)
         self.addCleanup(container.shutdown)
@@ -233,7 +233,7 @@ class N8nProductAcceptanceTests(PostgreSQLIntegrationTestCase):
                 report_engine="deterministic",
                 review_engine="deterministic",
             ),
-            overrides=ApplicationOverrides(llm_client=mock_llm),
+            overrides=dated_desk_overrides(llm_client=mock_llm),
         )
         self.addCleanup(replay_container.shutdown)
         replay_container.agency.initialize()
@@ -285,7 +285,7 @@ class N8nProductAcceptanceTests(PostgreSQLIntegrationTestCase):
                 report_engine="deterministic",
                 review_engine="deterministic",
             ),
-            overrides=ApplicationOverrides(llm_client=mock_llm),
+            overrides=dated_desk_overrides(llm_client=mock_llm),
         )
         self.addCleanup(worker_b.shutdown)
         worker_b.agency.initialize()
@@ -319,7 +319,7 @@ class N8nProductAcceptanceTests(PostgreSQLIntegrationTestCase):
                 report_engine="deterministic",
                 review_engine="deterministic",
             ),
-            overrides=ApplicationOverrides(llm_client=mock_llm),
+            overrides=dated_desk_overrides(llm_client=mock_llm),
         )
         self.addCleanup(reloaded.shutdown)
         reloaded_app = create_fastapi_app(container=reloaded)
