@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import unittest
-from types import SimpleNamespace
 from unittest.mock import patch
+import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from application.ports.quantitative_dataset_ports import ParsedDataset, ParsedVariable
@@ -17,6 +18,7 @@ from infrastructure.quantitative.importers.xlsx_openpyxl_adapter import (
 )
 from tests.application.quantitative.test_property_qa_byte_to_statistic_provenance import xlsx_bytes
 from infrastructure.security.sha256_digest_provider import Sha256DigestProvider
+from tests.fixtures.quantitative.sav_sample_fixture import sav_sample_bytes
 
 
 class _ParsedImporter:
@@ -96,6 +98,14 @@ class Qnt02DatasetLimitsTests(unittest.TestCase):
                 SavPyreadstatAdapter().parse(b"synthetic", filename="fixture.sav")
             self.assertEqual(read.call_count, 1)
             self.assertTrue(read.call_args.kwargs["metadataonly"])
+
+    def test_sav_import_without_optional_pandas(self):
+        with patch.dict(sys.modules, {"pandas": None}):
+            parsed = SavPyreadstatAdapter().parse(
+                sav_sample_bytes(), filename="fixture.sav"
+            )
+        self.assertEqual(len(parsed.variables), 7)
+        self.assertEqual(len(parsed.rows), 5)
 
     def test_valid_xlsx_archive_still_imports(self):
         data = xlsx_bytes(["choice"], [["A"], ["B"]])

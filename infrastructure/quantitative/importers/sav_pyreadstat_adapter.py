@@ -23,7 +23,9 @@ class SavPyreadstatAdapter:
     ) -> ParsedDataset:
         if data_sheet is not None:
             raise ValueError("SAV import does not accept data_sheet")
-        _, header = pyreadstat.read_sav(io.BytesIO(data), metadataonly=True)
+        _, header = pyreadstat.read_sav(
+            io.BytesIO(data), metadataonly=True, output_format="dict",
+        )
         header_columns = getattr(header, "number_columns", None)
         header_rows = getattr(header, "number_rows", None)
         if ((header_columns is not None and header_columns > MAX_VARIABLES)

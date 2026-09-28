@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import sys
 import unittest
+from unittest.mock import patch
 
 from domain.quantitative.workflow import QuantitativeRunRearmEvent
 from domain.value_objects.task_status import TaskStatus
@@ -14,6 +16,11 @@ from tests.fixtures.quantitative.sav_sample_fixture import sav_sample_bytes
 
 
 class PropertyQwFailedPreProviderQuantitativeRearmTests(ApiTestCase):
+    def test_sav_upload_succeeds_without_optional_pandas(self):
+        with patch.dict(sys.modules, {"pandas": None}):
+            study = self._create_uploaded("qw-no-optional-pandas")
+        self.assertIsNotNone(study.dataset_record_id)
+
     def _principal(self) -> str:
         return self.container.authentication_service.authenticate_api_key(
             self.container._test_api_key_plaintext

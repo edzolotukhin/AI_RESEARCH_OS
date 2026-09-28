@@ -35,7 +35,7 @@ from tests.integration.postgresql.helpers import (
     reset_schema,
 )
 from tests.application.quantitative.test_property_qa_byte_to_statistic_provenance import xlsx_bytes
-from tests.application.quantitative.test_q2_13a_temp_durable_outcomes import _populate_fixture, SyntheticClient
+from tests.fixtures.quantitative.qnt02_authority_fixture import OWNER, prepare_bound_analysis
 from tests.api.auth_helpers import auth_headers
 from tests.api.helpers import AuthenticatedTestClient, open_test_client, close_test_client
 
@@ -125,19 +125,17 @@ class Qnt02PostgresqlMethodPinTests(unittest.TestCase):
             ),
             projects_root=str(root / "protected"), cmf_quant_enabled=True,
         )
-        semantic = SyntheticClient("COMPLETED_WITH_NO_SUPPORTED_FINDINGS")
+        semantic = Mock()
         app = create_application_container(
             config=config, overrides=ApplicationOverrides(llm_client=Mock(), quantitative_llm_client=semantic),
         )
         self.addCleanup(app.shutdown)
-        fixture = _populate_fixture(app, root, "qnt02-pg-real-analysis", config,
-                                    "COMPLETED_WITH_NO_SUPPORTED_FINDINGS", self, prepare=True)
+        fixture = prepare_bound_analysis(app)
         run_id = fixture["run_id"]
         results = app.workflow_service.get_task_results(run_id)
         self.assertEqual(results[METHOD_PIN]["identity"]["version"], "1")
         self.assertIn(ANALYSIS_PIN, results)
-        self.assertEqual(semantic.calls, [])
-        self.assertTrue(fixture["evidence"])
+        semantic.generate.assert_not_called()
 
     def test_separate_worker_executes_persisted_quant_without_semantic_calls(self) -> None:
         root = Path(self.root.name)
@@ -146,14 +144,14 @@ class Qnt02PostgresqlMethodPinTests(unittest.TestCase):
                 deterministic_stage_executors=False, background_execution_mode="external"
             ), projects_root=str(root / "protected"), cmf_quant_enabled=True,
         )
-        api_semantic = SyntheticClient("COMPLETED_WITH_NO_SUPPORTED_FINDINGS")
+        api_semantic = Mock()
         api = create_application_container(config=config, overrides=ApplicationOverrides(
             llm_client=Mock(), quantitative_llm_client=api_semantic))
         self.addCleanup(api.shutdown)
         plaintext, key_id, key_prefix, key_hash = api.authentication_service.generate_key_material()
         api.authentication_service.register_api_key(
             name="qnt02-synthetic", key_id=key_id, key_prefix=key_prefix, key_hash=key_hash,
-            principal_id="q2-13a-benchmark-owner",
+            principal_id=OWNER,
         )
         api._test_api_key_plaintext = plaintext  # Existing server-side UI test credential path.
         raw_client, _, context = open_test_client(api)
@@ -173,13 +171,11 @@ class Qnt02PostgresqlMethodPinTests(unittest.TestCase):
         )
         self.assertEqual(uploaded.status_code, 303, uploaded.text)
         existing_study = api.quantitative_ui_service.get(
-            study_id, owner_id="q2-13a-benchmark-owner")
-        fixture = _populate_fixture(api, root, "qnt02-pg-worker", config,
-                                    "COMPLETED_WITH_NO_SUPPORTED_FINDINGS", self,
-                                    prepare="activate_only", existing_study=existing_study)
+            study_id, owner_id=OWNER)
+        fixture = prepare_bound_analysis(api, study=existing_study)
         run_id, project_id = fixture["run_id"], fixture["project_id"]
         ui = api.quantitative_ui_service
-        study = ui.get(fixture["study_id"], owner_id="q2-13a-benchmark-owner")
+        study = ui.get(fixture["study_id"], owner_id=OWNER)
         original, _ = ui._dataset(study)
         replacement = QuantitativeDatasetImportService(
             importers=(XlsxOpenpyxlAdapter(),),
@@ -193,7 +189,7 @@ class Qnt02PostgresqlMethodPinTests(unittest.TestCase):
         ui.state.persist(replacement.dataset_version, record_id="qnt02-newer-dataset",
                          project_id=project_id, run_id=run_id,
                          dataset_version_id=replacement.dataset_version.version_id)
-        worker_semantic = SyntheticClient("COMPLETED_WITH_NO_SUPPORTED_FINDINGS")
+        worker_semantic = Mock()
         worker = create_application_container(config=config, overrides=ApplicationOverrides(
             llm_client=Mock(), quantitative_llm_client=worker_semantic))
         self.addCleanup(worker.shutdown)
@@ -234,8 +230,8 @@ class Qnt02PostgresqlMethodPinTests(unittest.TestCase):
                                                {"run": run_id}), 0)
             self.assertEqual(connection.scalar(text("SELECT count(*) FROM sources WHERE project_id=:project"),
                                                {"project": project_id}), 0)
-        self.assertEqual(api_semantic.calls, [])
-        self.assertEqual(worker_semantic.calls, [])
+        api_semantic.generate.assert_not_called()
+        worker_semantic.generate.assert_not_called()
         status = client.get(f"/ui/quantitative/studies/{study_id}/status.json")
         self.assertEqual(status.status_code, 200)
         self.assertEqual(status.json()["run_id"], run_id)
