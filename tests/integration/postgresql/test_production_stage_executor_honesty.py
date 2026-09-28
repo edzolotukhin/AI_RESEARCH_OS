@@ -5,7 +5,6 @@ from __future__ import annotations
 import unittest
 
 from application.composition_root import create_application_container
-from application.config import ApplicationOverrides
 
 from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
 from tests.api.helpers import (
@@ -16,6 +15,7 @@ from tests.api.helpers import (
 )
 from tests.fixtures.research_brief import CANONICAL_BRIEF_REQUEST as BRIEF
 from tests.helpers.brief_aligned_planner_llm import create_brief_aligned_llm_mock
+from tests.helpers.dated_desk_integration_fixture import dated_desk_overrides
 from tests.integration.postgresql.helpers import (
     PostgreSQLIntegrationTestCase,
     postgresql_application_config,
@@ -33,7 +33,7 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
                 analysis_engine="deterministic",
                 report_engine="deterministic",
             ),
-            overrides=ApplicationOverrides(llm_client=mock_llm),
+            overrides=dated_desk_overrides(llm_client=mock_llm),
         )
         container._test_llm_client = mock_llm
         bootstrap_test_api_key(container)

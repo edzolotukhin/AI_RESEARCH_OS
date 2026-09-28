@@ -5,7 +5,6 @@ from __future__ import annotations
 import unittest
 
 from application.composition_root import create_application_container
-from application.config import ApplicationOverrides
 from application.exceptions.capability_not_implemented_error import (
     CapabilityNotImplementedError,
 )
@@ -20,6 +19,7 @@ from tests.api.helpers import (
 )
 from tests.fixtures.research_brief import CANONICAL_BRIEF_REQUEST as BRIEF
 from tests.helpers.brief_aligned_planner_llm import create_brief_aligned_llm_mock
+from tests.helpers.dated_desk_integration_fixture import dated_desk_overrides
 from tests.integration.postgresql.helpers import (
     PostgreSQLIntegrationTestCase,
     postgresql_application_config,
@@ -36,7 +36,7 @@ class Dr05EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
                 evidence_extractor="deterministic",
                 analysis_engine="deterministic",
             ),
-            overrides=ApplicationOverrides(
+            overrides=dated_desk_overrides(
                 llm_client=mock_llm,
                 report_executor=UnimplementedCapabilityExecutor(
                     capability="report",
