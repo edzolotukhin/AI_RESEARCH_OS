@@ -6,8 +6,8 @@ from typing import Any, Callable, Mapping
 
 from application.quantitative.analysis_execution import QuantitativeAnalysisExecutionService
 from application.methods.quantitative.pin import (
-    ANALYSIS_PIN, METHOD_PIN, POST_ANALYSIS_PIN,
-    resolve_method_pin, resolve_post_analysis_pin, verify_analysis_pin,
+    ANALYSIS_PIN, METHOD_PIN, POST_ANALYSIS_PIN, REVIEW_PIN,
+    resolve_method_pin, resolve_post_analysis_pin, resolve_review_pin, verify_analysis_pin,
 )
 from application.methods.quantitative.insight_integrity import CanonicalQuantInsightValidator
 from application.methods.quantitative.finding_authority import CanonicalQuantFindingSupportValidator
@@ -79,6 +79,7 @@ class QuantitativeStageServiceFactory:
     insight_lineage_repository_factory: Callable[[], Any] | None = None
     report_lineage_repository_factory: Callable[[], Any] | None = None
     research_question_coverage_repository_factory: Callable[[], Any] | None = None
+    review_repository_factory: Callable[[], Any] | None = None
 
     def prepare_design_aware_activation(
         self,
@@ -122,6 +123,7 @@ class QuantitativeStageServiceFactory:
         run_id: str,
         safe_state: Mapping[str, object],
         canonical_findings: bool = False,
+        canonical_review: bool = False,
     ) -> RealQuantitativeStageService:
         if not project_id or not run_id:
             raise QuantitativeWorkflowError("Quantitative project/run identity is required")
@@ -238,6 +240,9 @@ class QuantitativeStageServiceFactory:
             study_weighting_mode=weighting_mode,
             weighting_authority_fingerprint=weighting_authority_fingerprint,
             canonical_findings=canonical_findings,
+            canonical_review=canonical_review,
+            review_repository=(self.review_repository_factory()
+                               if canonical_review and self.review_repository_factory else None),
         )
 
     def _load_dataset_authority(self, *, project_id, run_id, state):
@@ -498,6 +503,10 @@ class QuantitativeWorkflowContextServiceResolver:
         canonical_findings = resolve_post_analysis_pin(
             context.execution_metadata.get(POST_ANALYSIS_PIN), method_pin=method_pin,
         )
+        canonical_review = resolve_review_pin(
+            context.execution_metadata.get(REVIEW_PIN), method_pin=method_pin,
+            post_analysis_pin=context.execution_metadata.get(POST_ANALYSIS_PIN),
+        )
         if context.workflow_run.workflow_template_id == CMF_QUANTITATIVE_WORKFLOW_ID and method_pin is None:
             raise QuantitativeWorkflowError("CMF Quant run has no method pin")
         if (method_pin is not None and analysis_pin is None
@@ -529,5 +538,6 @@ class QuantitativeWorkflowContextServiceResolver:
                 run_id=context.workflow_run.id,
                 safe_state=safe_state,
                 canonical_findings=canonical_findings,
+                canonical_review=canonical_review,
             )
         }

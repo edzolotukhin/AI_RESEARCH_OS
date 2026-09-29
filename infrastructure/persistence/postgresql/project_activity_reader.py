@@ -22,6 +22,9 @@ LABELS = {
     "DESIGN_APPROVED": "Дизайн дослідження затверджено",
     "DESK_REPORT_DRAFT_CREATED": "Сформовано чернетку звіту",
     "DESK_REVIEW_ATTENTION": "Перевірка звіту виявила зауваження",
+    "QUANT_REVIEW_ATTENTION": "Кількісний звіт потребує виправлення",
+    "QUANT_REVIEW_APPROVED": "Кількісний звіт пройшов перевірку",
+    "QUANT_APPROVED_REVISION_CREATED": "Затверджено версію кількісного звіту",
 }
 METHOD_LABELS = {"DESK": "Кабінетне дослідження", "QUANTITATIVE": "Кількісне дослідження"}
 
@@ -144,4 +147,19 @@ class PostgreSQLProjectActivityReader:
                         and review.project_id == row.project_id and review.workflow_run_id == run.id
                         and report.project_id == row.project_id and report.workflow_run_id == run.id
                         and review.verdict in ("revise", "reject"))
+        if row.event_type in {"QUANT_REVIEW_ATTENTION", "QUANT_REVIEW_APPROVED"}:
+            review = session.get(ReviewModel, row.source_id)
+            expected = ("revise", "reject") if row.event_type == "QUANT_REVIEW_ATTENTION" else ("approve",)
+            return bool(row.source_kind == "review" and review
+                        and review.project_id == row.project_id
+                        and review.workflow_run_id == run.id
+                        and (review.metadata_json or {}).get("methodology") == "QUANTITATIVE"
+                        and review.verdict in expected)
+        if row.event_type == "QUANT_APPROVED_REVISION_CREATED":
+            revision = session.get(QuantitativeStateModel, (row.project_id, row.source_id))
+            return bool(row.source_kind == "revision" and revision
+                        and revision.project_id == row.project_id
+                        and revision.run_id == run.id
+                        and revision.record_type == "domain.quantitative.review.QuantitativeApprovedRevision"
+                        and revision.accepted is True)
         return False

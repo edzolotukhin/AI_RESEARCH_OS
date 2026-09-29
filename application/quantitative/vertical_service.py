@@ -49,6 +49,7 @@ from domain.quantitative.research_design_authority import StudyWeightingMode
 from domain.quantitative.weighting import WeightSet, WeightSetApproval, WeightingMode, WeightingTargetPlan
 from domain.quantitative.workflow import QuantitativeAnalysisManifest, QuantitativeTerminalOutcome, QuantitativeTerminalResult
 from application.quantitative.fingerprints import canonical_digest
+from application.quantitative.review import QuantitativeReviewService
 
 
 @dataclass(frozen=True)
@@ -91,6 +92,8 @@ class RealQuantitativeStageService:
         study_weighting_mode=None,
         weighting_authority_fingerprint=None,
         canonical_findings: bool = False,
+        canonical_review: bool = False,
+        review_repository=None,
     ) -> None:
         self.plan, self.storage, self.digest = plan, storage, digest_provider
         self.state, self.approvals = state_service, approval_service
@@ -107,6 +110,8 @@ class RealQuantitativeStageService:
         self.study_weighting_mode = study_weighting_mode
         self.weighting_authority_fingerprint = weighting_authority_fingerprint
         self.canonical_findings = canonical_findings
+        self.canonical_review = canonical_review
+        self.review_repository = review_repository
         self.supports_progress_checkpoint = analysis_execution_service is not None
         self.importer = QuantitativeDatasetImportService(importers=tuple(importers), storage=storage, digest_provider=digest_provider)
         self.qc = DataQualityService(storage=storage, digest_provider=digest_provider)
@@ -756,6 +761,17 @@ class RealQuantitativeStageService:
         manifest=self._load(state,"analysis_manifest_record_id",project_id,QuantitativeAnalysisManifest); findings=self._load(state,"finding_generation_record_id",project_id,QuantitativeFindingGenerationResult); insights=self._load(state,"insight_generation_record_id",project_id,QuantitativeInsightGenerationResult); report=self._load(state,"report_composition_record_id",project_id,QuantitativeReportCompositionResult)
         if report.accepted_report is None:
             return self._complete_without_supported_report(project_id, run_id, state, dataset, qc, weights, manifest, findings, insights, report)
+        if self.canonical_review:
+            review, revision = QuantitativeReviewService(
+                state_service=self.state, digest_provider=self.digest,
+                review_repository=self.review_repository,
+            ).review(project_id=project_id, run_id=run_id, state=state)
+            state["quant_review_record_id"] = review.review_id
+            state["quant_review_verdict"] = review.verdict.value
+            if revision is not None:
+                state["quant_approved_revision_record_id"] = revision.revision_id
+            else:
+                state.pop("quant_approved_revision_record_id", None)
         result_ids=tuple(self.state.load(record_id,project_id=project_id,expected_type=StatisticalResult).result_id for record_id in manifest.statistical_result_record_ids)
         payload={"run":run_id,"dataset":dataset.dataset_fingerprint,"qc":qc.fingerprint,"weighting_mode":weighting_mode,"weighting_authority":weighting_fp,"weights":weights.reproducibility_fingerprint if weights else None,"results":result_ids,"findings":findings.generation_fingerprint,"insights":insights.generation_fingerprint,"report":report.composition_fingerprint}
         fp=canonical_digest(payload,digest_provider=self.digest)

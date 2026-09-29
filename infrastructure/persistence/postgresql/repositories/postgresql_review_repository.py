@@ -23,13 +23,26 @@ class PostgreSQLReviewRepository(ReviewRepository):
         with self._session_factory.session() as session:
             try:
                 session.add(review_to_model(review, version=1))
-                if review.verdict.value in ("revise", "reject"):
+                method = review.metadata.get("methodology", "DESK")
+                if method == "DESK" and review.verdict.value in ("revise", "reject"):
                     record_activity(
                         session, project_id=review.project_id,
                         semantic_key=f"desk-review:{review.id}",
                         event_type="DESK_REVIEW_ATTENTION", source_kind="review",
                         source_id=review.id, run_id=review.workflow_run_id,
-                        method="DESK", verdict=review.verdict.value.upper(),
+                        method=method, verdict=review.verdict.value.upper(),
+                        occurred_at=review.created_at,
+                    )
+                if method == "QUANTITATIVE":
+                    attention = review.verdict.value in ("revise", "reject")
+                    record_activity(
+                        session, project_id=review.project_id,
+                        semantic_key=f"quant-review:{review.id}",
+                        event_type=("QUANT_REVIEW_ATTENTION" if attention
+                                    else "QUANT_REVIEW_APPROVED"),
+                        source_kind="review", source_id=review.id,
+                        run_id=review.workflow_run_id, method="QUANTITATIVE",
+                        verdict=review.verdict.value.upper() if attention else None,
                         occurred_at=review.created_at,
                     )
                 session.flush()

@@ -15,6 +15,9 @@ from application.methods.quantitative.pin import POST_ANALYSIS_PIN, POST_ANALYSI
 from domain.ai.llm_response import LLMResponse
 from domain.quantitative.finding import QuantitativeFindingGenerationResult
 from domain.quantitative.insight import QuantitativeInsightGenerationResult
+from domain.quantitative.review import QuantitativeApprovedRevision, QuantitativeReview
+from domain.quantitative.report import QuantitativeReportCompositionResult
+from application.quantitative.review import QuantitativeReviewService
 from tests.fixtures.quantitative.qnt02_authority_fixture import OWNER, prepare_bound_analysis
 from tests.integration.postgresql.helpers import (
     create_test_engine, integration_tests_enabled, postgresql_application_config,
@@ -45,12 +48,21 @@ class _OfflineQuantSemanticClient:
             self.stages.append("report")
             support = json.loads(value.split("APPROVED_SUPPORT=", 1)[1])
             finding = support["findings"][0]
+            insight = support["insights"][0]
             response = {"title": "Synthetic report", "sections": [{
                 "section_id": "section-1", "section_type": "KEY_FINDINGS",
                 "title": "Bound result", "claim_units": [{
                     "claim_id": "claim-1", "text": finding["text"],
                     "support_mode": "DIRECT_FINDING",
                     "finding_refs": [finding["finding_id"]], "insight_refs": [],
+                }],
+            }, {
+                "section_id": "section-2", "section_type": "LIMITATIONS",
+                "title": "Synthetic limitations", "claim_units": [{
+                    "claim_id": "claim-2", "text": insight["text"],
+                    "support_mode": "EXACT_CONTEXT_INSIGHT",
+                    "finding_refs": list(insight["finding_refs"]),
+                    "insight_refs": [insight["insight_id"]],
                 }],
             }]}
         else:
@@ -110,6 +122,56 @@ class Qnt03PostAnalysisPostgresqlTests(unittest.TestCase):
         self.assertEqual(findings.rejected_findings, ())
         self.assertEqual(len(insights.accepted_insights), 1)
         self.assertEqual(insights.rejected_insights, ())
+        final_state = next(item for item in states if item.get("terminal_result_record_id"))
+        review = worker.quantitative_ui_service.state.load(
+            final_state["quant_review_record_id"], project_id=project_id,
+            expected_type=QuantitativeReview,
+        )
+        self.assertEqual(final_state.get("quant_review_verdict"), "approve", review.issues)
+        revision = worker.quantitative_ui_service.state.load(
+            final_state["quant_approved_revision_record_id"], project_id=project_id,
+            expected_type=QuantitativeApprovedRevision,
+        )
+        self.assertEqual(revision.review_fingerprint, review.fingerprint)
+        self.assertEqual(revision.dataset_fingerprint, fixture["dataset_fingerprint"])
+        self.assertEqual(worker.review_query_service.final_verdict_for_run(project_id, run_id),
+                         "approve")
+        timeline = worker.activity_reader.list_for_project(project_id)
+        labels = {item.label for item in timeline.events}
+        self.assertIn("Кількісний звіт пройшов перевірку", labels)
+        self.assertIn("Затверджено версію кількісного звіту", labels)
+        projected = worker.quantitative_ui_service.result_projection(
+            fixture["study_id"], owner_id=OWNER)
+        self.assertEqual(projected["review"]["verdict"], "approve")
+        self.assertEqual(projected["approved_revision"]["id"], revision.revision_id)
+        composition = worker.quantitative_ui_service.state.load(
+            final_state["report_composition_record_id"], project_id=project_id,
+            expected_type=QuantitativeReportCompositionResult,
+        )
+        broken = replace(composition, accepted_report=replace(
+            composition.accepted_report,
+            sections=(replace(composition.accepted_report.sections[0],
+                              narrative="The synthetic share was 999%."),
+                      *composition.accepted_report.sections[1:]),
+        ))
+        tampered_id = f"{run_id}:tampered-report-for-review-test"
+        worker.quantitative_ui_service.state.persist(
+            broken, record_id=tampered_id, project_id=project_id, run_id=run_id,
+        )
+        rejected, rejected_revision = QuantitativeReviewService(
+            state_service=worker.quantitative_ui_service.state,
+            digest_provider=worker.quantitative_ui_service.state._digest,
+            review_repository=worker.review_query_service._review_repository,
+        ).review(project_id=project_id, run_id=run_id,
+                 state={**final_state, "report_composition_record_id": tampered_id})
+        self.assertEqual(rejected.verdict.value, "revise")
+        self.assertIsNone(rejected_revision)
+        self.assertTrue(rejected.issues)
+        self.assertEqual(worker.quantitative_ui_service.state.load(
+            revision.revision_id, project_id=project_id,
+            expected_type=QuantitativeApprovedRevision), revision)
+        self.assertIn("Кількісний звіт потребує виправлення",
+                      {item.label for item in worker.activity_reader.list_for_project(project_id).events})
         self.assertEqual(worker_client.stages, ["insights", "report"])
         for finding in findings.accepted_findings:
             self.assertEqual(finding.canonical_authority.dataset_version_id,

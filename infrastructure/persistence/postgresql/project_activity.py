@@ -12,6 +12,8 @@ from infrastructure.persistence.postgresql.models.project_activity_model import 
 EVENT_TYPES = frozenset({
     "PROJECT_CREATED", "DESIGN_APPROVED", "METHOD_ACTIVATED",
     "DESK_REPORT_DRAFT_CREATED", "DESK_REVIEW_ATTENTION",
+    "QUANT_REVIEW_ATTENTION", "QUANT_REVIEW_APPROVED",
+    "QUANT_APPROVED_REVISION_CREATED",
 })
 
 
@@ -33,7 +35,7 @@ def record_activity(
 ) -> None:
     if event_type not in EVENT_TYPES or method not in (None, "DESK", "QUANTITATIVE") or verdict not in (None, "REVISE", "REJECT"):
         raise ValueError("Invalid Project Activity catalogue value")
-    if source_kind not in {"project", "design", "run", "study", "report", "review"}:
+    if source_kind not in {"project", "design", "run", "study", "report", "review", "revision"}:
         raise ValueError("Invalid Project Activity source")
     timestamp = utc_timestamp(occurred_at) if occurred_at is not None else datetime.now(UTC)
     if timestamp is None:

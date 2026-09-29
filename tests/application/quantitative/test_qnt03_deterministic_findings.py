@@ -144,7 +144,9 @@ class QNT03DeterministicFindingTests(unittest.TestCase):
 
 class QNT03PinnedCreationTests(ApiTestCase):
     def test_new_cmf_run_pins_version_before_dataset_and_checkpoint_cannot_change_it(self):
-        from application.methods.quantitative.pin import METHOD_PIN, POST_ANALYSIS_PIN
+        from application.methods.quantitative.pin import (
+            METHOD_PIN, POST_ANALYSIS_PIN, REVIEW_PIN, REVIEW_VERSION,
+        )
 
         self.container.quantitative_ui_service.cmf_quant_enabled = True
         response = self.client.post("/ui/quantitative/studies", data={
@@ -155,9 +157,12 @@ class QNT03PinnedCreationTests(ApiTestCase):
         run_id = response.headers["location"].rsplit("/", 1)[-1]
         results = self.container.workflow_service.get_task_results(run_id)
         self.assertEqual(results[POST_ANALYSIS_PIN], POST_ANALYSIS_VERSION)
+        self.assertEqual(results[REVIEW_PIN], REVIEW_VERSION)
         self.assertIn(METHOD_PIN, results)
         replay = checkpoint_results(results, {POST_ANALYSIS_PIN: "mutated"})
         self.assertEqual(replay[POST_ANALYSIS_PIN], POST_ANALYSIS_VERSION)
+        self.assertEqual(checkpoint_results(results, {REVIEW_PIN: "mutated"})[REVIEW_PIN],
+                         REVIEW_VERSION)
 
 
 if __name__ == "__main__":

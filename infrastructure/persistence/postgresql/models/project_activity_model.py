@@ -14,15 +14,17 @@ class ProjectActivityModel(Base):
         UniqueConstraint("project_id", "semantic_key", name="uq_project_activity_semantic"),
         CheckConstraint(
             "event_type IN ('PROJECT_CREATED', 'DESIGN_APPROVED', 'METHOD_ACTIVATED', "
-            "'DESK_REPORT_DRAFT_CREATED', 'DESK_REVIEW_ATTENTION')",
+            "'DESK_REPORT_DRAFT_CREATED', 'DESK_REVIEW_ATTENTION', "
+            "'QUANT_REVIEW_ATTENTION', 'QUANT_REVIEW_APPROVED', "
+            "'QUANT_APPROVED_REVISION_CREATED')",
             name="ck_project_activity_type",
         ),
         CheckConstraint("method IS NULL OR method IN ('DESK', 'QUANTITATIVE')", name="ck_project_activity_method"),
         CheckConstraint("verdict IS NULL OR verdict IN ('REVISE', 'REJECT')", name="ck_project_activity_verdict"),
-        CheckConstraint("source_kind IN ('project', 'design', 'run', 'study', 'report', 'review')", name="ck_project_activity_source_kind"),
+        CheckConstraint("source_kind IN ('project', 'design', 'run', 'study', 'report', 'review', 'revision')", name="ck_project_activity_source_kind"),
         CheckConstraint("event_version > 0", name="ck_project_activity_version"),
         CheckConstraint(
-            "(event_type = 'DESK_REVIEW_ATTENTION') = (verdict IS NOT NULL)",
+            "(event_type IN ('DESK_REVIEW_ATTENTION', 'QUANT_REVIEW_ATTENTION')) = (verdict IS NOT NULL)",
             name="ck_project_activity_attention_verdict",
         ),
         CheckConstraint(

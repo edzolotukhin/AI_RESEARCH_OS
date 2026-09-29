@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from application.ports.quantitative_state_repository import QuantitativeStateRecord
 from infrastructure.persistence.postgresql.models.quantitative_state_model import QuantitativeStateModel
 from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
+from infrastructure.persistence.postgresql.project_activity import record_activity
 
 
 class PostgreSQLQuantitativeStateRepository:
@@ -19,6 +20,15 @@ class PostgreSQLQuantitativeStateRepository:
         with self._sessions.session() as session:
             try:
                 session.add(QuantitativeStateModel(**record.__dict__)); session.flush()
+                if (record.record_type == "domain.quantitative.review.QuantitativeApprovedRevision"
+                        and record.accepted is True):
+                    record_activity(
+                        session, project_id=record.project_id,
+                        semantic_key=f"quant-approved-revision:{record.record_id}",
+                        event_type="QUANT_APPROVED_REVISION_CREATED",
+                        source_kind="revision", source_id=record.record_id,
+                        run_id=record.run_id, method="QUANTITATIVE",
+                    )
             except IntegrityError as exc:
                 session.rollback(); raise ValueError("immutable Quantitative record already exists") from exc
 

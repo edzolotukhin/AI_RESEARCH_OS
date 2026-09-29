@@ -17,6 +17,7 @@ from application.quantitative.dataset_import_service import QuantitativeDatasetI
 from application.quantitative.dataset_limits import MAX_SOURCE_BYTES
 from application.methods.quantitative.pin import (
     ANALYSIS_PIN, METHOD_PIN, POST_ANALYSIS_PIN, POST_ANALYSIS_VERSION,
+    REVIEW_PIN, REVIEW_VERSION, resolve_review_pin,
     make_analysis_pin, make_method_pin, resolve_method_pin, resolve_post_analysis_pin,
     verify_analysis_pin,
 )
@@ -296,9 +297,11 @@ class QuantitativeUiService:
         self.workflows.save_workflow_run(
             run, expected_version=self.workflows.get_workflow_run_version(run.id),
             task_results={**results, METHOD_PIN: pin,
-                          POST_ANALYSIS_PIN: POST_ANALYSIS_VERSION},
+                          POST_ANALYSIS_PIN: POST_ANALYSIS_VERSION,
+                          REVIEW_PIN: REVIEW_VERSION},
             quant_pin_binding={METHOD_PIN: pin,
-                               POST_ANALYSIS_PIN: POST_ANALYSIS_VERSION},
+                               POST_ANALYSIS_PIN: POST_ANALYSIS_VERSION,
+                               REVIEW_PIN: REVIEW_VERSION},
         )
 
     def _compatible_template(self, expected):
@@ -767,6 +770,11 @@ class QuantitativeUiService:
                     self.workflows.get_task_results(run.id).get(POST_ANALYSIS_PIN),
                     method_pin=self.workflows.get_task_results(run.id).get(METHOD_PIN),
                 ),
+                canonical_review=resolve_review_pin(
+                    self.workflows.get_task_results(run.id).get(REVIEW_PIN),
+                    method_pin=self.workflows.get_task_results(run.id).get(METHOD_PIN),
+                    post_analysis_pin=self.workflows.get_task_results(run.id).get(POST_ANALYSIS_PIN),
+                ),
             )
             context = self._run_engine(study, run, service, safe)
             if run.status is WorkflowStatus.PAUSED and context.current_task is not None and context.current_task.definition_id == "quant_findings":
@@ -1149,6 +1157,7 @@ class QuantitativeUiService:
         from domain.quantitative.finding import QuantitativeFindingGenerationResult
         from domain.quantitative.insight import QuantitativeInsightGenerationResult
         from domain.quantitative.report import QuantitativeReportCompositionResult
+        from domain.quantitative.review import QuantitativeApprovedRevision, QuantitativeReview
         terminal = self.state.load(study.terminal_result_record_id, project_id=study.project_id, expected_type=QuantitativeTerminalResult)
         records = self.state.list_for_run(study.run_id, project_id=study.project_id)
         stats = tuple(item for item in records if isinstance(item, StatisticalResult))
@@ -1163,6 +1172,18 @@ class QuantitativeUiService:
             None,
         )
         task_results = self.workflows.get_task_results(study.run_id)
+        completed_state = next((item.get("shared_state", {}).get(QUANTITATIVE_SAFE_STATE_KEY, {})
+                                for item in task_results.values() if isinstance(item, dict)
+                                and isinstance(item.get("shared_state"), dict)
+                                and item["shared_state"].get(QUANTITATIVE_SAFE_STATE_KEY, {}).get(
+                                    "terminal_result_record_id") == study.terminal_result_record_id), {})
+        review = (self.state.load(completed_state["quant_review_record_id"],
+                                  project_id=study.project_id, expected_type=QuantitativeReview)
+                  if completed_state.get("quant_review_record_id") else None)
+        approved_revision = (self.state.load(completed_state["quant_approved_revision_record_id"],
+                                             project_id=study.project_id,
+                                             expected_type=QuantitativeApprovedRevision)
+                             if completed_state.get("quant_approved_revision_record_id") else None)
         return {"study_id":study.study_id, "project_id":study.project_id, "run_id":study.run_id,
                 "terminal_result_id":terminal.result_id, "terminal_status":terminal.terminal_outcome.value,
                 "statistics":tuple({"result_id":item.result_id,"statistic_type":item.statistic_type,"value":str(item.value),
@@ -1178,6 +1199,13 @@ class QuantitativeUiService:
                           "title":report.accepted_report.title if report and report.accepted_report else None,
                           "status":terminal.report_status,
                           "sections":tuple({"title":item.title,"narrative":item.narrative} for item in report.accepted_report.sections) if report and report.accepted_report else ()},
+                "review":({"id":review.review_id,"verdict":review.verdict.value,
+                            "issues":review.issues} if review else None),
+                "approved_revision":({"id":approved_revision.revision_id,
+                                      "review_id":approved_revision.review_id,
+                                      "report_id":approved_revision.report_id,
+                                      "dataset_fingerprint":approved_revision.dataset_fingerprint}
+                                     if approved_revision else None),
                 "limitations":terminal.limitations,
                 "llm_usage":task_results.get("_run_usage_summary", {})}
 
@@ -1196,6 +1224,7 @@ class QuantitativeUiService:
         context.execution_metadata[METHOD_PIN] = stored_pins.get(METHOD_PIN)
         context.execution_metadata[ANALYSIS_PIN] = stored_pins.get(ANALYSIS_PIN)
         context.execution_metadata[POST_ANALYSIS_PIN] = stored_pins.get(POST_ANALYSIS_PIN)
+        context.execution_metadata[REVIEW_PIN] = stored_pins.get(REVIEW_PIN)
         persister=WorkflowRuntimePersister(workflow_service=self.workflows,audit=None,run_id=run.id,initial_version=self.workflows.get_workflow_run_version(run.id),task_results=self.workflows.get_task_results(run.id))
         try:
             return WorkflowEngine(TaskScheduler(),TaskExecutor(Resolver(),TaskLifecycleManager()),WorkflowCompletionPolicy()).run(context,checkpoint=persister)

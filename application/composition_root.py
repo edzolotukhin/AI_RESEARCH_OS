@@ -574,6 +574,7 @@ def create_application_container(
             insight_lineage_repository_factory=lambda: QLQuantitativeInsightLineageRepository(quantitative_state_service),
             report_lineage_repository_factory=lambda: QLQuantitativeReportLineageRepository(quantitative_state_service),
             research_question_coverage_repository_factory=lambda: QLQuantitativeResearchQuestionCoverageRepository(quantitative_state_service),
+            review_repository_factory=lambda: review_repository,
         )
 
     durable_workflow_service: DurableWorkflowService | None = None

@@ -9,6 +9,17 @@ METHOD_PIN = "_cmf_quant_method_v1"
 ANALYSIS_PIN = "_cmf_quant_analysis_v1"
 POST_ANALYSIS_PIN = "_cmf_quant_post_analysis"
 POST_ANALYSIS_VERSION = "QNT03_DETERMINISTIC_FINDINGS_V1"
+REVIEW_PIN = "_cmf_quant_review_v1"
+REVIEW_VERSION = "QNT04_DETERMINISTIC_REVIEW_V1"
+
+
+def resolve_review_pin(value, *, method_pin, post_analysis_pin):
+    if value is None:
+        return False  # Earlier runs retain their original completion semantics.
+    if (value != REVIEW_VERSION or method_pin is None
+            or post_analysis_pin != POST_ANALYSIS_VERSION):
+        raise ValueError("Quant Review version is missing or incompatible")
+    return True
 
 
 def resolve_post_analysis_pin(value, *, method_pin):
