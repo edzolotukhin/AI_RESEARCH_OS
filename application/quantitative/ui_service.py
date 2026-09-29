@@ -16,7 +16,8 @@ from application.persistence.exceptions import (
 from application.quantitative.dataset_import_service import QuantitativeDatasetImportService
 from application.quantitative.dataset_limits import MAX_SOURCE_BYTES
 from application.methods.quantitative.pin import (
-    ANALYSIS_PIN, METHOD_PIN, make_analysis_pin, make_method_pin, resolve_method_pin,
+    ANALYSIS_PIN, METHOD_PIN, POST_ANALYSIS_PIN, POST_ANALYSIS_VERSION,
+    make_analysis_pin, make_method_pin, resolve_method_pin, resolve_post_analysis_pin,
     verify_analysis_pin,
 )
 from application.quantitative.fingerprints import sha256_bytes
@@ -294,8 +295,10 @@ class QuantitativeUiService:
             raise QuantitativeUiError("Quant CMF method pin already exists")
         self.workflows.save_workflow_run(
             run, expected_version=self.workflows.get_workflow_run_version(run.id),
-            task_results={**results, METHOD_PIN: pin},
-            quant_pin_binding={METHOD_PIN: pin},
+            task_results={**results, METHOD_PIN: pin,
+                          POST_ANALYSIS_PIN: POST_ANALYSIS_VERSION},
+            quant_pin_binding={METHOD_PIN: pin,
+                               POST_ANALYSIS_PIN: POST_ANALYSIS_VERSION},
         )
 
     def _compatible_template(self, expected):
@@ -760,6 +763,10 @@ class QuantitativeUiService:
                 project_id=study.project_id,
                 run_id=study.run_id,
                 safe_state=safe,
+                canonical_findings=resolve_post_analysis_pin(
+                    self.workflows.get_task_results(run.id).get(POST_ANALYSIS_PIN),
+                    method_pin=self.workflows.get_task_results(run.id).get(METHOD_PIN),
+                ),
             )
             context = self._run_engine(study, run, service, safe)
             if run.status is WorkflowStatus.PAUSED and context.current_task is not None and context.current_task.definition_id == "quant_findings":
@@ -854,7 +861,11 @@ class QuantitativeUiService:
         paused[0].requeue_after_interrupt()
         run.resume()
         service = self.stage_service_factory.create(
-            project_id=study.project_id, run_id=study.run_id, safe_state=safe
+            project_id=study.project_id, run_id=study.run_id, safe_state=safe,
+            canonical_findings=resolve_post_analysis_pin(
+                self.workflows.get_task_results(run.id).get(POST_ANALYSIS_PIN),
+                method_pin=self.workflows.get_task_results(run.id).get(METHOD_PIN),
+            ),
         )
         try:
             context = self._run_engine(study, run, service, dict(safe))
@@ -1184,6 +1195,7 @@ class QuantitativeUiService:
         stored_pins = self.workflows.get_task_results(run.id)
         context.execution_metadata[METHOD_PIN] = stored_pins.get(METHOD_PIN)
         context.execution_metadata[ANALYSIS_PIN] = stored_pins.get(ANALYSIS_PIN)
+        context.execution_metadata[POST_ANALYSIS_PIN] = stored_pins.get(POST_ANALYSIS_PIN)
         persister=WorkflowRuntimePersister(workflow_service=self.workflows,audit=None,run_id=run.id,initial_version=self.workflows.get_workflow_run_version(run.id),task_results=self.workflows.get_task_results(run.id))
         try:
             return WorkflowEngine(TaskScheduler(),TaskExecutor(Resolver(),TaskLifecycleManager()),WorkflowCompletionPolicy()).run(context,checkpoint=persister)

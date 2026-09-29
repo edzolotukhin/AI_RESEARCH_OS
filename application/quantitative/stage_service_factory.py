@@ -6,11 +6,17 @@ from typing import Any, Callable, Mapping
 
 from application.quantitative.analysis_execution import QuantitativeAnalysisExecutionService
 from application.methods.quantitative.pin import (
-    ANALYSIS_PIN, METHOD_PIN, resolve_method_pin, verify_analysis_pin,
+    ANALYSIS_PIN, METHOD_PIN, POST_ANALYSIS_PIN,
+    resolve_method_pin, resolve_post_analysis_pin, verify_analysis_pin,
 )
+from application.methods.quantitative.insight_integrity import CanonicalQuantInsightValidator
+from application.methods.quantitative.finding_authority import CanonicalQuantFindingSupportValidator
 from application.quantitative.quality_control import assess_dataset_quality
 from application.quantitative.finding_generation import (
     QuantitativeFindingGenerationService,
+)
+from application.quantitative.deterministic_finding_proposals import (
+    DeterministicQuantitativeFindingProposalGenerator,
 )
 from application.quantitative.finding_support import QuantitativeFindingSupportValidator
 from application.quantitative.finding_lineage import QuantitativeFindingLineageService
@@ -115,6 +121,7 @@ class QuantitativeStageServiceFactory:
         project_id: str,
         run_id: str,
         safe_state: Mapping[str, object],
+        canonical_findings: bool = False,
     ) -> RealQuantitativeStageService:
         if not project_id or not run_id:
             raise QuantitativeWorkflowError("Quantitative project/run identity is required")
@@ -193,16 +200,21 @@ class QuantitativeStageServiceFactory:
             state_service=self.state_service,
             approval_service=approvals,
             finding_service=QuantitativeFindingGenerationService(
-                generator=self.finding_generator,
-                support_validator=QuantitativeFindingSupportValidator(
-                    digest_provider=self.digest_provider
-                ),
+                generator=(DeterministicQuantitativeFindingProposalGenerator()
+                           if canonical_findings else self.finding_generator),
+                support_validator=(CanonicalQuantFindingSupportValidator(
+                    digest_provider=self.digest_provider, dataset=dataset,
+                    run_id=run_id,
+                ) if canonical_findings else QuantitativeFindingSupportValidator(
+                    digest_provider=self.digest_provider,
+                )),
                 digest_provider=self.digest_provider,
             ),
             insight_service=QuantitativeInsightSynthesisService(
                 generator=self.insight_generator,
-                validator=QuantitativeInsightValidator(
-                    digest_provider=self.digest_provider
+                validator=(CanonicalQuantInsightValidator if canonical_findings else QuantitativeInsightValidator)(
+                    digest_provider=self.digest_provider,
+                    **({"require_canonical_authority": True} if canonical_findings else {}),
                 ),
                 digest_provider=self.digest_provider,
             ),
@@ -225,6 +237,7 @@ class QuantitativeStageServiceFactory:
             analysis_plan_authority=current_plan,
             study_weighting_mode=weighting_mode,
             weighting_authority_fingerprint=weighting_authority_fingerprint,
+            canonical_findings=canonical_findings,
         )
 
     def _load_dataset_authority(self, *, project_id, run_id, state):
@@ -482,6 +495,9 @@ class QuantitativeWorkflowContextServiceResolver:
             raise QuantitativeWorkflowError("Durable Quantitative state is invalid")
         method_pin = context.execution_metadata.get(METHOD_PIN)
         analysis_pin = context.execution_metadata.get(ANALYSIS_PIN)
+        canonical_findings = resolve_post_analysis_pin(
+            context.execution_metadata.get(POST_ANALYSIS_PIN), method_pin=method_pin,
+        )
         if context.workflow_run.workflow_template_id == CMF_QUANTITATIVE_WORKFLOW_ID and method_pin is None:
             raise QuantitativeWorkflowError("CMF Quant run has no method pin")
         if (method_pin is not None and analysis_pin is None
@@ -512,5 +528,6 @@ class QuantitativeWorkflowContextServiceResolver:
                 project_id=context.project.id,
                 run_id=context.workflow_run.id,
                 safe_state=safe_state,
+                canonical_findings=canonical_findings,
             )
         }

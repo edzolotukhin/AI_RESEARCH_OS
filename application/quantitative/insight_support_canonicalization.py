@@ -155,6 +155,31 @@ def finding_support_projection(finding) -> Mapping[str, Any]:
         projection["semantic_evidence_context"] = (
             semantic_evidence_context_projection(finding.semantic_evidence_context)
         )
+    if finding.canonical_authority is not None:
+        authority = finding.canonical_authority
+        projection["canonical_quant_authority"] = {
+            "fingerprint": authority.fingerprint,
+            "method_version": authority.method_version,
+            "dataset_version_id": authority.dataset_version_id,
+            "dataset_fingerprint": authority.dataset_fingerprint,
+            "source_n": authority.source_n,
+            "result_refs": tuple((item.result_id, item.reproducibility_fingerprint)
+                                 for item in authority.result_refs),
+            "comparison_refs": tuple((item.comparison_result_id,
+                                      item.reproducibility_fingerprint)
+                                     for item in authority.comparison_refs),
+            "procedures": authority.procedures,
+            "denominators": tuple(canonical_scalar(item)
+                                  for item in authority.denominators),
+            "filter_definition": authority.filter_definition,
+            "base_definition": authority.base_definition,
+            "weighting_status": authority.weighting_status,
+            "weight_set_fingerprint": authority.weight_set_fingerprint,
+            "missing_value_semantics": authority.missing_value_semantics,
+            "significance": tuple((item[0], item[1], canonical_scalar(item[2]),
+                                   canonical_scalar(item[3]))
+                                  for item in authority.significance),
+        }
     return projection
 
 

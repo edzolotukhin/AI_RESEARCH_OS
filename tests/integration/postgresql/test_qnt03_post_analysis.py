@@ -1,0 +1,121 @@
+"""QNT-03 offline worker path over disposable PostgreSQL authority."""
+
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from dataclasses import replace
+from pathlib import Path
+from unittest.mock import Mock
+
+from application.composition_root import create_application_container
+from application.config import ApplicationOverrides
+from application.methods.quantitative.pin import POST_ANALYSIS_PIN, POST_ANALYSIS_VERSION
+from domain.ai.llm_response import LLMResponse
+from domain.quantitative.finding import QuantitativeFindingGenerationResult
+from domain.quantitative.insight import QuantitativeInsightGenerationResult
+from tests.fixtures.quantitative.qnt02_authority_fixture import OWNER, prepare_bound_analysis
+from tests.integration.postgresql.helpers import (
+    create_test_engine, integration_tests_enabled, postgresql_application_config,
+    reset_schema,
+)
+
+
+class _OfflineQuantSemanticClient:
+    def __init__(self):
+        self.stages = []
+
+    def generate(self, prompt, *, options=None):
+        value = prompt.user if hasattr(prompt, "user") else prompt
+        if "AUTHORITATIVE_BUNDLE=" in value:
+            raise AssertionError("QNT-03 Finding generation must not call a provider")
+        if "ACCEPTED_FINDINGS=" in value:
+            self.stages.append("insights")
+            findings = json.loads(value.split("ACCEPTED_FINDINGS=", 1)[1])
+            selected = findings[0]
+            response = {"proposals": [{
+                "insight_type": "LIMITATION",
+                "insight_text": "Interpret this synthetic sample cautiously.",
+                "supporting_finding_ids": [selected["finding_id"]],
+                "referenced_display_values": [], "direction": None,
+                "limitation_note": "Synthetic sample only.",
+            }]}
+        elif "APPROVED_SUPPORT=" in value:
+            self.stages.append("report")
+            support = json.loads(value.split("APPROVED_SUPPORT=", 1)[1])
+            finding = support["findings"][0]
+            response = {"title": "Synthetic report", "sections": [{
+                "section_id": "section-1", "section_type": "KEY_FINDINGS",
+                "title": "Bound result", "claim_units": [{
+                    "claim_id": "claim-1", "text": finding["text"],
+                    "support_mode": "DIRECT_FINDING",
+                    "finding_refs": [finding["finding_id"]], "insight_refs": [],
+                }],
+            }]}
+        else:
+            raise AssertionError("Unexpected Quant provider boundary")
+        return LLMResponse(content=json.dumps(response), output_tokens=7)
+
+
+@unittest.skipUnless(integration_tests_enabled(), "Disposable PostgreSQL test database required")
+class Qnt03PostAnalysisPostgresqlTests(unittest.TestCase):
+    def test_separate_worker_persists_pinned_findings_and_insights(self):
+        engine = create_test_engine()
+        self.addCleanup(engine.dispose)
+        reset_schema(engine)
+        root = tempfile.TemporaryDirectory()
+        self.addCleanup(root.cleanup)
+        config = replace(postgresql_application_config(
+            deterministic_stage_executors=False, background_execution_mode="external",
+        ), projects_root=str(Path(root.name) / "protected"), cmf_quant_enabled=True)
+        api_client = _OfflineQuantSemanticClient()
+        api = create_application_container(config=config, overrides=ApplicationOverrides(
+            llm_client=Mock(), quantitative_llm_client=api_client,
+        ))
+        self.addCleanup(api.shutdown)
+        fixture = prepare_bound_analysis(api)
+        run_id, project_id = fixture["run_id"], fixture["project_id"]
+        self.assertEqual(api.workflow_service.get_task_results(run_id)[POST_ANALYSIS_PIN],
+                         POST_ANALYSIS_VERSION)
+        worker_client = _OfflineQuantSemanticClient()
+        worker = create_application_container(config=config, overrides=ApplicationOverrides(
+            llm_client=Mock(), quantitative_llm_client=worker_client,
+        ))
+        self.addCleanup(worker.shutdown)
+        self.assertTrue(worker.worker_execution_service.process_once("qnt03-analysis-worker"))
+        self.assertEqual(worker_client.stages, [])
+        run = worker.workflow_service.get_workflow_run(run_id)
+        paused = next(task for task in run.tasks if task.status.value == "paused")
+        boundary = worker.workflow_service.get_task_results(run_id)[paused.id]["shared_state"]["quantitative"]
+        worker.quantitative_ui_service.authorize_semantic_execution(
+            fixture["study_id"], owner_id=OWNER, actor_id=OWNER,
+            expected_authority_fingerprint=boundary["semantic_authority_fingerprint"],
+            rationale="Offline QNT-03 acceptance",
+        )
+        self.assertTrue(worker.worker_execution_service.process_once("qnt03-semantic-worker"))
+        results = worker.workflow_service.get_task_results(run_id)
+        states = [item.get("shared_state", {}).get("quantitative", {})
+                  for item in results.values() if isinstance(item, dict)]
+        state = next(item for item in states if item.get("insight_generation_record_id"))
+        findings = worker.quantitative_ui_service.state.load(
+            state["finding_generation_record_id"], project_id=project_id,
+            expected_type=QuantitativeFindingGenerationResult,
+        )
+        insights = worker.quantitative_ui_service.state.load(
+            state["insight_generation_record_id"], project_id=project_id,
+            expected_type=QuantitativeInsightGenerationResult,
+        )
+        self.assertTrue(findings.accepted_findings)
+        self.assertEqual(findings.rejected_findings, ())
+        self.assertEqual(len(insights.accepted_insights), 1)
+        self.assertEqual(insights.rejected_insights, ())
+        self.assertEqual(worker_client.stages, ["insights", "report"])
+        for finding in findings.accepted_findings:
+            self.assertEqual(finding.canonical_authority.dataset_version_id,
+                             fixture["dataset_version_id"])
+            self.assertEqual(finding.canonical_authority.run_id, run_id)
+        self.assertEqual(insights.accepted_insights[0].supporting_finding_refs[0].finding_id,
+                         findings.accepted_findings[0].finding_id)
+        self.assertNotIn("_research_kernel_v1", results)
+        self.assertEqual(api_client.stages, [])

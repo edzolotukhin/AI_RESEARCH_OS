@@ -12,6 +12,7 @@ class QuantitativeClaimType(str, Enum):
     KPI_VALUE = "KPI_VALUE"
     DESCRIPTIVE_COMPARISON = "DESCRIPTIVE_COMPARISON"
     SIGNIFICANT_COMPARISON = "SIGNIFICANT_COMPARISON"
+    NON_SIGNIFICANT_COMPARISON = "NON_SIGNIFICANT_COMPARISON"
 
 
 class QuantitativeSupportStatus(str, Enum):
@@ -75,6 +76,26 @@ class QuantitativeClaim:
 
 
 @dataclass(frozen=True)
+class CanonicalQuantFindingAuthority:
+    run_id: str
+    method_version: str
+    dataset_version_id: str
+    dataset_fingerprint: str
+    source_n: int
+    result_refs: tuple[QuantitativeResultReference, ...]
+    comparison_refs: tuple[QuantitativeComparisonReference, ...]
+    procedures: tuple[tuple[str, str], ...]
+    denominators: tuple[Any, ...]
+    filter_definition: str
+    base_definition: str
+    weighting_status: str
+    weight_set_fingerprint: str | None
+    missing_value_semantics: tuple[Any, ...]
+    significance: tuple[tuple[str, bool, Any, Any], ...]
+    fingerprint: str
+
+
+@dataclass(frozen=True)
 class QuantitativeFinding:
     finding_id: str
     text: str
@@ -91,6 +112,7 @@ class QuantitativeFinding:
     support_validation_fingerprint: str = ""
     support_validation_version: str = "qh-1"
     semantic_evidence_context: QuantitativeSemanticEvidenceContext | None = None
+    canonical_authority: CanonicalQuantFindingAuthority | None = None
 
 
 @dataclass(frozen=True)

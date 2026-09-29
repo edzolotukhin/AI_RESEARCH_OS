@@ -661,7 +661,10 @@ class QuantitativeFindingGenerationService:
         ) for item in comparison_ids)
         resolved = tuple(available_results[item] for item in result_ids)
         self._validate_claim_compatibility(claim_type, resolved)
-        canonical = self._canonical_claim_fields(claim_type, resolved)
+        canonical = self._canonical_claim_fields(
+            claim_type, resolved,
+            tuple(available_comparisons[item] for item in comparison_ids),
+        )
         self._validate_legacy_authority_fields(raw, canonical, claim_type)
         value = canonical["value"]
         provider_text = self._safe_text(str(raw["finding_text"]), "finding text")
@@ -801,6 +804,7 @@ class QuantitativeFindingGenerationService:
         if claim_type not in {
             QuantitativeClaimType.DESCRIPTIVE_COMPARISON,
             QuantitativeClaimType.SIGNIFICANT_COMPARISON,
+            QuantitativeClaimType.NON_SIGNIFICANT_COMPARISON,
         } and any(not item.presentation_eligible for item in results):
             raise QuantitativeAnalysisError(
                 "ineligible result cannot support a standalone Finding"
@@ -808,11 +812,13 @@ class QuantitativeFindingGenerationService:
         if claim_type in {
             QuantitativeClaimType.DESCRIPTIVE_COMPARISON,
             QuantitativeClaimType.SIGNIFICANT_COMPARISON,
+            QuantitativeClaimType.NON_SIGNIFICANT_COMPARISON,
         }:
             if not results or any(
                 item.statistic_type not in {
                     "VALID_PERCENTAGE", "WEIGHTED_PERCENTAGE",
                     "CROSS_TAB_COLUMN_PERCENTAGE", "GROUPED_CATEGORY_PERCENTAGE",
+                    "NUMERIC_MEAN",
                 }
                 for item in results
             ):
@@ -828,13 +834,15 @@ class QuantitativeFindingGenerationService:
             )
 
     @classmethod
-    def _canonical_claim_fields(cls, claim_type, results):
+    def _canonical_claim_fields(cls, claim_type, results, comparisons=()):
         first = results[0]
         if claim_type in {
             QuantitativeClaimType.DESCRIPTIVE_COMPARISON,
             QuantitativeClaimType.SIGNIFICANT_COMPARISON,
+            QuantitativeClaimType.NON_SIGNIFICANT_COMPARISON,
         }:
-            value = Decimal(str(first.value)) - Decimal(str(results[1].value))
+            value = (comparisons[0].observed_difference if comparisons else
+                     Decimal(str(first.value)) - Decimal(str(results[1].value)))
             direction = "HIGHER" if value > 0 else "LOWER" if value < 0 else "EQUAL"
             category = first.row_category_value
         else:
@@ -895,11 +903,13 @@ class QuantitativeFindingGenerationService:
             if name == "value" and raw.get(name) is None and claim_type in {
                 QuantitativeClaimType.DESCRIPTIVE_COMPARISON,
                 QuantitativeClaimType.SIGNIFICANT_COMPARISON,
+                QuantitativeClaimType.NON_SIGNIFICANT_COMPARISON,
             }:
                 continue
             if name == "display_value" and claim_type in {
                 QuantitativeClaimType.DESCRIPTIVE_COMPARISON,
                 QuantitativeClaimType.SIGNIFICANT_COMPARISON,
+                QuantitativeClaimType.NON_SIGNIFICANT_COMPARISON,
             }:
                 continue
             if name in raw and not matches(raw[name], canonical[name]):
@@ -978,6 +988,7 @@ class QuantitativeFindingGenerationService:
             QuantitativeClaimType.KPI_VALUE: (1, 0),
             QuantitativeClaimType.DESCRIPTIVE_COMPARISON: (2, 0),
             QuantitativeClaimType.SIGNIFICANT_COMPARISON: (2, 1),
+            QuantitativeClaimType.NON_SIGNIFICANT_COMPARISON: (2, 1),
         }[claim_type]
         actual = (len(result_ids), len(comparison_ids))
         if actual != expected:

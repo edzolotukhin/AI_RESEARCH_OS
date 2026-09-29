@@ -7,6 +7,16 @@ from infrastructure.security.sha256_digest_provider import Sha256DigestProvider
 
 METHOD_PIN = "_cmf_quant_method_v1"
 ANALYSIS_PIN = "_cmf_quant_analysis_v1"
+POST_ANALYSIS_PIN = "_cmf_quant_post_analysis"
+POST_ANALYSIS_VERSION = "QNT03_DETERMINISTIC_FINDINGS_V1"
+
+
+def resolve_post_analysis_pin(value, *, method_pin):
+    if value is None:
+        return False  # Existing CMF runs retain their accepted QI/QJ semantics.
+    if value != POST_ANALYSIS_VERSION or method_pin is None:
+        raise ValueError("Quant post-analysis version is missing or incompatible")
+    return True
 
 
 def _fingerprint(value):

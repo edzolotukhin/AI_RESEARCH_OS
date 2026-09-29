@@ -114,13 +114,20 @@ class WorkflowService:
     ) -> int:
         if quant_pin_binding is not None:
             from application.methods.quantitative.pin import (
-                METHOD_PIN, ANALYSIS_PIN, resolve_method_pin, verify_analysis_state,
+                METHOD_PIN, ANALYSIS_PIN, POST_ANALYSIS_PIN,
+                resolve_method_pin, resolve_post_analysis_pin,
+                verify_analysis_state,
             )
             if workflow_run.workflow_template_id != "quantitative-consumer-survey-cmf-v1":
                 raise ValueError("Quant pin binding requires a CMF Quant run")
             if METHOD_PIN in quant_pin_binding:
                 resolve_method_pin(quant_pin_binding[METHOD_PIN], project_id=workflow_run.project_id,
                                    run_id=workflow_run.id)
+            if POST_ANALYSIS_PIN in quant_pin_binding:
+                current = self._workflow_run_repository.get_task_results(workflow_run.id)
+                method_pin = quant_pin_binding.get(METHOD_PIN, current.get(METHOD_PIN))
+                resolve_post_analysis_pin(quant_pin_binding[POST_ANALYSIS_PIN],
+                                          method_pin=method_pin)
             if ANALYSIS_PIN in quant_pin_binding:
                 existing = self._workflow_run_repository.get_task_results(workflow_run.id)
                 if METHOD_PIN not in existing:

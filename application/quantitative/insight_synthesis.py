@@ -227,6 +227,7 @@ class QuantitativeInsightSynthesisService:
         *,
         findings: Sequence[QuantitativeFinding],
         post_validator: Callable[[QuantitativeInsight], QuantitativeInsight] | None = None,
+        before_dispatch: Callable[[], None] | None = None,
     ) -> QuantitativeInsightGenerationResult:
         accepted = self._accepted_findings(findings)
         for finding in accepted:
@@ -241,6 +242,8 @@ class QuantitativeInsightSynthesisService:
             {"version": PROMPT_VERSION, "prompt": prompt},
             digest_provider=self._digest,
         )
+        if before_dispatch is not None:
+            before_dispatch()
         raw = self._generator.generate(prompt)
         proposals = self._proposal_list(raw)
         parsed: list[QuantitativeInsight] = []

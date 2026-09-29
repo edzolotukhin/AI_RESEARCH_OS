@@ -90,6 +90,7 @@ class RealQuantitativeStageService:
         analysis_plan_authority=None,
         study_weighting_mode=None,
         weighting_authority_fingerprint=None,
+        canonical_findings: bool = False,
     ) -> None:
         self.plan, self.storage, self.digest = plan, storage, digest_provider
         self.state, self.approvals = state_service, approval_service
@@ -105,6 +106,7 @@ class RealQuantitativeStageService:
         self.analysis_plan_authority = analysis_plan_authority
         self.study_weighting_mode = study_weighting_mode
         self.weighting_authority_fingerprint = weighting_authority_fingerprint
+        self.canonical_findings = canonical_findings
         self.supports_progress_checkpoint = analysis_execution_service is not None
         self.importer = QuantitativeDatasetImportService(importers=tuple(importers), storage=storage, digest_provider=digest_provider)
         self.qc = DataQualityService(storage=storage, digest_provider=digest_provider)
@@ -348,7 +350,8 @@ class RealQuantitativeStageService:
                     if not generated.accepted_findings:
                         state["zero_supported_findings"] = "true"
                     return state
-                raise QuantitativeWorkflowError("indeterminate design-aware QI provider boundary; semantic retry forbidden")
+                if not self.canonical_findings:
+                    raise QuantitativeWorkflowError("indeterminate design-aware QI provider boundary; semantic retry forbidden")
             results, comparisons = self.finding_lineage.load_results(candidate)
             contexts = self.finding_lineage.semantic_contexts(candidate)
             limitations = self.finding_lineage.generation_limitations(candidate)
@@ -364,10 +367,12 @@ class RealQuantitativeStageService:
                 comparison_results=comparisons,
                 semantic_evidence_contexts=contexts,
                 limitations=limitations,
-                before_dispatch=lambda: self.approvals.require_and_consume_semantic_pipeline(
+                before_dispatch=None if self.canonical_findings else lambda: self.approvals.require_and_consume_semantic_pipeline(
                     project_id=project_id, run_id=run_id, safe_state=state
                 ),
             )
+            if self.canonical_findings and generated.rejected_findings:
+                raise QuantitativeWorkflowError("QNT03_FINDING_GENERATION_FAILURE: canonical result support rejected")
             generation_record_id = self._persist(generated, "finding-generation", project_id, run_id)
             lineage, coverage = self.finding_lineage.finalize(authority=authority, generation_record_id=generation_record_id, generation=generated)
             state["finding_generation_record_id"] = generation_record_id
@@ -379,10 +384,12 @@ class RealQuantitativeStageService:
             self.findings.preflight(statistical_results=results)
             generated = self.findings.generate(
                 statistical_results=results,
-                before_dispatch=lambda: self.approvals.require_and_consume_semantic_pipeline(
+                before_dispatch=None if self.canonical_findings else lambda: self.approvals.require_and_consume_semantic_pipeline(
                     project_id=project_id, run_id=run_id, safe_state=state
                 ),
             )
+            if self.canonical_findings and generated.rejected_findings:
+                raise QuantitativeWorkflowError("QNT03_FINDING_GENERATION_FAILURE: canonical result support rejected")
             generation_record_id = self._persist(generated, "finding-generation", project_id, run_id)
             state["finding_generation_record_id"] = generation_record_id
             if self.finding_lineage is not None:
@@ -391,6 +398,8 @@ class RealQuantitativeStageService:
         else:
             raise QuantitativeWorkflowError("unknown Quantitative analysis execution mode")
         if not generated.accepted_findings:
+            if self.canonical_findings:
+                raise QuantitativeWorkflowError("QNT03_FINDING_GENERATION_FAILURE: no eligible canonical Findings")
             state["zero_supported_findings"] = "true"
         return state
     def _quant_insights(self, project_id, run_id, state):
@@ -428,8 +437,16 @@ class RealQuantitativeStageService:
             return self._design_aware_insights(project_id, run_id, state, generated)
         if mode != "DATASET_ONLY_EXPLORATORY_EXECUTION":
             raise QuantitativeWorkflowError("unknown Quantitative analysis execution mode")
-        insights = self.insights.generate(findings=generated.accepted_findings)
+        insights = self.insights.generate(
+            findings=generated.accepted_findings,
+            before_dispatch=(lambda: self.approvals.require_and_consume_semantic_pipeline(
+                project_id=project_id, run_id=run_id,
+                safe_state=self._pre_finding_semantic_authority(state),
+            )) if self.canonical_findings else None,
+        )
         generation_record_id = self._persist(insights, "insight-generation", project_id, run_id)
+        if self.canonical_findings and insights.rejected_insights and not insights.accepted_insights:
+            raise QuantitativeWorkflowError("QNT03_INSIGHT_VALIDATION_REJECTED")
         state["insight_generation_record_id"] = generation_record_id
         if self.insight_lineage is not None:
             absence = self.insight_lineage.dataset_only_absence(project_id=project_id, run_id=run_id, generation_record_id=generation_record_id, generation=insights)
@@ -462,6 +479,8 @@ class RealQuantitativeStageService:
             completed = self.insight_lineage.repository.find_manifest_for_input(candidate.authority_id, project_id=project_id, run_id=run_id)
             if completed is not None:
                 insights = self.state.load(completed.insight_generation_record_id, project_id=project_id, expected_type=QuantitativeInsightGenerationResult)
+                if self.canonical_findings and insights.rejected_insights and not insights.accepted_insights:
+                    raise QuantitativeWorkflowError("QNT03_INSIGHT_VALIDATION_REJECTED")
                 self.insight_lineage.validate_generation_contract(insights)
                 state["insight_generation_record_id"] = completed.insight_generation_record_id
                 state["insight_input_authority_record_id"] = candidate.authority_id
@@ -475,12 +494,23 @@ class RealQuantitativeStageService:
             if not matching:
                 raise QuantitativeWorkflowError("indeterminate QJ provider boundary; retry prohibited")
             insights = matching[0]
+            if self.canonical_findings and insights.rejected_insights and not insights.accepted_insights:
+                raise QuantitativeWorkflowError("QNT03_INSIGHT_VALIDATION_REJECTED")
             generation_record_id = f"{run_id}:insight-generation:{authority_fingerprint(insights)}"
             lineage, coverage = self.insight_lineage.finalize(authority=candidate, generation_record_id=generation_record_id, generation=insights)
         else:
             authority = self.insight_lineage.repository.save_input_authority(candidate)
-            insights = self.insights.generate(findings=generated.accepted_findings, post_validator=self.insight_lineage.compatibility_validator(authority))
+            insights = self.insights.generate(
+                findings=generated.accepted_findings,
+                post_validator=self.insight_lineage.compatibility_validator(authority),
+                before_dispatch=(lambda: self.approvals.require_and_consume_semantic_pipeline(
+                    project_id=project_id, run_id=run_id,
+                    safe_state=self._pre_finding_semantic_authority(state),
+                )) if self.canonical_findings else None,
+            )
             generation_record_id = self._persist(insights, "insight-generation", project_id, run_id)
+            if self.canonical_findings and insights.rejected_insights and not insights.accepted_insights:
+                raise QuantitativeWorkflowError("QNT03_INSIGHT_VALIDATION_REJECTED")
             lineage, coverage = self.insight_lineage.finalize(authority=authority, generation_record_id=generation_record_id, generation=insights)
         state["insight_generation_record_id"] = generation_record_id
         state["insight_input_authority_record_id"] = candidate.authority_id
@@ -489,6 +519,20 @@ class RealQuantitativeStageService:
         if not insights.accepted_insights:
             state["zero_supported_insights"] = "true"
         return state
+
+    @staticmethod
+    def _pre_finding_semantic_authority(state):
+        """Recheck the approved pre-QI boundary before the sole paid QJ dispatch.
+
+        Deterministic QI adds only these governed output references. All pinned
+        dataset/plan/analysis fields remain in the authorization fingerprint.
+        """
+        finding_outputs = {
+            "finding_generation_record_id", "finding_input_authority_record_id",
+            "finding_lineage_manifest_record_id", "finding_coverage_manifest_record_id",
+            "finding_lineage_absence_record_id", "zero_supported_findings",
+        }
+        return {key: value for key, value in state.items() if key not in finding_outputs}
     def _quant_report(self, project_id, run_id, state):
         if state.get("zero_supported_findings") == "true":
             mode = state.get(

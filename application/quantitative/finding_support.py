@@ -64,6 +64,9 @@ class QuantitativeFindingSupportValidator:
         elif claim_type is QuantitativeClaimType.SIGNIFICANT_COMPARISON:
             self._validate_direction(finding, results)
             self._validate_significance(results, resolved_comparisons)
+        elif claim_type is QuantitativeClaimType.NON_SIGNIFICANT_COMPARISON:
+            self._validate_direction(finding, results)
+            self._validate_non_significance(results, resolved_comparisons)
         else:  # pragma: no cover - enum prevents ordinary construction
             raise QuantitativeAnalysisError("unsupported Quantitative Finding claim type")
 
@@ -212,6 +215,25 @@ class QuantitativeFindingSupportValidator:
             or comparison.group_a_result_fingerprint != a.reproducibility_fingerprint
             or comparison.group_b_result_id != b.result_id
             or comparison.group_b_result_fingerprint != b.reproducibility_fingerprint
+            or comparison.observed_difference != Decimal(str(a.value)) - Decimal(str(b.value))
+        ):
+            raise QuantitativeAnalysisError("ComparisonResult is incompatible with referenced results")
+
+    @staticmethod
+    def _validate_non_significance(results, comparisons):
+        if len(comparisons) != 1 or comparisons[0].supports_significance_wording:
+            raise QuantitativeAnalysisError("non-significant Finding requires one non-significant ComparisonResult")
+        a, b = results
+        comparison = comparisons[0]
+        if (
+            comparison.dataset_version_id != a.dataset_version_id
+            or comparison.dataset_fingerprint != a.dataset_fingerprint
+            or comparison.data_fingerprint != a.data_fingerprint
+            or comparison.group_a_result_id != a.result_id
+            or comparison.group_a_result_fingerprint != a.reproducibility_fingerprint
+            or comparison.group_b_result_id != b.result_id
+            or comparison.group_b_result_fingerprint != b.reproducibility_fingerprint
+            or comparison.observed_difference != Decimal(str(a.value)) - Decimal(str(b.value))
         ):
             raise QuantitativeAnalysisError("ComparisonResult is incompatible with referenced results")
 
