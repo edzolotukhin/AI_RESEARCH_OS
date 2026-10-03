@@ -8,7 +8,10 @@ from application.query.project_activity_views import ActivityTimeline
 from application.persistence.exceptions import AccessDeniedError
 from application.query.desk_workbench_query_service import DeskWorkbenchQueryService
 from application.query.quantitative_study_query_service import QuantitativeStudyQueryService
-from application.quantitative.workflow import build_quantitative_workflow_template
+from application.quantitative.workflow import (
+    CMF_QUANTITATIVE_WORKFLOW_ID,
+    QUANTITATIVE_WORKFLOW_ID,
+)
 from domain.quantitative.workflow import QuantitativeStudyProjection
 from domain.research_method import DESK, QUANTITATIVE
 
@@ -42,7 +45,7 @@ class ProjectOutputsQueryService:
             raise AccessDeniedError("Проєкт не знайдено")
         methods = self.container.project_planning_service.explicit_or_inferred_methods(project)
         runs = self.container.workflow_service.list_workflow_runs_for_project(project.id)
-        quant_template_id = build_quantitative_workflow_template().id
+        quant_template_ids = {QUANTITATIVE_WORKFLOW_ID, CMF_QUANTITATIVE_WORKFLOW_ID}
         desk_runs = []
         quant_matches = []
         for run in runs:
@@ -52,10 +55,10 @@ class ProjectOutputsQueryService:
                 run.id, project_id=project.id, expected_type=QuantitativeStudyProjection,
             )
             if snapshots:
-                if run.workflow_template_id != quant_template_id:
+                if run.workflow_template_id not in quant_template_ids:
                     raise ValueError("Quantitative study has an unexpected workflow template")
                 quant_matches.append((run, max(snapshots, key=lambda item: item.revision)))
-            elif run.workflow_template_id != quant_template_id:
+            elif run.workflow_template_id not in quant_template_ids:
                 desk_runs.append(run)
 
         result = []

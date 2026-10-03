@@ -70,6 +70,20 @@ class _OfflineQuantSemanticClient:
         return LLMResponse(content=json.dumps(response), output_tokens=7)
 
 
+class _OfflinePdfRenderer:
+    def render(self, document):
+        return b"%PDF-1.4\n" + document.source_id.encode() + document.source_version.encode()
+
+
+class _OfflinePptxRenderer:
+    version = "qnt05-pptx-test-v1"
+    template_version = "qnt05-template-v1"
+    media_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+    def render(self, document):
+        return b"PK\x03\x04" + document.source_id.encode() + document.source_version.encode()
+
+
 @unittest.skipUnless(integration_tests_enabled(), "Disposable PostgreSQL test database required")
 class Qnt03PostAnalysisPostgresqlTests(unittest.TestCase):
     def test_separate_worker_persists_pinned_findings_and_insights(self):
@@ -136,6 +150,47 @@ class Qnt03PostAnalysisPostgresqlTests(unittest.TestCase):
         self.assertEqual(revision.dataset_fingerprint, fixture["dataset_fingerprint"])
         self.assertEqual(worker.review_query_service.final_verdict_for_run(project_id, run_id),
                          "approve")
+        deliverables = worker.project_deliverables_service
+        deliverables.renderer = _OfflinePdfRenderer()
+        deliverables.pptx_renderer = _OfflinePptxRenderer()
+        catalog = deliverables.catalog(project_id, owner_id=OWNER)
+        self.assertEqual(len(catalog.quantitative), 1)
+        source = catalog.quantitative[0].document
+        self.assertEqual((source.source_id, source.source_version, source.status),
+                         (revision.revision_id, revision.fingerprint, "Схвалено"))
+        pdf = deliverables.generate(project_id, "QUANTITATIVE", revision.revision_id,
+                                    owner_id=OWNER)
+        self.assertEqual(deliverables.download(
+            project_id, "QUANTITATIVE", revision.revision_id, pdf.id,
+            owner_id=OWNER)[1], deliverables.download(
+                project_id, "QUANTITATIVE", revision.revision_id, pdf.id,
+                owner_id=OWNER)[1])
+        job = deliverables.schedule_presentation(
+            project_id, "QUANTITATIVE", revision.revision_id, owner_id=OWNER)
+        self.assertEqual(job.source_version, revision.fingerprint)
+        self.assertTrue(deliverables.process_next_presentation("qnt05-pg-worker"))
+        completed = deliverables.source(
+            project_id, "QUANTITATIVE", revision.revision_id,
+            owner_id=OWNER).pptx
+        first_pptx = deliverables.download_presentation(
+            project_id, "QUANTITATIVE", revision.revision_id, completed.id,
+            owner_id=OWNER)[1]
+        self.assertEqual(first_pptx, deliverables.download_presentation(
+            project_id, "QUANTITATIVE", revision.revision_id, completed.id,
+            owner_id=OWNER)[1])
+        restarted = api.project_deliverables_service
+        restarted.pptx_renderer = _OfflinePptxRenderer()
+        restored = restarted.catalog(project_id, owner_id=OWNER).quantitative[0]
+        self.assertEqual(restored.pdf.id, pdf.id)
+        self.assertEqual(restored.pptx.id, completed.id)
+        self.assertEqual(restarted.download(
+            project_id, "QUANTITATIVE", revision.revision_id, pdf.id,
+            owner_id=OWNER)[1], deliverables.download(
+                project_id, "QUANTITATIVE", revision.revision_id, pdf.id,
+                owner_id=OWNER)[1])
+        self.assertEqual(restarted.download_presentation(
+            project_id, "QUANTITATIVE", revision.revision_id, completed.id,
+            owner_id=OWNER)[1], first_pptx)
         timeline = worker.activity_reader.list_for_project(project_id)
         labels = {item.label for item in timeline.events}
         self.assertIn("Кількісний звіт пройшов перевірку", labels)

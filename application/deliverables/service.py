@@ -13,7 +13,12 @@ from application.persistence.exceptions import AccessDeniedError, EntityNotFound
 from domain.quantitative.report import QuantitativeReportCompositionResult, QuantitativeReportValidationStatus
 from domain.quantitative.workflow import QuantitativeStudyProjection
 from domain.reviews.review_verdict import ReviewVerdict
-from application.quantitative.workflow import build_quantitative_workflow_template
+from application.quantitative.workflow import (
+    CMF_QUANTITATIVE_WORKFLOW_ID,
+    QUANTITATIVE_WORKFLOW_ID,
+)
+from application.methods.quantitative.pin import REVIEW_PIN
+from application.deliverables.quantitative_sources import approved_quantitative_sources
 from application.report.source_display import source_display
 
 
@@ -103,6 +108,11 @@ class ProjectDeliverablesService:
             return []
         documents = []
         for run_id in sorted(run_ids):
+            task_results = self.workflows.get_task_results(run_id)
+            if task_results.get(REVIEW_PIN) is not None:
+                documents.extend(approved_quantitative_sources(
+                    state=self.quantitative_state, project_id=project_id, run_id=run_id))
+                continue
             projections = self.quantitative_state.list_for_run(
                 run_id, project_id=project_id, expected_type=QuantitativeStudyProjection)
             projections = tuple(item for item in projections if item.run_id == run_id and item.project_id == project_id)
@@ -144,13 +154,13 @@ class ProjectDeliverablesService:
 
     def catalog(self, project_id: str, *, owner_id: str) -> ReportCatalog:
         self._project(project_id, owner_id)
-        quant_template = build_quantitative_workflow_template().id
+        quant_templates = {QUANTITATIVE_WORKFLOW_ID, CMF_QUANTITATIVE_WORKFLOW_ID}
         desk_runs: set[str] = set()
         quant_runs: set[str] = set()
         for run in self.workflows.list_workflow_runs_for_project(project_id):
             if run.project_id != project_id:
                 raise AccessDeniedError("Проєкт не знайдено")
-            (quant_runs if run.workflow_template_id == quant_template else desk_runs).add(run.id)
+            (quant_runs if run.workflow_template_id in quant_templates else desk_runs).add(run.id)
         from application.methods.versioning import resolve_pin
         from application.methods.desk.profile import PIN
         desk = []
