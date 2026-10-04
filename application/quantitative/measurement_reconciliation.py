@@ -240,7 +240,11 @@ class QuantitativeMeasurementReconciliationService:
         if actual is None: status=ReconciliationMatchStatus.MISSING_IN_DATA; reasons=["expected variable is absent"]
         elif expected.pii_expectation is PiiClassification.NONE and actual.pii_classification is not PiiClassification.NONE: status=ReconciliationMatchStatus.INCOMPATIBLE_IN_DATA; reasons=["PII classification cannot be downgraded"]
         elif actual.variable_type != expected.variable_type: status=ReconciliationMatchStatus.INCOMPATIBLE_IN_DATA; reasons=["variable type differs"]
-        elif _text(actual.measurement_level) != _text(expected.measurement_level): status=ReconciliationMatchStatus.INCOMPATIBLE_IN_DATA; reasons=["measurement level differs"]
+        elif _text(actual.measurement_level) != _text(expected.measurement_level):
+            if decision and _text(actual.measurement_level) in {"", "unknown"}:
+                status=ReconciliationMatchStatus.COMPATIBLE_MATCH; reasons=["unknown measurement level explicitly reviewed"]
+            else:
+                status=ReconciliationMatchStatus.INCOMPATIBLE_IN_DATA; reasons=["measurement level differs"]
         else:
             review_required=False; compatible=actual.role != expected.analytical_role
             if compatible: reasons.append("variable role requires reviewed authority")

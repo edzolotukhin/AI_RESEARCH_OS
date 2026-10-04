@@ -21,7 +21,14 @@ def create_study(request:Request,title:str=Form(""),description:str=Form(""),sub
 @router.get("/studies/{study_id}",include_in_schema=False)
 def study_detail(study_id:str):return RedirectResponse(f"/ui/quantitative/studies/{study_id}/overview",status_code=303)
 def _screen(request,study_id,section):
-    try:return templates.TemplateResponse(request,f"quantitative/{section}.html",{"request":request,"view":build_quantitative_ui_facade(request.app.state.container).view(study_id,active=section)})
+    try:
+        facade=build_quantitative_ui_facade(request.app.state.container)
+        study=facade.get(study_id)
+        return templates.TemplateResponse(request,f"quantitative/{section}.html",{
+            "request":request,"view":facade.view(study_id,active=section),
+            "study":study,"authority":facade.authority(study_id),
+            "diagnostics":facade.diagnostics(study_id) if study.weight_set_record_id else None,
+        })
     except (QuantitativeUiError,ValueError,KeyError) as exc:return _error(request,str(exc),404)
 @router.get("/studies/{study_id}/overview",response_class=HTMLResponse,include_in_schema=False)
 def overview(request:Request,study_id:str):return _screen(request,study_id,"overview")
@@ -43,7 +50,7 @@ async def upload_dataset(request:Request,study_id:str,dataset:UploadFile=File(..
 @router.get("/studies/{study_id}/status.json",include_in_schema=False)
 def study_status(request:Request,study_id:str):
     try:
-        f=build_quantitative_ui_facade(request.app.state.container);s=f.get(study_id);return JSONResponse({"study_id":s.study_id,"project_id":s.project_id,"run_id":s.run_id,"state":s.state,"setup_state":s.state,"execution_status":f.execution_status(study_id),"revision":s.revision,"dataset_available":bool(s.dataset_record_id),"weight_set_available":bool(s.weight_set_record_id)})
+        f=build_quantitative_ui_facade(request.app.state.container);s=f.get(study_id);a=f.authority(study_id);return JSONResponse({"study_id":s.study_id,"project_id":s.project_id,"run_id":s.run_id,"state":s.state,"setup_state":s.state,"execution_status":f.execution_status(study_id),"revision":s.revision,"dataset_available":bool(s.dataset_record_id),"weight_set_available":bool(s.weight_set_record_id),"canonical":a["canonical"],"dataset_version":a["dataset_version"],"design_state":a["design_state"],"design_version":a["design_version"]})
     except QuantitativeUiError as exc:return JSONResponse({"detail":str(exc)},status_code=404)
 @router.post("/studies/{study_id}/qc",include_in_schema=False)
 def run_qc(request:Request,study_id:str):
@@ -77,6 +84,25 @@ def resume_quantitative(request:Request,study_id:str):
 def rearm_quantitative(request:Request,study_id:str,reason:str=Form(...)):
     try:build_quantitative_ui_facade(request.app.state.container).rearm(study_id,reason=reason);return _go(study_id)
     except QuantitativeUiError as exc:return _error(request,str(exc))
+@router.post("/studies/{study_id}/design",include_in_schema=False)
+def configure_design(request:Request,study_id:str,title:str=Form(...),research_question:str=Form(...),population:str=Form(...),procedure:str=Form(...),primary_variable_id:str=Form(...),group_variable_id:str=Form(""),outcome_category:str=Form(""),group_a_category:str=Form(""),group_b_category:str=Form(""),weighting_mode:str=Form("UNWEIGHTED")):
+    try:
+        build_quantitative_ui_facade(request.app.state.container).configure_design(
+            study_id,title=title,research_question=research_question,population=population,
+            procedure=procedure,primary_variable_id=primary_variable_id,
+            group_variable_id=group_variable_id or None,outcome_category=outcome_category or None,
+            group_a_category=group_a_category or None,group_b_category=group_b_category or None,
+            weighting_mode=weighting_mode)
+        return _go(study_id,"analysis")
+    except (QuantitativeUiError,ValueError,KeyError) as exc:return _error(request,str(exc))
+@router.post("/studies/{study_id}/design/approve",include_in_schema=False)
+def approve_design(request:Request,study_id:str,plan_version_id:str=Form(...),expected_fingerprint:str=Form(...),rationale:str=Form("")):
+    try:
+        build_quantitative_ui_facade(request.app.state.container).approve_design(
+            study_id,plan_version_id=plan_version_id,expected_fingerprint=expected_fingerprint,
+            rationale=rationale)
+        return _go(study_id,"analysis")
+    except (QuantitativeUiError,ValueError,KeyError) as exc:return _error(request,str(exc))
 @router.get("/studies/{study_id}/result.json",include_in_schema=False)
 def quantitative_result(request:Request,study_id:str):
     try:return JSONResponse(build_quantitative_ui_facade(request.app.state.container).result(study_id))

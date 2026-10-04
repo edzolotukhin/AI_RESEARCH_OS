@@ -654,6 +654,7 @@ def create_application_container(
     )
 
     quantitative_ui_service = None
+    quantitative_authority_product_service = None
     if quantitative_stage_service_factory is not None:
         quantitative_ui_service = QuantitativeUiService(
             project_service=project_service,
@@ -674,6 +675,11 @@ def create_application_container(
             ),
             activation_sessions=persistence.activation_sessions,
             cmf_quant_enabled=config.cmf_quant_enabled,
+        )
+        from application.quantitative.authority_product_service import QuantitativeAuthorityProductService
+        quantitative_authority_product_service = QuantitativeAuthorityProductService(
+            ui_service=quantitative_ui_service,
+            finalization_service=quantitative_authority_finalization_service,
         )
 
     project_planning_service = ProjectPlanningService(
@@ -733,6 +739,7 @@ def create_application_container(
         quantitative_authority_chain_selection_service=quantitative_authority_chain_selection_service,
         quantitative_study_sufficiency_service=quantitative_study_sufficiency_service,
         quantitative_authority_finalization_service=quantitative_authority_finalization_service,
+        quantitative_authority_product_service=quantitative_authority_product_service,
         _shutdown_callbacks=shutdown_callbacks,
     )
 

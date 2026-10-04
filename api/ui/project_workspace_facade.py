@@ -118,7 +118,8 @@ class ProjectWorkspaceFacade:
         try:
             return self.container.quantitative_ui_service.create_quantitative_study_for_project(
                 project_id=project_id, owner_id=self.owner_id, title=title,
-                description=description, submission_key=submission_key.strip() or str(uuid4()))
+                description=description, submission_key=submission_key.strip() or str(uuid4()),
+                canonical=True)
         except QuantitativeUiError as exc:
             translated = {
                 "title and submission_key are required": "Вкажіть назву дослідження",

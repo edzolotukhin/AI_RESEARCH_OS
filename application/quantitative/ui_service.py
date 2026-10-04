@@ -96,13 +96,14 @@ class QuantitativeUiService:
         self._studies: dict[str, QuantitativeStudyProjection] = {}
         self._submission_ids: dict[tuple[str, str], str] = {}
 
-    def create_study(self, *, owner_id: str, title: str, description: str, submission_key: str) -> QuantitativeStudyProjection:
+    def create_study(self, *, owner_id: str, title: str, description: str, submission_key: str,
+                     canonical: bool = False) -> QuantitativeStudyProjection:
         if getattr(self.activation_sessions, "transactional", False):
             try:
                 with self.activation_sessions.transaction():
                     return self._create_study_locked(
                         owner_id=owner_id, title=title, description=description,
-                        submission_key=submission_key,
+                        submission_key=submission_key, canonical=canonical,
                     )
             except BaseException:
                 study_id = str(uuid5(NAMESPACE_URL, f"quantitative-study:{owner_id}:{submission_key.strip()}"))
@@ -111,11 +112,11 @@ class QuantitativeUiService:
                 raise
         return self._create_study_locked(
             owner_id=owner_id, title=title, description=description,
-            submission_key=submission_key,
+            submission_key=submission_key, canonical=canonical,
         )
 
     def _create_study_locked(self, *, owner_id: str, title: str, description: str,
-                             submission_key: str) -> QuantitativeStudyProjection:
+                             submission_key: str, canonical: bool = False) -> QuantitativeStudyProjection:
         title, description, submission_key = (
             title.strip(), description.strip(), submission_key.strip()
         )
@@ -134,7 +135,9 @@ class QuantitativeUiService:
             self._submission_ids[(owner_id, submission_key)] = study_id
             return replay
 
-        expected_template = build_quantitative_workflow_template(cmf=self.cmf_quant_enabled)
+        expected_template = build_quantitative_workflow_template(
+            cmf=canonical or self.cmf_quant_enabled
+        )
         template = self._compatible_template(expected_template)
         project_created = False
         run_created = False
@@ -195,7 +198,8 @@ class QuantitativeUiService:
 
     def create_quantitative_study_for_project(self, *, project_id: str, owner_id: str,
                                                title: str, description: str,
-                                               submission_key: str) -> QuantitativeStudyProjection:
+                                               submission_key: str,
+                                               canonical: bool = False) -> QuantitativeStudyProjection:
         boundary = (
             self.activation_sessions.activation(project_id)
             if self.activation_sessions is not None else nullcontext()
@@ -208,6 +212,7 @@ class QuantitativeUiService:
                 return self._create_quantitative_study_for_project(
                     project_id=project_id, owner_id=owner_id, title=title,
                     description=description, submission_key=submission_key,
+                    canonical=canonical,
                 )
         except BaseException:
             # _persist_study caches before commit; never retain an uncommitted
@@ -217,7 +222,8 @@ class QuantitativeUiService:
 
     def _create_quantitative_study_for_project(self, *, project_id: str, owner_id: str,
                                                title: str, description: str,
-                                               submission_key: str) -> QuantitativeStudyProjection:
+                                               submission_key: str,
+                                               canonical: bool = False) -> QuantitativeStudyProjection:
         title, description, submission_key = title.strip(), description.strip(), submission_key.strip()
         if not title or not submission_key:
             raise QuantitativeUiError("title and submission_key are required")
@@ -241,7 +247,9 @@ class QuantitativeUiService:
                                                 expected_type=QuantitativeStudyProjection)
             if snapshots:
                 raise QuantitativeUiError("This Project already has a Quantitative study")
-        expected_template = build_quantitative_workflow_template(cmf=self.cmf_quant_enabled)
+        expected_template = build_quantitative_workflow_template(
+            cmf=canonical or self.cmf_quant_enabled
+        )
         template = self._compatible_template(expected_template)
         run_created = False
         try:
@@ -416,9 +424,19 @@ class QuantitativeUiService:
                     "Different dataset upload requires explicit replacement"
                 )
             run = self.workflows.get_workflow_run(study.run_id)
+            from domain.quantitative.analysis_plan import QuantitativeAnalysisPlanVersion
+            bound_plans = tuple(
+                item for item in self.state.list_for_run(
+                    study.run_id, project_id=study.project_id
+                ) if isinstance(item, QuantitativeAnalysisPlanVersion)
+            )
+            non_creation_results = set(self.workflows.get_task_results(study.run_id)) - {
+                METHOD_PIN, POST_ANALYSIS_PIN, REVIEW_PIN,
+            }
             if (
                 any(task.status is not TaskStatus.CREATED for task in run.tasks)
-                or self.workflows.get_task_results(study.run_id)
+                or non_creation_results
+                or bound_plans
             ):
                 raise QuantitativeUiError(
                     "Dataset replacement is unavailable after workflow execution begins"

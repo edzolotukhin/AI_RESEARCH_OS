@@ -7,12 +7,13 @@ class QuantitativeUiFacade:
     def __init__(self, container: ApplicationContainer) -> None:
         from api.ui.principal import resolve_ui_principal
         self.principal = resolve_ui_principal(container)
+        self.container = container
         self.service = container.quantitative_ui_service
         if self.service is None: raise QuantitativeUiError("Quantitative UI is not configured")
         self.query = QuantitativeStudyQueryService(ui_service=self.service)
     @property
     def owner_id(self): return self.principal.principal_id
-    def create(self,**values): return self.service.create_study(owner_id=self.owner_id,**values)
+    def create(self,**values): return self.service.create_study(owner_id=self.owner_id,canonical=True,**values)
     def get(self,study_id): return self.service.get(study_id,owner_id=self.owner_id)
     def upload(self,study_id,**values): return self.service.upload(study_id,owner_id=self.owner_id,**values)
     def import_review(self,study_id): return self.service.import_review(study_id,owner_id=self.owner_id)
@@ -26,6 +27,12 @@ class QuantitativeUiFacade:
     def resume(self,study_id): return self.service.resume_workflow(study_id,owner_id=self.owner_id)
     def rearm(self,study_id,**values): return self.service.rearm_failed_run(study_id,owner_id=self.owner_id,actor_id=self.owner_id,**values)
     def result(self,study_id): return self.service.result_projection(study_id,owner_id=self.owner_id)
+    def authority(self,study_id): return self.container.quantitative_authority_product_service.projection(study_id,owner_id=self.owner_id)
+    def configure_design(self,study_id,**values):
+        from application.quantitative.authority_product_service import QuantitativeDesignIntent
+        return self.container.quantitative_authority_product_service.configure(
+            study_id, owner_id=self.owner_id, intent=QuantitativeDesignIntent(**values))
+    def approve_design(self,study_id,**values): return self.container.quantitative_authority_product_service.approve(study_id,owner_id=self.owner_id,**values)
     def view(self,study_id,*,active): return self.query.get(study_id,owner_id=self.owner_id,active=active)
 
 def build_quantitative_ui_facade(container: ApplicationContainer) -> QuantitativeUiFacade:

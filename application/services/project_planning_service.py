@@ -222,6 +222,7 @@ class ProjectPlanningService:
                 title=f"{project.name} — кількісне дослідження",
                 description="Кількісне дослідження в межах проєкту",
                 submission_key="pf02-project-activation",
+                canonical=True,
             )
 
     def design_is_current(self, project: Project) -> bool:

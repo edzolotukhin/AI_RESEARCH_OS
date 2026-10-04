@@ -100,15 +100,18 @@ class PropertyQoQuantitativeUiVerticalTests(ApiTestCase):
         recovered = service.get(study_id, owner_id=principal_id)
         self.assertEqual(recovered, expected)
 
-    def test_synthetic_sav_reaches_real_qm_qh_qj_qk_terminal_authority(self):
-        study_id=self._create("qo-terminal")
+    def test_explicit_historical_sav_reaches_real_qm_qh_qj_qk_terminal_authority(self):
+        principal=self.container.authentication_service.authenticate_api_key(self.container._test_api_key_plaintext).principal_id
+        study_id=self.container.quantitative_ui_service.create_study(
+            owner_id=principal,title="Synthetic consumer survey",
+            description="Historical QO compatibility",submission_key="qo-terminal",
+            canonical=False).study_id
         self.client.post(f"/ui/quantitative/studies/{study_id}/dataset",files={"dataset":("sample.sav",sav_sample_bytes(),"application/octet-stream")},follow_redirects=False)
         self.client.post(f"/ui/quantitative/studies/{study_id}/qc",follow_redirects=False)
         cleaned=self.client.post(f"/ui/quantitative/studies/{study_id}/cleaning",data={
             "variable_name":"mynum","replacements_json":json.dumps({"1.1":0,"1.2":7,"-1000.3":8,"-1.4":9,"1000.3":10})},follow_redirects=False)
         self.assertEqual(cleaned.status_code,303)
         service=self.container.quantitative_ui_service
-        principal=self.container.authentication_service.authenticate_api_key(self.container._test_api_key_plaintext).principal_id
         study=service.get(study_id,owner_id=principal)
         self.client.post(f"/ui/quantitative/studies/{study_id}/qc-approval",data={"fingerprint":study.qc_record_id.rsplit(":",1)[-1],"decision":"APPROVED","rationale":"cleaned QC"},follow_redirects=False)
         weighted=self.client.post(f"/ui/quantitative/studies/{study_id}/target-margins",data={"targets_json":json.dumps({"myord":{"1.0":60,"2.0":20,"3.0":20}})},follow_redirects=False)

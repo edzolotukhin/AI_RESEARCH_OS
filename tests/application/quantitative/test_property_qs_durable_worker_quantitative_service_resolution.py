@@ -37,16 +37,12 @@ class PropertyQsDurableWorkerResolutionTests(ApiTestCase):
         ).principal_id
 
     def _ready_study(self, key: str):
-        created = self.client.post(
-            "/ui/quantitative/studies",
-            data={
-                "title": "QS synthetic worker study",
-                "description": "offline worker acceptance",
-                "submission_key": key,
-            },
-            follow_redirects=False,
+        study = self.container.quantitative_ui_service.create_study(
+            owner_id=self._principal(), title="QS synthetic worker study",
+            description="Historical worker compatibility", submission_key=key,
+            canonical=False,
         )
-        study_id = created.headers["location"].rsplit("/", 1)[-1]
+        study_id = study.study_id
         self.client.post(
             f"/ui/quantitative/studies/{study_id}/dataset",
             files={

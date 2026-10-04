@@ -39,10 +39,8 @@ class PropertyQtAtomicQuantitativeStudyCreationTests(ApiTestCase):
         self.assertEqual(len(runs.list_for_project(first_id)), 1)
         self.assertEqual(len(runs.list_for_project(second_id)), 1)
         self.assertEqual(len(templates._templates), 1)
-        self.assertEqual(
-            templates.get_by_id(build_quantitative_workflow_template().id),
-            build_quantitative_workflow_template(),
-        )
+        expected = build_quantitative_workflow_template(cmf=True)
+        self.assertEqual(templates.get_by_id(expected.id), expected)
 
     def test_replay_survives_cache_loss_without_duplicate_authority(self):
         first = self._create("qt-replay")
@@ -78,7 +76,7 @@ class PropertyQtAtomicQuantitativeStudyCreationTests(ApiTestCase):
 
     def test_incompatible_existing_template_fails_before_project_creation(self):
         projects, templates, runs = self._repositories()
-        expected = build_quantitative_workflow_template()
+        expected = build_quantitative_workflow_template(cmf=True)
         templates.save_snapshot(
             WorkflowTemplate(expected.id, "corrupted", []),
             project_id="forensic-template-owner",
