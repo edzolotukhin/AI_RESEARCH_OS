@@ -1,0 +1,170 @@
+"""QUA-02 application service over the append-only qualitative authority store."""
+from __future__ import annotations
+
+from uuid import uuid4
+
+from domain.qualitative.analysis import reject_population_claim
+from domain.qualitative.authority import ConsentState, TranscriptSpanRef
+from application.qualitative.service import transcript_from_payload
+
+
+class QualitativeAnalysisService:
+    def __init__(self, authority):
+        self.authority = authority
+
+    @property
+    def repository(self): return self.authority.repository
+
+    def _record(self, project_id, record_id, kind=None):
+        return self.authority._get(project_id, record_id, kind)
+
+    def _owner(self, project_id, owner_id): self.authority._project(project_id, owner_id)
+
+    def create_corpus(self, project_id, run_id, transcript_ids, *, owner_id, instructions=""):
+        self._owner(project_id, owner_id); self._record(project_id, run_id, "run")
+        if not transcript_ids or len(set(transcript_ids)) != len(transcript_ids):
+            raise ValueError("Corpus requires distinct transcript versions")
+        members = []
+        for transcript_id in transcript_ids:
+            record = self._record(project_id, transcript_id, "transcript")
+            if record.run_id != run_id or not record.payload.get("analysis_eligible"):
+                raise ValueError("Transcript is not eligible for this corpus")
+            session = self._record(project_id, record.payload["session_id"], "session")
+            participant = self._record(project_id, session.payload["participant_id"], "participant")
+            consents = [x for x in self.repository.list_for_run(run_id, project_id=project_id, record_type="consent")
+                        if x.payload["participant_id"] == participant.record_id]
+            consent = max(consents, key=lambda x: x.payload["recorded_at"]) if consents else None
+            if consent is None or consent.payload["state"] != ConsentState.ELIGIBLE.value:
+                raise ValueError("Consent is not eligible for new analysis")
+            members.append({"session_id":session.record_id,"participant_id":participant.record_id,
+                "participant_pseudonym":participant.payload["pseudonym"],"transcript_version_id":transcript_id,
+                "transcript_checksum":record.payload["checksum"],"source_artifact_id":record.payload["source_artifact_id"],
+                "consent_record_id":consent.record_id})
+        identity = str(uuid4()); previous = self.repository.list_for_run(run_id, project_id=project_id, record_type="analysis_corpus")
+        self.authority._put(project_id, run_id, "analysis_corpus", identity,
+            {"corpus_id":identity,"revision":len(previous)+1,"method_id":"QUALITATIVE","method_version":"1",
+             "members":members,"instructions":instructions,"status":"frozen"})
+        self.authority._activity(project_id,run_id,"QUAL_ANALYSIS_CORPUS_FROZEN","qual_analysis_corpus",identity)
+        return self._record(project_id, identity)
+
+    def create_codebook(self, project_id, run_id, codes, *, owner_id, parent_id=None, status="draft", memo=""):
+        self._owner(project_id, owner_id); self._record(project_id, run_id, "run")
+        if status not in {"draft","accepted"}: raise ValueError("Invalid codebook status")
+        if parent_id and self._record(project_id, parent_id, "codebook_revision").run_id != run_id:
+            raise ValueError("Parent codebook belongs to another run")
+        normalized=[]; seen=set()
+        for item in codes:
+            code_id=item.get("code_id") or str(uuid4())
+            if code_id in seen or not item.get("label","").strip() or not item.get("definition","").strip():
+                raise ValueError("Invalid or duplicate code")
+            seen.add(code_id); normalized.append({**item,"code_id":code_id,"origin":item.get("origin","human")})
+        identity=str(uuid4()); previous=self.repository.list_for_run(run_id,project_id=project_id,record_type="codebook_revision")
+        self.authority._put(project_id,run_id,"codebook_revision",identity,
+            {"codebook_revision_id":identity,"revision":len(previous)+1,"codes":normalized,"status":status,"memo":memo},parent=parent_id)
+        self.authority._activity(project_id,run_id,"QUAL_CODEBOOK_REVISION_CREATED","qual_codebook",identity)
+        return self._record(project_id,identity)
+
+    def _validated_applications(self, project_id, corpus, codebook, applications):
+        members={x["transcript_version_id"]:x for x in corpus.payload["members"]}
+        codes={x["code_id"] for x in codebook.payload["codes"]}; output=[]; identities=set()
+        for value in applications:
+            member=members.get(value.get("transcript_version_id"))
+            if member is None or value.get("code_id") not in codes: raise ValueError("Application is outside corpus/codebook")
+            transcript_record=self._record(project_id,member["transcript_version_id"],"transcript")
+            transcript=transcript_from_payload(transcript_record.payload)
+            ref=TranscriptSpanRef(member["transcript_version_id"],value.get("transcript_checksum",member["transcript_checksum"]),
+                value["segment_id"],int(value["start"]),int(value["end"]))
+            excerpt=ref.resolve(transcript)
+            app_id=value.get("application_id") or str(uuid4())
+            if app_id in identities: raise ValueError("Duplicate code application")
+            identities.add(app_id); output.append({**value,"application_id":app_id,
+                "transcript_checksum":member["transcript_checksum"],"session_id":member["session_id"],
+                "participant_id":member["participant_id"],"participant_pseudonym":member["participant_pseudonym"],
+                "excerpt":excerpt,"origin":value.get("origin","human"),"review_state":value.get("review_state","accepted")})
+        return output
+
+    def create_coding(self, project_id, run_id, corpus_id, codebook_id, applications, *, owner_id,
+                      status="accepted", parent_id=None, memo=""):
+        self._owner(project_id,owner_id); corpus=self._record(project_id,corpus_id,"analysis_corpus")
+        codebook=self._record(project_id,codebook_id,"codebook_revision")
+        if corpus.run_id != run_id or codebook.run_id != run_id: raise ValueError("Foreign analytical authority")
+        if status not in {"draft","accepted"}: raise ValueError("Invalid coding status")
+        if parent_id and self._record(project_id,parent_id,"coding_revision").run_id != run_id:
+            raise ValueError("Parent coding belongs to another run")
+        normalized=self._validated_applications(project_id,corpus,codebook,applications)
+        identity=str(uuid4()); previous=self.repository.list_for_run(run_id,project_id=project_id,record_type="coding_revision")
+        self.authority._put(project_id,run_id,"coding_revision",identity,
+            {"coding_revision_id":identity,"revision":len(previous)+1,"corpus_id":corpus_id,"codebook_revision_id":codebook_id,
+             "applications":normalized,"status":status,"memo":memo},parent=parent_id)
+        if status == "accepted": self.authority._activity(project_id,run_id,"QUAL_CODING_REVISION_ACCEPTED","qual_coding",identity)
+        return self._record(project_id,identity)
+
+    def create_ai_proposal(self, project_id, run_id, corpus_id, codebook_id, *, batch_key, payload, owner_id):
+        self._owner(project_id,owner_id); corpus=self._record(project_id,corpus_id,"analysis_corpus")
+        codebook=self._record(project_id,codebook_id,"codebook_revision")
+        existing=next((x for x in self.repository.list_for_run(run_id,project_id=project_id,record_type="ai_analysis_proposal")
+                       if x.payload["batch_key"] == batch_key),None)
+        if existing: return existing
+        applications=self._validated_applications(project_id,corpus,codebook,payload.get("applications",[]))
+        for theme in payload.get("themes",[]):
+            reject_population_claim(theme.get("description",""))
+            if not theme.get("supporting_application_ids"): raise ValueError("AI theme requires evidence")
+        identity=str(uuid4()); self.authority._put(project_id,run_id,"ai_analysis_proposal",identity,
+            {"proposal_id":identity,"corpus_id":corpus_id,"codebook_revision_id":codebook_id,"batch_key":batch_key,
+             "applications":applications,"themes":payload.get("themes",[]),"status":"pending_review"})
+        self.authority._activity(project_id,run_id,"QUAL_AI_CODING_COMPLETED","qual_ai_proposal",identity)
+        return self._record(project_id,identity)
+
+    def review_ai_proposal(self, project_id, proposal_id, *, owner_id, decision):
+        self._owner(project_id,owner_id); proposal=self._record(project_id,proposal_id,"ai_analysis_proposal")
+        if decision not in {"accepted","rejected"}: raise ValueError("Invalid proposal decision")
+        existing=self.repository.get_for_project(f"{proposal_id}:{decision}",project_id=project_id)
+        if existing: return existing
+        self.authority._put(project_id,proposal.run_id,"ai_proposal_review",f"{proposal_id}:{decision}",
+            {"proposal_id":proposal_id,"decision":decision,"status":"reviewed"},parent=proposal_id)
+        return self._record(project_id,f"{proposal_id}:{decision}")
+
+    def create_thematic_revision(self, project_id, run_id, coding_id, *, categories, themes, owner_id,
+                                 status="draft", parent_id=None, memo=""):
+        self._owner(project_id,owner_id); coding=self._record(project_id,coding_id,"coding_revision")
+        if coding.run_id != run_id or coding.payload["status"] != "accepted": raise ValueError("Accepted coding is required")
+        if status not in {"draft","accepted"}: raise ValueError("Invalid thematic status")
+        if parent_id and self._record(project_id,parent_id,"thematic_revision").run_id != run_id:
+            raise ValueError("Parent thematic revision belongs to another run")
+        apps={x["application_id"]:x for x in coding.payload["applications"]}; codes={x["code_id"] for x in coding.payload["applications"]}
+        category_ids=set()
+        for item in categories:
+            if item["category_id"] in category_ids or not set(item.get("code_ids",[])).issubset(codes): raise ValueError("Invalid category")
+            category_ids.add(item["category_id"])
+        normalized=[]
+        for item in themes:
+            reject_population_claim(item.get("description","")); support=item.get("supporting_application_ids",[])
+            contradictions=item.get("contradictory_application_ids",[])
+            if not support or not set(support+contradictions).issubset(apps): raise ValueError("Theme evidence is invalid")
+            if not set(item.get("code_ids",[])).issubset(codes) or not set(item.get("category_ids",[])).issubset(category_ids):
+                raise ValueError("Theme references unknown analytical objects")
+            represented=[apps[x] for x in dict.fromkeys(support+contradictions)]
+            normalized.append({**item,"participant_count":len({x["participant_id"] for x in represented}),
+                "session_count":len({x["session_id"] for x in represented}),"span_count":len(represented)})
+        identity=str(uuid4()); previous=self.repository.list_for_run(run_id,project_id=project_id,record_type="thematic_revision")
+        self.authority._put(project_id,run_id,"thematic_revision",identity,
+            {"thematic_revision_id":identity,"revision":len(previous)+1,"coding_revision_id":coding_id,
+             "corpus_id":coding.payload["corpus_id"],"codebook_revision_id":coding.payload["codebook_revision_id"],
+             "categories":categories,"themes":normalized,"status":status,"memo":memo},parent=parent_id)
+        self.authority._activity(project_id,run_id,"QUAL_THEMATIC_REVISION_CREATED","qual_thematic_analysis",identity)
+        if status == "accepted":
+            self.authority._activity(project_id,run_id,"QUAL_THEMATIC_ANALYSIS_ACCEPTED","qual_thematic_analysis",identity)
+            self.authority._activity(project_id,run_id,"QUAL_READY_FOR_FINDINGS","qual_thematic_analysis",identity)
+        return self._record(project_id,identity)
+
+    def readiness(self, project_id, run_id, *, owner_id):
+        self._owner(project_id,owner_id)
+        accepted=[x for x in self.repository.list_for_run(run_id,project_id=project_id,record_type="thematic_revision")
+                  if x.payload.get("status") == "accepted"]
+        if accepted: return "ready_for_findings"
+        proposals=self.repository.list_for_run(run_id,project_id=project_id,record_type="ai_analysis_proposal")
+        if proposals: return "ai_proposals_pending_review"
+        codings=self.repository.list_for_run(run_id,project_id=project_id,record_type="coding_revision")
+        if codings: return "themes_require_review"
+        corpora=self.repository.list_for_run(run_id,project_id=project_id,record_type="analysis_corpus")
+        return "codebook_draft" if corpora else "corpus_incomplete"

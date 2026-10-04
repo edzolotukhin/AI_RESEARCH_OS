@@ -15,8 +15,15 @@ class TranscriptDerivationRequest(BaseModel):
     speaker_roles: dict[str,str] = Field(default_factory=dict)
     clean: bool = False
     redacted: bool = True
+class CorpusRequest(BaseModel): transcript_ids: list[str]; instructions: str = ""
+class CodebookRequest(BaseModel): codes: list[dict]; parent_id: str | None = None; status: str = "draft"; memo: str = ""
+class CodingRequest(BaseModel): corpus_id: str; codebook_id: str; applications: list[dict]; parent_id: str | None = None; status: str = "accepted"; memo: str = ""
+class AiProposalRequest(BaseModel): corpus_id: str; codebook_id: str; batch_key: str; payload: dict
+class AiReviewRequest(BaseModel): decision: str
+class ThematicRequest(BaseModel): coding_id: str; categories: list[dict] = Field(default_factory=list); themes: list[dict]; parent_id: str | None = None; status: str = "draft"; memo: str = ""
 
 def service(container): return container.qualitative_service
+def analysis(container): return container.qualitative_analysis_service
 
 @router.post("/runs", dependencies=[Depends(bearer_scheme)])
 def create_run(project_id: str, container: ContainerDep, principal: PrincipalDep):
@@ -57,6 +64,39 @@ def detail(project_id: str, run_id: str, container: ContainerDep, principal: Pri
     records = service(container).records(project_id, run_id, owner_id=principal.principal_id)
     return {"run_id":run_id,"readiness":service(container).readiness(project_id,run_id,owner_id=principal.principal_id).value,
             "records":[{"id":x.record_id,"type":x.record_type,"payload":{k:v for k,v in x.payload.items() if k != "private_bytes"}} for x in records]}
+
+@router.post("/{run_id}/analysis/corpora", dependencies=[Depends(bearer_scheme)])
+def corpus(project_id: str, run_id: str, body: CorpusRequest, container: ContainerDep, principal: PrincipalDep):
+    value=analysis(container).create_corpus(project_id,run_id,body.transcript_ids,owner_id=principal.principal_id,instructions=body.instructions)
+    return value.payload
+
+@router.post("/{run_id}/analysis/codebooks", dependencies=[Depends(bearer_scheme)])
+def codebook(project_id: str, run_id: str, body: CodebookRequest, container: ContainerDep, principal: PrincipalDep):
+    return analysis(container).create_codebook(project_id,run_id,body.codes,owner_id=principal.principal_id,
+        parent_id=body.parent_id,status=body.status,memo=body.memo).payload
+
+@router.post("/{run_id}/analysis/codings", dependencies=[Depends(bearer_scheme)])
+def coding(project_id: str, run_id: str, body: CodingRequest, container: ContainerDep, principal: PrincipalDep):
+    return analysis(container).create_coding(project_id,run_id,body.corpus_id,body.codebook_id,body.applications,
+        owner_id=principal.principal_id,parent_id=body.parent_id,status=body.status,memo=body.memo).payload
+
+@router.post("/{run_id}/analysis/ai-proposals", dependencies=[Depends(bearer_scheme)])
+def ai_proposal(project_id: str, run_id: str, body: AiProposalRequest, container: ContainerDep, principal: PrincipalDep):
+    return analysis(container).create_ai_proposal(project_id,run_id,body.corpus_id,body.codebook_id,
+        batch_key=body.batch_key,payload=body.payload,owner_id=principal.principal_id).payload
+
+@router.post("/analysis/ai-proposals/{proposal_id}/review", dependencies=[Depends(bearer_scheme)])
+def ai_review(project_id: str, proposal_id: str, body: AiReviewRequest, container: ContainerDep, principal: PrincipalDep):
+    return analysis(container).review_ai_proposal(project_id,proposal_id,owner_id=principal.principal_id,decision=body.decision).payload
+
+@router.post("/{run_id}/analysis/themes", dependencies=[Depends(bearer_scheme)])
+def thematic(project_id: str, run_id: str, body: ThematicRequest, container: ContainerDep, principal: PrincipalDep):
+    return analysis(container).create_thematic_revision(project_id,run_id,body.coding_id,categories=body.categories,
+        themes=body.themes,owner_id=principal.principal_id,status=body.status,parent_id=body.parent_id,memo=body.memo).payload
+
+@router.get("/{run_id}/analysis/readiness", dependencies=[Depends(bearer_scheme)])
+def analysis_readiness(project_id: str, run_id: str, container: ContainerDep, principal: PrincipalDep):
+    return {"readiness":analysis(container).readiness(project_id,run_id,owner_id=principal.principal_id)}
 
 @router.post("/transcripts/{transcript_id}/exports", dependencies=[Depends(bearer_scheme)])
 def export(project_id: str, transcript_id: str, container: ContainerDep, principal: PrincipalDep):

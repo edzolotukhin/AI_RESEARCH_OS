@@ -19,12 +19,15 @@ class ProjectActivityModel(Base):
             "'QUANT_APPROVED_REVISION_CREATED', 'QUANT_PDF_GENERATED', "
             "'QUANT_PPTX_GENERATED', 'QUAL_RUN_CREATED', 'QUAL_SESSION_CREATED', 'QUAL_ARTIFACT_ACCEPTED', "
             "'QUAL_TRANSCRIPTION_STARTED', 'QUAL_TRANSCRIPTION_COMPLETED', 'QUAL_TRANSCRIPTION_FAILED', "
-            "'QUAL_TRANSCRIPT_READY', 'QUAL_TRANSCRIPT_DOCX_GENERATED', 'QUAL_AUTHORITY_READY')",
+            "'QUAL_TRANSCRIPT_READY', 'QUAL_TRANSCRIPT_DOCX_GENERATED', 'QUAL_AUTHORITY_READY', "
+            "'QUAL_ANALYSIS_CORPUS_FROZEN', 'QUAL_CODEBOOK_REVISION_CREATED', 'QUAL_AI_CODING_COMPLETED', "
+            "'QUAL_CODING_REVISION_ACCEPTED', 'QUAL_THEMATIC_REVISION_CREATED', "
+            "'QUAL_THEMATIC_ANALYSIS_ACCEPTED', 'QUAL_READY_FOR_FINDINGS')",
             name="ck_project_activity_type",
         ),
         CheckConstraint("method IS NULL OR method IN ('DESK', 'QUANTITATIVE', 'QUALITATIVE')", name="ck_project_activity_method"),
         CheckConstraint("verdict IS NULL OR verdict IN ('REVISE', 'REJECT')", name="ck_project_activity_verdict"),
-        CheckConstraint("source_kind IN ('project', 'design', 'run', 'study', 'report', 'review', 'revision', 'deliverable', 'session', 'qual_artifact', 'transcription_job', 'transcript', 'transcript_export')", name="ck_project_activity_source_kind"),
+        CheckConstraint("source_kind IN ('project', 'design', 'run', 'study', 'report', 'review', 'revision', 'deliverable', 'session', 'qual_artifact', 'transcription_job', 'transcript', 'transcript_export', 'qual_analysis_corpus', 'qual_codebook', 'qual_ai_proposal', 'qual_coding', 'qual_thematic_analysis')", name="ck_project_activity_source_kind"),
         CheckConstraint("event_version > 0", name="ck_project_activity_version"),
         CheckConstraint(
             "(event_type IN ('DESK_REVIEW_ATTENTION', 'QUANT_REVIEW_ATTENTION')) = (verdict IS NOT NULL)",

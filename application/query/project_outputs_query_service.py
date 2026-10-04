@@ -152,8 +152,14 @@ class ProjectOutputsQueryService:
         records = self.container.qualitative_service.records(project.id, run.id, owner_id=owner_id)
         transcripts = [x for x in records if x.record_type == "transcript"]
         exports = [x for x in records if x.record_type == "export"]
+        codebooks = [x for x in records if x.record_type == "codebook_revision" and x.payload.get("status") == "accepted"]
+        codings = [x for x in records if x.record_type == "coding_revision" and x.payload.get("status") == "accepted"]
+        themes = [x for x in records if x.record_type == "thematic_revision" and x.payload.get("status") == "accepted"]
         outputs = tuple(x for available, x in ((bool(transcripts), "Канонічний транскрипт"),
-                                                (bool(exports), "DOCX транскрипту")) if available)
-        return MethodOutputsView("Глибинні інтерв’ю", "Транскрипт готовий" if transcripts else "Підготовка",
-            "success" if transcripts else "active", "Транскрипт є дослідницьким артефактом, а не фінальним звітом.",
+                                                (bool(exports), "DOCX транскрипту"),
+                                                (bool(codebooks), "Прийнятий кодбук"),
+                                                (bool(codings), "Прийняте кодування"),
+                                                (bool(themes), "Прийнятий тематичний аналіз")) if available)
+        return MethodOutputsView("Глибинні інтерв’ю", "Готово до висновків" if themes else ("Транскрипт готовий" if transcripts else "Підготовка"),
+            "success" if transcripts else "active", "Тематичний аналіз є аналітичним authority, а не фінальним звітом.",
             outputs, "Фінальний звіт недоступний", f"/ui/projects/{project.id}/qualitative/{run.id}")

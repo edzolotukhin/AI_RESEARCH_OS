@@ -12,7 +12,9 @@ def _ctx(request, project_id, run_id, error=None):
     service = request.app.state.container.qualitative_service
     return {"request":request,"project_id":project_id,"run_id":run_id,"error":error,
             "records":service.records(project_id,run_id,owner_id=owner),
-            "readiness":service.readiness(project_id,run_id,owner_id=owner).value}
+            "readiness":service.readiness(project_id,run_id,owner_id=owner).value,
+            "analysis_readiness":request.app.state.container.qualitative_analysis_service.readiness(
+                project_id,run_id,owner_id=owner)}
 
 @router.get("/{run_id}", response_class=HTMLResponse)
 def detail(request: Request, project_id: str, run_id: str):
@@ -46,6 +48,20 @@ async def artifact(request: Request, project_id: str, run_id: str, session_id: s
 def process(request: Request, project_id: str, run_id: str, job_id: str):
     owner=resolve_ui_principal(request.app.state.container).principal_id
     request.app.state.container.qualitative_service.process_job(project_id,job_id,owner_id=owner)
+    return RedirectResponse(f"/ui/projects/{project_id}/qualitative/{run_id}",303)
+
+@router.post("/{run_id}/analysis/corpora")
+def corpus(request: Request, project_id: str, run_id: str, transcript_ids: list[str]=Form(...), instructions: str=Form("")):
+    owner=resolve_ui_principal(request.app.state.container).principal_id
+    request.app.state.container.qualitative_analysis_service.create_corpus(
+        project_id,run_id,transcript_ids,owner_id=owner,instructions=instructions)
+    return RedirectResponse(f"/ui/projects/{project_id}/qualitative/{run_id}",303)
+
+@router.post("/{run_id}/analysis/codebooks")
+def codebook(request: Request, project_id: str, run_id: str, label: str=Form(...), definition: str=Form(...), origin: str=Form("human")):
+    owner=resolve_ui_principal(request.app.state.container).principal_id
+    request.app.state.container.qualitative_analysis_service.create_codebook(
+        project_id,run_id,[{"label":label,"definition":definition,"origin":origin}],owner_id=owner)
     return RedirectResponse(f"/ui/projects/{project_id}/qualitative/{run_id}",303)
 
 @router.post("/{run_id}/transcripts/{transcript_id}/exports")

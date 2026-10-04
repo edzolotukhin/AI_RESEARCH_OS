@@ -33,6 +33,10 @@ LABELS = {
     "QUAL_TRANSCRIPTION_COMPLETED": "Транскрипцію завершено", "QUAL_TRANSCRIPTION_FAILED": "Транскрипція не вдалася",
     "QUAL_TRANSCRIPT_READY": "Канонічний транскрипт готовий", "QUAL_TRANSCRIPT_DOCX_GENERATED": "DOCX транскрипту готовий",
     "QUAL_AUTHORITY_READY": "Транскрипт готовий до майбутнього кодування",
+    "QUAL_ANALYSIS_CORPUS_FROZEN":"Корпус аналізу зафіксовано", "QUAL_CODEBOOK_REVISION_CREATED":"Версію кодбука створено",
+    "QUAL_AI_CODING_COMPLETED":"AI-пропозиції кодування підготовлено", "QUAL_CODING_REVISION_ACCEPTED":"Версію кодування прийнято",
+    "QUAL_THEMATIC_REVISION_CREATED":"Тематичну версію створено", "QUAL_THEMATIC_ANALYSIS_ACCEPTED":"Тематичний аналіз прийнято",
+    "QUAL_READY_FOR_FINDINGS":"Якісний аналіз готовий до висновків",
 }
 METHOD_LABELS = {"DESK": "Кабінетне дослідження", "QUANTITATIVE": "Кількісне дослідження", "QUALITATIVE":"Глибинні інтерв’ю"}
 
@@ -183,6 +187,10 @@ class PostgreSQLProjectActivityReader:
             expected = {"QUAL_RUN_CREATED":"run", "QUAL_SESSION_CREATED":"session", "QUAL_ARTIFACT_ACCEPTED":"artifact",
                         "QUAL_TRANSCRIPTION_STARTED":"job", "QUAL_TRANSCRIPTION_COMPLETED":"job",
                         "QUAL_TRANSCRIPTION_FAILED":"job", "QUAL_TRANSCRIPT_READY":"transcript",
-                        "QUAL_AUTHORITY_READY":"transcript", "QUAL_TRANSCRIPT_DOCX_GENERATED":"export"}.get(row.event_type)
+                        "QUAL_AUTHORITY_READY":"transcript", "QUAL_TRANSCRIPT_DOCX_GENERATED":"export",
+                        "QUAL_ANALYSIS_CORPUS_FROZEN":"analysis_corpus", "QUAL_CODEBOOK_REVISION_CREATED":"codebook_revision",
+                        "QUAL_AI_CODING_COMPLETED":"ai_analysis_proposal", "QUAL_CODING_REVISION_ACCEPTED":"coding_revision",
+                        "QUAL_THEMATIC_REVISION_CREATED":"thematic_revision", "QUAL_THEMATIC_ANALYSIS_ACCEPTED":"thematic_revision",
+                        "QUAL_READY_FOR_FINDINGS":"thematic_revision"}.get(row.event_type)
             return bool(record and record.run_id == run.id and record.record_type == expected)
         return False
