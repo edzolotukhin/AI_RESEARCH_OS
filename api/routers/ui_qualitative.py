@@ -1,4 +1,5 @@
 from pathlib import Path
+from uuid import uuid4
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
@@ -87,6 +88,26 @@ def ai_job(request: Request, project_id: str, run_id: str, corpus_id: str=Form(.
 def proposal_review(request: Request, project_id: str, run_id: str, proposal_id: str, decision: str):
     owner=resolve_ui_principal(request.app.state.container).principal_id
     request.app.state.container.qualitative_analysis_service.review_ai_proposal(project_id,proposal_id,owner_id=owner,decision=decision)
+    return RedirectResponse(f"/ui/projects/{project_id}/qualitative/{run_id}",303)
+
+@router.post("/{run_id}/analysis/ai-jobs/{job_id}/retry")
+def retry_ai_job(request: Request, project_id: str, run_id: str, job_id: str):
+    owner=resolve_ui_principal(request.app.state.container).principal_id
+    request.app.state.container.qualitative_analysis_service.retry_ai_job(project_id,job_id,owner_id=owner)
+    return RedirectResponse(f"/ui/projects/{project_id}/qualitative/{run_id}",303)
+
+@router.post("/{run_id}/analysis/themes")
+def thematic(request: Request, project_id: str, run_id: str, coding_id: str=Form(...), title: str=Form(...),
+             description: str=Form(...), code_ids: list[str]=Form(...), supporting_application_ids: list[str]=Form(...),
+             contradictory_application_ids: list[str]|None=Form(None), category_id: str=Form(""), category_title: str=Form(""),
+             status: str=Form("draft"), parent_id: str|None=Form(None)):
+    owner=resolve_ui_principal(request.app.state.container).principal_id
+    categories=[] if not category_id else [{"category_id":category_id,"title":category_title or category_id,"code_ids":code_ids}]
+    request.app.state.container.qualitative_analysis_service.create_thematic_revision(project_id,run_id,coding_id,
+        categories=categories,themes=[{"theme_id":str(uuid4()),"title":title,"description":description,"origin":"human",
+        "code_ids":code_ids,"category_ids":[] if not category_id else [category_id],
+        "supporting_application_ids":supporting_application_ids,
+        "contradictory_application_ids":contradictory_application_ids or []}],owner_id=owner,status=status,parent_id=parent_id)
     return RedirectResponse(f"/ui/projects/{project_id}/qualitative/{run_id}",303)
 
 @router.post("/{run_id}/transcripts/{transcript_id}/exports")

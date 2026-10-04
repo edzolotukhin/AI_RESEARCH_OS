@@ -96,6 +96,12 @@ def process_ai_job(project_id: str, run_id: str, container: ContainerDep, princi
     analysis(container)._owner(project_id,principal.principal_id)
     return {"processed":analysis(container).process_next_job()}
 
+@router.post("/{run_id}/analysis/ai-jobs/{job_id}/retry", dependencies=[Depends(bearer_scheme)])
+def retry_ai_job(project_id: str, run_id: str, job_id: str, container: ContainerDep, principal: PrincipalDep):
+    value=analysis(container).retry_ai_job(project_id,job_id,owner_id=principal.principal_id)
+    if value.run_id != run_id: raise ValueError("Qualitative AI job belongs to another run")
+    return value.payload
+
 @router.post("/analysis/ai-proposals/{proposal_id}/review", dependencies=[Depends(bearer_scheme)])
 def ai_review(project_id: str, proposal_id: str, body: AiReviewRequest, container: ContainerDep, principal: PrincipalDep):
     return analysis(container).review_ai_proposal(project_id,proposal_id,owner_id=principal.principal_id,decision=body.decision).payload

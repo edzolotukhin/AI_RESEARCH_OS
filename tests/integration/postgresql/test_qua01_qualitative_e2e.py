@@ -4,6 +4,7 @@ from application.composition_root import create_application_container
 from application.config import ApplicationOverrides
 from api.app import create_fastapi_app
 from application.qualitative.transcription import DeterministicTranscriptionProvider
+from infrastructure.qualitative.analysis_provider import DeterministicQualitativeAnalysisProvider
 from domain.qualitative.authority import SpeakerRole, TranscriptSegment
 from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
 from tests.application.qualitative.test_qua01_authority import minimal_docx
@@ -96,3 +97,45 @@ class Qua01PostgresqlE2E(unittest.TestCase):
         self.assertEqual(persisted["payload"]["themes"][0]["participant_count"],3)
         self.assertIn("Прийнятий тематичний аналіз",qualitative.outputs)
         self.assertTrue(any("готовий до висновків" in item.label.lower() for item in activity.events))
+
+    def test_qua02_ai_acceptance_replay_and_failed_retry_survive_process_restart(self):
+        first=self.container(); self.addCleanup(first.shutdown); raw,headers,key=self.client(first)
+        owner=first.authentication_service.authenticate_api_key(headers["Authorization"].split()[1]).principal_id
+        project=first.project_service.create_project("QUA-02 AI restart",owner_principal_id=owner,selected_methods=("QUALITATIVE",))
+        run=raw.post(f"/projects/{project.id}/qualitative/runs",headers=headers).json()["run_id"]
+        participant=raw.post(f"/projects/{project.id}/qualitative/{run}/participants",headers=headers,json={"pseudonym":"P01"}).json()["participant_id"]
+        raw.post(f"/projects/{project.id}/qualitative/{run}/consents",headers=headers,json={"participant_id":participant,"state":"eligible","context":"attested","researcher_attested":True})
+        session=raw.post(f"/projects/{project.id}/qualitative/{run}/sessions",headers=headers,json={"participant_id":participant,"context":"IDI"}).json()["session_id"]
+        transcript_id=raw.post(f"/projects/{project.id}/qualitative/{run}/sessions/{session}/artifacts",headers=headers,
+            files={"artifact":("P01.txt",b"P01: Canonical restart evidence","text/plain")}).json()["result_id"]
+        corpus=raw.post(f"/projects/{project.id}/qualitative/{run}/analysis/corpora",headers=headers,json={"transcript_ids":[transcript_id]}).json()
+        codebook=raw.post(f"/projects/{project.id}/qualitative/{run}/analysis/codebooks",headers=headers,json={"codes":[
+            {"code_id":"restart","label":"Restart","definition":"Restart evidence"}],"status":"accepted"}).json()
+        transcript=next(x["payload"] for x in raw.get(f"/projects/{project.id}/qualitative/{run}",headers=headers).json()["records"] if x["id"]==transcript_id)
+        segment=transcript["segments"][0]; application={"application_id":"restart-app","code_id":"restart",
+            "transcript_version_id":transcript_id,"transcript_checksum":transcript["checksum"],"segment_id":segment["segment_id"],
+            "start":0,"end":len(segment["text"])}
+        job=raw.post(f"/projects/{project.id}/qualitative/{run}/analysis/ai-jobs",headers=headers,json={
+            "corpus_id":corpus["corpus_id"],"codebook_id":codebook["codebook_revision_id"],"batch_key":"restart-batch"}).json()
+        first.shutdown(); restarted=self.container(); self.addCleanup(restarted.shutdown); raw2,headers2,_=self.client(restarted,key)
+        restarted.qualitative_analysis_service.provider=DeterministicQualitativeAnalysisProvider({"restart-batch":{"applications":[application]}})
+        self.assertTrue(restarted.qualitative_analysis_service.process_next_job())
+        records=raw2.get(f"/projects/{project.id}/qualitative/{run}",headers=headers2).json()["records"]
+        proposal=next(x for x in records if x["type"]=="ai_analysis_proposal")
+        accepted=raw2.post(f"/projects/{project.id}/qualitative/analysis/ai-proposals/{proposal['id']}/review",headers=headers2,json={"decision":"accepted"}).json()
+        replay=raw2.post(f"/projects/{project.id}/qualitative/analysis/ai-proposals/{proposal['id']}/review",headers=headers2,json={"decision":"accepted"})
+        self.assertEqual(replay.status_code,200,replay.text)
+        self.assertEqual(replay.json()["canonical_id"],accepted["canonical_id"])
+        canonical=restarted.qualitative_analysis_service.repository.get_for_project(accepted["canonical_id"],project_id=project.id)
+        self.assertEqual(len(canonical.payload["applications"]),1); self.assertEqual(canonical.payload["corpus_id"],corpus["corpus_id"])
+        failed=raw2.post(f"/projects/{project.id}/qualitative/{run}/analysis/ai-jobs",headers=headers2,json={
+            "corpus_id":corpus["corpus_id"],"codebook_id":codebook["codebook_revision_id"],"batch_key":"failure-batch"}).json()
+        restarted.qualitative_analysis_service.provider=DeterministicQualitativeAnalysisProvider({})
+        with self.assertRaises(ValueError): restarted.qualitative_analysis_service.process_next_job()
+        restarted.shutdown(); recovered=self.container(); self.addCleanup(recovered.shutdown); raw3,headers3,_=self.client(recovered,key)
+        retry=raw3.post(f"/projects/{project.id}/qualitative/{run}/analysis/ai-jobs/{failed['job_id']}/retry",headers=headers3).json()
+        self.assertEqual(retry["attempt"],2)
+        recovered.qualitative_analysis_service.provider=DeterministicQualitativeAnalysisProvider({"failure-batch":{"applications":[{**application,"application_id":"retry-app"}]}})
+        self.assertTrue(recovered.qualitative_analysis_service.process_next_job())
+        proposals=recovered.qualitative_analysis_service.repository.list_for_run(run,project_id=project.id,record_type="ai_analysis_proposal")
+        self.assertEqual(len([x for x in proposals if x.payload["batch_key"]=="failure-batch"]),1)

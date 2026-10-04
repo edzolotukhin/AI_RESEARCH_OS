@@ -28,4 +28,17 @@ Completion delta adds a browser transcript workspace with same-segment text sele
 
 Completion focused evidence: browser/provider/API group 15 passed (14 combined authority regressions plus 4 completion tests, with overlap). Final post-completion canonical suite: 3174 total, 3012 passed, 162 skipped, 0 failures/errors.
 
-Known limitations: no live AI provider call was made; rich drag/drop theme composition remains backed by protected structured API rather than a visual graph editor. The optional analytical working DOCX is deferred. A non-canonical direct `pytest tests/architecture` diagnostic still reports the baseline repository's pre-existing crypto-boundary inventory (18 historical application imports); QUA-02 adds none. QUA-03 is not implemented.
+## Closure implementation evidence
+
+- AI coding acceptance now atomically persists the decision, optional derived draft Codebook Revision, canonical Code Applications, accepted Coding Revision and direct proposal-to-canonical linkage. Replay returns the same canonical identity and cannot duplicate an application.
+- AI thematic acceptance produces a canonical draft Thematic Analysis Revision; coding and thematic proposal batches are both deduplicated.
+- Explicit failed-job retry persists a child attempt pinned to the same logical request and batch. The total attempt ceiling is three (initial plus two explicit retries); completed, running/non-failed and foreign jobs are rejected.
+- The browser Theme workspace supports title/description, Codes, optional Category, separate supporting/deviant evidence, server-derived coverage, canonical transcript navigation, draft save and human finalization to `ready_for_findings`.
+- focused QUA-01/02 authority/API/product group: 16 passed;
+- fresh PostgreSQL QUA hard gate: 4 passed, including a process-independent queue → restart → proposal → acceptance → replay and failed → restart → explicit retry → success scenario;
+- accepted-proposal replay retained one Coding Revision, one Code Application, the exact corpus/checksum/span and one proposal per batch;
+- canonical final offline suite: 3176 total, 3013 passed, 163 skipped, 0 failures/errors;
+- Alembic remains a single head at `020_qua02_thematic_analysis`; no migration 021 was introduced;
+- deterministic providers only; OpenAI, Tavily, AssemblyAI, ARK and web were not called.
+
+Known limitations: no live AI provider call was made; Theme composition uses the repository's form workspace rather than drag/drop visualization. Retry audit is represented by immutable attempt records because migration 020 intentionally has no retry Activity enum. The optional analytical working DOCX remains deferred. A non-canonical direct `pytest tests/architecture` diagnostic still reports the baseline repository's pre-existing crypto-boundary inventory (18 historical application imports); QUA-02 adds none. QUA-03 is not implemented.

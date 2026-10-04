@@ -62,6 +62,37 @@ class Qua02AnalysisTests(ApiTestCase):
         review=self.client.post(f"/projects/{self.project.id}/qualitative/analysis/ai-proposals/{first['proposal_id']}/review",
             json={"decision":"accepted"})
         self.assertEqual(review.status_code,200)
+        canonical_id=review.json()["canonical_id"]
+        replay=self.client.post(f"/projects/{self.project.id}/qualitative/analysis/ai-proposals/{first['proposal_id']}/review",
+            json={"decision":"accepted"})
+        self.assertEqual(replay.json()["canonical_id"],canonical_id)
+        canonical=self.container.qualitative_analysis_service.repository.get_for_project(canonical_id,project_id=self.project.id)
+        self.assertEqual(canonical.record_type,"coding_revision")
+        self.assertEqual(len(canonical.payload["applications"]),1)
+        self.assertEqual(canonical.payload["applications"][0]["excerpt"],transcripts[t2]["segments"][0]["text"])
+        ui_theme=self.client.post(f"/ui/projects/{self.project.id}/qualitative/{self.run}/analysis/themes",data={
+            "coding_id":coding["coding_revision_id"],"title":"Charging workspace","description":"Corpus-grounded theme",
+            "code_ids":["ease","barrier","deviant"],"category_id":"experience","category_title":"Experience",
+            "supporting_application_ids":["a1","a2"],"contradictory_application_ids":["a3"],"status":"draft"})
+        self.assertEqual(ui_theme.status_code,200)
+        draft=next(x for x in self.container.qualitative_analysis_service.repository.list_for_run(
+            self.run,project_id=self.project.id,record_type="thematic_revision") if x.payload["status"]=="draft")
+        self.assertEqual(draft.payload["themes"][0]["participant_count"],3)
+        thematic_payload={"categories":[],"themes":[{"theme_id":"ai-theme","title":"AI thematic proposal",
+            "description":"Grounded corpus interpretation","code_ids":["ease","barrier"],"category_ids":[],
+            "supporting_application_ids":["a1","a2"],"contradictory_application_ids":[]}]}
+        self.container.qualitative_analysis_service.provider=DeterministicQualitativeAnalysisProvider({"theme-batch":thematic_payload})
+        theme_job=self.client.post(f"/projects/{self.project.id}/qualitative/{self.run}/analysis/ai-jobs",json={
+            "corpus_id":corpus["corpus_id"],"codebook_id":codebook["codebook_revision_id"],"batch_key":"theme-batch",
+            "kind":"thematic","coding_id":coding["coding_revision_id"]}).json()
+        self.assertEqual(theme_job["state"],"queued"); self.assertTrue(self.container.qualitative_analysis_service.process_next_job())
+        theme_proposal=next(x for x in self.container.qualitative_analysis_service.repository.list_for_run(
+            self.run,project_id=self.project.id,record_type="ai_analysis_proposal") if x.payload.get("batch_key")=="theme-batch")
+        theme_review=self.client.post(f"/projects/{self.project.id}/qualitative/analysis/ai-proposals/{theme_proposal.record_id}/review",
+            json={"decision":"accepted"}).json()
+        self.assertEqual(theme_review["canonical_kind"],"thematic_revision")
+        self.assertEqual(self.client.post(f"/projects/{self.project.id}/qualitative/analysis/ai-proposals/{theme_proposal.record_id}/review",
+            json={"decision":"accepted"}).json()["canonical_id"],theme_review["canonical_id"])
         thematic=self.client.post(f"/projects/{self.project.id}/qualitative/{self.run}/analysis/themes",json={
             "coding_id":coding["coding_revision_id"],"categories":[{"category_id":"experience","title":"Experience","code_ids":["ease","barrier","deviant"]}],
             "themes":[{"theme_id":"theme-1","title":"Charging shapes adoption","description":"Different corpus experiences",
@@ -72,6 +103,29 @@ class Qua02AnalysisTests(ApiTestCase):
         self.assertEqual((theme["participant_count"],theme["session_count"],theme["span_count"]),(3,3,3))
         ready=self.client.get(f"/projects/{self.project.id}/qualitative/{self.run}/analysis/readiness").json()
         self.assertEqual(ready["readiness"],"ready_for_findings")
+
+    def test_failed_ai_job_has_explicit_bounded_persisted_retry(self):
+        transcript_id=self.transcript("P01","Retry canonical span")
+        corpus=self.client.post(f"/projects/{self.project.id}/qualitative/{self.run}/analysis/corpora",json={"transcript_ids":[transcript_id]}).json()
+        codebook=self.client.post(f"/projects/{self.project.id}/qualitative/{self.run}/analysis/codebooks",json={
+            "codes":[{"code_id":"retry","label":"Retry","definition":"Retry evidence"}],"status":"accepted"}).json()
+        records=self.client.get(f"/projects/{self.project.id}/qualitative/{self.run}").json()["records"]
+        transcript=next(x["payload"] for x in records if x["id"]==transcript_id); segment=transcript["segments"][0]
+        job=self.client.post(f"/projects/{self.project.id}/qualitative/{self.run}/analysis/ai-jobs",json={
+            "corpus_id":corpus["corpus_id"],"codebook_id":codebook["codebook_revision_id"],"batch_key":"retry-batch"}).json()
+        self.container.qualitative_analysis_service.provider=DeterministicQualitativeAnalysisProvider({})
+        with self.assertRaises(ValueError): self.container.qualitative_analysis_service.process_next_job()
+        retry=self.client.post(f"/projects/{self.project.id}/qualitative/{self.run}/analysis/ai-jobs/{job['job_id']}/retry")
+        self.assertEqual(retry.status_code,200); self.assertEqual(retry.json()["attempt"],2)
+        payload={"applications":[{"application_id":"retry-app","code_id":"retry","transcript_version_id":transcript_id,
+            "transcript_checksum":transcript["checksum"],"segment_id":segment["segment_id"],"start":0,"end":len(segment["text"])}]}
+        self.container.qualitative_analysis_service.provider=DeterministicQualitativeAnalysisProvider({"retry-batch":payload})
+        self.assertTrue(self.container.qualitative_analysis_service.process_next_job())
+        proposals=self.container.qualitative_analysis_service.repository.list_for_run(
+            self.run,project_id=self.project.id,record_type="ai_analysis_proposal")
+        self.assertEqual(len(proposals),1)
+        completed=self.client.post(f"/projects/{self.project.id}/qualitative/{self.run}/analysis/ai-jobs/{retry.json()['job_id']}/retry")
+        self.assertEqual(completed.status_code,422)
 
     def test_closed_world_and_immutable_pins_fail_closed(self):
         transcript_id=self.transcript("P01","Canonical words")
@@ -101,5 +155,6 @@ class Qua02AnalysisTests(ApiTestCase):
         self.transcript("P01","Selectable canonical transcript")
         response=self.client.get(f"/ui/projects/{self.project.id}/qualitative/{self.run}")
         self.assertEqual(response.status_code,200)
-        for marker in ("qual-segment","transcript_checksum","Застосувати код до виділення","AI-assisted аналіз","getSelection"):
+        for marker in ("qual-segment","transcript_checksum","Застосувати код до виділення","AI-assisted аналіз","getSelection",
+                       "Theme workspace","Supporting evidence","Deviant evidence","Перевірити й фіналізувати"):
             self.assertIn(marker,response.text)
