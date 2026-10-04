@@ -35,6 +35,14 @@ class InsightView:
     text: str; support_count: int
 
 @dataclass(frozen=True)
+class QuantitativeReviewView:
+    verdict: str; label: str; severity: str; issues: tuple[str, ...] = ()
+
+@dataclass(frozen=True)
+class ApprovedRevisionView:
+    revision_id: str; review_id: str; method_version: str; ready_for_deliverables: bool = True
+
+@dataclass(frozen=True)
 class ReportSectionView:
     title: str; narrative: str
 
@@ -54,3 +62,5 @@ class QuantitativeStudyView:
     can_upload: bool; can_run_qc: bool; can_resume: bool
     completed_analysis_count: int = 0; result_count: int = 0; finding_count: int = 0; insight_count: int = 0
     project_id: str = ""
+    review: QuantitativeReviewView | None = None
+    approved_revision: ApprovedRevisionView | None = None

@@ -46,12 +46,12 @@ class TestP135DeterministicGovernedReportComposition(PropertyQKQuantitativeRepor
         }
 
     @staticmethod
-    def proposal_v3(*units):
+    def proposal_v3(*units, section_type="KEY_FINDINGS"):
         return {
             "title": "Quantitative Results",
             "sections": [{
                 "section_id": "section-1",
-                "section_type": "KEY_FINDINGS",
+                "section_type": section_type,
                 "title": "Governed claims",
                 "claim_units": list(units),
             }],
@@ -135,6 +135,27 @@ class TestP135DeterministicGovernedReportComposition(PropertyQKQuantitativeRepor
         report = self.compose_v3(response, (first, second), (insight,))[2].accepted_report
         assert report is not None
         assert report.sections[0].narrative == insight.insight_text
+
+    def test_limitation_insight_can_form_governed_limitation_section(self):
+        finding = self.supported_finding()
+        insight = self.supported_insight(finding)
+        response = self.proposal_v3(
+            self.unit(
+                "limitation",
+                insight.insight_text,
+                "EXACT_CONTEXT_INSIGHT",
+                (finding,),
+                (insight,),
+            ),
+            section_type="LIMITATIONS",
+        )
+        service, generator, composed = self.compose_v3(
+            response, (finding,), (insight,)
+        )
+        report = composed.accepted_report
+        assert report is not None
+        assert report.sections[0].section_type.value == "LIMITATIONS"
+        assert 'KPI_RESULTS|LIMITATIONS' in generator.prompts[0]
 
     def test_interpretive_insight_plus_independent_direct_claim_is_accepted(self):
         first = self.supported_finding("first", "42", display="42.0")

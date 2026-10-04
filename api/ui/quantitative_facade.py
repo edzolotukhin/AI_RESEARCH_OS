@@ -33,6 +33,8 @@ class QuantitativeUiFacade:
         return self.container.quantitative_authority_product_service.configure(
             study_id, owner_id=self.owner_id, intent=QuantitativeDesignIntent(**values))
     def approve_design(self,study_id,**values): return self.container.quantitative_authority_product_service.approve(study_id,owner_id=self.owner_id,**values)
+    def execute_analysis(self,study_id): return self.container.quantitative_authority_product_service.execute(study_id,owner_id=self.owner_id)
+    def authorize_semantics(self,study_id,**values): return self.container.quantitative_authority_product_service.authorize_semantics(study_id,owner_id=self.owner_id,**values)
     def view(self,study_id,*,active): return self.query.get(study_id,owner_id=self.owner_id,active=active)
 
 def build_quantitative_ui_facade(container: ApplicationContainer) -> QuantitativeUiFacade:

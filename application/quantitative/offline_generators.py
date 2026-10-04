@@ -60,16 +60,27 @@ class OfflineReportGenerator:
     def generate(self, prompt):
         support=_bundle(prompt, "APPROVED_SUPPORT="); insight=support["insights"][0]
         finding_by_id={item["finding_id"]:item for item in support["findings"]}
-        finding=finding_by_id[insight["finding_refs"][0]]
-        value=finding["display_value"]
-        section={"section_id":"section-1", "section_type":"KEY_FINDINGS", "title":"Results",
-                 "narrative":f"Supported result was {value}.", "finding_refs":[finding["finding_id"]],
-                 "finding_fingerprints":{finding["finding_id"]:finding["validation_fingerprint"]},
-                 "insight_refs":[insight["insight_id"]], "insight_fingerprints":{insight["insight_id"]:insight["validation_fingerprint"]},
-                 "referenced_display_values":[value], "authoritative_result_refs":finding["result_refs"],
-                 "authoritative_table_refs":[], "weighting_status":finding["weighting"], "filter_definition":finding["filter"],
-                 "base_definition":finding["base"], "direction":None}
-        return {"title":"Synthetic Quantitative Report", "finding_refs":[finding["finding_id"]],
-                "finding_fingerprints":{finding["finding_id"]:finding["validation_fingerprint"]},
-                "insight_refs":[insight["insight_id"]], "insight_fingerprints":{insight["insight_id"]:insight["validation_fingerprint"]},
-                "sections":[section]}
+        findings=[finding_by_id[item] for item in insight["finding_refs"]]
+        if "Do not return section narrative" not in prompt:
+            finding=findings[0]; value=finding["display_value"]
+            section={"section_id":"section-1", "section_type":"KEY_FINDINGS", "title":"Results",
+                     "narrative":f"Supported result was {value}.", "finding_refs":[finding["finding_id"]],
+                     "finding_fingerprints":{finding["finding_id"]:finding["validation_fingerprint"]},
+                     "insight_refs":[insight["insight_id"]], "insight_fingerprints":{insight["insight_id"]:insight["validation_fingerprint"]},
+                     "referenced_display_values":[value], "authoritative_result_refs":finding["result_refs"],
+                     "authoritative_table_refs":[], "weighting_status":finding["weighting"], "filter_definition":finding["filter"],
+                     "base_definition":finding["base"], "direction":None}
+            return {"title":"Synthetic Quantitative Report", "finding_refs":[finding["finding_id"]],
+                    "finding_fingerprints":{finding["finding_id"]:finding["validation_fingerprint"]},
+                    "insight_refs":[insight["insight_id"]], "insight_fingerprints":{insight["insight_id"]:insight["validation_fingerprint"]},
+                    "sections":[section]}
+        # QK owns narrative assembly, fingerprints, numeric/result references and
+        # methodological context.  The deterministic adapter supplies only the
+        # same bounded author fields accepted from a production provider.
+        claim={"claim_id":"claim-1", "text":insight["text"],
+               "support_mode":"EXACT_CONTEXT_INSIGHT",
+               "finding_refs":[item["finding_id"] for item in findings],
+               "insight_refs":[insight["insight_id"]]}
+        section={"section_id":"section-1", "section_type":"LIMITATIONS",
+                 "title":"Limitations", "claim_units":[claim]}
+        return {"title":"Synthetic Quantitative Report", "sections":[section]}

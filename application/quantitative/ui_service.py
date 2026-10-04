@@ -892,6 +892,11 @@ class QuantitativeUiService:
                 self.workflows.get_task_results(run.id).get(POST_ANALYSIS_PIN),
                 method_pin=self.workflows.get_task_results(run.id).get(METHOD_PIN),
             ),
+            canonical_review=resolve_review_pin(
+                self.workflows.get_task_results(run.id).get(REVIEW_PIN),
+                method_pin=self.workflows.get_task_results(run.id).get(METHOD_PIN),
+                post_analysis_pin=self.workflows.get_task_results(run.id).get(POST_ANALYSIS_PIN),
+            ),
         )
         try:
             context = self._run_engine(study, run, service, dict(safe))

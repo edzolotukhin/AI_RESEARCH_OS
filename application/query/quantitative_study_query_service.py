@@ -13,11 +13,13 @@ from api.ui.quantitative_presentation import (
 )
 from application.query.quantitative_study_views import (
     AnalysisItemView,
+    ApprovedRevisionView,
     FindingView,
     InsightView,
     MetricView,
     NavigationItemView,
     QuantitativeStudyView,
+    QuantitativeReviewView,
     ReportSectionView,
     ResultItemView,
     VariableView,
@@ -27,6 +29,7 @@ from domain.quantitative.analysis_plan import QuantitativeAnalysisPlanVersion
 from domain.quantitative.dataset import CodebookVersion, DatasetVersion
 from domain.quantitative.finding import QuantitativeFindingGenerationResult
 from domain.quantitative.insight import QuantitativeInsightGenerationResult
+from domain.quantitative.review import QuantitativeApprovedRevision, QuantitativeReview
 from domain.quantitative.quality import QualityControlRun
 from domain.quantitative.questionnaire_authority import QuantitativeQuestionnaireVersion
 from domain.quantitative.report import QuantitativeReportCompositionResult
@@ -57,6 +60,8 @@ class QuantitativeStudyQueryService:
         finding_result = self._latest(records, QuantitativeFindingGenerationResult)
         insight_result = self._latest(records, QuantitativeInsightGenerationResult)
         report_result = self._latest(records, QuantitativeReportCompositionResult)
+        review_record = self._latest(records, QuantitativeReview)
+        revision_record = self._latest(records, QuantitativeApprovedRevision)
 
         terminal_name = _value(getattr(terminal, "terminal_outcome", ""), "")
         status = present_quantitative_status(run.status.value, terminal_outcome=terminal_name)
@@ -106,6 +111,19 @@ class QuantitativeStudyQueryService:
         findings = tuple(self._finding_view(item) for item in getattr(finding_result, "accepted_findings", ()))
         insights = tuple(InsightView(item.insight_text, len(item.supporting_finding_refs)) for item in getattr(insight_result, "accepted_insights", ()))
         report = getattr(report_result, "accepted_report", None)
+        review = None
+        if review_record is not None:
+            verdict = review_record.verdict.value
+            review = QuantitativeReviewView(
+                verdict,
+                "Затверджено" if verdict == "approve" else "Потрібне доопрацювання",
+                "success" if verdict == "approve" else "warning",
+                tuple(review_record.issues),
+            )
+        approved_revision = (ApprovedRevisionView(
+            revision_record.revision_id, revision_record.review_id,
+            revision_record.method_version,
+        ) if revision_record is not None else None)
         sections = tuple(ReportSectionView(item.title, item.narrative) for item in getattr(report, "sections", ()))
         limitations = tuple(dict.fromkeys((*getattr(design, "limitations", ()), *getattr(plan, "limitations", ()), *getattr(terminal, "limitations", ()))))
         warnings = tuple(dict.fromkeys((*getattr(dataset, "warnings", ()), *(getattr(item, "message", _value(item)) for item in getattr(qc, "issues", ())))))
@@ -143,6 +161,8 @@ class QuantitativeStudyQueryService:
             run.status.value == "paused" and study.state == "READY_TO_ANALYZE",
             sum(1 for item in analyses if item.result_count), len(results), len(findings), len(insights),
             study.project_id,
+            review,
+            approved_revision,
         )
 
     @staticmethod

@@ -14,7 +14,11 @@ from uuid import NAMESPACE_URL, uuid5
 from application.methods.quantitative.pin import METHOD_PIN, resolve_method_pin
 from application.quantitative.comparison_statistics import MEAN_METHOD, PROPORTION_METHOD
 from application.quantitative.ui_service import QuantitativeUiError
-from application.quantitative.workflow import CMF_QUANTITATIVE_WORKFLOW_ID
+from application.quantitative.workflow import (
+    CMF_QUANTITATIVE_WORKFLOW_ID,
+    QUANTITATIVE_SAFE_STATE_KEY,
+    QuantitativeApprovalService,
+)
 from domain.quantitative.analysis import (
     AnalysisSpecification,
     ComparisonSpecification,
@@ -60,6 +64,7 @@ from domain.quantitative.research_design_authority import (
 )
 from domain.quantitative.weighting import WeightSet
 from domain.quantitative.workflow import QuantitativeApproval, QuantitativeApprovalDecision
+from domain.value_objects.task_status import TaskStatus
 from application.quantitative.weighting import approve_weight_set
 
 
@@ -111,6 +116,7 @@ class QuantitativeAuthorityProductService:
         method_pin = self.ui.workflows.get_task_results(run.id).get(METHOD_PIN)
         if canonical:
             resolve_method_pin(method_pin, project_id=study.project_id, run_id=study.run_id)
+        semantic = self._semantic_authorization(run, study)
         return {
             "canonical": canonical,
             "execution_label": "Канонічне кількісне дослідження" if canonical else "Історичне кількісне дослідження",
@@ -125,6 +131,9 @@ class QuantitativeAuthorityProductService:
             "design_version": getattr(plan, "version_id", None),
             "design_identity": self._short(getattr(plan, "fingerprint", None)),
             "design_approval_token": getattr(plan, "fingerprint", None),
+            "can_execute": canonical and getattr(getattr(plan, "lifecycle_status", None), "value", "") == "APPROVED" and run.status.value == "paused" and not semantic["required"],
+            "semantic_authorization_required": semantic["required"],
+            "semantic_authorization_token": semantic["token"],
             "variables": tuple(
                 {
                     "id": item.variable_id,
@@ -140,6 +149,44 @@ class QuantitativeAuthorityProductService:
             ),
             "limits": {"bytes": 20 * 1024 * 1024, "rows": 10_000, "variables": 200, "cells": 100_000},
         }
+
+    def execute(self, study_id: str, *, owner_id: str):
+        """Start the accepted design-aware workflow against its exact authorities."""
+        projection = self.projection(study_id, owner_id=owner_id)
+        if not projection["canonical"]:
+            raise QuantitativeUiError("Historical Quant studies cannot use canonical execution")
+        if projection["design_state"] != "APPROVED":
+            raise QuantitativeUiError("An approved current Analysis Design is required")
+        if not projection["can_execute"]:
+            raise QuantitativeUiError("Canonical analysis is not ready for execution")
+        return self.ui.activate_design_aware_workflow(study_id, owner_id=owner_id)
+
+    def authorize_semantics(self, study_id: str, *, owner_id: str,
+                            expected_authority_fingerprint: str, rationale: str):
+        projection = self.projection(study_id, owner_id=owner_id)
+        if not projection["semantic_authorization_required"]:
+            raise QuantitativeUiError("Canonical Findings and Insights are not awaiting authorization")
+        if projection["semantic_authorization_token"] != expected_authority_fingerprint:
+            raise QuantitativeUiError("Stale semantic authorization authority")
+        return self.ui.authorize_semantic_execution(
+            study_id, owner_id=owner_id, actor_id=owner_id,
+            expected_authority_fingerprint=expected_authority_fingerprint,
+            rationale=rationale.strip() or "Підтверджено перехід до інтерпретації результатів",
+        )
+
+    def _semantic_authorization(self, run, study) -> dict:
+        paused = tuple(task for task in run.tasks if task.status is TaskStatus.PAUSED)
+        if len(paused) != 1 or paused[0].definition_id != "quant_findings":
+            return {"required": False, "token": None}
+        snapshot = self.ui.workflows.get_task_results(run.id).get(paused[0].id)
+        shared = snapshot.get("shared_state") if isinstance(snapshot, dict) else None
+        safe = shared.get(QUANTITATIVE_SAFE_STATE_KEY) if isinstance(shared, dict) else None
+        if not isinstance(safe, dict):
+            raise QuantitativeUiError("Durable pre-semantic authority is unavailable")
+        token = QuantitativeApprovalService(self.ui.state, self.ui.digest).semantic_authority_fingerprint(
+            project_id=study.project_id, run_id=study.run_id, safe_state=safe,
+        )
+        return {"required": True, "token": token}
 
     def configure(self, study_id: str, *, owner_id: str, intent: QuantitativeDesignIntent):
         intent = replace(

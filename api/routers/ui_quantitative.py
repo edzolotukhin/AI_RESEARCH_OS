@@ -103,6 +103,19 @@ def approve_design(request:Request,study_id:str,plan_version_id:str=Form(...),ex
             rationale=rationale)
         return _go(study_id,"analysis")
     except (QuantitativeUiError,ValueError,KeyError) as exc:return _error(request,str(exc))
+@router.post("/studies/{study_id}/analysis/execute",include_in_schema=False)
+def execute_analysis(request:Request,study_id:str):
+    try:
+        build_quantitative_ui_facade(request.app.state.container).execute_analysis(study_id)
+        return _go(study_id,"analysis")
+    except (QuantitativeUiError,ValueError,KeyError) as exc:return _error(request,str(exc))
+@router.post("/studies/{study_id}/analysis/authorize-semantics",include_in_schema=False)
+def authorize_analysis_semantics(request:Request,study_id:str,expected_authority_fingerprint:str=Form(...),rationale:str=Form("")):
+    try:
+        build_quantitative_ui_facade(request.app.state.container).authorize_semantics(
+            study_id,expected_authority_fingerprint=expected_authority_fingerprint,rationale=rationale)
+        return _go(study_id,"results")
+    except (QuantitativeUiError,ValueError,KeyError) as exc:return _error(request,str(exc))
 @router.get("/studies/{study_id}/result.json",include_in_schema=False)
 def quantitative_result(request:Request,study_id:str):
     try:return JSONResponse(build_quantitative_ui_facade(request.app.state.container).result(study_id))
