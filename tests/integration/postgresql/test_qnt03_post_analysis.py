@@ -195,6 +195,8 @@ class Qnt03PostAnalysisPostgresqlTests(unittest.TestCase):
         labels = {item.label for item in timeline.events}
         self.assertIn("Кількісний звіт пройшов перевірку", labels)
         self.assertIn("Затверджено версію кількісного звіту", labels)
+        self.assertIn("PDF кількісного звіту готовий", labels)
+        self.assertIn("Презентація кількісного звіту готова", labels)
         projected = worker.quantitative_ui_service.result_projection(
             fixture["study_id"], owner_id=OWNER)
         self.assertEqual(projected["review"]["verdict"], "approve")

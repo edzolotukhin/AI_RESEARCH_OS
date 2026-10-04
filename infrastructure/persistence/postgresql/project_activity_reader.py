@@ -25,6 +25,8 @@ LABELS = {
     "QUANT_REVIEW_ATTENTION": "Кількісний звіт потребує виправлення",
     "QUANT_REVIEW_APPROVED": "Кількісний звіт пройшов перевірку",
     "QUANT_APPROVED_REVISION_CREATED": "Затверджено версію кількісного звіту",
+    "QUANT_PDF_GENERATED": "PDF кількісного звіту готовий",
+    "QUANT_PPTX_GENERATED": "Презентація кількісного звіту готова",
 }
 METHOD_LABELS = {"DESK": "Кабінетне дослідження", "QUANTITATIVE": "Кількісне дослідження"}
 
@@ -162,4 +164,12 @@ class PostgreSQLProjectActivityReader:
                         and revision.run_id == run.id
                         and revision.record_type == "domain.quantitative.review.QuantitativeApprovedRevision"
                         and revision.accepted is True)
+        if row.event_type in {"QUANT_PDF_GENERATED", "QUANT_PPTX_GENERATED"}:
+            from infrastructure.persistence.postgresql.models.pdf_deliverable_model import PdfDeliverableModel
+            deliverable = session.get(PdfDeliverableModel, row.source_id)
+            expected_format = "PDF" if row.event_type == "QUANT_PDF_GENERATED" else "PPTX"
+            return bool(row.source_kind == "deliverable" and row.method == "QUANTITATIVE"
+                        and deliverable and deliverable.project_id == row.project_id
+                        and deliverable.run_id == run.id and deliverable.method == "QUANTITATIVE"
+                        and deliverable.format == expected_format)
         return False

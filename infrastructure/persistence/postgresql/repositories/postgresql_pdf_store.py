@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from application.deliverables.contracts import PdfDeliverable
 from infrastructure.persistence.postgresql.models.pdf_deliverable_model import PdfDeliverableModel
+from infrastructure.persistence.postgresql.project_activity import record_activity
 from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
 
 
@@ -49,8 +50,18 @@ class PostgreSQLPdfStore:
         values = {name: getattr(record, name) for name in PdfDeliverable.__dataclass_fields__}
         values["content"] = data
         with self._sessions.session() as session:
-            session.execute(insert(PdfDeliverableModel).values(**values).on_conflict_do_nothing(
-                constraint="uq_project_deliverable_identity"))
+            inserted = session.execute(insert(PdfDeliverableModel).values(**values).on_conflict_do_nothing(
+                constraint="uq_project_deliverable_identity").returning(PdfDeliverableModel.id)).scalar_one_or_none()
+            if inserted is not None and record.method == "QUANTITATIVE":
+                record_activity(
+                    session, project_id=record.project_id,
+                    semantic_key=f"quant-deliverable:{record.format.lower()}:{record.id}",
+                    event_type=("QUANT_PDF_GENERATED" if record.format == "PDF"
+                                else "QUANT_PPTX_GENERATED"),
+                    source_kind="deliverable", source_id=record.id,
+                    occurred_at=record.created_at, method="QUANTITATIVE",
+                    run_id=record.run_id,
+                )
         found = self.find(project_id=record.project_id, method=record.method,
                           source_id=record.source_id, source_version=record.source_version,
                           renderer_version=record.renderer_version,
