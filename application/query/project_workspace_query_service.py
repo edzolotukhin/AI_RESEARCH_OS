@@ -7,17 +7,19 @@ from application.query.project_workspace_views import (
 )
 from application.quantitative.workflow import build_quantitative_workflow_template
 from domain.value_objects.task_status import TaskStatus
-from domain.research_method import DESK, QUANTITATIVE
+from domain.research_method import DESK, QUANTITATIVE, QUALITATIVE
+from application.qualitative.service import QUAL_TEMPLATE
 
 
 class ProjectWorkspaceQueryService:
     def __init__(self, *, project_service, workflow_service, quantitative_ui_service,
-                 research_result_service, project_planning_service) -> None:
+                 research_result_service, project_planning_service, qualitative_service=None) -> None:
         self.projects = project_service
         self.workflows = workflow_service
         self.quantitative = quantitative_ui_service
         self.research_results = research_result_service
         self.planning = project_planning_service
+        self.qualitative = qualitative_service
 
     def list(self, *, owner_id: str) -> ProjectListView:
         items = []
@@ -47,20 +49,22 @@ class ProjectWorkspaceQueryService:
             if snapshots:
                 quant_study = max(snapshots, key=lambda item: item.revision)
                 quant_run = run
-            elif run.workflow_template_id != quant_template_id:
+            elif run.workflow_template_id not in {quant_template_id, QUAL_TEMPLATE}:
                 desk_runs.append(run)
         desk_run = desk_runs[-1] if desk_runs else None
         selected = self.planning.explicit_or_inferred_methods(project)
         desk = self._desk(project_id, desk_run, project) if DESK in selected else None
         quant = self._quant(project_id, quant_study, quant_run, project) if QUANTITATIVE in selected else None
-        methods = tuple(item for item in (desk, quant) if item is not None)
+        qual_run = next((run for run in runs if run.workflow_template_id == QUAL_TEMPLATE), None)
+        qualitative = self._qual(project_id, qual_run, owner_id) if QUALITATIVE in selected else None
+        methods = tuple(item for item in (desk, quant, qualitative) if item is not None)
         brief = None if project.research_brief is None else ProjectBriefSummaryView(
             project.research_brief.title, project.research_brief.business_question,
             project.research_brief.objectives,
         )
         attention = tuple(x.name for x in methods if x.state is WorkspaceMethodState.ATTENTION)
         return ProjectWorkspaceView(project.id, project.name, self._humanize(project.status),
-                                    brief, desk, quant, methods,
+                                    brief, desk, quant, qualitative, methods,
                                     self.planning.available_methods(project),
                                     project.research_design_status,
                                     self.planning.design_is_current(project),
@@ -132,6 +136,20 @@ class ProjectWorkspaceQueryService:
             pass
         action = WorkspaceActionView("Відкрити кількісне дослідження", f"/ui/quantitative/studies/{study.study_id}/overview")
         return MethodWorkspaceView("Кількісне дослідження", state, label, explanation, None, output, action, action)
+
+    def _qual(self, project_id, run, owner_id):
+        if run is None:
+            return MethodWorkspaceView("Глибинні інтерв’ю", WorkspaceMethodState.READY,
+                "Готове до налаштування", "Додайте аудіо або готовий транскрипт.", None,
+                MethodOutputAvailabilityView(), WorkspaceActionView("Налаштувати глибинні інтерв’ю",
+                f"/ui/projects/{project_id}/methods/QUALITATIVE/activate"))
+        readiness = self.qualitative.readiness(project_id, run.id, owner_id=owner_id).value
+        ready = readiness == "authority_ready_for_coding"
+        action = WorkspaceActionView("Відкрити глибинні інтерв’ю", f"/ui/projects/{project_id}/qualitative/{run.id}")
+        return MethodWorkspaceView("Глибинні інтерв’ю", WorkspaceMethodState.READY if ready else WorkspaceMethodState.RUNNING,
+            "Готове до майбутнього кодування" if ready else "Підготовка транскрипту",
+            "Канонічний транскрипт готовий; аналіз ще не виконувався." if ready else "Завершіть канонічний транскрипт.",
+            None, MethodOutputAvailabilityView(), action, action)
 
     @staticmethod
     def _humanize(value):

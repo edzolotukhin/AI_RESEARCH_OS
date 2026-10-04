@@ -17,12 +17,14 @@ class ProjectActivityModel(Base):
             "'DESK_REPORT_DRAFT_CREATED', 'DESK_REVIEW_ATTENTION', "
             "'QUANT_REVIEW_ATTENTION', 'QUANT_REVIEW_APPROVED', "
             "'QUANT_APPROVED_REVISION_CREATED', 'QUANT_PDF_GENERATED', "
-            "'QUANT_PPTX_GENERATED')",
+            "'QUANT_PPTX_GENERATED', 'QUAL_RUN_CREATED', 'QUAL_SESSION_CREATED', 'QUAL_ARTIFACT_ACCEPTED', "
+            "'QUAL_TRANSCRIPTION_STARTED', 'QUAL_TRANSCRIPTION_COMPLETED', 'QUAL_TRANSCRIPTION_FAILED', "
+            "'QUAL_TRANSCRIPT_READY', 'QUAL_TRANSCRIPT_DOCX_GENERATED', 'QUAL_AUTHORITY_READY')",
             name="ck_project_activity_type",
         ),
-        CheckConstraint("method IS NULL OR method IN ('DESK', 'QUANTITATIVE')", name="ck_project_activity_method"),
+        CheckConstraint("method IS NULL OR method IN ('DESK', 'QUANTITATIVE', 'QUALITATIVE')", name="ck_project_activity_method"),
         CheckConstraint("verdict IS NULL OR verdict IN ('REVISE', 'REJECT')", name="ck_project_activity_verdict"),
-        CheckConstraint("source_kind IN ('project', 'design', 'run', 'study', 'report', 'review', 'revision', 'deliverable')", name="ck_project_activity_source_kind"),
+        CheckConstraint("source_kind IN ('project', 'design', 'run', 'study', 'report', 'review', 'revision', 'deliverable', 'session', 'qual_artifact', 'transcription_job', 'transcript', 'transcript_export')", name="ck_project_activity_source_kind"),
         CheckConstraint("event_version > 0", name="ck_project_activity_version"),
         CheckConstraint(
             "(event_type IN ('DESK_REVIEW_ATTENTION', 'QUANT_REVIEW_ATTENTION')) = (verdict IS NOT NULL)",

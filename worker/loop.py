@@ -50,6 +50,8 @@ class WorkerLoop:
                     if self._container.project_deliverables_service is not None:
                         processed = (self._container.project_deliverables_service
                                      .process_next_presentation(self._worker)) or processed
+                    if self._container.qualitative_service is not None:
+                        processed = self._container.qualitative_service.process_next_job(self._worker) or processed
                 except Exception:
                     logger.exception(
                         "worker_process_once_unexpected worker_id=%s",
@@ -74,7 +76,12 @@ class WorkerLoop:
                 if not self._container.project_deliverables_service.process_next_presentation(self._worker):
                     break
                 presentations += 1
-        return runs + presentations
+        qualitative = 0
+        if self._container.qualitative_service is not None:
+            for _ in range(max_iterations):
+                if not self._container.qualitative_service.process_next_job(self._worker): break
+                qualitative += 1
+        return runs + presentations + qualitative
 
 
 def install_signal_handlers(loop: WorkerLoop) -> None:

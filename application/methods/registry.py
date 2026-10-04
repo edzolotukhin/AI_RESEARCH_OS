@@ -21,19 +21,23 @@ class MethodRegistry:
             if any(not getattr(identity, field.name) for field in fields(identity)):
                 raise MethodResolutionError("Incomplete method version identity")
             capabilities = method.capabilities
-            if capabilities.research_mode not in ("adaptive_external", "persisted_dataset"):
+            if capabilities.research_mode not in ("adaptive_external", "persisted_dataset", "qualitative_artifact"):
                 raise MethodResolutionError("Unsupported research mode")
-            if not capabilities.support_kinds or not set(capabilities.support_kinds) <= {"text_citation", "dataset_authority"}:
+            if not capabilities.support_kinds or not set(capabilities.support_kinds) <= {"text_citation", "dataset_authority", "transcript_authority"}:
                 raise MethodResolutionError("Unsupported canonical support kind")
-            if not set(capabilities.formats) <= {"PDF", "PPTX"}:
+            if not set(capabilities.formats) <= {"PDF", "PPTX", "DOCX"}:
                 raise MethodResolutionError("Unsupported deliverable format")
             required = (
                 ("validate_design", "research_needs", "research_adapter", "run_stage", "report_sources")
                 if capabilities.research_mode == "adaptive_external"
-                else ("bind_dataset", "run_stage", "report_sources")
+                else (("bind_dataset", "run_stage", "report_sources")
+                      if capabilities.research_mode == "persisted_dataset"
+                      else ("bind_transcript", "run_stage", "report_sources"))
             )
             if capabilities.research_mode == "persisted_dataset" and capabilities.support_kinds != ("dataset_authority",):
                 raise MethodResolutionError("Persisted-dataset method requires canonical dataset support")
+            if capabilities.research_mode == "qualitative_artifact" and capabilities.support_kinds != ("transcript_authority",):
+                raise MethodResolutionError("Qualitative method requires canonical transcript support")
             for name in required:
                 if not callable(getattr(method, name, None)):
                     raise MethodResolutionError(f"Incomplete method binding: {name}")

@@ -23,7 +23,9 @@ from api.routers import (
     ui_research,
     ui_quantitative,
     ui_projects,
+    ui_qualitative,
     workflow_runs,
+    qualitative,
 )
 
 
@@ -75,6 +77,8 @@ def create_fastapi_app(
     app.include_router(ui_research.router)
     app.include_router(ui_quantitative.router)
     app.include_router(ui_projects.router)
+    app.include_router(ui_qualitative.router)
+    app.include_router(qualitative.router)
     app.include_router(workflow_runs.router)
     app.include_router(artifacts.router)
     app.include_router(sources.router)

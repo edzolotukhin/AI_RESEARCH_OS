@@ -13,7 +13,8 @@ from application.quantitative.workflow import (
     QUANTITATIVE_WORKFLOW_ID,
 )
 from domain.quantitative.workflow import QuantitativeStudyProjection
-from domain.research_method import DESK, QUANTITATIVE
+from domain.research_method import DESK, QUANTITATIVE, QUALITATIVE
+from application.qualitative.service import QUAL_TEMPLATE
 
 
 @dataclass(frozen=True)
@@ -58,7 +59,7 @@ class ProjectOutputsQueryService:
                 if run.workflow_template_id not in quant_template_ids:
                     raise ValueError("Quantitative study has an unexpected workflow template")
                 quant_matches.append((run, max(snapshots, key=lambda item: item.revision)))
-            elif run.workflow_template_id not in quant_template_ids:
+            elif run.workflow_template_id not in quant_template_ids | {QUAL_TEMPLATE}:
                 desk_runs.append(run)
 
         result = []
@@ -66,6 +67,9 @@ class ProjectOutputsQueryService:
             result.append(self._desk(project, desk_runs[-1] if desk_runs else None))
         if QUANTITATIVE in methods:
             result.append(self._quant(project, owner_id, quant_matches[-1] if quant_matches else None))
+        if QUALITATIVE in methods:
+            qual_run = next((run for run in runs if run.workflow_template_id == QUAL_TEMPLATE), None)
+            result.append(self._qual(project, owner_id, qual_run))
         activity = ActivityTimeline(state="unavailable")
         reader = getattr(self.container, "activity_reader", None)
         if reader is not None:
@@ -140,3 +144,16 @@ class ProjectOutputsQueryService:
                                  "Перегляньте стан і результати у кількісному дослідженні.",
                                  outputs, report,
                                  f"/ui/quantitative/studies/{study.study_id}/overview")
+
+    def _qual(self, project, owner_id, run):
+        if run is None:
+            return MethodOutputsView("Глибинні інтерв’ю", "Не активовано", "inactive",
+                "Метод обрано, але сесію ще не створено.", (), "Фінальний звіт недоступний", None)
+        records = self.container.qualitative_service.records(project.id, run.id, owner_id=owner_id)
+        transcripts = [x for x in records if x.record_type == "transcript"]
+        exports = [x for x in records if x.record_type == "export"]
+        outputs = tuple(x for available, x in ((bool(transcripts), "Канонічний транскрипт"),
+                                                (bool(exports), "DOCX транскрипту")) if available)
+        return MethodOutputsView("Глибинні інтерв’ю", "Транскрипт готовий" if transcripts else "Підготовка",
+            "success" if transcripts else "active", "Транскрипт є дослідницьким артефактом, а не фінальним звітом.",
+            outputs, "Фінальний звіт недоступний", f"/ui/projects/{project.id}/qualitative/{run.id}")

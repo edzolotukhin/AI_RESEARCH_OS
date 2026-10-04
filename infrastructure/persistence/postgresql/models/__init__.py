@@ -23,6 +23,7 @@ from infrastructure.persistence.postgresql.models.source_model import SourceMode
 from infrastructure.persistence.postgresql.models.workflow_template_model import (
     WorkflowTemplateModel,
 )
+from infrastructure.persistence.postgresql.models.qualitative_state_model import QualitativeStateModel
 
 __all__ = [
     "ArtifactModel",
@@ -41,4 +42,5 @@ __all__ = [
     "WorkflowRunModel",
     "WorkflowTaskModel",
     "WorkflowTemplateModel",
+    "QualitativeStateModel",
 ]

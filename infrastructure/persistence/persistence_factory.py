@@ -55,6 +55,7 @@ from infrastructure.persistence.memory.in_memory_workflow_template_repository im
     InMemoryWorkflowTemplateRepository,
 )
 from infrastructure.persistence.memory.in_memory_quantitative_state_repository import InMemoryQuantitativeStateRepository
+from infrastructure.persistence.memory.in_memory_qualitative_state_repository import InMemoryQualitativeStateRepository
 from infrastructure.persistence.postgresql.config import PostgreSQLConfig
 from infrastructure.persistence.postgresql.database import create_database_engine
 from infrastructure.persistence.postgresql.repositories.postgresql_api_key_repository import (
@@ -103,6 +104,7 @@ from infrastructure.persistence.postgresql.repositories.postgresql_workflow_temp
     PostgreSQLWorkflowTemplateRepository,
 )
 from infrastructure.persistence.postgresql.repositories.postgresql_quantitative_state_repository import PostgreSQLQuantitativeStateRepository
+from infrastructure.persistence.postgresql.repositories.postgresql_qualitative_state_repository import PostgreSQLQualitativeStateRepository
 from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
 from application.deliverables.store import InMemoryPdfStore
 from infrastructure.persistence.postgresql.repositories.postgresql_pdf_store import PostgreSQLPdfStore
@@ -129,6 +131,7 @@ class PersistenceBundle:
     pdf_store: object | None = None
     presentation_jobs: object | None = None
     quantitative_state_repository: object | None = None
+    qualitative_state_repository: object | None = None
     engine: Engine | None = None
     activation_sessions: object | None = None
 
@@ -167,6 +170,7 @@ def build_persistence_bundle(
             execution_log_store=InMemoryExecutionLogStore(),
             pdf_store=InMemoryPdfStore(),
             quantitative_state_repository=InMemoryQuantitativeStateRepository(),
+            qualitative_state_repository=InMemoryQualitativeStateRepository(),
             activation_sessions=InMemoryActivationCoordinator(),
         )
 
@@ -190,6 +194,7 @@ def build_persistence_bundle(
             execution_log_store=InMemoryExecutionLogStore(),
             pdf_store=InMemoryPdfStore(),
             quantitative_state_repository=None,
+            qualitative_state_repository=InMemoryQualitativeStateRepository(),
         )
 
     if backend == "postgresql":
@@ -223,6 +228,7 @@ def build_persistence_bundle(
             pdf_store=PostgreSQLPdfStore(session_factory),
             presentation_jobs=PostgreSQLPresentationJobs(session_factory),
             quantitative_state_repository=PostgreSQLQuantitativeStateRepository(session_factory),
+            qualitative_state_repository=PostgreSQLQualitativeStateRepository(session_factory),
             engine=engine,
             activation_sessions=session_factory,
         )

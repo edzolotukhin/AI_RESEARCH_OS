@@ -22,6 +22,7 @@ class ProjectWorkspaceFacade:
             quantitative_ui_service=container.quantitative_ui_service,
             research_result_service=container.research_run_result_query_service,
             project_planning_service=container.project_planning_service,
+            qualitative_service=container.qualitative_service,
         )
 
     @property
@@ -109,6 +110,9 @@ class ProjectWorkspaceFacade:
                 project, owner_id=self.owner_id,
             )
             return "quantitative", study.study_id
+        if method == "QUALITATIVE":
+            run = self.container.qualitative_service.create_run(project_id, owner_id=self.owner_id)
+            return "qualitative", run.record_id
         raise ValueError("Невідомий метод дослідження")
 
     def project_for_design(self, project_id: str):

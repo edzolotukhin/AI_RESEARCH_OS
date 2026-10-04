@@ -1,0 +1,1 @@
+"""Qualitative ingestion application services."""

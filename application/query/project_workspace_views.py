@@ -55,6 +55,7 @@ class ProjectWorkspaceView:
     brief: ProjectBriefSummaryView | None
     desk: MethodWorkspaceView | None
     quantitative: MethodWorkspaceView | None
+    qualitative: MethodWorkspaceView | None
     methods: tuple[MethodWorkspaceView, ...]
     available_methods: tuple[str, ...]
     design_status: str | None

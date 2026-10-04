@@ -219,7 +219,9 @@ def project_method_remove(request: Request, project_id: str, method: str):
 def project_method_activate(request: Request, project_id: str, method: str):
     try:
         kind, identity = _facade(request).activate_method(project_id, method)
-        target = f"/ui/research/{identity}/overview" if kind == "desk" else f"/ui/quantitative/studies/{identity}/overview"
+        target = (f"/ui/research/{identity}/overview" if kind == "desk" else
+                  f"/ui/quantitative/studies/{identity}/overview" if kind == "quantitative" else
+                  f"/ui/projects/{project_id}/qualitative/{identity}")
         return RedirectResponse(target, status_code=303)
     except (AccessDeniedError, EntityNotFoundError):
         return templates.TemplateResponse(request, "projects/error.html", {"request": request, "message": "Проєкт не знайдено"}, status_code=404)

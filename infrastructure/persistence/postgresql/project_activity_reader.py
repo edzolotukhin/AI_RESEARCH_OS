@@ -11,6 +11,7 @@ from application.query.project_activity_views import ActivityEventView, Activity
 from infrastructure.persistence.postgresql.models.project_activity_model import ProjectActivityModel
 from infrastructure.persistence.postgresql.models.project_model import ProjectModel
 from infrastructure.persistence.postgresql.models.quantitative_state_model import QuantitativeStateModel
+from infrastructure.persistence.postgresql.models.qualitative_state_model import QualitativeStateModel
 from infrastructure.persistence.postgresql.models.report_model import ReportModel
 from infrastructure.persistence.postgresql.models.review_model import ReviewModel
 from infrastructure.persistence.postgresql.models.workflow_run_model import WorkflowRunModel
@@ -27,8 +28,13 @@ LABELS = {
     "QUANT_APPROVED_REVISION_CREATED": "Затверджено версію кількісного звіту",
     "QUANT_PDF_GENERATED": "PDF кількісного звіту готовий",
     "QUANT_PPTX_GENERATED": "Презентація кількісного звіту готова",
+    "QUAL_RUN_CREATED": "Глибинні інтерв’ю активовано", "QUAL_SESSION_CREATED": "Створено сесію інтерв’ю",
+    "QUAL_ARTIFACT_ACCEPTED": "Джерело інтерв’ю прийнято", "QUAL_TRANSCRIPTION_STARTED": "Транскрипцію розпочато",
+    "QUAL_TRANSCRIPTION_COMPLETED": "Транскрипцію завершено", "QUAL_TRANSCRIPTION_FAILED": "Транскрипція не вдалася",
+    "QUAL_TRANSCRIPT_READY": "Канонічний транскрипт готовий", "QUAL_TRANSCRIPT_DOCX_GENERATED": "DOCX транскрипту готовий",
+    "QUAL_AUTHORITY_READY": "Транскрипт готовий до майбутнього кодування",
 }
-METHOD_LABELS = {"DESK": "Кабінетне дослідження", "QUANTITATIVE": "Кількісне дослідження"}
+METHOD_LABELS = {"DESK": "Кабінетне дослідження", "QUANTITATIVE": "Кількісне дослідження", "QUALITATIVE":"Глибинні інтерв’ю"}
 
 
 class PostgreSQLProjectActivityReader:
@@ -172,4 +178,11 @@ class PostgreSQLProjectActivityReader:
                         and deliverable and deliverable.project_id == row.project_id
                         and deliverable.run_id == run.id and deliverable.method == "QUANTITATIVE"
                         and deliverable.format == expected_format)
+        if row.method == "QUALITATIVE" and row.source_id:
+            record = session.get(QualitativeStateModel, (row.project_id, row.source_id))
+            expected = {"QUAL_RUN_CREATED":"run", "QUAL_SESSION_CREATED":"session", "QUAL_ARTIFACT_ACCEPTED":"artifact",
+                        "QUAL_TRANSCRIPTION_STARTED":"job", "QUAL_TRANSCRIPTION_COMPLETED":"job",
+                        "QUAL_TRANSCRIPTION_FAILED":"job", "QUAL_TRANSCRIPT_READY":"transcript",
+                        "QUAL_AUTHORITY_READY":"transcript", "QUAL_TRANSCRIPT_DOCX_GENERATED":"export"}.get(row.event_type)
+            return bool(record and record.run_id == run.id and record.record_type == expected)
         return False

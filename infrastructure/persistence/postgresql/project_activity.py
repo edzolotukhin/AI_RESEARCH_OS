@@ -15,6 +15,9 @@ EVENT_TYPES = frozenset({
     "QUANT_REVIEW_ATTENTION", "QUANT_REVIEW_APPROVED",
     "QUANT_APPROVED_REVISION_CREATED",
     "QUANT_PDF_GENERATED", "QUANT_PPTX_GENERATED",
+    "QUAL_RUN_CREATED", "QUAL_SESSION_CREATED", "QUAL_ARTIFACT_ACCEPTED",
+    "QUAL_TRANSCRIPTION_STARTED", "QUAL_TRANSCRIPTION_COMPLETED", "QUAL_TRANSCRIPTION_FAILED",
+    "QUAL_TRANSCRIPT_READY", "QUAL_TRANSCRIPT_DOCX_GENERATED", "QUAL_AUTHORITY_READY",
 })
 
 
@@ -34,9 +37,9 @@ def record_activity(
     method: str | None = None, run_id: str | None = None, actor_id: str | None = None,
     verdict: str | None = None,
 ) -> None:
-    if event_type not in EVENT_TYPES or method not in (None, "DESK", "QUANTITATIVE") or verdict not in (None, "REVISE", "REJECT"):
+    if event_type not in EVENT_TYPES or method not in (None, "DESK", "QUANTITATIVE", "QUALITATIVE") or verdict not in (None, "REVISE", "REJECT"):
         raise ValueError("Invalid Project Activity catalogue value")
-    if source_kind not in {"project", "design", "run", "study", "report", "review", "revision", "deliverable"}:
+    if source_kind not in {"project", "design", "run", "study", "report", "review", "revision", "deliverable", "session", "qual_artifact", "transcription_job", "transcript", "transcript_export"}:
         raise ValueError("Invalid Project Activity source")
     timestamp = utc_timestamp(occurred_at) if occurred_at is not None else datetime.now(UTC)
     if timestamp is None:

@@ -63,6 +63,7 @@ class ApplicationContainer:
     background_execution: BackgroundExecutionCapability | None = None
     readiness_check: ReadinessCheck | None = None
     quantitative_ui_service: Any | None = None
+    qualitative_service: Any | None = None
     project_planning_service: Any | None = None
     activity_reader: Any | None = None
     project_deliverables_service: Any | None = None

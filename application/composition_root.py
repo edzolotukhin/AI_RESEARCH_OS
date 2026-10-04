@@ -682,6 +682,24 @@ def create_application_container(
             finalization_service=quantitative_authority_finalization_service,
         )
 
+    from application.qualitative.service import QualitativeService
+    from application.qualitative.transcription import DeterministicTranscriptionProvider
+    qualitative_digest_provider = Sha256DigestProvider()
+    qualitative_activity_recorder = None
+    if persistence.activation_sessions is not None and hasattr(persistence.activation_sessions, "session"):
+        from infrastructure.persistence.postgresql.project_activity import record_activity
+        def qualitative_activity_recorder(project_id, run_id, event_type, source_kind, source_id):
+            with persistence.activation_sessions.session() as session:
+                record_activity(session, project_id=project_id, semantic_key=f"{event_type.lower()}:{source_id}",
+                    event_type=event_type, source_kind=source_kind, source_id=source_id,
+                    method="QUALITATIVE", run_id=run_id)
+    qualitative_service = QualitativeService(
+        projects=project_service, workflows=workflow_service,
+        repository=persistence.qualitative_state_repository,
+        provider=DeterministicTranscriptionProvider({}),
+        digest_provider=qualitative_digest_provider, activity_recorder=qualitative_activity_recorder,
+    )
+
     project_planning_service = ProjectPlanningService(
         project_service=project_service,
         workflow_service=workflow_service,
@@ -731,6 +749,7 @@ def create_application_container(
         background_execution=background_execution,
         readiness_check=readiness_check,
         quantitative_ui_service=quantitative_ui_service,
+        qualitative_service=qualitative_service,
         project_planning_service=project_planning_service,
         activity_reader=activity_reader,
         project_deliverables_service=project_deliverables_service,
