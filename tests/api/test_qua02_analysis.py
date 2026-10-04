@@ -1,4 +1,5 @@
 from tests.api.helpers import ApiTestCase
+from infrastructure.qualitative.analysis_provider import DeterministicQualitativeAnalysisProvider
 
 
 class Qua02AnalysisTests(ApiTestCase):
@@ -48,9 +49,16 @@ class Qua02AnalysisTests(ApiTestCase):
         proposal={"corpus_id":corpus["corpus_id"],"codebook_id":codebook["codebook_revision_id"],"batch_key":"batch-1",
             "payload":{"applications":[{**applications[1],"application_id":"ai-a2","origin":"ai_proposed","review_state":"proposed"}],
             "themes":[{"title":"Charging experience","description":"Corpus interpretation","supporting_application_ids":["ai-a2"]}]}}
-        first=self.client.post(f"/projects/{self.project.id}/qualitative/{self.run}/analysis/ai-proposals",json=proposal).json()
-        second=self.client.post(f"/projects/{self.project.id}/qualitative/{self.run}/analysis/ai-proposals",json=proposal).json()
-        self.assertEqual(first["proposal_id"],second["proposal_id"])
+        self.container.qualitative_analysis_service.provider=DeterministicQualitativeAnalysisProvider({"batch-1":proposal["payload"]})
+        job=self.client.post(f"/projects/{self.project.id}/qualitative/{self.run}/analysis/ai-jobs",json={
+            "corpus_id":corpus["corpus_id"],"codebook_id":codebook["codebook_revision_id"],"batch_key":"batch-1","kind":"coding"}).json()
+        self.assertEqual(job["state"],"queued")
+        self.assertTrue(self.container.qualitative_analysis_service.process_next_job())
+        detail_after=self.client.get(f"/projects/{self.project.id}/qualitative/{self.run}").json()["records"]
+        first=next(x["payload"] for x in detail_after if x["type"]=="ai_analysis_proposal")
+        second=self.container.qualitative_analysis_service.request_ai_job(self.project.id,self.run,corpus["corpus_id"],
+            codebook["codebook_revision_id"],owner_id=self.owner,batch_key="batch-1").payload
+        self.assertEqual(job["job_id"],second["job_id"])
         review=self.client.post(f"/projects/{self.project.id}/qualitative/analysis/ai-proposals/{first['proposal_id']}/review",
             json={"decision":"accepted"})
         self.assertEqual(review.status_code,200)
@@ -88,3 +96,10 @@ class Qua02AnalysisTests(ApiTestCase):
             "participant_id":participant["id"],"state":"withdrawn","context":"withdrawn"})
         response=self.client.post(f"/projects/{self.project.id}/qualitative/{self.run}/analysis/corpora",json={"transcript_ids":[transcript_id]})
         self.assertEqual(response.status_code,422)
+
+    def test_browser_workspace_exposes_canonical_span_and_ai_review_actions(self):
+        self.transcript("P01","Selectable canonical transcript")
+        response=self.client.get(f"/ui/projects/{self.project.id}/qualitative/{self.run}")
+        self.assertEqual(response.status_code,200)
+        for marker in ("qual-segment","transcript_checksum","Застосувати код до виділення","AI-assisted аналіз","getSelection"):
+            self.assertIn(marker,response.text)

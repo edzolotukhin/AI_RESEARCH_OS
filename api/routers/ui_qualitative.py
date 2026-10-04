@@ -64,6 +64,31 @@ def codebook(request: Request, project_id: str, run_id: str, label: str=Form(...
         project_id,run_id,[{"label":label,"definition":definition,"origin":origin}],owner_id=owner)
     return RedirectResponse(f"/ui/projects/{project_id}/qualitative/{run_id}",303)
 
+@router.post("/{run_id}/analysis/codings")
+def coding(request: Request, project_id: str, run_id: str, corpus_id: str=Form(...), codebook_id: str=Form(...),
+           code_id: str=Form(...), transcript_id: str=Form(...), transcript_checksum: str=Form(...),
+           segment_id: str=Form(...), start: int=Form(...), end: int=Form(...), memo: str=Form("")):
+    owner=resolve_ui_principal(request.app.state.container).principal_id
+    request.app.state.container.qualitative_analysis_service.create_coding(project_id,run_id,corpus_id,codebook_id,[{
+        "code_id":code_id,"transcript_version_id":transcript_id,"transcript_checksum":transcript_checksum,
+        "segment_id":segment_id,"start":start,"end":end,"memo":memo,"origin":"human","review_state":"accepted"}],
+        owner_id=owner,status="accepted")
+    return RedirectResponse(f"/ui/projects/{project_id}/qualitative/{run_id}",303)
+
+@router.post("/{run_id}/analysis/ai-jobs")
+def ai_job(request: Request, project_id: str, run_id: str, corpus_id: str=Form(...), codebook_id: str=Form(...),
+           batch_key: str=Form(...), kind: str=Form("coding"), coding_id: str|None=Form(None)):
+    owner=resolve_ui_principal(request.app.state.container).principal_id
+    request.app.state.container.qualitative_analysis_service.request_ai_job(project_id,run_id,corpus_id,codebook_id,
+        owner_id=owner,batch_key=batch_key,kind=kind,coding_id=coding_id)
+    return RedirectResponse(f"/ui/projects/{project_id}/qualitative/{run_id}",303)
+
+@router.post("/{run_id}/analysis/proposals/{proposal_id}/{decision}")
+def proposal_review(request: Request, project_id: str, run_id: str, proposal_id: str, decision: str):
+    owner=resolve_ui_principal(request.app.state.container).principal_id
+    request.app.state.container.qualitative_analysis_service.review_ai_proposal(project_id,proposal_id,owner_id=owner,decision=decision)
+    return RedirectResponse(f"/ui/projects/{project_id}/qualitative/{run_id}",303)
+
 @router.post("/{run_id}/transcripts/{transcript_id}/exports")
 def export(request: Request, project_id: str, run_id: str, transcript_id: str):
     owner=resolve_ui_principal(request.app.state.container).principal_id

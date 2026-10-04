@@ -18,4 +18,8 @@ Accepted Thematic Analysis Revisions are immutable and bind the exact corpus, co
 
 Migration `020_qua02_thematic_analysis` extends only the Activity catalogue/source kinds. QUA-02 records use the existing append-only PostgreSQL qualitative state store introduced by migration 019. Desk Evidence, Quant Results, ARK and web research are not used.
 
+The browser workspace renders canonical transcript segments with participant/speaker context and timestamps. Browser selection produces Unicode offsets only within one rendered canonical segment; the server resolves those offsets against the pinned checksum-bound `TranscriptSpanRef` before creating a Coding Revision. Overlapping selections and multiple codes remain independent applications. Codebook, coding, AI-job/proposal and thematic states are visible, with explicit proposal accept/reject actions.
+
+AI execution reuses the repository `LLMClient` analysis-stage boundary. `LLMQualitativeAnalysisProvider` supplies only pinned corpus/codebook/coding material and accepts one validator-approved JSON object. The same job orchestration is exercised offline by `DeterministicQualitativeAnalysisProvider`. Append-only `ai_analysis_job` and state records provide queued/running/proposals-ready/failed lifecycle, batch idempotency and restart-safe worker processing; neither adapter can directly mutate accepted authority.
+
 The working analysis DOCX export is explicitly deferred: QUA-01 transcript DOCX remains available, while QUA-02 does not masquerade an analytical working document as a final deliverable. QUA-03 begins only from an accepted Thematic Analysis Revision and owns canonical qualitative Findings and Insights.

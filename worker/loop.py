@@ -52,6 +52,8 @@ class WorkerLoop:
                                      .process_next_presentation(self._worker)) or processed
                     if self._container.qualitative_service is not None:
                         processed = self._container.qualitative_service.process_next_job(self._worker) or processed
+                    if self._container.qualitative_analysis_service is not None:
+                        processed = self._container.qualitative_analysis_service.process_next_job(self._worker) or processed
                 except Exception:
                     logger.exception(
                         "worker_process_once_unexpected worker_id=%s",
@@ -80,6 +82,10 @@ class WorkerLoop:
         if self._container.qualitative_service is not None:
             for _ in range(max_iterations):
                 if not self._container.qualitative_service.process_next_job(self._worker): break
+                qualitative += 1
+        if self._container.qualitative_analysis_service is not None:
+            for _ in range(max_iterations):
+                if not self._container.qualitative_analysis_service.process_next_job(self._worker): break
                 qualitative += 1
         return runs + presentations + qualitative
 

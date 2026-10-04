@@ -9,8 +9,8 @@ from application.qualitative.service import transcript_from_payload
 
 
 class QualitativeAnalysisService:
-    def __init__(self, authority):
-        self.authority = authority
+    def __init__(self, authority, provider=None):
+        self.authority, self.provider = authority, provider
 
     @property
     def repository(self): return self.authority.repository
@@ -123,6 +123,57 @@ class QualitativeAnalysisService:
         self.authority._put(project_id,proposal.run_id,"ai_proposal_review",f"{proposal_id}:{decision}",
             {"proposal_id":proposal_id,"decision":decision,"status":"reviewed"},parent=proposal_id)
         return self._record(project_id,f"{proposal_id}:{decision}")
+
+    def request_ai_job(self, project_id, run_id, corpus_id, codebook_id, *, owner_id, batch_key, kind="coding", coding_id=None):
+        self._owner(project_id,owner_id); corpus=self._record(project_id,corpus_id,"analysis_corpus")
+        codebook=self._record(project_id,codebook_id,"codebook_revision")
+        if corpus.run_id != run_id or codebook.run_id != run_id or kind not in {"coding","thematic"}:
+            raise ValueError("Invalid qualitative AI job authority")
+        if kind == "thematic":
+            coding=self._record(project_id,coding_id,"coding_revision")
+            if coding.run_id != run_id or coding.payload["status"] != "accepted": raise ValueError("Accepted coding required")
+        existing=next((x for x in self.repository.list_for_run(run_id,project_id=project_id,record_type="ai_analysis_job")
+                       if x.payload["batch_key"] == batch_key),None)
+        if existing: return existing
+        identity=str(uuid4()); request={"job_id":identity,"kind":kind,"batch_key":batch_key,"corpus":corpus.payload,
+            "codebook":codebook.payload,"coding":None if not coding_id else self._record(project_id,coding_id,"coding_revision").payload}
+        self.authority._put(project_id,run_id,"ai_analysis_job",identity,{"job_id":identity,"state":"queued","batch_key":batch_key,
+            "kind":kind,"owner_id":owner_id,"corpus_id":corpus_id,"codebook_revision_id":codebook_id,"coding_revision_id":coding_id,
+            "request":request})
+        return self._record(project_id,identity)
+
+    def process_next_job(self, worker_id="worker"):
+        for job in self.repository.list_by_type("ai_analysis_job"):
+            if job.payload.get("state") != "queued": continue
+            ready_id=f"{job.record_id}:ready"; failed_id=f"{job.record_id}:failed"
+            if self.repository.get_for_project(ready_id,project_id=job.project_id) or self.repository.get_for_project(failed_id,project_id=job.project_id): continue
+            running_id=f"{job.record_id}:running"
+            if not self.repository.get_for_project(running_id,project_id=job.project_id):
+                self.authority._put(job.project_id,job.run_id,"ai_analysis_job_state",running_id,{"job_id":job.record_id,"state":"running"},parent=job.record_id)
+            try:
+                output=self.provider.propose(job.payload["request"])
+                if job.payload["kind"] == "coding":
+                    proposal=self.create_ai_proposal(job.project_id,job.run_id,job.payload["corpus_id"],job.payload["codebook_revision_id"],
+                        batch_key=job.payload["batch_key"],payload=output,owner_id=job.payload["owner_id"])
+                else:
+                    coding=self._record(job.project_id,job.payload["coding_revision_id"],"coding_revision")
+                    valid={x["application_id"] for x in coding.payload["applications"]}
+                    for theme in output.get("themes",[]):
+                        refs=theme.get("supporting_application_ids",[])+theme.get("contradictory_application_ids",[])
+                        if not refs or not set(refs).issubset(valid): raise ValueError("Thematic proposal evidence is invalid")
+                        reject_population_claim(theme.get("description",""))
+                    proposal_id=str(uuid4()); self.authority._put(job.project_id,job.run_id,"ai_analysis_proposal",proposal_id,
+                        {"proposal_id":proposal_id,"kind":"thematic","batch_key":job.payload["batch_key"],"coding_revision_id":coding.record_id,
+                         "categories":output.get("categories",[]),"themes":output.get("themes",[]),"status":"pending_review"})
+                    proposal=self._record(job.project_id,proposal_id)
+                self.authority._put(job.project_id,job.run_id,"ai_analysis_job_state",ready_id,
+                    {"job_id":job.record_id,"state":"proposals_ready","proposal_id":proposal.record_id},parent=job.record_id)
+            except Exception as exc:
+                self.authority._put(job.project_id,job.run_id,"ai_analysis_job_state",failed_id,
+                    {"job_id":job.record_id,"state":"failed","error_category":type(exc).__name__},parent=job.record_id)
+                raise
+            return True
+        return False
 
     def create_thematic_revision(self, project_id, run_id, coding_id, *, categories, themes, owner_id,
                                  status="draft", parent_id=None, memo=""):

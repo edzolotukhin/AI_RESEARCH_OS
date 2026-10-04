@@ -21,6 +21,7 @@ class CodingRequest(BaseModel): corpus_id: str; codebook_id: str; applications: 
 class AiProposalRequest(BaseModel): corpus_id: str; codebook_id: str; batch_key: str; payload: dict
 class AiReviewRequest(BaseModel): decision: str
 class ThematicRequest(BaseModel): coding_id: str; categories: list[dict] = Field(default_factory=list); themes: list[dict]; parent_id: str | None = None; status: str = "draft"; memo: str = ""
+class AiJobRequest(BaseModel): corpus_id: str; codebook_id: str; batch_key: str; kind: str = "coding"; coding_id: str | None = None
 
 def service(container): return container.qualitative_service
 def analysis(container): return container.qualitative_analysis_service
@@ -84,6 +85,16 @@ def coding(project_id: str, run_id: str, body: CodingRequest, container: Contain
 def ai_proposal(project_id: str, run_id: str, body: AiProposalRequest, container: ContainerDep, principal: PrincipalDep):
     return analysis(container).create_ai_proposal(project_id,run_id,body.corpus_id,body.codebook_id,
         batch_key=body.batch_key,payload=body.payload,owner_id=principal.principal_id).payload
+
+@router.post("/{run_id}/analysis/ai-jobs", dependencies=[Depends(bearer_scheme)])
+def ai_job(project_id: str, run_id: str, body: AiJobRequest, container: ContainerDep, principal: PrincipalDep):
+    return analysis(container).request_ai_job(project_id,run_id,body.corpus_id,body.codebook_id,
+        owner_id=principal.principal_id,batch_key=body.batch_key,kind=body.kind,coding_id=body.coding_id).payload
+
+@router.post("/{run_id}/analysis/ai-jobs/process", dependencies=[Depends(bearer_scheme)])
+def process_ai_job(project_id: str, run_id: str, container: ContainerDep, principal: PrincipalDep):
+    analysis(container)._owner(project_id,principal.principal_id)
+    return {"processed":analysis(container).process_next_job()}
 
 @router.post("/analysis/ai-proposals/{proposal_id}/review", dependencies=[Depends(bearer_scheme)])
 def ai_review(project_id: str, proposal_id: str, body: AiReviewRequest, container: ContainerDep, principal: PrincipalDep):

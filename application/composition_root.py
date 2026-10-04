@@ -685,6 +685,7 @@ def create_application_container(
     from application.qualitative.service import QualitativeService
     from application.qualitative.analysis_service import QualitativeAnalysisService
     from application.qualitative.transcription import DeterministicTranscriptionProvider
+    from infrastructure.qualitative.analysis_provider import LLMQualitativeAnalysisProvider
     qualitative_digest_provider = Sha256DigestProvider()
     qualitative_activity_recorder = None
     if persistence.activation_sessions is not None and hasattr(persistence.activation_sessions, "session"):
@@ -751,7 +752,8 @@ def create_application_container(
         readiness_check=readiness_check,
         quantitative_ui_service=quantitative_ui_service,
         qualitative_service=qualitative_service,
-        qualitative_analysis_service=QualitativeAnalysisService(qualitative_service),
+        qualitative_analysis_service=QualitativeAnalysisService(
+            qualitative_service, LLMQualitativeAnalysisProvider(stage_llm_clients.analysis)),
         project_planning_service=project_planning_service,
         activity_reader=activity_reader,
         project_deliverables_service=project_deliverables_service,
