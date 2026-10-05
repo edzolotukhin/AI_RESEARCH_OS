@@ -15,6 +15,8 @@ def _ctx(request, project_id, run_id, error=None):
             "records":service.records(project_id,run_id,owner_id=owner),
             "readiness":service.readiness(project_id,run_id,owner_id=owner).value,
             "analysis_readiness":request.app.state.container.qualitative_analysis_service.readiness(
+                project_id,run_id,owner_id=owner),
+            "post_analysis_readiness":request.app.state.container.qualitative_post_analysis_service.readiness(
                 project_id,run_id,owner_id=owner)}
 
 @router.get("/{run_id}", response_class=HTMLResponse)
@@ -108,6 +110,54 @@ def thematic(request: Request, project_id: str, run_id: str, coding_id: str=Form
         "code_ids":code_ids,"category_ids":[] if not category_id else [category_id],
         "supporting_application_ids":supporting_application_ids,
         "contradictory_application_ids":contradictory_application_ids or []}],owner_id=owner,status=status,parent_id=parent_id)
+    return RedirectResponse(f"/ui/projects/{project_id}/qualitative/{run_id}",303)
+
+@router.post("/{run_id}/post-analysis/findings")
+def finding(request: Request, project_id: str, run_id: str, thematic_id: str=Form(...), title: str=Form(...),
+            statement: str=Form(...), explanation: str=Form(...), theme_ids: list[str]=Form(...), status: str=Form("draft"),
+            parent_id: str|None=Form(None)):
+    owner=resolve_ui_principal(request.app.state.container).principal_id
+    request.app.state.container.qualitative_post_analysis_service.create_finding(project_id,run_id,thematic_id,
+        title=title,statement=statement,explanation=explanation,theme_ids=theme_ids,owner_id=owner,status=status,parent_id=parent_id)
+    return RedirectResponse(f"/ui/projects/{project_id}/qualitative/{run_id}",303)
+
+@router.post("/{run_id}/post-analysis/insights")
+def insight(request: Request, project_id: str, run_id: str, thematic_id: str=Form(...), title: str=Form(...),
+            statement: str=Form(...), implication: str=Form(...), finding_ids: list[str]=Form(...), status: str=Form("draft"),
+            parent_id: str|None=Form(None)):
+    owner=resolve_ui_principal(request.app.state.container).principal_id
+    request.app.state.container.qualitative_post_analysis_service.create_insight(project_id,run_id,thematic_id,
+        title=title,statement=statement,implication=implication,finding_ids=finding_ids,owner_id=owner,status=status,parent_id=parent_id)
+    return RedirectResponse(f"/ui/projects/{project_id}/qualitative/{run_id}",303)
+
+@router.post("/{run_id}/post-analysis/revisions")
+def revision(request: Request, project_id: str, run_id: str, thematic_id: str=Form(...),
+             finding_ids: list[str]=Form(...), insight_ids: list[str]=Form(...), parent_id: str|None=Form(None)):
+    owner=resolve_ui_principal(request.app.state.container).principal_id
+    request.app.state.container.qualitative_post_analysis_service.create_revision(project_id,run_id,thematic_id,
+        finding_ids,insight_ids,owner_id=owner,parent_id=parent_id)
+    return RedirectResponse(f"/ui/projects/{project_id}/qualitative/{run_id}",303)
+
+@router.post("/{run_id}/post-analysis/ai-jobs")
+def post_analysis_ai_job(request: Request, project_id: str, run_id: str, thematic_id: str=Form(...),
+                         batch_key: str=Form(...), kind: str=Form(...), finding_ids: list[str]|None=Form(None)):
+    owner=resolve_ui_principal(request.app.state.container).principal_id
+    request.app.state.container.qualitative_post_analysis_service.request_ai_job(project_id,run_id,thematic_id,
+        owner_id=owner,batch_key=batch_key,kind=kind,finding_ids=finding_ids or ())
+    return RedirectResponse(f"/ui/projects/{project_id}/qualitative/{run_id}",303)
+
+@router.post("/{run_id}/post-analysis/ai-proposals/{proposal_id}/{decision}")
+def post_analysis_proposal_review(request: Request, project_id: str, run_id: str, proposal_id: str, decision: str):
+    owner=resolve_ui_principal(request.app.state.container).principal_id
+    request.app.state.container.qualitative_post_analysis_service.review_ai_proposal(
+        project_id,proposal_id,owner_id=owner,decision=decision)
+    return RedirectResponse(f"/ui/projects/{project_id}/qualitative/{run_id}",303)
+
+@router.post("/{run_id}/post-analysis/revisions/{revision_id}/review")
+def review(request: Request, project_id: str, run_id: str, revision_id: str, decision: str=Form(...), comments: str=Form("")):
+    owner=resolve_ui_principal(request.app.state.container).principal_id
+    request.app.state.container.qualitative_post_analysis_service.review(project_id,run_id,revision_id,
+        owner_id=owner,decision=decision,comments=comments)
     return RedirectResponse(f"/ui/projects/{project_id}/qualitative/{run_id}",303)
 
 @router.post("/{run_id}/transcripts/{transcript_id}/exports")

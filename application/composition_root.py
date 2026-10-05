@@ -684,6 +684,7 @@ def create_application_container(
 
     from application.qualitative.service import QualitativeService
     from application.qualitative.analysis_service import QualitativeAnalysisService
+    from application.qualitative.post_analysis_service import QualitativePostAnalysisService
     from application.qualitative.transcription import DeterministicTranscriptionProvider
     from infrastructure.qualitative.analysis_provider import LLMQualitativeAnalysisProvider
     qualitative_digest_provider = Sha256DigestProvider()
@@ -754,6 +755,8 @@ def create_application_container(
         qualitative_service=qualitative_service,
         qualitative_analysis_service=QualitativeAnalysisService(
             qualitative_service, LLMQualitativeAnalysisProvider(stage_llm_clients.analysis)),
+        qualitative_post_analysis_service=QualitativePostAnalysisService(
+            qualitative_service, LLMQualitativeAnalysisProvider(stage_llm_clients.analysis), review_repository),
         project_planning_service=project_planning_service,
         activity_reader=activity_reader,
         project_deliverables_service=project_deliverables_service,

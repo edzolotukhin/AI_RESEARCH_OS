@@ -65,6 +65,7 @@ class ApplicationContainer:
     quantitative_ui_service: Any | None = None
     qualitative_service: Any | None = None
     qualitative_analysis_service: Any | None = None
+    qualitative_post_analysis_service: Any | None = None
     project_planning_service: Any | None = None
     activity_reader: Any | None = None
     project_deliverables_service: Any | None = None

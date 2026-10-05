@@ -155,11 +155,17 @@ class ProjectOutputsQueryService:
         codebooks = [x for x in records if x.record_type == "codebook_revision" and x.payload.get("status") == "accepted"]
         codings = [x for x in records if x.record_type == "coding_revision" and x.payload.get("status") == "accepted"]
         themes = [x for x in records if x.record_type == "thematic_revision" and x.payload.get("status") == "accepted"]
+        findings = [x for x in records if x.record_type == "qualitative_finding" and x.payload.get("status") == "accepted"]
+        insights = [x for x in records if x.record_type == "qualitative_insight" and x.payload.get("status") == "accepted"]
+        approved = [x for x in records if x.record_type == "qualitative_approved_revision"]
         outputs = tuple(x for available, x in ((bool(transcripts), "Канонічний транскрипт"),
                                                 (bool(exports), "DOCX транскрипту"),
                                                 (bool(codebooks), "Прийнятий кодбук"),
                                                 (bool(codings), "Прийняте кодування"),
-                                                (bool(themes), "Прийнятий тематичний аналіз")) if available)
-        return MethodOutputsView("Глибинні інтерв’ю", "Готово до висновків" if themes else ("Транскрипт готовий" if transcripts else "Підготовка"),
+                                                (bool(themes), "Прийнятий тематичний аналіз"),
+                                                (bool(findings), "Прийняті якісні висновки"),
+                                                (bool(insights), "Прийняті якісні інсайти"),
+                                                (bool(approved), "Затверджена якісна версія")) if available)
+        return MethodOutputsView("Глибинні інтерв’ю", "Готово до документів" if approved else ("Готово до висновків" if themes else ("Транскрипт готовий" if transcripts else "Підготовка")),
             "success" if transcripts else "active", "Тематичний аналіз є аналітичним authority, а не фінальним звітом.",
             outputs, "Фінальний звіт недоступний", f"/ui/projects/{project.id}/qualitative/{run.id}")

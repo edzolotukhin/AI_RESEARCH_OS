@@ -21,6 +21,9 @@ EVENT_TYPES = frozenset({
     "QUAL_ANALYSIS_CORPUS_FROZEN", "QUAL_CODEBOOK_REVISION_CREATED", "QUAL_AI_CODING_COMPLETED",
     "QUAL_CODING_REVISION_ACCEPTED", "QUAL_THEMATIC_REVISION_CREATED",
     "QUAL_THEMATIC_ANALYSIS_ACCEPTED", "QUAL_READY_FOR_FINDINGS",
+    "QUAL_FINDINGS_REVISION_CREATED", "QUAL_AI_FINDINGS_READY", "QUAL_FINDING_ACCEPTED",
+    "QUAL_INSIGHT_ACCEPTED", "QUAL_REVIEW_REQUESTED", "QUAL_REVIEW_CHANGES_REQUIRED",
+    "QUAL_REVIEW_APPROVED", "QUAL_APPROVED_REVISION_CREATED", "QUAL_READY_FOR_DELIVERABLES",
 })
 
 
@@ -42,7 +45,7 @@ def record_activity(
 ) -> None:
     if event_type not in EVENT_TYPES or method not in (None, "DESK", "QUANTITATIVE", "QUALITATIVE") or verdict not in (None, "REVISE", "REJECT"):
         raise ValueError("Invalid Project Activity catalogue value")
-    if source_kind not in {"project", "design", "run", "study", "report", "review", "revision", "deliverable", "session", "qual_artifact", "transcription_job", "transcript", "transcript_export", "qual_analysis_corpus", "qual_codebook", "qual_ai_proposal", "qual_coding", "qual_thematic_analysis"}:
+    if source_kind not in {"project", "design", "run", "study", "report", "review", "revision", "deliverable", "session", "qual_artifact", "transcription_job", "transcript", "transcript_export", "qual_analysis_corpus", "qual_codebook", "qual_ai_proposal", "qual_coding", "qual_thematic_analysis", "qual_finding", "qual_insight", "qual_post_analysis_revision", "qual_review", "qual_approved_revision"}:
         raise ValueError("Invalid Project Activity source")
     timestamp = utc_timestamp(occurred_at) if occurred_at is not None else datetime.now(UTC)
     if timestamp is None:

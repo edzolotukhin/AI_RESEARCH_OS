@@ -37,6 +37,11 @@ LABELS = {
     "QUAL_AI_CODING_COMPLETED":"AI-пропозиції кодування підготовлено", "QUAL_CODING_REVISION_ACCEPTED":"Версію кодування прийнято",
     "QUAL_THEMATIC_REVISION_CREATED":"Тематичну версію створено", "QUAL_THEMATIC_ANALYSIS_ACCEPTED":"Тематичний аналіз прийнято",
     "QUAL_READY_FOR_FINDINGS":"Якісний аналіз готовий до висновків",
+    "QUAL_FINDINGS_REVISION_CREATED":"Версію якісних висновків створено", "QUAL_AI_FINDINGS_READY":"AI-пропозиції висновків готові",
+    "QUAL_FINDING_ACCEPTED":"Якісний висновок прийнято", "QUAL_INSIGHT_ACCEPTED":"Якісний інсайт прийнято",
+    "QUAL_REVIEW_REQUESTED":"Якісну версію надіслано на перевірку", "QUAL_REVIEW_CHANGES_REQUIRED":"Якісна версія потребує змін",
+    "QUAL_REVIEW_APPROVED":"Якісну версію схвалено", "QUAL_APPROVED_REVISION_CREATED":"Затверджено якісну версію",
+    "QUAL_READY_FOR_DELIVERABLES":"Якісна версія готова до документів",
 }
 METHOD_LABELS = {"DESK": "Кабінетне дослідження", "QUANTITATIVE": "Кількісне дослідження", "QUALITATIVE":"Глибинні інтерв’ю"}
 
@@ -191,6 +196,15 @@ class PostgreSQLProjectActivityReader:
                         "QUAL_ANALYSIS_CORPUS_FROZEN":"analysis_corpus", "QUAL_CODEBOOK_REVISION_CREATED":"codebook_revision",
                         "QUAL_AI_CODING_COMPLETED":"ai_analysis_proposal", "QUAL_CODING_REVISION_ACCEPTED":"coding_revision",
                         "QUAL_THEMATIC_REVISION_CREATED":"thematic_revision", "QUAL_THEMATIC_ANALYSIS_ACCEPTED":"thematic_revision",
-                        "QUAL_READY_FOR_FINDINGS":"thematic_revision"}.get(row.event_type)
+                        "QUAL_READY_FOR_FINDINGS":"thematic_revision",
+                        "QUAL_FINDINGS_REVISION_CREATED":"qualitative_post_analysis_revision",
+                        "QUAL_AI_FINDINGS_READY":"qualitative_post_analysis_proposal",
+                        "QUAL_FINDING_ACCEPTED":"qualitative_finding",
+                        "QUAL_INSIGHT_ACCEPTED":"qualitative_insight",
+                        "QUAL_REVIEW_REQUESTED":"qualitative_post_analysis_revision",
+                        "QUAL_REVIEW_CHANGES_REQUIRED":"qualitative_review",
+                        "QUAL_REVIEW_APPROVED":"qualitative_review",
+                        "QUAL_APPROVED_REVISION_CREATED":"qualitative_approved_revision",
+                        "QUAL_READY_FOR_DELIVERABLES":"qualitative_approved_revision"}.get(row.event_type)
             return bool(record and record.run_id == run.id and record.record_type == expected)
         return False

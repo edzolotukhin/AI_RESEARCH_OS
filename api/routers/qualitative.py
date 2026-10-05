@@ -22,9 +22,19 @@ class AiProposalRequest(BaseModel): corpus_id: str; codebook_id: str; batch_key:
 class AiReviewRequest(BaseModel): decision: str
 class ThematicRequest(BaseModel): coding_id: str; categories: list[dict] = Field(default_factory=list); themes: list[dict]; parent_id: str | None = None; status: str = "draft"; memo: str = ""
 class AiJobRequest(BaseModel): corpus_id: str; codebook_id: str; batch_key: str; kind: str = "coding"; coding_id: str | None = None
+class QualFindingRequest(BaseModel):
+    thematic_id: str; title: str; statement: str; explanation: str; theme_ids: list[str]
+    status: str = "draft"; origin: str = "human"; parent_id: str | None = None
+class QualInsightRequest(BaseModel):
+    thematic_id: str; title: str; statement: str; implication: str; finding_ids: list[str]
+    status: str = "draft"; origin: str = "human"; parent_id: str | None = None
+class QualRevisionRequest(BaseModel): thematic_id: str; finding_ids: list[str]; insight_ids: list[str]; parent_id: str | None = None
+class QualReviewRequest(BaseModel): decision: str; comments: str = ""
+class QualAiJobRequest(BaseModel): thematic_id: str; batch_key: str; kind: str; finding_ids: list[str] = Field(default_factory=list)
 
 def service(container): return container.qualitative_service
 def analysis(container): return container.qualitative_analysis_service
+def post_analysis(container): return container.qualitative_post_analysis_service
 
 @router.post("/runs", dependencies=[Depends(bearer_scheme)])
 def create_run(project_id: str, container: ContainerDep, principal: PrincipalDep):
@@ -114,6 +124,55 @@ def thematic(project_id: str, run_id: str, body: ThematicRequest, container: Con
 @router.get("/{run_id}/analysis/readiness", dependencies=[Depends(bearer_scheme)])
 def analysis_readiness(project_id: str, run_id: str, container: ContainerDep, principal: PrincipalDep):
     return {"readiness":analysis(container).readiness(project_id,run_id,owner_id=principal.principal_id)}
+
+@router.post("/{run_id}/post-analysis/findings", dependencies=[Depends(bearer_scheme)])
+def qualitative_finding(project_id: str, run_id: str, body: QualFindingRequest, container: ContainerDep, principal: PrincipalDep):
+    return post_analysis(container).create_finding(project_id,run_id,body.thematic_id,title=body.title,
+        statement=body.statement,explanation=body.explanation,theme_ids=body.theme_ids,owner_id=principal.principal_id,
+        status=body.status,origin=body.origin,parent_id=body.parent_id).payload
+
+@router.post("/{run_id}/post-analysis/insights", dependencies=[Depends(bearer_scheme)])
+def qualitative_insight(project_id: str, run_id: str, body: QualInsightRequest, container: ContainerDep, principal: PrincipalDep):
+    return post_analysis(container).create_insight(project_id,run_id,body.thematic_id,title=body.title,
+        statement=body.statement,implication=body.implication,finding_ids=body.finding_ids,owner_id=principal.principal_id,
+        status=body.status,origin=body.origin,parent_id=body.parent_id).payload
+
+@router.post("/{run_id}/post-analysis/revisions", dependencies=[Depends(bearer_scheme)])
+def qualitative_revision(project_id: str, run_id: str, body: QualRevisionRequest, container: ContainerDep, principal: PrincipalDep):
+    return post_analysis(container).create_revision(project_id,run_id,body.thematic_id,body.finding_ids,body.insight_ids,
+        owner_id=principal.principal_id,parent_id=body.parent_id).payload
+
+@router.post("/{run_id}/post-analysis/revisions/{revision_id}/review", dependencies=[Depends(bearer_scheme)])
+def qualitative_review(project_id: str, run_id: str, revision_id: str, body: QualReviewRequest,
+                       container: ContainerDep, principal: PrincipalDep):
+    review,approved=post_analysis(container).review(project_id,run_id,revision_id,owner_id=principal.principal_id,
+        decision=body.decision,comments=body.comments)
+    return {"review":review.payload,"approved_revision":None if approved is None else approved.payload,
+            "readiness":post_analysis(container).readiness(project_id,run_id,owner_id=principal.principal_id)}
+
+@router.get("/{run_id}/post-analysis", dependencies=[Depends(bearer_scheme)])
+def qualitative_post_analysis(project_id: str, run_id: str, container: ContainerDep, principal: PrincipalDep):
+    service=post_analysis(container); service._owner(project_id,principal.principal_id)
+    kinds={"qualitative_finding","qualitative_insight","qualitative_post_analysis_revision","qualitative_review","qualitative_approved_revision"}
+    records=[x for x in service.repository.list_for_run(run_id,project_id=project_id) if x.record_type in kinds]
+    return {"readiness":service.readiness(project_id,run_id,owner_id=principal.principal_id),
+            "records":[{"id":x.record_id,"type":x.record_type,"payload":x.payload} for x in records]}
+
+@router.post("/{run_id}/post-analysis/ai-jobs", dependencies=[Depends(bearer_scheme)])
+def qualitative_ai_job(project_id: str, run_id: str, body: QualAiJobRequest, container: ContainerDep, principal: PrincipalDep):
+    return post_analysis(container).request_ai_job(project_id,run_id,body.thematic_id,owner_id=principal.principal_id,
+        batch_key=body.batch_key,kind=body.kind,finding_ids=body.finding_ids).payload
+
+@router.post("/{run_id}/post-analysis/ai-jobs/process", dependencies=[Depends(bearer_scheme)])
+def process_qualitative_ai_job(project_id: str, run_id: str, container: ContainerDep, principal: PrincipalDep):
+    post_analysis(container)._owner(project_id,principal.principal_id)
+    return {"processed":post_analysis(container).process_next_job()}
+
+@router.post("/post-analysis/ai-proposals/{proposal_id}/review", dependencies=[Depends(bearer_scheme)])
+def review_qualitative_ai_proposal(project_id: str, proposal_id: str, body: AiReviewRequest,
+                                   container: ContainerDep, principal: PrincipalDep):
+    return post_analysis(container).review_ai_proposal(project_id,proposal_id,owner_id=principal.principal_id,
+        decision=body.decision).payload
 
 @router.post("/transcripts/{transcript_id}/exports", dependencies=[Depends(bearer_scheme)])
 def export(project_id: str, transcript_id: str, container: ContainerDep, principal: PrincipalDep):
