@@ -41,6 +41,16 @@ class ProjectService:
         project_id: str | None = None,
         selected_methods: tuple[str, ...] | list[str] | None = None,
     ) -> Project:
+        project = self.build_project(name, owner_principal_id=owner_principal_id,
+                                     project_id=project_id, selected_methods=selected_methods)
+        self._project_repository.create(project)
+        return project
+
+    def build_project(
+        self, name: str, *, owner_principal_id: str | None = None,
+        project_id: str | None = None,
+        selected_methods: tuple[str, ...] | list[str] | None = None,
+    ) -> Project:
         if project_id is None:
             project = self._project_factory.create(name)
         else:
@@ -51,8 +61,10 @@ class ProjectService:
             if selected_methods is None
             else canonicalize_research_methods(selected_methods)
         )
-        self._project_repository.create(project)
         return project
+
+    def persist_built_project(self, project: Project) -> None:
+        self._project_repository.create(project)
 
     def get_project(self, project_id: str) -> Project:
         project = self._project_repository.get_by_id(project_id)

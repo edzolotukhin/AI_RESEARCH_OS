@@ -49,7 +49,7 @@
 {% if pptx_error %}<p role="alert">Презентацію зараз недоступно створити. Спробуйте пізніше.</p>{% endif %}
 {% if not view.methods %}<section class="empty compact-empty"><h2>Методи ще не обрано</h2><p>Результати з’являться після вибору та виконання дослідження.</p></section>{% endif %}
 <section class="context compact-section output-note"><p class="eyebrow">АКТИВНІСТЬ</p><h2>{% if view.activity.state == 'unavailable' %}Історія активності недоступна{% else %}Активність проєкту{% endif %}</h2>
-{% if view.activity.events %}<ol class="activity-timeline">{% for event in view.activity.events %}<li><span>{{ event.label }}</span><time>{{ event.date_time }}</time>{% if event.method %}<small>{{ event.method }}</small>{% endif %}</li>{% endfor %}</ol>{% endif %}
+{% if view.activity.events %}<ol class="activity-timeline">{% for event in view.activity.events %}<li><span>{{ event.label }}</span><time>{{ event.date_time }}</time>{% if event.actor_name %}<small>{{ event.actor_name }}</small>{% endif %}{% if event.method %}<small>{{ event.method }}</small>{% endif %}</li>{% endfor %}</ol>{% endif %}
 {% if view.activity.message %}<p class="muted">{{ view.activity.message }}</p>{% endif %}
 </section>
 {% endblock %}

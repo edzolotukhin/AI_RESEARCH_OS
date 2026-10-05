@@ -43,6 +43,11 @@ def record_activity(
     method: str | None = None, run_id: str | None = None, actor_id: str | None = None,
     verdict: str | None = None,
 ) -> None:
+    if actor_id is None:
+        # Human browser identity is request-scoped and server-derived. System,
+        # worker, and historical events intentionally remain unattributed.
+        from application.identity import current_human_actor_id
+        actor_id = current_human_actor_id.get()
     if event_type not in EVENT_TYPES or method not in (None, "DESK", "QUANTITATIVE", "QUALITATIVE") or verdict not in (None, "REVISE", "REJECT"):
         raise ValueError("Invalid Project Activity catalogue value")
     if source_kind not in {"project", "design", "run", "study", "report", "review", "revision", "deliverable", "session", "qual_artifact", "transcription_job", "transcript", "transcript_export", "qual_analysis_corpus", "qual_codebook", "qual_ai_proposal", "qual_coding", "qual_thematic_analysis", "qual_finding", "qual_insight", "qual_post_analysis_revision", "qual_review", "qual_approved_revision"}:

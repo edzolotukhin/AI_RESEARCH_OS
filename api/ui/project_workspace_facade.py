@@ -27,7 +27,14 @@ class ProjectWorkspaceFacade:
 
     @property
     def owner_id(self): return self.principal.principal_id
-    def list_projects(self): return self.query.list(owner_id=self.owner_id)
+    def list_projects(self):
+        projects=self.authorization.list_visible_projects(self.principal)
+        items=[]
+        from application.query.project_workspace_views import ProjectListItemView, ProjectListView
+        for project in projects:
+            view=self.query.get(project.id,owner_id=project.owner_principal_id)
+            items.append(ProjectListItemView(project.id,project.name,self.query._humanize(project.status),tuple((m.name,m.state_label) for m in view.methods),bool(view.attention_items)))
+        return ProjectListView(tuple(items))
     def create_project(self, name: str, selected_methods):
         name = name.strip()
         if not name: raise ValueError("Вкажіть назву проєкту")
@@ -35,34 +42,54 @@ class ProjectWorkspaceFacade:
             methods = canonicalize_research_methods(selected_methods)
         except ValueError as exc:
             raise ValueError("Оберіть щонайменше один метод дослідження") from exc
-        return self.container.project_service.create_project(
+        project=self.container.project_service.build_project(
             name, owner_principal_id=self.owner_id, selected_methods=methods,
         )
+        if self.principal.authentication_type != "browser_session":
+            self.container.project_service.persist_built_project(project)
+            return project
+        from application.identity import ProjectMembership, ProjectRole
+        from datetime import UTC, datetime
+        membership = ProjectMembership(project.id, self.owner_id, ProjectRole.OWNER,
+                                       datetime.now(UTC), self.owner_id)
+        atomic_create = getattr(self.container.identity_service.store, "create_owned_project", None)
+        if atomic_create is not None:
+            atomic_create(project, membership)
+            return project
+        try:
+            self.container.project_service.persist_built_project(project)
+            self.container.identity_service.store.create_membership(membership)
+        except Exception:
+            self.container.project_service.delete_project(project.id)
+            raise
+        return project
+    def _project_owner(self, project_id: str, *, mutate: bool=False, owner: bool=False):
+        project=self.authorization.require_project(self.principal,project_id)
+        if self.principal.authentication_type == "browser_session":
+            self.container.identity_service.require(
+                project_id, self.owner_id, mutate=mutate, owner=owner,
+            )
+        return project,project.owner_principal_id
     def get_workspace(self, project_id: str):
-        self.authorization.require_project(self.principal, project_id)
-        return self.query.get(project_id, owner_id=self.owner_id)
+        project,_=self._project_owner(project_id)
+        return self.query.get(project_id, owner_id=project.owner_principal_id)
     def get_outputs(self, project_id: str):
         project = self.authorization.require_project(self.principal, project_id)
         return ProjectOutputsQueryService(container=self.container).get(
-            project, owner_id=self.owner_id,
+            project, owner_id=project.owner_principal_id,
         )
     def get_report_catalog(self, project_id: str):
-        return self.container.project_deliverables_service.catalog(project_id, owner_id=self.owner_id)
+        _,owner=self._project_owner(project_id); return self.container.project_deliverables_service.catalog(project_id, owner_id=owner)
     def get_report_source(self, project_id: str, method: str, source_id: str):
-        return self.container.project_deliverables_service.source(
-            project_id, method, source_id, owner_id=self.owner_id)
+        _,owner=self._project_owner(project_id); return self.container.project_deliverables_service.source(project_id, method, source_id, owner_id=owner)
     def generate_report_pdf(self, project_id: str, method: str, source_id: str):
-        return self.container.project_deliverables_service.generate(
-            project_id, method, source_id, owner_id=self.owner_id)
+        _,owner=self._project_owner(project_id,mutate=True); return self.container.project_deliverables_service.generate(project_id, method, source_id, owner_id=owner)
     def download_report_pdf(self, project_id: str, method: str, source_id: str, deliverable_id: str):
-        return self.container.project_deliverables_service.download(
-            project_id, method, source_id, deliverable_id, owner_id=self.owner_id)
+        _,owner=self._project_owner(project_id); return self.container.project_deliverables_service.download(project_id, method, source_id, deliverable_id, owner_id=owner)
     def schedule_presentation(self, project_id: str, method: str, source_id: str):
-        return self.container.project_deliverables_service.schedule_presentation(
-            project_id, method, source_id, owner_id=self.owner_id)
+        _,owner=self._project_owner(project_id,mutate=True); return self.container.project_deliverables_service.schedule_presentation(project_id, method, source_id, owner_id=owner)
     def download_presentation(self, project_id: str, method: str, source_id: str, deliverable_id: str):
-        return self.container.project_deliverables_service.download_presentation(
-            project_id, method, source_id, deliverable_id, owner_id=self.owner_id)
+        _,owner=self._project_owner(project_id); return self.container.project_deliverables_service.download_presentation(project_id, method, source_id, deliverable_id, owner_id=owner)
     def start_desk(self, project_id: str, brief_payload: dict):
         project = self.authorization.require_project(self.principal, project_id)
         quant_id = build_quantitative_workflow_template().id

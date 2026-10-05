@@ -15,6 +15,7 @@ from infrastructure.persistence.postgresql.models.qualitative_state_model import
 from infrastructure.persistence.postgresql.models.report_model import ReportModel
 from infrastructure.persistence.postgresql.models.review_model import ReviewModel
 from infrastructure.persistence.postgresql.models.workflow_run_model import WorkflowRunModel
+from infrastructure.persistence.postgresql.models.identity_model import UserModel
 from infrastructure.persistence.postgresql.project_activity import utc_timestamp
 
 
@@ -80,19 +81,20 @@ class PostgreSQLProjectActivityReader:
             )
             complete = bool(creation_event and self._valid_canonical(session, creation_event))
             # New projects always have PROJECT_CREATED. Old projects retain a gap.
-            events: dict[str, tuple[datetime, str, str, str | None]] = {}
+            events: dict[str, tuple[datetime, str, str, str | None, str | None]] = {}
 
-            def add(key: str, event_type: str, when, method: str | None = None) -> None:
+            def add(key: str, event_type: str, when, method: str | None = None,
+                    actor_id: str | None = None) -> None:
                 timestamp = utc_timestamp(when)
                 if timestamp is None:
                     return
                 identity = str(uuid5(NAMESPACE_URL, f"project-activity:{project_id}:{key}"))
-                events.setdefault(key, (timestamp, identity, event_type, method))
+                events.setdefault(key, (timestamp, identity, event_type, method, actor_id))
 
             for row in canonical:
                 if not self._valid_canonical(session, row):
                     continue
-                add(row.semantic_key, row.event_type, row.occurred_at, row.method)
+                add(row.semantic_key, row.event_type, row.occurred_at, row.method, row.actor_id)
 
             # Project creation is the only historical event proven by the project row itself.
             add("project-created", "PROJECT_CREATED", project.created_at)
@@ -126,13 +128,18 @@ class PostgreSQLProjectActivityReader:
                 add(f"desk-review:{review.id}", "DESK_REVIEW_ATTENTION", review.created_at, "DESK")
 
             ordered = sorted(events.values(), key=lambda row: (row[0], row[1]), reverse=True)[:limit]
+            actor_ids = {row[4] for row in ordered if row[4]}
+            actor_names = {user.id: user.display_name for user in session.scalars(
+                select(UserModel).where(UserModel.id.in_(actor_ids))
+            )} if actor_ids else {}
             return ActivityTimeline(
                 events=tuple(ActivityEventView(
                     label=(METHOD_LABELS[method] + " активовано" if event_type == "METHOD_ACTIVATED" and method
                            else LABELS[event_type]),
                     date_time=when.astimezone(UTC).strftime("%d.%m.%Y %H:%M UTC"),
                     method=(METHOD_LABELS[method] if method else None),
-                ) for when, identity, event_type, method in ordered),
+                    actor_name=(actor_names.get(actor_id) if actor_id else None),
+                ) for when, identity, event_type, method, actor_id in ordered),
                 history_incomplete=not complete,
             )
 

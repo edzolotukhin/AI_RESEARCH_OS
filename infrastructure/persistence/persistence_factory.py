@@ -56,6 +56,7 @@ from infrastructure.persistence.memory.in_memory_workflow_template_repository im
 )
 from infrastructure.persistence.memory.in_memory_quantitative_state_repository import InMemoryQuantitativeStateRepository
 from infrastructure.persistence.memory.in_memory_qualitative_state_repository import InMemoryQualitativeStateRepository
+from infrastructure.persistence.memory.in_memory_identity_store import InMemoryIdentityStore
 from infrastructure.persistence.postgresql.config import PostgreSQLConfig
 from infrastructure.persistence.postgresql.database import create_database_engine
 from infrastructure.persistence.postgresql.repositories.postgresql_api_key_repository import (
@@ -134,6 +135,7 @@ class PersistenceBundle:
     qualitative_state_repository: object | None = None
     engine: Engine | None = None
     activation_sessions: object | None = None
+    identity_store: object | None = None
 
 
 def resolve_persistence_backend() -> str:
@@ -172,6 +174,7 @@ def build_persistence_bundle(
             quantitative_state_repository=InMemoryQuantitativeStateRepository(),
             qualitative_state_repository=InMemoryQualitativeStateRepository(),
             activation_sessions=InMemoryActivationCoordinator(),
+            identity_store=InMemoryIdentityStore(),
         )
 
     if backend == "file":
@@ -195,6 +198,7 @@ def build_persistence_bundle(
             pdf_store=InMemoryPdfStore(),
             quantitative_state_repository=None,
             qualitative_state_repository=InMemoryQualitativeStateRepository(),
+            identity_store=InMemoryIdentityStore(),
         )
 
     if backend == "postgresql":
@@ -203,6 +207,7 @@ def build_persistence_bundle(
         )
         engine = create_database_engine(config.database_url)
         session_factory = DatabaseSessionFactory(engine)
+        from infrastructure.persistence.postgresql.repositories.postgresql_identity_store import PostgreSQLIdentityStore
         return PersistenceBundle(
             project_repository=PostgreSQLProjectRepository(session_factory),
             workflow_template_repository=PostgreSQLWorkflowTemplateRepository(
@@ -231,6 +236,7 @@ def build_persistence_bundle(
             qualitative_state_repository=PostgreSQLQualitativeStateRepository(session_factory),
             engine=engine,
             activation_sessions=session_factory,
+            identity_store=PostgreSQLIdentityStore(session_factory),
         )
 
     raise ValueError(

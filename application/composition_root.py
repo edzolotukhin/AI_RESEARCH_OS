@@ -619,6 +619,14 @@ def create_application_container(
 
     authentication_service: AuthenticationService | None = None
     authorization_service: AuthorizationService | None = None
+    identity_service = None
+    if persistence.identity_store is not None:
+        from application.identity import IdentityService
+        identity_service = IdentityService(persistence.identity_store)
+    def human_project_access(project_id, actor_id):
+        if identity_service is None: return False
+        try: identity_service.require(project_id, actor_id); return True
+        except PermissionError: return False
     if persistence.api_key_repository is not None:
         material_provider = Sha256ApiKeyMaterialProvider()
         authentication_service = AuthenticationService(
@@ -635,6 +643,7 @@ def create_application_container(
             insight_service=insight_service,
             report_query_service=report_query_service,
             review_query_service=review_query_service,
+            identity_service=identity_service,
         )
 
     agency = Agency(
@@ -676,6 +685,7 @@ def create_application_container(
             ),
             activation_sessions=persistence.activation_sessions,
             cmf_quant_enabled=config.cmf_quant_enabled,
+            access_checker=human_project_access,
         )
         from application.quantitative.authority_product_service import QuantitativeAuthorityProductService
         quantitative_authority_product_service = QuantitativeAuthorityProductService(
@@ -693,15 +703,17 @@ def create_application_container(
     if persistence.activation_sessions is not None and hasattr(persistence.activation_sessions, "session"):
         from infrastructure.persistence.postgresql.project_activity import record_activity
         def qualitative_activity_recorder(project_id, run_id, event_type, source_kind, source_id):
+            from application.identity import current_human_actor_id
             with persistence.activation_sessions.session() as session:
                 record_activity(session, project_id=project_id, semantic_key=f"{event_type.lower()}:{source_id}",
                     event_type=event_type, source_kind=source_kind, source_id=source_id,
-                    method="QUALITATIVE", run_id=run_id)
+                    method="QUALITATIVE", run_id=run_id, actor_id=current_human_actor_id.get())
     qualitative_service = QualitativeService(
         projects=project_service, workflows=workflow_service,
         repository=persistence.qualitative_state_repository,
         provider=DeterministicTranscriptionProvider({}),
         digest_provider=qualitative_digest_provider, activity_recorder=qualitative_activity_recorder,
+        access_checker=human_project_access,
     )
 
     project_planning_service = ProjectPlanningService(
@@ -752,6 +764,7 @@ def create_application_container(
         research_submission_service=research_submission_service,
         authentication_service=authentication_service,
         authorization_service=authorization_service,
+        identity_service=identity_service,
         background_execution=background_execution,
         readiness_check=readiness_check,
         quantitative_ui_service=quantitative_ui_service,

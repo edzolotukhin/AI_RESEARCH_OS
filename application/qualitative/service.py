@@ -14,13 +14,15 @@ QUAL_TEMPLATE = "cmf-qualitative-idi-v1"
 
 
 class QualitativeService:
-    def __init__(self, *, projects, workflows, repository, provider, digest_provider, activity_recorder=None):
+    def __init__(self, *, projects, workflows, repository, provider, digest_provider, activity_recorder=None, access_checker=None):
         self.projects, self.workflows, self.repository = projects, workflows, repository
         self.provider, self.digest, self.activity_recorder = provider, digest_provider, activity_recorder
+        self.access_checker = access_checker
 
     def _project(self, project_id, owner_id):
         project = self.projects.get_project(project_id)
-        if project.owner_principal_id != owner_id: raise AccessDeniedError("Qualitative authority not found")
+        if project.owner_principal_id != owner_id and not (self.access_checker and self.access_checker(project_id, owner_id)):
+            raise AccessDeniedError("Qualitative authority not found")
         return project
 
     def _put(self, project_id, run_id, kind, record_id, payload, parent=None, data=None):

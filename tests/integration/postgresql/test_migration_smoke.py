@@ -71,6 +71,7 @@ class PostgreSQLMigrationSmokeTests(unittest.TestCase):
         self.assertIn("workflow_runs", table_names)
         self.assertIn("pdf_deliverables", table_names)
         self.assertIn("presentation_jobs", table_names)
+        self.assertTrue({"users", "browser_sessions", "project_memberships"}.issubset(table_names))
         with self.engine.connect() as connection:
             columns = set(connection.execute(text(
                 "SELECT column_name FROM information_schema.columns "

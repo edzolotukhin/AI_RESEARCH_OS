@@ -109,6 +109,9 @@ def reset_schema(engine: Engine) -> None:
 
 def truncate_all_tables(engine: Engine) -> None:
     table_names = [
+        "browser_sessions",
+        "project_memberships",
+        "users",
         "research_submissions",
         "api_keys",
         "execution_log_entries",

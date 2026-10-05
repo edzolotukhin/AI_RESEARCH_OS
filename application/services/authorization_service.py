@@ -36,6 +36,7 @@ class AuthorizationService:
         insight_service: InsightService | None = None,
         report_query_service: ReportQueryService | None = None,
         review_query_service: ReviewQueryService | None = None,
+        identity_service=None,
     ) -> None:
         self._project_service = project_service
         self._workflow_service = workflow_service
@@ -46,6 +47,7 @@ class AuthorizationService:
         self._insight_service = insight_service
         self._report_query_service = report_query_service
         self._review_query_service = review_query_service
+        self._identity_service = identity_service
 
     def require_project(
         self,
@@ -57,7 +59,10 @@ class AuthorizationService:
         except EntityNotFoundError as exc:
             raise AccessDeniedError(str(exc)) from exc
 
-        if project.owner_principal_id != principal.principal_id:
+        if self._identity_service is not None and principal.authentication_type == "browser_session":
+            try: self._identity_service.require(project_id, principal.principal_id)
+            except PermissionError as exc: raise AccessDeniedError(f"Project not found: {project_id}") from exc
+        elif project.owner_principal_id != principal.principal_id:
             raise AccessDeniedError(f"Project not found: {project_id}")
         return project
 
@@ -179,8 +184,11 @@ class AuthorizationService:
         offset: int = 0,
         limit: int | None = None,
     ) -> list[Project]:
-        return self._project_service.list_projects(
-            owner_principal_id=principal.principal_id,
-            offset=offset,
-            limit=limit,
-        )
+        if self._identity_service is not None and principal.authentication_type == "browser_session":
+            memberships=self._identity_service.store.list_memberships_for_user(principal.principal_id)
+            projects=[]
+            for membership in memberships[offset:(offset+limit) if limit else None]:
+                try: projects.append(self._project_service.get_project(membership.project_id))
+                except EntityNotFoundError: continue
+            return projects
+        return self._project_service.list_projects(owner_principal_id=principal.principal_id,offset=offset,limit=limit)

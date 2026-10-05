@@ -72,7 +72,7 @@ class QuantitativeUiService:
                  finding_generator, insight_generator, report_generator,
                  generation_mode: str, stage_service_factory=None,
                  durable_workflow_service=None, activation_sessions=None,
-                 cmf_quant_enabled: bool = False) -> None:
+                 cmf_quant_enabled: bool = False, access_checker=None) -> None:
         if generation_mode not in {"offline", "production"}:
             raise ValueError("Quantitative generation mode is not configured")
         if any(item is None for item in (finding_generator, insight_generator, report_generator)):
@@ -93,8 +93,12 @@ class QuantitativeUiService:
         self.durable_workflow_service = durable_workflow_service
         self.activation_sessions = activation_sessions
         self.cmf_quant_enabled = cmf_quant_enabled
+        self.access_checker = access_checker
         self._studies: dict[str, QuantitativeStudyProjection] = {}
         self._submission_ids: dict[tuple[str, str], str] = {}
+
+    def _has_project_access(self, project, actor_id: str) -> bool:
+        return project.owner_principal_id == actor_id or bool(self.access_checker and self.access_checker(project.id, actor_id))
 
     def create_study(self, *, owner_id: str, title: str, description: str, submission_key: str,
                      canonical: bool = False) -> QuantitativeStudyProjection:
@@ -231,7 +235,7 @@ class QuantitativeUiService:
             project = self.projects.get_project(project_id)
         except Exception as exc:
             raise QuantitativeUiError("Project not found") from exc
-        if project.owner_principal_id != owner_id:
+        if not self._has_project_access(project, owner_id):
             raise QuantitativeUiError("Project not found")
         study_id = str(uuid5(NAMESPACE_URL, f"quantitative-study:{project_id}:{owner_id}:{submission_key}"))
         run_id = str(uuid5(NAMESPACE_URL, f"quantitative-run:{project_id}:{owner_id}:{submission_key}"))
@@ -288,7 +292,7 @@ class QuantitativeUiService:
         if study is None:
             return None
         project = self.projects.get_project(project_id)
-        if project.owner_principal_id != owner_id:
+        if not self._has_project_access(project, owner_id):
             raise QuantitativeUiError("Quantitative study not found")
         if (study.title, study.description) != (title, description):
             raise QuantitativeUiError("submission key was already used for different content")
@@ -335,7 +339,7 @@ class QuantitativeUiService:
             project = self.projects.get_project(study_id)
         except EntityNotFoundError:
             return None
-        if project.owner_principal_id != owner_id:
+        if not self._has_project_access(project, owner_id):
             raise QuantitativeUiError("Quantitative study not found")
         snapshots = self.state.list_for_run(
             study_id,
@@ -372,7 +376,7 @@ class QuantitativeUiService:
             project = self.projects.get_project(project_id)
         except Exception as exc:
             raise QuantitativeUiError("Quantitative study not found") from exc
-        if project.owner_principal_id != owner_id:
+        if not self._has_project_access(project, owner_id):
             raise QuantitativeUiError("Quantitative study not found")
         if study is None:
             snapshots = self.state.list_for_run(study_id, project_id=study_id, expected_type=QuantitativeStudyProjection)
@@ -1272,7 +1276,7 @@ class QuantitativeUiService:
             project = self.projects.get_project(project_id)
         except Exception as exc:
             raise QuantitativeUiError("Quantitative workflow run not found") from exc
-        if project.owner_principal_id != owner_id:
+        if not self._has_project_access(project, owner_id):
             raise QuantitativeUiError("Quantitative workflow run not found")
         try:
             run = self.workflows.get_workflow_run(run_id)

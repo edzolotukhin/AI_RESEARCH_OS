@@ -43,6 +43,7 @@ class PostgreSQLProjectRepository:
                 session, project_id=project.id, semantic_key="project-created",
                 event_type="PROJECT_CREATED", source_kind="project",
                 source_id=project.id, occurred_at=project.created_at or None,
+                actor_id=project.owner_principal_id,
             )
 
     def save(

@@ -24,6 +24,7 @@ from api.routers import (
     ui_quantitative,
     ui_projects,
     ui_qualitative,
+    ui_identity,
     workflow_runs,
     qualitative,
 )
@@ -68,6 +69,8 @@ def create_fastapi_app(
         lifespan=lifespan,
     )
     app.state.container = app_container
+    from api.ui.session import browser_session_middleware
+    app.middleware("http")(browser_session_middleware)
 
     register_exception_handlers(app)
 
@@ -78,6 +81,7 @@ def create_fastapi_app(
     app.include_router(ui_quantitative.router)
     app.include_router(ui_projects.router)
     app.include_router(ui_qualitative.router)
+    app.include_router(ui_identity.router)
     app.include_router(qualitative.router)
     app.include_router(workflow_runs.router)
     app.include_router(artifacts.router)

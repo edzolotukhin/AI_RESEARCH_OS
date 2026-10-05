@@ -17,6 +17,8 @@
         <span>МЕТОДИ</span>
         <a href="/ui/research/new">Кабінетне дослідження</a>
         <a href="/ui/quantitative/new">Кількісне дослідження</a>
+        <span>ОБЛІКОВИЙ ЗАПИС</span>
+        <a href="/ui/account">{{ request.state.user.display_name if request.state.user and request.state.user.display_name is defined else 'Account' }}</a>
       </nav>
     </aside>
     <main>

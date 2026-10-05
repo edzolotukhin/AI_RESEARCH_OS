@@ -10,6 +10,7 @@ class ActivityEventView:
     label: str
     date_time: str
     method: str | None = None
+    actor_name: str | None = None
 
 
 @dataclass(frozen=True)

@@ -60,6 +60,7 @@ class ApplicationContainer:
     research_submission_service: ResearchSubmissionService | None = None
     authentication_service: AuthenticationService | None = None
     authorization_service: AuthorizationService | None = None
+    identity_service: Any | None = None
     background_execution: BackgroundExecutionCapability | None = None
     readiness_check: ReadinessCheck | None = None
     quantitative_ui_service: Any | None = None
