@@ -42,6 +42,11 @@ LABELS = {
     "QUAL_REVIEW_REQUESTED":"Якісну версію надіслано на перевірку", "QUAL_REVIEW_CHANGES_REQUIRED":"Якісна версія потребує змін",
     "QUAL_REVIEW_APPROVED":"Якісну версію схвалено", "QUAL_APPROVED_REVISION_CREATED":"Затверджено якісну версію",
     "QUAL_READY_FOR_DELIVERABLES":"Якісна версія готова до документів",
+    "QUAL_REPORT_DRAFT_CREATED":"Створено чернетку якісного звіту",
+    "QUAL_REPORT_FINALIZED":"Якісний звіт фіналізовано",
+    "QUAL_PDF_GENERATED":"PDF якісного звіту готовий",
+    "QUAL_PPTX_GENERATED":"Презентація якісного звіту готова",
+    "QUAL_DELIVERABLE_READY":"Якісний звіт готовий до експорту",
 }
 METHOD_LABELS = {"DESK": "Кабінетне дослідження", "QUANTITATIVE": "Кількісне дослідження", "QUALITATIVE":"Глибинні інтерв’ю"}
 
@@ -187,6 +192,14 @@ class PostgreSQLProjectActivityReader:
                         and deliverable and deliverable.project_id == row.project_id
                         and deliverable.run_id == run.id and deliverable.method == "QUANTITATIVE"
                         and deliverable.format == expected_format)
+        if row.event_type in {"QUAL_PDF_GENERATED", "QUAL_PPTX_GENERATED"}:
+            from infrastructure.persistence.postgresql.models.pdf_deliverable_model import PdfDeliverableModel
+            deliverable = session.get(PdfDeliverableModel, row.source_id)
+            expected_format = "PDF" if row.event_type == "QUAL_PDF_GENERATED" else "PPTX"
+            return bool(row.source_kind == "deliverable" and row.method == "QUALITATIVE"
+                        and deliverable and deliverable.project_id == row.project_id
+                        and deliverable.run_id == run.id and deliverable.method == "QUALITATIVE"
+                        and deliverable.format == expected_format)
         if row.method == "QUALITATIVE" and row.source_id:
             record = session.get(QualitativeStateModel, (row.project_id, row.source_id))
             expected = {"QUAL_RUN_CREATED":"run", "QUAL_SESSION_CREATED":"session", "QUAL_ARTIFACT_ACCEPTED":"artifact",
@@ -205,6 +218,9 @@ class PostgreSQLProjectActivityReader:
                         "QUAL_REVIEW_CHANGES_REQUIRED":"qualitative_review",
                         "QUAL_REVIEW_APPROVED":"qualitative_review",
                         "QUAL_APPROVED_REVISION_CREATED":"qualitative_approved_revision",
-                        "QUAL_READY_FOR_DELIVERABLES":"qualitative_approved_revision"}.get(row.event_type)
+                        "QUAL_READY_FOR_DELIVERABLES":"qualitative_approved_revision",
+                        "QUAL_REPORT_DRAFT_CREATED":"qualitative_report_revision",
+                        "QUAL_REPORT_FINALIZED":"qualitative_report_revision",
+                        "QUAL_DELIVERABLE_READY":"qualitative_report_revision"}.get(row.event_type)
             return bool(record and record.run_id == run.id and record.record_type == expected)
         return False

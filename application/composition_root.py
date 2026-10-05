@@ -109,6 +109,7 @@ from infrastructure.security.sha256_digest_provider import Sha256DigestProvider
 from infrastructure.quantitative.importers import SavPyreadstatAdapter, XlsxOpenpyxlAdapter
 from infrastructure.quantitative.storage.protected_file_dataset_storage import ProtectedFileDatasetStorage
 from application.deliverables.service import ProjectDeliverablesService
+from application.qualitative.report_service import QualitativeReportService
 from infrastructure.documents.reportlab_pdf_renderer import ReportLabPdfRenderer
 from infrastructure.documents.pptx_renderer import PptxRenderer
 
@@ -719,10 +720,12 @@ def create_application_container(
         from infrastructure.persistence.postgresql.project_activity_reader import PostgreSQLProjectActivityReader
         activity_reader = PostgreSQLProjectActivityReader(persistence.activation_sessions)
 
+    qualitative_report_service = QualitativeReportService(qualitative_service)
     project_deliverables_service = ProjectDeliverablesService(
         projects=project_service, workflows=workflow_service,
         reports=report_query_service, reviews=review_query_service,
         quantitative_state=quantitative_ui_service.state if quantitative_ui_service else None,
+        qualitative_reports=qualitative_report_service,
         store=persistence.pdf_store, renderer=ReportLabPdfRenderer(),
         presentation_jobs=persistence.presentation_jobs,
         pptx_renderer=PptxRenderer() if persistence.presentation_jobs is not None else None,
@@ -757,6 +760,7 @@ def create_application_container(
             qualitative_service, LLMQualitativeAnalysisProvider(stage_llm_clients.analysis)),
         qualitative_post_analysis_service=QualitativePostAnalysisService(
             qualitative_service, LLMQualitativeAnalysisProvider(stage_llm_clients.analysis), review_repository),
+        qualitative_report_service=qualitative_report_service,
         project_planning_service=project_planning_service,
         activity_reader=activity_reader,
         project_deliverables_service=project_deliverables_service,

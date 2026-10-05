@@ -34,18 +34,21 @@ class ReportCatalogItem:
 class ReportCatalog:
     desk: tuple[ReportCatalogItem, ...]
     quantitative: tuple[ReportCatalogItem, ...]
+    qualitative: tuple[ReportCatalogItem, ...]
     latest_created_desk_id: str | None
     latest_approved_desk_id: str | None
 
 
 class ProjectDeliverablesService:
     def __init__(self, *, projects, workflows, reports, reviews, quantitative_state,
+                 qualitative_reports=None,
                  store, renderer, presentation_jobs=None, pptx_renderer=None) -> None:
         self.projects = projects
         self.workflows = workflows
         self.reports = reports
         self.reviews = reviews
         self.quantitative_state = quantitative_state
+        self.qualitative_reports = qualitative_reports
         self.store = store
         self.renderer = renderer
         self.presentation_jobs = presentation_jobs
@@ -157,10 +160,13 @@ class ProjectDeliverablesService:
         quant_templates = {QUANTITATIVE_WORKFLOW_ID, CMF_QUANTITATIVE_WORKFLOW_ID}
         desk_runs: set[str] = set()
         quant_runs: set[str] = set()
+        qual_runs: set[str] = set()
+        from application.qualitative.service import QUAL_TEMPLATE
         for run in self.workflows.list_workflow_runs_for_project(project_id):
             if run.project_id != project_id:
                 raise AccessDeniedError("Проєкт не знайдено")
-            (quant_runs if run.workflow_template_id in quant_templates else desk_runs).add(run.id)
+            (quant_runs if run.workflow_template_id in quant_templates else
+             qual_runs if run.workflow_template_id == QUAL_TEMPLATE else desk_runs).add(run.id)
         from application.methods.versioning import resolve_pin
         from application.methods.desk.profile import PIN
         desk = []
@@ -174,6 +180,7 @@ class ProjectDeliverablesService:
         desk.extend(self._desk(project_id, legacy_runs))
         desk.sort(key=lambda item: (item.created_at or "", item.revision_number or 0, item.source_id), reverse=True)
         quant = self._quantitative(project_id, quant_runs)
+        qual = self.qualitative_reports.documents(project_id, qual_runs) if self.qualitative_reports else []
 
         def item(document):
             pdf = self.store.find(project_id=project_id, method=document.method,
@@ -195,13 +202,14 @@ class ProjectDeliverablesService:
                         format="PPTX", template_version=self.pptx_renderer.template_version)
             return ReportCatalogItem(document, pdf, job, pptx)
 
-        return ReportCatalog(tuple(map(item, desk)), tuple(map(item, quant)),
+        return ReportCatalog(tuple(map(item, desk)), tuple(map(item, quant)), tuple(map(item, qual)),
                              desk[0].source_id if desk else None,
                              next((doc.source_id for doc in desk if doc.status == "Схвалено"), None))
 
     def source(self, project_id: str, method: str, source_id: str, *, owner_id: str) -> ReportCatalogItem:
         catalog = self.catalog(project_id, owner_id=owner_id)
-        group = catalog.desk if method == "DESK" else catalog.quantitative if method == "QUANTITATIVE" else ()
+        group = (catalog.desk if method == "DESK" else catalog.quantitative if method == "QUANTITATIVE"
+                 else catalog.qualitative if method == "QUALITATIVE" else ())
         matches = [item for item in group if item.document.source_id == source_id]
         if len(matches) != 1:
             raise AccessDeniedError("Звіт не знайдено")
@@ -242,7 +250,7 @@ class ProjectDeliverablesService:
             raise AccessDeniedError("PDF не знайдено")
         if record.renderer_version not in {RENDERER_VERSION, "prf06e-reportlab-1"}:
             raise AccessDeniedError("PDF не знайдено")
-        if method == "QUANTITATIVE" and record.source_version != document.source_version:
+        if method in {"QUANTITATIVE", "QUALITATIVE"} and record.source_version != document.source_version:
             raise AccessDeniedError("PDF не знайдено")
         if method == "DESK" and not record.source_version.startswith(
             f"revision-{document.revision_number}-review-"):
@@ -325,7 +333,7 @@ class ProjectDeliverablesService:
             project_id, method, document.run_id, document.study_id, source_id,
             "PPTX", self.pptx_renderer.media_type):
             raise AccessDeniedError("Презентацію не знайдено")
-        if (method == "QUANTITATIVE" and record.source_version != document.source_version) or (
+        if (method in {"QUANTITATIVE", "QUALITATIVE"} and record.source_version != document.source_version) or (
             method == "DESK" and not record.source_version.startswith(
                 f"revision-{document.revision_number}-review-")):
             raise AccessDeniedError("Презентацію не знайдено")

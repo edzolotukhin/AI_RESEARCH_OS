@@ -11,8 +11,10 @@ templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent
 def _ctx(request, project_id, run_id, error=None):
     owner = resolve_ui_principal(request.app.state.container).principal_id
     service = request.app.state.container.qualitative_service
+    records=service.records(project_id,run_id,owner_id=owner)
     return {"request":request,"project_id":project_id,"run_id":run_id,"error":error,
-            "records":service.records(project_id,run_id,owner_id=owner),
+            "records":records,
+            "qual_reports":[x for x in records if x.record_type == "qualitative_report_revision"],
             "readiness":service.readiness(project_id,run_id,owner_id=owner).value,
             "analysis_readiness":request.app.state.container.qualitative_analysis_service.readiness(
                 project_id,run_id,owner_id=owner),
@@ -159,6 +161,31 @@ def review(request: Request, project_id: str, run_id: str, revision_id: str, dec
     request.app.state.container.qualitative_post_analysis_service.review(project_id,run_id,revision_id,
         owner_id=owner,decision=decision,comments=comments)
     return RedirectResponse(f"/ui/projects/{project_id}/qualitative/{run_id}",303)
+
+@router.post("/{run_id}/deliverables/reports")
+def create_report(request: Request, project_id: str, run_id: str,
+                  approved_revision_id: str=Form(...), title: str=Form("")):
+    owner=resolve_ui_principal(request.app.state.container).principal_id
+    request.app.state.container.qualitative_report_service.create_draft(
+        project_id,run_id,approved_revision_id,owner_id=owner,title=title)
+    return RedirectResponse(f"/ui/projects/{project_id}/qualitative/{run_id}#deliverables",303)
+
+@router.post("/{run_id}/deliverables/reports/{report_id}/edit")
+def edit_report(request: Request, project_id: str, run_id: str, report_id: str,
+                title: str=Form(...), executive_summary: str=Form(...), methodology: str=Form(...),
+                limitations: str=Form(...), conclusion: str=Form(...)):
+    owner=resolve_ui_principal(request.app.state.container).principal_id
+    request.app.state.container.qualitative_report_service.revise(
+        project_id,run_id,report_id,owner_id=owner,title=title,executive_summary=executive_summary,
+        methodology=methodology,limitations=limitations,conclusion=conclusion)
+    return RedirectResponse(f"/ui/projects/{project_id}/qualitative/{run_id}#deliverables",303)
+
+@router.post("/{run_id}/deliverables/reports/{report_id}/finalize")
+def finalize_report(request: Request, project_id: str, run_id: str, report_id: str):
+    owner=resolve_ui_principal(request.app.state.container).principal_id
+    request.app.state.container.qualitative_report_service.finalize(
+        project_id,run_id,report_id,owner_id=owner)
+    return RedirectResponse(f"/ui/projects/{project_id}/outputs",303)
 
 @router.post("/{run_id}/transcripts/{transcript_id}/exports")
 def export(request: Request, project_id: str, run_id: str, transcript_id: str):

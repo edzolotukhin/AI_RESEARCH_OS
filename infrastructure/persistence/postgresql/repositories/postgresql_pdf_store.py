@@ -52,14 +52,14 @@ class PostgreSQLPdfStore:
         with self._sessions.session() as session:
             inserted = session.execute(insert(PdfDeliverableModel).values(**values).on_conflict_do_nothing(
                 constraint="uq_project_deliverable_identity").returning(PdfDeliverableModel.id)).scalar_one_or_none()
-            if inserted is not None and record.method == "QUANTITATIVE":
+            if inserted is not None and record.method in {"QUANTITATIVE", "QUALITATIVE"}:
                 record_activity(
                     session, project_id=record.project_id,
-                    semantic_key=f"quant-deliverable:{record.format.lower()}:{record.id}",
-                    event_type=("QUANT_PDF_GENERATED" if record.format == "PDF"
-                                else "QUANT_PPTX_GENERATED"),
+                    semantic_key=f"{record.method.lower()}-deliverable:{record.format.lower()}:{record.id}",
+                    event_type=(("QUANT_" if record.method == "QUANTITATIVE" else "QUAL_") +
+                                ("PDF_GENERATED" if record.format == "PDF" else "PPTX_GENERATED")),
                     source_kind="deliverable", source_id=record.id,
-                    occurred_at=record.created_at, method="QUANTITATIVE",
+                    occurred_at=record.created_at, method=record.method,
                     run_id=record.run_id,
                 )
         found = self.find(project_id=record.project_id, method=record.method,

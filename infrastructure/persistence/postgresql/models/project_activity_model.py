@@ -25,12 +25,14 @@ class ProjectActivityModel(Base):
             "'QUAL_THEMATIC_ANALYSIS_ACCEPTED', 'QUAL_READY_FOR_FINDINGS', "
             "'QUAL_FINDINGS_REVISION_CREATED', 'QUAL_AI_FINDINGS_READY', 'QUAL_FINDING_ACCEPTED', "
             "'QUAL_INSIGHT_ACCEPTED', 'QUAL_REVIEW_REQUESTED', 'QUAL_REVIEW_CHANGES_REQUIRED', "
-            "'QUAL_REVIEW_APPROVED', 'QUAL_APPROVED_REVISION_CREATED', 'QUAL_READY_FOR_DELIVERABLES')",
+            "'QUAL_REVIEW_APPROVED', 'QUAL_APPROVED_REVISION_CREATED', 'QUAL_READY_FOR_DELIVERABLES', "
+            "'QUAL_REPORT_DRAFT_CREATED', 'QUAL_REPORT_FINALIZED', 'QUAL_PDF_GENERATED', "
+            "'QUAL_PPTX_GENERATED', 'QUAL_DELIVERABLE_READY')",
             name="ck_project_activity_type",
         ),
         CheckConstraint("method IS NULL OR method IN ('DESK', 'QUANTITATIVE', 'QUALITATIVE')", name="ck_project_activity_method"),
         CheckConstraint("verdict IS NULL OR verdict IN ('REVISE', 'REJECT')", name="ck_project_activity_verdict"),
-        CheckConstraint("source_kind IN ('project', 'design', 'run', 'study', 'report', 'review', 'revision', 'deliverable', 'session', 'qual_artifact', 'transcription_job', 'transcript', 'transcript_export', 'qual_analysis_corpus', 'qual_codebook', 'qual_ai_proposal', 'qual_coding', 'qual_thematic_analysis', 'qual_finding', 'qual_insight', 'qual_post_analysis_revision', 'qual_review', 'qual_approved_revision')", name="ck_project_activity_source_kind"),
+        CheckConstraint("source_kind IN ('project', 'design', 'run', 'study', 'report', 'review', 'revision', 'deliverable', 'session', 'qual_artifact', 'transcription_job', 'transcript', 'transcript_export', 'qual_analysis_corpus', 'qual_codebook', 'qual_ai_proposal', 'qual_coding', 'qual_thematic_analysis', 'qual_finding', 'qual_insight', 'qual_post_analysis_revision', 'qual_review', 'qual_approved_revision', 'qual_report')", name="ck_project_activity_source_kind"),
         CheckConstraint("event_version > 0", name="ck_project_activity_version"),
         CheckConstraint(
             "(event_type IN ('DESK_REVIEW_ATTENTION', 'QUANT_REVIEW_ATTENTION')) = (verdict IS NOT NULL)",
