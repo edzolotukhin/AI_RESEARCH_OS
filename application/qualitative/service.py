@@ -9,15 +9,22 @@ from application.qualitative.transcript_parser import parse_docx, parse_prepared
 from domain.qualitative.authority import *
 from domain.workflow_template import WorkflowTemplate
 from application.persistence.exceptions import AccessDeniedError
+from application.upload_security import (
+    safe_upload_filename,
+    validate_audio_signature,
+    validate_docx,
+)
 
 QUAL_TEMPLATE = "cmf-qualitative-idi-v1"
 
 
 class QualitativeService:
-    def __init__(self, *, projects, workflows, repository, provider, digest_provider, activity_recorder=None, access_checker=None):
+    def __init__(self, *, projects, workflows, repository, provider, digest_provider, activity_recorder=None, access_checker=None,
+                 participant_provider_transfer_enabled=False):
         self.projects, self.workflows, self.repository = projects, workflows, repository
         self.provider, self.digest, self.activity_recorder = provider, digest_provider, activity_recorder
         self.access_checker = access_checker
+        self.participant_provider_transfer_enabled = participant_provider_transfer_enabled
 
     def _project(self, project_id, owner_id):
         project = self.projects.get_project(project_id)
@@ -74,12 +81,29 @@ class QualitativeService:
     def upload(self, project_id, run_id, session_id, *, filename, media_type, content, owner_id):
         self._project(project_id, owner_id); session = self._get(project_id, session_id, "session")
         if session.run_id != run_id: raise ValueError("Session belongs to another run")
+        filename = safe_upload_filename(filename)
         suffix = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
         if suffix == "docx": kind, limit = ArtifactKind.PREPARED_DOCX, 10_000_000
         elif suffix == "txt": kind, limit = ArtifactKind.PREPARED_TEXT, 5_000_000
         elif suffix in {"wav","mp3","m4a","mp4","webm"}: kind, limit = ArtifactKind.AUDIO, 100_000_000
         else: raise ValueError("Unsupported qualitative artifact type")
         if not content or len(content) > limit: raise ValueError("Invalid qualitative artifact size")
+        segments = None
+        if kind is ArtifactKind.PREPARED_DOCX:
+            validate_docx(content)
+            segments = parse_docx(content)
+        elif kind is ArtifactKind.PREPARED_TEXT:
+            try:
+                segments = parse_prepared_text(content.decode("utf-8"))
+            except UnicodeDecodeError as exc:
+                raise ValueError("Prepared transcript must be valid UTF-8 text") from exc
+        else:
+            validate_audio_signature(suffix, content)
+            if (getattr(self.provider, "external_participant_transfer", True)
+                    and not self.participant_provider_transfer_enabled):
+                raise ValueError(
+                    "External transcription is not enabled for participant data in this workspace"
+                )
         identity = str(uuid4()); artifact = QualitativeArtifact.from_bytes(content=content, artifact_id=identity,
             project_id=project_id, run_id=run_id, session_id=session_id, kind=kind, media_type=media_type,
             original_filename=filename, imported_at=datetime.now(UTC))
@@ -87,7 +111,6 @@ class QualitativeService:
         self._put(project_id, run_id, "artifact", identity, payload, data=content)
         self._activity(project_id, run_id, "QUAL_ARTIFACT_ACCEPTED", "qual_artifact", identity)
         if kind is ArtifactKind.AUDIO: return artifact, self.queue_transcription(project_id, run_id, identity, owner_id=owner_id)
-        segments = parse_docx(content) if kind is ArtifactKind.PREPARED_DOCX else parse_prepared_text(content.decode("utf-8"))
         return artifact, self._canonicalize(project_id, run_id, session_id, identity, SourceMode.PREPARED_TRANSCRIPT, segments)
 
     def queue_transcription(self, project_id, run_id, artifact_id, *, owner_id):

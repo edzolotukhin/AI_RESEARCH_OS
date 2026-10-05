@@ -405,12 +405,18 @@ class QuantitativeUiService:
                replace_existing: bool = False) -> QuantitativeStudyProjection:
         study = self.get(study_id, owner_id=owner_id)
         self._require_setup_paused(study)
+        from application.upload_security import safe_upload_filename, validate_quantitative_signature
+        filename = safe_upload_filename(filename)
         suffix = Path(filename).suffix.casefold()
         formats = {".sav": DatasetFormat.SAV, ".xlsx": DatasetFormat.XLSX}
         if suffix not in formats:
             raise QuantitativeUiError("Only SAV and XLSX datasets are supported")
         if not content or len(content) > self.MAX_UPLOAD_BYTES:
             raise QuantitativeUiError("Dataset is empty or exceeds the upload limit")
+        try:
+            validate_quantitative_signature(suffix, content)
+        except ValueError as exc:
+            raise QuantitativeUiError(str(exc)) from exc
         current_dataset = None
         if study.dataset_record_id:
             current_dataset = self.state.load(

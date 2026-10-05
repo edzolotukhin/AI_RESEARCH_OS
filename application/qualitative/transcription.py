@@ -22,6 +22,7 @@ class TranscriptionProvider(Protocol):
 
 class DeterministicTranscriptionProvider:
     """Provider-free acceptance adapter; fixtures are explicit and immutable."""
+    external_participant_transfer = False
     def __init__(self, fixtures: dict[str, tuple[TranscriptSegment, ...]]):
         self._fixtures = dict(fixtures)
 

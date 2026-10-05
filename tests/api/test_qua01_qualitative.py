@@ -46,7 +46,7 @@ class Qua01ApiTests(ApiTestCase):
         self.container.qualitative_service.provider = DeterministicTranscriptionProvider({"audio-fixed": ()})
         # Upload assigns an opaque artifact identity, so bind the deterministic fixture after upload.
         uploaded = self.client.post(f"/projects/{self.project.id}/qualitative/{run}/sessions/{session}/artifacts",
-            files={"artifact":("interview.wav",b"RIFFsynthetic","audio/wav")}).json()
+            files={"artifact":("interview.wav",b"RIFF\x04\x00\x00\x00WAVEsynthetic","audio/wav")}).json()
         artifact_id, job_id = uploaded["artifact_id"], uploaded["result_id"]
         segments=(TranscriptSegment("segment-0001",0,"Hello",speaker_label="A",speaker_role=SpeakerRole.INTERVIEWER,
             start_ms=1000,end_ms=1500,words=(TranscriptWord("Hello",1000,1500),)),)
@@ -68,7 +68,7 @@ class Qua01ApiTests(ApiTestCase):
         run, session = self.create_context()
         uploaded = self.client.post(
             f"/projects/{self.project.id}/qualitative/{run}/sessions/{session}/artifacts",
-            files={"artifact":("interview.wav",b"RIFFsynthetic","audio/wav")}).json()
+            files={"artifact":("interview.wav",b"RIFF\x04\x00\x00\x00WAVEsynthetic","audio/wav")}).json()
         provider = FailingProvider()
         self.container.qualitative_service.provider = provider
 

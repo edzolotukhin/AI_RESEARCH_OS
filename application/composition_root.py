@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from application.config import ApplicationConfig, ApplicationOverrides
 from application.executor_resolver import ExecutorResolver
 from application.factories.research_design_factory import ResearchDesignFactory
@@ -714,6 +716,9 @@ def create_application_container(
         provider=DeterministicTranscriptionProvider({}),
         digest_provider=qualitative_digest_provider, activity_recorder=qualitative_activity_recorder,
         access_checker=human_project_access,
+        participant_provider_transfer_enabled=os.environ.get(
+            "ALLOW_PARTICIPANT_DATA_EXTERNAL_TRANSCRIPTION", "0"
+        ).lower() in {"1", "true", "yes"},
     )
 
     project_planning_service = ProjectPlanningService(

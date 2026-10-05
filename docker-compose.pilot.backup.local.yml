@@ -1,0 +1,6 @@
+services:
+  recovery:
+    environment:
+      RESTIC_REPOSITORY: /offhost/repository
+    volumes:
+      - ${OPS01B_OFFHOST_PATH:?set isolated fake off-host path}:/offhost

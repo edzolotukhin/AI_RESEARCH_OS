@@ -8,6 +8,7 @@ from domain.qualitative.authority import SpeakerRole, TranscriptSegment, Transcr
 
 class AssemblyAITranscriptionProvider:
     """Narrow prerecorded adapter; credentials never enter canonical objects or errors."""
+    external_participant_transfer = True
     def __init__(self, *, api_key: str, base_url: str = "https://api.assemblyai.com/v2", client=None):
         if not api_key:
             raise ValueError("AssemblyAI API key is required")

@@ -1,0 +1,33 @@
+services:
+  recovery:
+    build:
+      context: .
+      dockerfile: deploy/pilot/backup.Dockerfile
+    restart: "no"
+    profiles: [operations]
+    networks: [pilot_backend]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:?set POSTGRES_USER}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB}
+      APP_SHA: ${APP_SHA:?set exact accepted APP_SHA}
+      ALEMBIC_HEAD: ${ALEMBIC_HEAD:-023_ux01a_identity_membership}
+      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:?set independent encrypted backup destination}
+      RESTIC_PASSWORD_FILE: /run/secrets/restic_password
+      BACKUP_WORK_ROOT: /work
+      QUANTITATIVE_PROTECTED_STORAGE_ROOT: /var/lib/ai_research_os/quantitative-protected
+      PROJECTS_ROOT: /var/lib/ai_research_os/projects
+      RESTORE_CONFIRMATION: ${RESTORE_CONFIRMATION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      RESTIC_REST_USERNAME: ${RESTIC_REST_USERNAME:-}
+      RESTIC_REST_PASSWORD: ${RESTIC_REST_PASSWORD:-}
+    volumes:
+      - pilot_protected_data:/var/lib/ai_research_os/quantitative-protected
+      - pilot_project_data:/var/lib/ai_research_os/projects
+      - pilot_backup_staging:/work
+      - ${RESTIC_PASSWORD_FILE_HOST:?set host path to recovery credential}:/run/secrets/restic_password:ro
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "5"}
+
+volumes:
+  pilot_backup_staging:

@@ -20,6 +20,13 @@ def minimal_docx(paragraphs):
                 f'<w:body>{body}</w:body></w:document>').encode()
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as archive:
+        archive.writestr("[Content_Types].xml", (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Override PartName="/word/document.xml" '
+            'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+            '</Types>'
+        ))
         archive.writestr("word/document.xml", document)
     return output.getvalue()
 
