@@ -8,7 +8,8 @@ import os
 
 
 def _key(container) -> bytes:
-    value = ((os.environ.get("UI_INTERNAL_API_KEY") or "").strip()
+    value = ((os.environ.get("UI_CSRF_SECRET") or "").strip()
+             or (os.environ.get("UI_INTERNAL_API_KEY") or "").strip()
              or (os.environ.get("AI_RESEARCH_OS_API_KEY") or "").strip()
              or getattr(container, "_test_api_key_plaintext", None))
     if not value:

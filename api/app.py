@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from application.composition_root import create_application_container
 from application.config import ApplicationConfig
@@ -71,6 +72,11 @@ def create_fastapi_app(
     app.state.container = app_container
     from api.ui.session import browser_session_middleware
     app.middleware("http")(browser_session_middleware)
+    from application.production_config import configured_allowed_hosts
+    allowed_hosts = configured_allowed_hosts()
+    if allowed_hosts:
+        # Added last so host rejection is outside session/auth processing.
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 
     register_exception_handlers(app)
 

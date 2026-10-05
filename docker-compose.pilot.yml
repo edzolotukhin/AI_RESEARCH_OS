@@ -1,0 +1,153 @@
+x-app-environment: &app-environment
+  APP_ENV: pilot
+  PERSISTENCE_BACKEND: postgresql
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?set POSTGRES_USER}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB}
+  PROJECTS_ROOT: /var/lib/ai_research_os/projects
+  QUANTITATIVE_PROTECTED_STORAGE_ROOT: /var/lib/ai_research_os/quantitative-protected
+  ALLOWED_HOSTS: ${ALLOWED_HOSTS:?set ALLOWED_HOSTS}
+  UI_COOKIE_SECURE: "1"
+  UI_CSRF_SECRET: ${UI_CSRF_SECRET:?set UI_CSRF_SECRET}
+  PILOT_ADMIN_USER_ID: ${PILOT_ADMIN_USER_ID:-}
+  ARK_DESK_ENABLED: ${ARK_DESK_ENABLED:-1}
+  CMF_DESK_ENABLED: ${CMF_DESK_ENABLED:-1}
+  CMF_QUANT_ENABLED: ${CMF_QUANT_ENABLED:-1}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  SEARCH_API_KEY: ${SEARCH_API_KEY:-}
+  ASSEMBLYAI_API_KEY: ${ASSEMBLYAI_API_KEY:-}
+  SEARCH_PROVIDER: ${SEARCH_PROVIDER:-tavily}
+  EVIDENCE_EXTRACTOR: ${EVIDENCE_EXTRACTOR:-llm}
+  ANALYSIS_ENGINE: ${ANALYSIS_ENGINE:-llm}
+  REPORT_ENGINE: ${REPORT_ENGINE:-llm}
+  REVIEW_ENGINE: ${REVIEW_ENGINE:-llm}
+  DETERMINISTIC_PLANNER: ${DETERMINISTIC_PLANNER:-0}
+  DETERMINISTIC_STAGE_EXECUTORS: ${DETERMINISTIC_STAGE_EXECUTORS:-0}
+
+x-service-defaults: &service-defaults
+  build:
+    context: .
+  restart: unless-stopped
+  networks: [pilot_backend]
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "5"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - pilot_postgres_data:/var/lib/postgresql/data
+    networks: [pilot_backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "5"}
+
+  migrate:
+    <<: *service-defaults
+    restart: "no"
+    profiles: [operations]
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment: *app-environment
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    volumes:
+      - pilot_protected_data:/var/lib/ai_research_os/quantitative-protected
+      - pilot_project_data:/var/lib/ai_research_os/projects
+
+  bootstrap-owner:
+    <<: *service-defaults
+    restart: "no"
+    profiles: [operations]
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment:
+      <<: *app-environment
+      PILOT_OWNER_EMAIL: ${PILOT_OWNER_EMAIL:?set PILOT_OWNER_EMAIL}
+      PILOT_OWNER_DISPLAY_NAME: ${PILOT_OWNER_DISPLAY_NAME:?set PILOT_OWNER_DISPLAY_NAME}
+      PILOT_OWNER_PASSWORD: ${PILOT_OWNER_PASSWORD:?set PILOT_OWNER_PASSWORD}
+      UX01A_LEGACY_PROJECT_IDS: ${UX01A_LEGACY_PROJECT_IDS:-}
+    command: ["python", "-m", "tools.bootstrap_pilot_owner"]
+    volumes:
+      - pilot_protected_data:/var/lib/ai_research_os/quantitative-protected
+      - pilot_project_data:/var/lib/ai_research_os/projects
+
+  api:
+    <<: *service-defaults
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment: *app-environment
+    command: ["uvicorn", "api.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
+    expose: ["8000"]
+    networks: [pilot_frontend, pilot_backend]
+    volumes:
+      - pilot_protected_data:/var/lib/ai_research_os/quantitative-protected
+      - pilot_project_data:/var/lib/ai_research_os/projects
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=5)\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  worker:
+    <<: *service-defaults
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment:
+      <<: *app-environment
+      WORKER_LEASE_DURATION_SECONDS: "30"
+      WORKER_HEARTBEAT_INTERVAL_SECONDS: "10"
+      WORKER_POLL_INTERVAL_SECONDS: "1"
+    command: ["python", "-m", "worker.main"]
+    volumes:
+      - pilot_protected_data:/var/lib/ai_research_os/quantitative-protected
+      - pilot_project_data:/var/lib/ai_research_os/projects
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD-SHELL", "python -m worker.healthcheck"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 45s
+
+  proxy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    depends_on:
+      api: {condition: service_healthy}
+    environment:
+      PILOT_HOST: ${PILOT_HOST:?set PILOT_HOST}
+      TLS_CONTACT_EMAIL: ${TLS_CONTACT_EMAIL:?set TLS_CONTACT_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+    networks: [pilot_frontend]
+    volumes:
+      - ./deploy/pilot/Caddyfile:/etc/caddy/Caddyfile:ro
+      - pilot_caddy_data:/data
+      - pilot_caddy_config:/config
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "5"}
+
+networks:
+  pilot_frontend:
+  pilot_backend:
+
+volumes:
+  pilot_postgres_data:
+  pilot_protected_data:
+  pilot_project_data:
+  pilot_caddy_data:
+  pilot_caddy_config:

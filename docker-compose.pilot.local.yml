@@ -1,0 +1,17 @@
+services:
+  postgres:
+    restart: "no"
+  api:
+    restart: "no"
+  worker:
+    restart: "no"
+  proxy:
+    restart: "no"
+    environment:
+      PILOT_HOST: localhost
+      TLS_CONTACT_EMAIL: local@example.invalid
+    ports: !override
+      - "127.0.0.1:18080:80"
+      - "127.0.0.1:18443:443"
+    volumes:
+      - ./deploy/pilot/Caddyfile.local:/etc/caddy/Caddyfile:ro

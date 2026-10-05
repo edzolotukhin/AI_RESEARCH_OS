@@ -1,0 +1,20 @@
+{
+    email {$TLS_CONTACT_EMAIL}
+}
+
+{$PILOT_HOST} {
+    encode zstd gzip
+    request_body {
+        max_size 128MB
+    }
+    reverse_proxy api:8000 {
+        transport http {
+            dial_timeout 10s
+            response_header_timeout 120s
+        }
+    }
+    log {
+        output stdout
+        format json
+    }
+}

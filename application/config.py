@@ -149,9 +149,12 @@ class ApplicationConfig:
 
     @classmethod
     def from_env(cls) -> ApplicationConfig:
+        from application.production_config import validate_production_environment
         from infrastructure.persistence.persistence_factory import (
             resolve_persistence_backend,
         )
+
+        validate_production_environment()
 
         return cls(
             ark_desk_enabled=os.environ.get("ARK_DESK_ENABLED", "0").lower() in {"1", "true", "yes"},
