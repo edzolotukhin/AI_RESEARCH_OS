@@ -3,14 +3,14 @@
 {% block content %}
 <div class="breadcrumb"><a href="/ui/projects">Проєкти</a><span>/</span><span>{{ view.project_name }}</span></div>
 <section class="project-header">
-  <div><span class="lifecycle-chip">{{ view.lifecycle }}</span><p>Простір проєкту для незалежних методів у спільному контексті дослідження.</p></div>
+  <div><span class="lifecycle-chip">{{ view.lifecycle }}</span> <span class="role-chip">{{ {'OWNER':'Власник','RESEARCHER':'Дослідник','VIEWER':'Перегляд'}.get(view.role, view.role) }}</span><p>Методи мають спільний контекст проєкту, але їхні висновки залишаються незалежними.</p></div>
   {% if view.attention_items %}<div class="attention">Потребує уваги: {{ view.attention_items|join(', ') }}</div>{% endif %}
 </section>
 <section class="context compact-section">
   <p class="eyebrow">КОНТЕКСТ ДОСЛІДЖЕННЯ</p>
   {% if view.brief %}<h2>{{ view.brief.title }}</h2><p class="research-question">{{ view.brief.business_question }}</p>{% if view.brief.objectives %}<ul>{% for item in view.brief.objectives %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
   {% else %}<h2>Дослідницький бриф ще не додано</h2><p class="muted">Додайте контекст і цілі дослідження перед формуванням дизайну.</p>{% endif %}
-  <a class="text-link" href="/ui/projects/{{ view.project_id }}/brief">{{ 'Редагувати бриф' if view.brief else 'Додати бриф' }}</a>
+  {% if view.can_mutate %}<a class="text-link" href="/ui/projects/{{ view.project_id }}/brief">{{ 'Редагувати бриф' if view.brief else 'Додати бриф' }}</a>{% endif %}
 </section>
 <section class="design-gate compact-section"><p class="eyebrow">ДИЗАЙН ДОСЛІДЖЕННЯ</p>
   {% if view.design_status == 'APPROVED' and view.design_current %}<h2>Дизайн затверджено</h2><p class="muted">Обрані методи можна активувати незалежно.</p>
@@ -27,11 +27,11 @@
     {% if method.progress is not none %}<div class="progress"><i style="width:{{ method.progress }}%"></i></div><small>Виконано: {{ method.progress }}%</small>{% endif %}
     <div class="outputs-label">РЕЗУЛЬТАТИ</div>
     <div class="outputs"><span>Висновки <b>{{ method.output.findings_count if method.output.findings_count is not none else '—' }}</b></span><span>Інсайти <b>{{ method.output.insights_count if method.output.insights_count is not none else '—' }}</b></span><span>Звіт <b>{{ 'Доступний' if method.output.report_available else '—' }}</b></span></div>
-    {% if '/activate' in method.primary_action.href %}<form method="post" action="{{ method.primary_action.href }}"><button class="button" type="submit">{{ method.primary_action.label }}</button></form>{% else %}<a class="button" href="{{ method.primary_action.href }}">{{ method.primary_action.label }}</a>{% endif %}
+    {% if view.can_mutate and '/activate' in method.primary_action.href %}<form method="post" action="{{ method.primary_action.href }}"><button class="button" type="submit">{{ method.primary_action.label }}</button></form>{% else %}<a class="button" href="{{ method.open_action.href if method.open_action else method.primary_action.href }}">{{ 'Переглянути дослідження' if not view.can_mutate else method.primary_action.label }}</a>{% endif %}
   </article>
   {% endfor %}
 </div>
 {% if not view.methods %}<section class="empty compact-empty"><h2>Методи ще не обрано</h2><p>Додайте метод, який відповідає завданню цього проєкту.</p></section>{% endif %}
-{% if view.available_methods %}<section class="add-method compact-section"><p class="eyebrow">ДОДАТИ МЕТОД</p><form method="post" action="/ui/projects/{{ view.project_id }}/methods"><select name="method" required><option value="">Оберіть метод</option>{% if 'DESK' in view.available_methods %}<option value="DESK">Кабінетне дослідження</option>{% endif %}{% if 'QUANTITATIVE' in view.available_methods %}<option value="QUANTITATIVE">Кількісне дослідження</option>{% endif %}{% if 'QUALITATIVE' in view.available_methods %}<option value="QUALITATIVE">Глибинні інтерв’ю</option>{% endif %}</select><button class="button button-quiet" type="submit">+ Додати метод</button></form></section>{% endif %}
+{% if view.available_methods and view.can_mutate %}<section class="add-method compact-section"><p class="eyebrow">ДОДАТИ МЕТОД</p><form method="post" action="/ui/projects/{{ view.project_id }}/methods"><select name="method" required><option value="">Оберіть метод</option>{% if 'DESK' in view.available_methods %}<option value="DESK">Кабінетне дослідження</option>{% endif %}{% if 'QUANTITATIVE' in view.available_methods %}<option value="QUANTITATIVE">Кількісне дослідження</option>{% endif %}{% if 'QUALITATIVE' in view.available_methods %}<option value="QUALITATIVE">Глибинні інтерв’ю</option>{% endif %}</select><button class="button button-quiet" type="submit">+ Додати метод</button></form></section>{% endif %}
 <section class="context compact-section output-note"><p class="eyebrow">РЕЗУЛЬТАТИ ПРОЄКТУ</p><p>Результати залишаються окремими для кожного методу. Простір проєкту не об’єднує висновки, інсайти, рекомендації чи звіти.</p><a class="button button-quiet" href="/ui/projects/{{ view.project_id }}/outputs">Переглянути результати та активність</a></section>
 {% endblock %}

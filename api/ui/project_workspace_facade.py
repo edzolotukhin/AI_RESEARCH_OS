@@ -33,7 +33,9 @@ class ProjectWorkspaceFacade:
         from application.query.project_workspace_views import ProjectListItemView, ProjectListView
         for project in projects:
             view=self.query.get(project.id,owner_id=project.owner_principal_id)
-            items.append(ProjectListItemView(project.id,project.name,self.query._humanize(project.status),tuple((m.name,m.state_label) for m in view.methods),bool(view.attention_items)))
+            role, _, _ = self._role(project.id)
+            next_action = next((m.primary_action.label for m in view.methods if m.state.value != "COMPLETED"), "View outputs")
+            items.append(ProjectListItemView(project.id,project.name,self.query._humanize(project.status),tuple((m.name,m.state_label) for m in view.methods),bool(view.attention_items),role,next_action))
         return ProjectListView(tuple(items))
     def create_project(self, name: str, selected_methods):
         name = name.strip()
@@ -72,7 +74,17 @@ class ProjectWorkspaceFacade:
         return project,project.owner_principal_id
     def get_workspace(self, project_id: str):
         project,_=self._project_owner(project_id)
-        return self.query.get(project_id, owner_id=project.owner_principal_id)
+        from dataclasses import replace
+        role, can_mutate, can_manage = self._role(project_id)
+        return replace(self.query.get(project_id, owner_id=project.owner_principal_id),
+                       role=role, can_mutate=can_mutate, can_manage_access=can_manage)
+
+    def _role(self, project_id: str):
+        if self.principal.authentication_type != "browser_session":
+            return "OWNER", True, True
+        membership = self.container.identity_service.require(project_id, self.owner_id)
+        role = membership.role.value
+        return role, role in {"OWNER", "RESEARCHER"}, role == "OWNER"
     def get_outputs(self, project_id: str):
         project = self.authorization.require_project(self.principal, project_id)
         return ProjectOutputsQueryService(container=self.container).get(

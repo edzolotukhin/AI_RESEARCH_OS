@@ -8,18 +8,23 @@
 </head>
 <body>
   <div class="shell">
-    <aside>
+    <aside aria-label="Primary navigation">
       <a class="brand" href="/ui/projects"><b>AI</b> AI RESEARCH OS</a>
       <nav>
         <span>РОБОЧИЙ ПРОСТІР</span>
-        <a href="/ui/projects">Проєкти</a>
-        <a href="/ui/projects/new">Створити проєкт</a>
-        <span>МЕТОДИ</span>
-        <a href="/ui/research/new">Кабінетне дослідження</a>
-        <a href="/ui/quantitative/new">Кількісне дослідження</a>
+        <a class="{{ 'active' if request.url.path == '/ui/projects' else '' }}" href="/ui/projects">Проєкти</a>
+        {% if view is defined and view.project_id is defined %}
+        <span>ПРОЄКТ</span>
+        <a class="{{ 'active' if request.url.path == '/ui/projects/' ~ view.project_id else '' }}" href="/ui/projects/{{ view.project_id }}">Огляд</a>
+        {% for method in view.methods|default(()) %}{% if method.primary_action is defined %}<a href="{{ method.primary_action.href }}">{{ method.name }}</a>{% elif method.href is defined and method.href %}<a href="{{ method.href }}">{{ method.name }}</a>{% endif %}{% endfor %}
+        <a class="{{ 'active' if '/outputs' in request.url.path else '' }}" href="/ui/projects/{{ view.project_id }}/outputs">Результати</a>
+        <a href="/ui/projects/{{ view.project_id }}/outputs#activity">Активність</a>
+        {% if view.can_manage_access|default(false) %}<a href="/ui/projects/{{ view.project_id }}/members">Доступ до проєкту</a>{% endif %}
+        {% endif %}
         <span>ОБЛІКОВИЙ ЗАПИС</span>
         <a href="/ui/account">{{ request.state.user.display_name if request.state.user and request.state.user.display_name is defined else 'Account' }}</a>
       </nav>
+      <form class="sidebar-logout" method="post" action="/ui/logout"><button type="submit">Вийти</button></form>
     </aside>
     <main>
       <header>

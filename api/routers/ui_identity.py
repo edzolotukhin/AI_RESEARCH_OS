@@ -42,7 +42,9 @@ def account(request: Request):
 def members(request: Request, project_id: str):
     service=request.app.state.container.identity_service; user=current_ui_user.get(); service.require(project_id,user.id,owner=True)
     values=[{"membership":m,"user":service.store.get_user(m.user_id)} for m in service.store.list_memberships_for_project(project_id)]
-    return templates.TemplateResponse(request,"identity/members.html",{"request":request,"project_id":project_id,"members":values,"users":service.store.list_users(),"error":None})
+    from api.ui.project_workspace_facade import build_project_workspace_facade
+    view=build_project_workspace_facade(request.app.state.container).get_workspace(project_id)
+    return templates.TemplateResponse(request,"identity/members.html",{"request":request,"project_id":project_id,"view":view,"members":values,"users":service.store.list_users(),"error":None})
 
 @router.post("/projects/{project_id}/members", include_in_schema=False)
 def add_member(request:Request,project_id:str,user_id:str=Form(...),role:str=Form(...)):

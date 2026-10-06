@@ -6,10 +6,11 @@
   <article class="project-card">
     <div class="project-main">
       <div class="project-title-row">
-        <h2>{{ item.project_name }}</h2>
+        <h2>{{ item.project_name }}</h2><span class="role-chip">{{ item.role|title }}</span>
         <span class="lifecycle-chip">{{ item.lifecycle }}</span>
         {% if item.attention %}<span class="status-chip status-attention">Потребує уваги</span>{% endif %}
       </div>
+      <p class="next-action"><b>Наступний крок:</b> {{ item.next_action }}</p>
       <div class="project-methods">
         {% for name, state in item.method_states %}<div class="method-state"><span>{{ name }}</span><b class="status-chip status-{{ 'attention' if 'уваги' in state or 'обмеженнями' in state else 'success' if state == 'Завершено' else 'active' }}">{{ state }}</b></div>{% endfor %}
         {% if not item.method_states %}<div class="method-state"><span>Методи ще не обрано</span></div>{% endif %}
@@ -20,6 +21,6 @@
   {% endfor %}
 </div>
 {% else %}
-<section class="empty compact-empty"><h2>Проєктів ще немає</h2><p>Створіть проєкт, щоб об’єднати незалежні методи в одному дослідницькому просторі.</p><a class="button" href="/ui/projects/new">Створити проєкт</a></section>
+<section class="empty compact-empty"><h2>Проєктів ще немає</h2><p>Створіть проєкт, якщо ваша роль це дозволяє, або зверніться до власника проєкту по доступ.</p><a class="button" href="/ui/projects/new">Створити проєкт</a></section>
 {% endif %}
 {% endblock %}

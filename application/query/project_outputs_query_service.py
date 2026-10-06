@@ -167,5 +167,5 @@ class ProjectOutputsQueryService:
                                                 (bool(insights), "Прийняті якісні інсайти"),
                                                 (bool(approved), "Затверджена якісна версія")) if available)
         return MethodOutputsView("Глибинні інтерв’ю", "Готово до документів" if approved else ("Готово до висновків" if themes else ("Транскрипт готовий" if transcripts else "Підготовка")),
-            "success" if transcripts else "active", "Тематичний аналіз є аналітичним authority, а не фінальним звітом.",
+            "success" if transcripts else "active", "Тематичний аналіз завершено; фінальний звіт створюється окремо.",
             outputs, "Фінальний звіт недоступний", f"/ui/projects/{project.id}/qualitative/{run.id}")

@@ -61,6 +61,9 @@ class ProjectWorkspaceView:
     design_status: str | None
     design_current: bool
     attention_items: tuple[str, ...]
+    role: str = "OWNER"
+    can_mutate: bool = True
+    can_manage_access: bool = True
 
 
 @dataclass(frozen=True)
@@ -70,6 +73,8 @@ class ProjectListItemView:
     lifecycle: str
     method_states: tuple[tuple[str, str], ...]
     attention: bool
+    role: str = "OWNER"
+    next_action: str = "Open project"
 
 
 @dataclass(frozen=True)

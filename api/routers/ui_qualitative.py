@@ -12,7 +12,9 @@ def _ctx(request, project_id, run_id, error=None):
     owner = resolve_ui_principal(request.app.state.container).principal_id
     service = request.app.state.container.qualitative_service
     records=service.records(project_id,run_id,owner_id=owner)
+    from api.ui.project_workspace_facade import build_project_workspace_facade
     return {"request":request,"project_id":project_id,"run_id":run_id,"error":error,
+            "view":build_project_workspace_facade(request.app.state.container).get_workspace(project_id),
             "records":records,
             "qual_reports":[x for x in records if x.record_type == "qualitative_report_revision"],
             "readiness":service.readiness(project_id,run_id,owner_id=owner).value,
