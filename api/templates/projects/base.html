@@ -23,6 +23,7 @@
         {% endif %}
         <span>ОБЛІКОВИЙ ЗАПИС</span>
         <a href="/ui/account">{{ request.state.user.display_name if request.state.user and request.state.user.display_name is defined else 'Account' }}</a>
+        {% if request.state.is_operator|default(false) %}<a class="{{ 'active' if request.url.path == '/ui/operations' else '' }}" href="/ui/operations">Операції</a>{% endif %}
       </nav>
       <form class="sidebar-logout" method="post" action="/ui/logout"><button type="submit">Вийти</button></form>
     </aside>

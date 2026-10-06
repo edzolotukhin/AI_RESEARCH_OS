@@ -24,6 +24,7 @@ async def browser_session_middleware(request: Request, call_next):
     context_token = current_ui_user.set(user)
     actor_token = current_human_actor_id.set(user.id if user is not None and not hasattr(user, "authentication_type") else None)
     request.state.user = user
+    request.state.is_operator = bool(user is not None and not hasattr(user, "authentication_type") and user.id == os.environ.get("PILOT_ADMIN_USER_ID"))
     try:
         if path.startswith("/ui") and not public and user is None:
             target = path + (("?" + request.url.query) if request.url.query else "")

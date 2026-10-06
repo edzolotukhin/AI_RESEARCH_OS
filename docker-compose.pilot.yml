@@ -8,6 +8,8 @@ x-app-environment: &app-environment
   UI_COOKIE_SECURE: "1"
   UI_CSRF_SECRET: ${UI_CSRF_SECRET:?set UI_CSRF_SECRET}
   PILOT_ADMIN_USER_ID: ${PILOT_ADMIN_USER_ID:-}
+  WORKER_HEARTBEAT_FILE: /var/run/ai_research_os/worker-heartbeat.json
+  BACKUP_STATUS_FILE: /var/run/ai_research_os/backup-status.json
   ARK_DESK_ENABLED: ${ARK_DESK_ENABLED:-1}
   CMF_DESK_ENABLED: ${CMF_DESK_ENABLED:-1}
   CMF_QUANT_ENABLED: ${CMF_QUANT_ENABLED:-1}
@@ -94,6 +96,7 @@ services:
     volumes:
       - pilot_protected_data:/var/lib/ai_research_os/quantitative-protected
       - pilot_project_data:/var/lib/ai_research_os/projects
+      - pilot_runtime_status:/var/run/ai_research_os:ro
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=5)\""]
       interval: 15s
@@ -114,6 +117,7 @@ services:
     volumes:
       - pilot_protected_data:/var/lib/ai_research_os/quantitative-protected
       - pilot_project_data:/var/lib/ai_research_os/projects
+      - pilot_runtime_status:/var/run/ai_research_os
     stop_grace_period: 30s
     healthcheck:
       test: ["CMD-SHELL", "python -m worker.healthcheck"]
@@ -152,3 +156,4 @@ volumes:
   pilot_project_data:
   pilot_caddy_data:
   pilot_caddy_config:
+  pilot_runtime_status:

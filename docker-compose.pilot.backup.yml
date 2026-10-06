@@ -15,6 +15,7 @@ services:
       BACKUP_WORK_ROOT: /work
       QUANTITATIVE_PROTECTED_STORAGE_ROOT: /var/lib/ai_research_os/quantitative-protected
       PROJECTS_ROOT: /var/lib/ai_research_os/projects
+      BACKUP_STATUS_FILE: /var/run/ai_research_os/backup-status.json
       RESTORE_CONFIRMATION: ${RESTORE_CONFIRMATION:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
@@ -24,6 +25,7 @@ services:
       - pilot_protected_data:/var/lib/ai_research_os/quantitative-protected
       - pilot_project_data:/var/lib/ai_research_os/projects
       - pilot_backup_staging:/work
+      - pilot_runtime_status:/var/run/ai_research_os
       - ${RESTIC_PASSWORD_FILE_HOST:?set host path to recovery credential}:/run/secrets/restic_password:ro
     logging:
       driver: json-file
@@ -31,3 +33,6 @@ services:
 
 volumes:
   pilot_backup_staging:
+  pilot_runtime_status:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME:-ai_research_os}_pilot_runtime_status

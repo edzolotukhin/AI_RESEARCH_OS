@@ -3,6 +3,9 @@ from __future__ import annotations
 import os
 import signal
 import threading
+from datetime import datetime, timezone
+from pathlib import Path
+import json
 
 from application.container import ApplicationContainer
 from worker.identity import generate_worker_id
@@ -45,6 +48,7 @@ class WorkerLoop:
         self._container.agency.initialize()
         try:
             while not self._stop.is_set():
+                self._write_heartbeat()
                 try:
                     processed = self._service.process_once(self._worker)
                     if self._container.project_deliverables_service is not None:
@@ -64,6 +68,19 @@ class WorkerLoop:
                     self._stop.wait(self._lease_config.poll_interval_seconds)
         finally:
             logger.info("worker_loop_stop worker_id=%s", self._worker)
+
+    def _write_heartbeat(self) -> None:
+        path = os.environ.get("WORKER_HEARTBEAT_FILE")
+        if not path:
+            return
+        target = Path(path)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temporary = target.with_suffix(".tmp")
+            temporary.write_text(json.dumps({"observed_at": datetime.now(timezone.utc).isoformat(), "worker_id": self._worker}), encoding="utf-8")
+            temporary.replace(target)
+        except OSError:
+            logger.exception("worker_heartbeat_write_failed worker_id=%s", self._worker)
 
     def run_until_idle(self, *, max_iterations: int = 100) -> int:
         """Process runnable runs until none remain. Useful in tests."""

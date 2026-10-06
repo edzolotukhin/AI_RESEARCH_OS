@@ -164,13 +164,19 @@ def status() -> None:
     latest = max(values, key=lambda item: item["time"])
     created = datetime.fromisoformat(latest["time"].replace("Z", "+00:00"))
     age = (datetime.now(UTC) - created).total_seconds()
-    print(json.dumps({
+    payload = {
         "status": "backup_available",
         "snapshot_id": latest["id"],
         "created_at": latest["time"],
         "age_seconds": round(age, 3),
         "within_24h_policy": age <= 24 * 60 * 60,
-    }, sort_keys=True))
+    }
+    encoded = json.dumps(payload, sort_keys=True)
+    status_file = os.environ.get("BACKUP_STATUS_FILE")
+    if status_file:
+        target = Path(status_file); target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_suffix(".tmp"); temporary.write_text(encoded, encoding="utf-8"); temporary.replace(target)
+    print(encoded)
 
 
 def ensure_empty(path: Path) -> None:

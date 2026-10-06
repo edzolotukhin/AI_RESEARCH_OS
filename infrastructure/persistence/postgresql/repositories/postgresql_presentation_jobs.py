@@ -35,6 +35,14 @@ class PostgreSQLPresentationJobs:
             )).one_or_none()
             return self._record(model)
 
+    def list_recent(self, *, limit: int = 50) -> tuple[PresentationJob, ...]:
+        bounded = max(1, min(limit, 50))
+        with self._sessions.session() as session:
+            values = session.scalars(select(PresentationJobModel).order_by(
+                PresentationJobModel.updated_at.desc(), PresentationJobModel.id
+            ).limit(bounded)).all()
+            return tuple(self._record(value) for value in values)
+
     def schedule(self, *, project_id: str, method: str, run_id: str, study_id: str | None,
                  source_id: str, source_version: str, status_snapshot: str,
                  template_version: str, renderer_version: str) -> PresentationJob:

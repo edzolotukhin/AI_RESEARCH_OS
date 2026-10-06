@@ -1,15 +1,16 @@
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from api.ui.session import SESSION_COOKIE, current_ui_user, secure_cookie
 from api.routers.ui_research import templates
 from application.identity import ProjectRole
+from application.operations.status import OperationsStatusService
 import os
 
 router = APIRouter(prefix="/ui", tags=["ui-identity"])
 
 def _require_admin():
     user=current_ui_user.get()
-    if user is None or user.id != os.environ.get("PILOT_ADMIN_USER_ID"): raise PermissionError("Administrator access required")
+    if user is None or user.id != os.environ.get("PILOT_ADMIN_USER_ID"): raise HTTPException(status_code=403, detail="Administrator access required")
     return user
 
 def _safe_next(value: str) -> str:
@@ -37,6 +38,13 @@ def logout(request: Request):
 @router.get("/account", response_class=HTMLResponse, include_in_schema=False)
 def account(request: Request):
     return templates.TemplateResponse(request, "identity/account.html", {"request": request, "user": current_ui_user.get()})
+
+@router.get("/operations", response_class=HTMLResponse, include_in_schema=False)
+def operations(request: Request):
+    _require_admin()
+    container = request.app.state.container
+    service = getattr(container, "operations_status_service", None) or OperationsStatusService(readiness=container.check_readiness)
+    return templates.TemplateResponse(request, "identity/operations.html", {"request": request, "snapshot": service.snapshot()})
 
 @router.get("/projects/{project_id}/members", response_class=HTMLResponse, include_in_schema=False)
 def members(request: Request, project_id: str):

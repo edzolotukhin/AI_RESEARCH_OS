@@ -748,6 +748,15 @@ def create_application_container(
         pptx_renderer=PptxRenderer() if persistence.presentation_jobs is not None else None,
     )
 
+    from application.operations.status import JobObservation, OperationsStatusService
+    def operations_jobs():
+        if persistence.presentation_jobs is None or not hasattr(persistence.presentation_jobs, "list_recent"):
+            return ()
+        return tuple(JobObservation(job.id, f"{job.method} presentation", job.project_id,
+                                    job.state, job.updated_at, job.failure_code)
+                     for job in persistence.presentation_jobs.list_recent(limit=50))
+    operations_status_service = OperationsStatusService(readiness=readiness_check, jobs=operations_jobs)
+
     return ApplicationContainer(
         config=config,
         agency=agency,
@@ -788,6 +797,7 @@ def create_application_container(
         quantitative_study_sufficiency_service=quantitative_study_sufficiency_service,
         quantitative_authority_finalization_service=quantitative_authority_finalization_service,
         quantitative_authority_product_service=quantitative_authority_product_service,
+        operations_status_service=operations_status_service,
         _shutdown_callbacks=shutdown_callbacks,
     )
 
