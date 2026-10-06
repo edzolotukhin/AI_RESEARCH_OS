@@ -59,3 +59,13 @@
 - Remaining P0 before real-data pilot: configure and verify the real off-host destination and separately held recovery credential; complete production monitoring/operator visibility and real-server DNS/TLS/firewall validation.
 - Remaining P1: simplified navigation/onboarding/help/feedback and routine repeat restore drills.
 - Deferred: centralized compliance tooling, malware scanning service, automated legal retention workflow, multi-host HA, and OPS-01C monitoring.
+
+## OPS-01B-R1 remote PostgreSQL integration closure
+
+- The first exact remote workflow for commit `66061e0636b5893f06570e6d1b9ff3c84ce34379`, GitHub Actions run `37353642419`, failed in step 14, `PostgreSQL integration tests`. The failed remote run remains the historical CI result; it has not been rewritten or rerun as part of this local correction.
+- CI executes `python -W error::ResourceWarning -m unittest discover -s tests/integration/postgresql -p "test_*.py" -v` against disposable PostgreSQL 16 test and migration databases. Direct remote job-log download was unavailable in this environment (GitHub returned HTTP 403 and no authenticated GitHub CLI was available), so the exact group was reproduced locally with tracked repository files and CI-equivalent PostgreSQL configuration.
+- The first broken transition was qualitative audio artifact upload in `tests.integration.postgresql.test_qua01_qualitative_e2e.Qua01PostgresqlE2E.test_audio_is_processed_by_existing_worker_loop`. The stale fixture `RIFFfixture` no longer satisfied the accepted OPS-01B WAV contract (`RIFF` plus the `WAVE` form marker); upload correctly failed closed, and the test subsequently raised `KeyError: 'artifact_id'`.
+- Root-cause classification: stale PostgreSQL integration fixture exposed by the intended OPS-01B upload-hardening contract, not a production upload-validation defect. The fixture now contains the minimum structurally valid synthetic WAV header. No security check, provider-isolation rule, application behavior, or migration was weakened.
+- Two PDF failures seen during the initial local reproduction were environment-only: the local process lacked CI's configured font. With the CI-equivalent `PDF_FONT_PATH`, both passed and were unrelated to the remote qualitative fixture failure.
+- Post-fix exact failing test: 1 passed. PostgreSQL repository contracts: 37 passed. Focused OPS-01B and qualitative authority/API tests: 20 passed. Final exact PostgreSQL integration group: 164 tests run, 163 passed, 1 skipped, 0 failures/errors.
+- One canonical post-fix offline suite was run: 3,217 tests; 3,052 passed; 165 skipped; 0 failures; 0 errors. No OpenAI, Tavily, AssemblyAI, or other live provider call occurred.

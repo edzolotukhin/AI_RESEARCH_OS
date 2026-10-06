@@ -45,7 +45,7 @@ class Qua01PostgresqlE2E(unittest.TestCase):
         container=self.container(); self.addCleanup(container.shutdown); raw,headers,_=self.client(container)
         project,run,session=self.context(raw,headers,container)
         upload=raw.post(f"/projects/{project}/qualitative/{run}/sessions/{session}/artifacts",headers=headers,
-            files={"artifact":("interview.wav",b"RIFFfixture","audio/wav")}).json()
+            files={"artifact":("interview.wav",b"RIFF\x04\x00\x00\x00WAVEfixture","audio/wav")}).json()
         container.qualitative_service.provider=DeterministicTranscriptionProvider({upload["artifact_id"]:(
             TranscriptSegment("segment-0001",0,"Answer",speaker_label="A",speaker_role=SpeakerRole.PARTICIPANT,start_ms=100,end_ms=900),)})
         from worker.loop import WorkerLoop
