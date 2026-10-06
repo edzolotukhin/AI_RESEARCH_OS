@@ -4,6 +4,7 @@ from api.ui.session import SESSION_COOKIE, current_ui_user, secure_cookie
 from api.routers.ui_research import templates
 from application.identity import ProjectRole
 from application.operations.status import OperationsStatusService
+from application.pilot_feedback import FeedbackValidationError, build_feedback, record_feedback
 import os
 
 router = APIRouter(prefix="/ui", tags=["ui-identity"])
@@ -38,6 +39,36 @@ def logout(request: Request):
 @router.get("/account", response_class=HTMLResponse, include_in_schema=False)
 def account(request: Request):
     return templates.TemplateResponse(request, "identity/account.html", {"request": request, "user": current_ui_user.get()})
+
+@router.get("/help", response_class=HTMLResponse, include_in_schema=False)
+def help_page(request: Request):
+    return templates.TemplateResponse(request, "identity/help.html", {"request": request})
+
+def _feedback_context(request: Request, project_id: str):
+    if not project_id: return None, None
+    user = current_ui_user.get()
+    membership = request.app.state.container.identity_service.require(project_id, user.id)
+    return project_id, membership.role.value
+
+@router.get("/feedback", response_class=HTMLResponse, include_in_schema=False)
+def feedback_page(request: Request, from_route: str = "/ui/projects", project_id: str = ""):
+    try: safe_project, role = _feedback_context(request, project_id)
+    except PermissionError: safe_project, role = None, None
+    return templates.TemplateResponse(request, "identity/feedback.html", {"request": request, "from_route": _safe_next(from_route), "project_id": safe_project or "", "role": role, "error": None, "sent": False, "category": "broken", "message": ""})
+
+@router.post("/feedback", response_class=HTMLResponse, include_in_schema=False)
+def submit_feedback(request: Request, category: str = Form(...), message: str = Form(...), from_route: str = Form("/ui/projects"), project_id: str = Form("")):
+    user = current_ui_user.get(); safe_project = role = None
+    try:
+        safe_project, role = _feedback_context(request, project_id)
+        value = build_feedback(user_id=user.id, category=category, message=message, route=_safe_next(from_route), project_id=safe_project, role=role)
+        record_feedback(value)
+    except (FeedbackValidationError, PermissionError) as exc:
+        error = str(exc) if isinstance(exc, FeedbackValidationError) else "Контекст проєкту недоступний."
+        return templates.TemplateResponse(request, "identity/feedback.html", {"request": request, "from_route": _safe_next(from_route), "project_id": "", "role": None, "error": error, "sent": False, "category": category, "message": message}, status_code=400)
+    except Exception:
+        return templates.TemplateResponse(request, "identity/feedback.html", {"request": request, "from_route": _safe_next(from_route), "project_id": safe_project or "", "role": role, "error": "Не вдалося надіслати відгук. Спробуйте ще раз.", "sent": False, "category": category, "message": message}, status_code=503)
+    return templates.TemplateResponse(request, "identity/feedback.html", {"request": request, "from_route": value.route, "project_id": safe_project or "", "role": role, "error": None, "sent": True, "category": category, "message": ""})
 
 @router.get("/operations", response_class=HTMLResponse, include_in_schema=False)
 def operations(request: Request):

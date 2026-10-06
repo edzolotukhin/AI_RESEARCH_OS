@@ -1,0 +1,1 @@
+document.addEventListener("DOMContentLoaded", () => { const panel=document.querySelector("[data-first-use]"); if(!panel)return; const key="ai-research-os:first-use:v1"; if(localStorage.getItem(key)==="dismissed")panel.hidden=true; panel.querySelector("[data-dismiss]")?.addEventListener("click",()=>{localStorage.setItem(key,"dismissed");panel.hidden=true;}); });

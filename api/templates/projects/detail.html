@@ -6,6 +6,7 @@
   <div><span class="lifecycle-chip">{{ view.lifecycle }}</span> <span class="role-chip">{{ {'OWNER':'Власник','RESEARCHER':'Дослідник','VIEWER':'Перегляд'}.get(view.role, view.role) }}</span><p>Методи мають спільний контекст проєкту, але їхні висновки залишаються незалежними.</p></div>
   {% if view.attention_items %}<div class="attention">Потребує уваги: {{ view.attention_items|join(', ') }}</div>{% endif %}
 </section>
+{% if view.role == 'VIEWER' %}<section class="read-only-notice" role="status"><b>Режим перегляду</b><span>Ви можете читати матеріали й результати, але не змінювати бриф, методи або рішення перевірки.</span></section>{% endif %}
 <section class="context compact-section">
   <p class="eyebrow">КОНТЕКСТ ДОСЛІДЖЕННЯ</p>
   {% if view.brief %}<h2>{{ view.brief.title }}</h2><p class="research-question">{{ view.brief.business_question }}</p>{% if view.brief.objectives %}<ul>{% for item in view.brief.objectives %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
@@ -24,6 +25,7 @@
   <article class="method card state-{{ method.state.value|lower }}">
     <div class="method-head"><h3>{{ method.name }}</h3><span class="status-chip status-{{ 'inactive' if method.state.value == 'NOT_STARTED' else 'attention' if method.state.value in ('ATTENTION','LIMITED') else 'success' if method.state.value == 'COMPLETED' else 'active' }}">{{ method.state_label }}</span></div>
     <p class="method-explanation">{{ method.explanation }}</p>
+    <p class="method-guidance">{% if method.name == 'Кабінетне дослідження' %}Підійде для перевірки ринку, контексту та відкритих джерел.{% elif method.name == 'Кількісне дослідження' %}Почніть із SAV/XLSX; рядки респондентів у робочому просторі не показуються.{% else %}Почніть з аудіо або готового транскрипту й перевірте текст до кодування.{% endif %}</p>
     {% if method.progress is not none %}<div class="progress"><i style="width:{{ method.progress }}%"></i></div><small>Виконано: {{ method.progress }}%</small>{% endif %}
     <div class="outputs-label">РЕЗУЛЬТАТИ</div>
     <div class="outputs"><span>Висновки <b>{{ method.output.findings_count if method.output.findings_count is not none else '—' }}</b></span><span>Інсайти <b>{{ method.output.insights_count if method.output.insights_count is not none else '—' }}</b></span><span>Звіт <b>{{ 'Доступний' if method.output.report_available else '—' }}</b></span></div>

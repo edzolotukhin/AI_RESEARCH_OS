@@ -1,12 +1,13 @@
 {% extends "projects/base.html" %}
 {% block content %}
+<section class="welcome-panel" data-first-use><div><p class="eyebrow">ПЕРШИЙ КРОК</p><h2>Один проєкт — три незалежні дослідницькі шляхи</h2><p>Створіть проєкт, сформулюйте бриф і оберіть кабінетне, кількісне або якісне дослідження. Система показуватиме наступну дію та збереже людське рішення перед фінальними матеріалами.</p><a class="button" href="/ui/projects/new">Створити проєкт</a> <a class="button button-quiet" href="/ui/help">Як це працює</a></div><button class="dismiss-guidance" type="button" data-dismiss aria-label="Сховати підказку">×</button></section>
 {% if view.projects %}
 <div class="project-list">
   {% for item in view.projects %}
   <article class="project-card">
     <div class="project-main">
       <div class="project-title-row">
-        <h2>{{ item.project_name }}</h2><span class="role-chip">{{ item.role|title }}</span>
+        <h2>{{ item.project_name }}</h2><span class="role-chip">{{ {'OWNER':'Власник','RESEARCHER':'Дослідник','VIEWER':'Перегляд'}.get(item.role, item.role) }}</span>
         <span class="lifecycle-chip">{{ item.lifecycle }}</span>
         {% if item.attention %}<span class="status-chip status-attention">Потребує уваги</span>{% endif %}
       </div>
