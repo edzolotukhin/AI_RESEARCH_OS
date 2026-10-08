@@ -15,6 +15,23 @@ class BrowserIdentityE2ETests(unittest.TestCase):
         self.context.__exit__(None,None,None);self.container.shutdown()
     def login(self,email,password):return self.client.post("/ui/login",data={"email":email,"password":password},follow_redirects=False)
     def logout(self):return self.client.post("/ui/logout",follow_redirects=False)
+    def test_new_project_route_requires_login_not_existing_membership(self):
+        anonymous = self.client.get("/ui/projects/new", follow_redirects=False)
+        self.assertEqual(anonymous.status_code, 303)
+        self.assertTrue(anonymous.headers["location"].startswith("/ui/login?next="))
+
+        self.assertEqual(self.login("bob@example.com", "another correct horse").status_code, 303)
+        self.assertEqual(self.client.get("/ui/projects/new").status_code, 200)
+
+        self.logout(); self.login("alice@example.com", "correct horse battery")
+        created = self.client.post(
+            "/ui/projects", data={"name": "Alice only", "selected_methods": "DESK"},
+            follow_redirects=False,
+        )
+        project_id = created.headers["location"].rsplit("/", 1)[-1]
+        self.logout(); self.login("bob@example.com", "another correct horse")
+        self.assertEqual(self.client.get(f"/ui/projects/{project_id}").status_code, 404)
+
     def test_login_project_membership_role_removal_and_logout(self):
         self.assertEqual(self.client.get("/ui/projects",follow_redirects=False).status_code,303)
         self.assertEqual(self.login("alice@example.com","wrong password value").status_code,401)

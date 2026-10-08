@@ -9,6 +9,7 @@ from application.identity import current_human_actor_id
 
 SESSION_COOKIE = "ai_research_os_session"
 current_ui_user = ContextVar("current_ui_user", default=None)
+PROJECT_COLLECTION_PATHS = frozenset({"/ui/projects/new"})
 
 async def browser_session_middleware(request: Request, call_next):
     path = request.url.path
@@ -30,7 +31,9 @@ async def browser_session_middleware(request: Request, call_next):
             target = path + (("?" + request.url.query) if request.url.query else "")
             return RedirectResponse(f"/ui/login?next={quote(target, safe='/')}", status_code=303)
         if path.startswith("/ui") and not public and user is not None and not hasattr(user, "authentication_type"):
-            match=re.match(r"^/ui/projects/([^/]+)",path)
+            match = None if path in PROJECT_COLLECTION_PATHS else re.match(
+                r"^/ui/projects/([^/]+)(?:/|$)", path
+            )
             if match:
                 try:
                     service.require(match.group(1),user.id,mutate=request.method not in {"GET","HEAD","OPTIONS"},owner="/members" in path)
