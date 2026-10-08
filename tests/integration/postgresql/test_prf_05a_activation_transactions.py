@@ -184,6 +184,28 @@ class ActivationTransactions(TestCase):
         )
         self.assertEqual(planner._desk_run(project.id).id, replacements[0].id)
 
+        replacement = replacements[0]
+        replacement.ready(); replacement.start(); replacement.fail()
+        self.container.workflow_service.save_workflow_run(
+            replacement,
+            expected_version=self.container.workflow_service.get_workflow_run_version(
+                replacement.id
+            ),
+        )
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(
+                    planner.retry_failed_desk,
+                    self.container.project_service.get_project(project.id),
+                )
+                for _ in range(2)
+            ]
+            chained = [item.result(timeout=20) for item in futures]
+        self.assertEqual(chained[0].id, chained[1].id)
+        self.assertNotIn(chained[0].id, {failed.id, replacement.id})
+        self.assertEqual(len(planner._desk_runs(project.id)), 3)
+        self.assertEqual(planner._desk_run(project.id).id, chained[0].id)
+
     def test_activity_insert_failure_rolls_back_both_activations(self):
         desk = self.project("DESK")
         with patch("infrastructure.persistence.postgresql.repositories.postgresql_workflow_run_repository.record_activity", side_effect=RuntimeError("activity failed")):

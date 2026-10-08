@@ -223,7 +223,7 @@ class ProjectPlanningService:
                 raise ProjectPlanningError("Немає невдалого запуску для повторення")
 
             current = runs[-1]
-            if len(runs) >= 2:
+            if current.status.value != "failed" and len(runs) >= 2:
                 predecessor = runs[-2]
                 expected = self._desk_retry_run_id(project.id, predecessor.id)
                 if predecessor.status.value == "failed" and current.id == expected:

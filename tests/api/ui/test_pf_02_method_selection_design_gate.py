@@ -388,6 +388,40 @@ class Pf02MethodSelectionDesignGateTests(ApiTestCase):
                     )
                 self.assertEqual(len(service._desk_runs(project_id)), 1)
 
+    def test_failed_replacements_can_form_an_idempotent_retry_chain(self):
+        project_id = self.create(("DESK",))
+        self.approve(project_id)
+        service = self.container.project_planning_service
+        project = self.container.project_service.get_project(project_id)
+        attempts = [self.fail_run(service.activate_desk(project))]
+
+        with patch.object(service.planner, "run", side_effect=AssertionError("Planner rerun")):
+            for _ in range(3):
+                replacement = service.retry_failed_desk(
+                    self.container.project_service.get_project(project_id)
+                )
+                replay = service.retry_failed_desk(
+                    self.container.project_service.get_project(project_id)
+                )
+                self.assertEqual(replay.id, replacement.id)
+                self.assertNotIn(replacement.id, {attempt.id for attempt in attempts})
+                attempts.append(replacement)
+                if len(attempts) < 4:
+                    attempts[-1] = self.fail_run(replacement)
+
+        persisted = service._desk_runs(project_id)
+        self.assertEqual([run.id for run in persisted], [run.id for run in attempts])
+        self.assertEqual(
+            [run.status for run in persisted[:-1]],
+            [WorkflowStatus.FAILED] * 3,
+        )
+        self.assertEqual(service._desk_run(project_id).id, attempts[-1].id)
+
+        page = self.client.get(f"/ui/projects/{project_id}")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(attempts[-1].id, page.text)
+        self.assertNotIn("Повторити дослідження", page.text)
+
     def test_quantitative_activation_is_project_bound_paused_and_idempotent(self):
         project_id = self.create(("QUANTITATIVE",))
         self.approve(project_id)
