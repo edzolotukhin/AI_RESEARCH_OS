@@ -154,6 +154,10 @@ class ProjectWorkspaceFacade:
             return "qualitative", run.record_id
         raise ValueError("Невідомий метод дослідження")
 
+    def retry_desk(self, project_id: str):
+        project, _ = self._project_owner(project_id, mutate=True)
+        return self.container.project_planning_service.retry_failed_desk(project)
+
     def project_for_design(self, project_id: str):
         return self.authorization.require_project(self.principal, project_id)
     def create_quantitative(self, project_id: str, title: str, description: str, submission_key: str):

@@ -44,6 +44,7 @@ from application.sources.deterministic_source_relevance import (
 )
 from application.sources.exceptions import (
     DuplicateSourceError,
+    SearchConfigurationError,
     SearchProviderError,
     SourceAcquisitionError,
 )
@@ -434,6 +435,14 @@ class SourceAcquisitionService:
             search_id = funnel.search_start(query)
             try:
                 candidates = self._search_provider.search(query)
+            except SearchConfigurationError:
+                funnel.emit(
+                    "search_result",
+                    search_id=search_id,
+                    status="failure",
+                    reason="search_configuration_error",
+                )
+                raise
             except SearchProviderError:
                 funnel.emit("search_result", search_id=search_id, status="failure", reason="search_provider_error")
                 if query.retrieval_arm is RetrievalArm.LOCALIZED:

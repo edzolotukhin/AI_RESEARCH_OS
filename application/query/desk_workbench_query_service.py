@@ -33,6 +33,7 @@ class DeskHeaderView:
     execution_status: str
     outcome: str | None
     is_terminal: bool
+    failure_explanation: str | None = None
 
 
 @dataclass(frozen=True)
@@ -210,7 +211,15 @@ class DeskWorkbenchQueryService:
             except ResearchRunResultProjectionError:
                 pass
 
-        header = self._header(run, project, status, outcome)
+        header = self._header(
+            run,
+            project,
+            status,
+            outcome,
+            self._failure_explanation(run_id)
+            if outcome == "EXECUTION_FAILED" or run.status.value == "failed"
+            else None,
+        )
         return DeskWorkbenchView(
             header=header,
             design=self._design(template),
@@ -248,8 +257,32 @@ class DeskWorkbenchQueryService:
             return text
         return "Дослідження завершено з додатковими обмеженнями."
 
+    def _failure_explanation(self, run_id: str) -> str | None:
+        task_results = self._container.workflow_service.get_task_results(run_id)
+        for snapshot in task_results.values():
+            if not isinstance(snapshot, dict):
+                continue
+            shared = snapshot.get("shared_state")
+            if not isinstance(shared, dict):
+                continue
+            funnel = shared.get("research_funnel_v1")
+            if not isinstance(funnel, dict):
+                continue
+            for event in funnel.get("events", ()):
+                if (
+                    isinstance(event, dict)
+                    and event.get("kind") == "search_result"
+                    and event.get("reason") == "search_configuration_error"
+                ):
+                    return (
+                        "Пошук джерел недоступний через конфігурацію провайдера. "
+                        "Після виправлення налаштувань створіть нову спробу дослідження."
+                    )
+        return None
+
     @staticmethod
-    def _header(run, project, status, outcome: str | None) -> DeskHeaderView:
+    def _header(run, project, status, outcome: str | None,
+                failure_explanation: str | None = None) -> DeskHeaderView:
         phase_labels = {
             "QUEUED": "Очікує на початок роботи",
             "PLANNING": "Готується план виконання",
@@ -288,6 +321,7 @@ class DeskWorkbenchQueryService:
             execution_status=status.execution_status.value,
             outcome=outcome,
             is_terminal=status.execution_status is ResearchExecutionStatus.TERMINAL,
+            failure_explanation=failure_explanation,
         )
 
     @staticmethod

@@ -29,7 +29,7 @@
     {% if method.progress is not none %}<div class="progress"><i style="width:{{ method.progress }}%"></i></div><small>Виконано: {{ method.progress }}%</small>{% endif %}
     <div class="outputs-label">РЕЗУЛЬТАТИ</div>
     <div class="outputs"><span>Висновки <b>{{ method.output.findings_count if method.output.findings_count is not none else '—' }}</b></span><span>Інсайти <b>{{ method.output.insights_count if method.output.insights_count is not none else '—' }}</b></span><span>Звіт <b>{{ 'Доступний' if method.output.report_available else '—' }}</b></span></div>
-    {% if view.can_mutate and '/activate' in method.primary_action.href %}<form method="post" action="{{ method.primary_action.href }}"><button class="button" type="submit">{{ method.primary_action.label }}</button></form>{% else %}<a class="button" href="{{ method.open_action.href if method.open_action else method.primary_action.href }}">{{ 'Переглянути дослідження' if not view.can_mutate else method.primary_action.label }}</a>{% endif %}
+    {% if view.can_mutate and ('/activate' in method.primary_action.href or '/retry' in method.primary_action.href) %}<form method="post" action="{{ method.primary_action.href }}"><button class="button" type="submit">{{ method.primary_action.label }}</button></form>{% else %}<a class="button" href="{{ method.open_action.href if method.open_action else method.primary_action.href }}">{{ 'Переглянути дослідження' if not view.can_mutate else method.primary_action.label }}</a>{% endif %}
   </article>
   {% endfor %}
 </div>

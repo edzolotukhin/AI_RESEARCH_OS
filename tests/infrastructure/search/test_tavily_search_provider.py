@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from domain.sources.search_query import SearchQuery
 
 from application.sources.exceptions import SearchConfigurationError, SearchProviderError
 from infrastructure.search.tavily_search_provider import TavilySearchProvider
+from application.sources.source_acquisition_service import SourceAcquisitionService
 
 
 class TavilySearchProviderTests(unittest.TestCase):
@@ -52,6 +53,31 @@ class TavilySearchProviderTests(unittest.TestCase):
         )
         with self.assertRaises(SearchConfigurationError):
             provider.search(query)
+        self.assertIsInstance(SearchConfigurationError("missing"), SearchProviderError)
+
+    def test_missing_key_emits_only_sanitized_configuration_category(self) -> None:
+        provider = TavilySearchProvider(api_key=None)
+        service = SourceAcquisitionService(
+            search_provider=provider,
+            source_retriever=Mock(),
+            source_repository=Mock(),
+        )
+        query = SearchQuery(
+            id="sq-configuration",
+            research_question_id="rq-1",
+            information_need_id="in-1",
+            query_text="safe query",
+        )
+        with patch(
+            "application.sources.source_acquisition_service.funnel.emit"
+        ) as emit, self.assertRaises(SearchConfigurationError):
+            service._collect_candidates([query])
+        emit.assert_called_once_with(
+            "search_result",
+            search_id=None,
+            status="failure",
+            reason="search_configuration_error",
+        )
 
     def test_http_error_raises_search_provider_error(self) -> None:
         client = Mock()

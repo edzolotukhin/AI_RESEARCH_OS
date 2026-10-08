@@ -51,7 +51,10 @@ class ProjectWorkspaceQueryService:
                 quant_run = run
             elif run.workflow_template_id not in {quant_template_id, QUAL_TEMPLATE}:
                 desk_runs.append(run)
-        desk_run = desk_runs[-1] if desk_runs else None
+        desk_run = max(
+            desk_runs,
+            key=self.planning._desk_attempt_order,
+        ) if desk_runs else None
         selected = self.planning.explicit_or_inferred_methods(project)
         desk = self._desk(project_id, desk_run, project) if DESK in selected else None
         quant = self._quant(project_id, quant_study, quant_run, project) if QUANTITATIVE in selected else None
@@ -107,8 +110,18 @@ class ProjectWorkspaceQueryService:
         except Exception:
             pass
         open_action = WorkspaceActionView("Відкрити кабінетне дослідження", f"/ui/research/{run.id}/overview")
+        primary_action = open_action
+        if status == "failed":
+            explanation = (
+                "Кабінетне дослідження завершилося помилкою. Попередня спроба "
+                "залишиться в історії після повторного запуску."
+            )
+            primary_action = WorkspaceActionView(
+                "Повторити дослідження",
+                f"/ui/projects/{project_id}/methods/DESK/retry",
+            )
         return MethodWorkspaceView("Кабінетне дослідження", state, label, explanation, progress, output,
-                                   open_action, open_action)
+                                   primary_action, open_action)
 
     def _quant(self, project_id, study, run, project):
         if study is None:

@@ -7,6 +7,7 @@ from application.services.project_planning_service import ProjectPlanningError
 from application.persistence.exceptions import ConcurrentModificationError
 from domain.research_brief import ResearchBrief
 from domain.planning.research_design import ResearchQuestion
+from domain.workflow_status import WorkflowStatus
 from tests.api.helpers import ApiTestCase
 
 
@@ -92,6 +93,15 @@ class Pf02MethodSelectionDesignGateTests(ApiTestCase):
             follow_redirects=False,
         )
         self.assertEqual(response.status_code, 303)
+
+    def fail_run(self, run):
+        run.ready(); run.start(); run.fail()
+        self.container.workflow_service.save_workflow_run(
+            run,
+            expected_version=self.container.workflow_service.get_workflow_run_version(run.id),
+            task_results={"ow03_failure_marker": {"reason": "sanitized"}},
+        )
+        return self.container.workflow_service.get_workflow_run(run.id)
 
     def test_create_requires_supported_explicit_selection_and_hides_unselected(self):
         self.assertEqual(
@@ -286,6 +296,97 @@ class Pf02MethodSelectionDesignGateTests(ApiTestCase):
         template = self.container.workflow_service.get_template(first.workflow_template_id)
         project = self.container.project_service.get_project(project_id)
         self.assertEqual(template.research_design_snapshot, project.current_research_design)
+
+    def test_failed_desk_retry_creates_one_replacement_without_mutating_history(self):
+        project_id = self.create(("DESK",))
+        self.approve(project_id)
+        service = self.container.project_planning_service
+        project = self.container.project_service.get_project(project_id)
+        failed = self.fail_run(service.activate_desk(project))
+        before = self.container.workflow_service.get_task_results(failed.id)
+
+        with patch.object(service.planner, "run", side_effect=AssertionError("Planner rerun")):
+            replacement = service.retry_failed_desk(
+                self.container.project_service.get_project(project_id)
+            )
+            replay = service.retry_failed_desk(
+                self.container.project_service.get_project(project_id)
+            )
+
+        self.assertNotEqual(replacement.id, failed.id)
+        self.assertEqual(replay.id, replacement.id)
+        self.assertEqual(len(service._desk_runs(project_id)), 2)
+        self.assertEqual(
+            self.container.workflow_service.get_workflow_run(failed.id).status,
+            WorkflowStatus.FAILED,
+        )
+        self.assertEqual(
+            self.container.workflow_service.get_task_results(failed.id), before,
+        )
+        self.assertEqual(service._desk_run(project_id).id, replacement.id)
+        template = self.container.workflow_service.get_template(
+            replacement.workflow_template_id
+        )
+        self.assertEqual(
+            template.research_design_snapshot,
+            self.container.project_service.get_project(project_id).current_research_design,
+        )
+        page = self.client.get(f"/ui/projects/{project_id}")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(replacement.id, page.text)
+
+    def test_retry_route_exposes_failed_attempt_and_rejects_nonfailed_current_run(self):
+        project_id = self.create(("DESK",))
+        self.approve(project_id)
+        service = self.container.project_planning_service
+        run = service.activate_desk(self.container.project_service.get_project(project_id))
+        response = self.client.post(
+            f"/ui/projects/{project_id}/methods/DESK/retry",
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(len(service._desk_runs(project_id)), 1)
+
+        self.fail_run(run)
+        page = self.client.get(f"/ui/projects/{project_id}")
+        self.assertIn("Повторити дослідження", page.text)
+        self.assertIn("залишиться в історії", page.text)
+        response = self.client.post(
+            f"/ui/projects/{project_id}/methods/DESK/retry",
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 303)
+        replacement_id = response.headers["location"].split("/")[3]
+        self.assertNotEqual(replacement_id, run.id)
+        self.assertEqual(service._desk_run(project_id).id, replacement_id)
+
+    def test_retry_rejects_running_paused_and_completed_current_attempts(self):
+        transitions = {
+            "running": lambda run: (run.ready(), run.start()),
+            "paused": lambda run: (run.ready(), run.start(), run.pause()),
+            "completed": lambda run: (run.ready(), run.start(), run.complete()),
+        }
+        for label, transition in transitions.items():
+            with self.subTest(status=label):
+                project_id = self.create(("DESK",))
+                self.approve(project_id)
+                service = self.container.project_planning_service
+                run = service.activate_desk(
+                    self.container.project_service.get_project(project_id)
+                )
+                transition(run)
+                self.container.workflow_service.save_workflow_run(
+                    run,
+                    expected_version=(
+                        self.container.workflow_service.get_workflow_run_version(run.id)
+                    ),
+                )
+
+                with self.assertRaises(ProjectPlanningError):
+                    service.retry_failed_desk(
+                        self.container.project_service.get_project(project_id)
+                    )
+                self.assertEqual(len(service._desk_runs(project_id)), 1)
 
     def test_quantitative_activation_is_project_bound_paused_and_idempotent(self):
         project_id = self.create(("QUANTITATIVE",))

@@ -68,3 +68,29 @@ class DeskWorkbenchQueryTests(TestCase):
         for stored, expected in values.items():
             with self.subTest(stored=stored):
                 self.assertEqual(DeskWorkbenchQueryService._display_date(stored), expected)
+
+    def test_sanitized_search_configuration_failure_is_explained_to_owner(self):
+        self.run.status = WorkflowStatus.FAILED
+        self.container.research_status_query_service.get_status.return_value = ResearchStatusProjection(
+            "run-a", "project-a", ResearchExecutionStatus.TERMINAL,
+            ResearchPhase.COMPLETED, None, True, "failed",
+        )
+        self.container.source_service.list_sources_for_run.return_value = []
+        self.container.workflow_service.get_task_results.return_value = {
+            "task-search": {
+                "shared_state": {
+                    "research_funnel_v1": {
+                        "events": [{
+                            "kind": "search_result",
+                            "status": "failure",
+                            "reason": "search_configuration_error",
+                        }]
+                    }
+                }
+            }
+        }
+        view = DeskWorkbenchQueryService(container=self.container).get(
+            "run-a", project=self.project,
+        )
+        self.assertIn("конфігурацію провайдера", view.header.failure_explanation)
+        self.assertNotIn("SEARCH_API_KEY", view.header.failure_explanation)

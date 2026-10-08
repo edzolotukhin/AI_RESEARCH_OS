@@ -7,6 +7,7 @@ import json
 from uuid import NAMESPACE_URL, uuid5
 
 from application.quantitative.workflow import build_quantitative_workflow_template, CMF_QUANTITATIVE_WORKFLOW_ID
+from application.qualitative.service import QUAL_TEMPLATE
 from application.planner.project_planning_profile import (
     PROJECT_PLANNING_PROFILE_VERSION,
     PROJECT_PLANNING_PROFILE_KEY,
@@ -203,6 +204,46 @@ class ProjectPlanningService:
             project, template, run_id=run_id,
         ).workflow_run
 
+    def retry_failed_desk(self, project: Project):
+        """Create one immutable replacement for the current failed Desk run."""
+        if self.file_activation_unavailable:
+            raise ProjectPlanningError(
+                "Повторний запуск недоступний у файловому режимі зберігання"
+            )
+        boundary = (
+            self.activation_sessions.activation(project.id)
+            if self.activation_sessions is not None else nullcontext()
+        )
+        with boundary:
+            if self.activation_sessions is not None:
+                project = self.projects.get_project(project.id)
+            self._require_activation(project, DESK)
+            runs = self._desk_runs(project.id)
+            if not runs:
+                raise ProjectPlanningError("Немає невдалого запуску для повторення")
+
+            current = runs[-1]
+            if len(runs) >= 2:
+                predecessor = runs[-2]
+                expected = self._desk_retry_run_id(project.id, predecessor.id)
+                if predecessor.status.value == "failed" and current.id == expected:
+                    return current
+
+            if current.status.value != "failed":
+                raise ProjectPlanningError(
+                    "Повторити можна лише останній невдалий запуск"
+                )
+
+            template = self.workflow_mapper.from_research_design(
+                project.current_research_design,
+                project,
+            )
+            return self.agency.start_research_from_template(
+                project,
+                template,
+                run_id=self._desk_retry_run_id(project.id, current.id),
+            ).workflow_run
+
     def activate_quantitative(self, project: Project, *, owner_id: str):
         if self.file_activation_unavailable:
             raise ProjectPlanningError(
@@ -285,16 +326,37 @@ class ProjectPlanningService:
         )
 
     def _desk_run(self, project_id: str):
+        runs = self._desk_runs(project_id)
+        return runs[-1] if runs else None
+
+    def _desk_runs(self, project_id: str):
         quant_template = build_quantitative_workflow_template().id
+        result = []
         for run in self.workflows.list_workflow_runs_for_project(project_id):
-            if run.workflow_template_id in {quant_template, CMF_QUANTITATIVE_WORKFLOW_ID}:
+            if run.workflow_template_id in {
+                quant_template,
+                CMF_QUANTITATIVE_WORKFLOW_ID,
+                QUAL_TEMPLATE,
+            }:
                 continue
             if self.quantitative and self.quantitative.state.list_for_run(
                 run.id, project_id=project_id, expected_type=self._study_type()
             ):
                 continue
-            return run
-        return None
+            result.append(run)
+        return sorted(result, key=self._desk_attempt_order)
+
+    @staticmethod
+    def _desk_attempt_order(run):
+        created_at = min(
+            (task.created_at for task in run.tasks if task.created_at),
+            default="",
+        )
+        return created_at, run.id
+
+    @staticmethod
+    def _desk_retry_run_id(project_id: str, failed_run_id: str) -> str:
+        return str(uuid5(NAMESPACE_URL, f"ow03-desk-retry:{project_id}:{failed_run_id}"))
 
     @staticmethod
     def _study_type():

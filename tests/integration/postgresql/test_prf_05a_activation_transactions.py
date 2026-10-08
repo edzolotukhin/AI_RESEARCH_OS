@@ -155,6 +155,35 @@ class ActivationTransactions(TestCase):
         self.assertEqual(len(self.container.workflow_service.list_workflow_runs_for_project(project.id)), 1)
         self.assertEqual(self.activity_count(project.id, "Кабінетне дослідження активовано"), 1)
 
+    def test_concurrent_failed_desk_retry_creates_one_immutable_replacement(self):
+        project = self.project("DESK")
+        planner = self.container.project_planning_service
+        failed = planner.activate_desk(project)
+        failed.ready(); failed.start(); failed.fail()
+        self.container.workflow_service.save_workflow_run(
+            failed,
+            expected_version=self.container.workflow_service.get_workflow_run_version(failed.id),
+            task_results={"ow03_failure_marker": {"reason": "sanitized"}},
+        )
+        before = self.container.workflow_service.get_task_results(failed.id)
+        with patch.object(planner.planner, "run", side_effect=AssertionError("Planner rerun")):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = [
+                    pool.submit(
+                        planner.retry_failed_desk,
+                        self.container.project_service.get_project(project.id),
+                    )
+                    for _ in range(2)
+                ]
+                replacements = [item.result(timeout=20) for item in futures]
+        self.assertEqual(replacements[0].id, replacements[1].id)
+        self.assertNotEqual(replacements[0].id, failed.id)
+        self.assertEqual(len(planner._desk_runs(project.id)), 2)
+        self.assertEqual(
+            self.container.workflow_service.get_task_results(failed.id), before,
+        )
+        self.assertEqual(planner._desk_run(project.id).id, replacements[0].id)
+
     def test_activity_insert_failure_rolls_back_both_activations(self):
         desk = self.project("DESK")
         with patch("infrastructure.persistence.postgresql.repositories.postgresql_workflow_run_repository.record_activity", side_effect=RuntimeError("activity failed")):

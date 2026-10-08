@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 from api.app import create_fastapi_app
 from tests.api.helpers import build_test_container
@@ -76,6 +77,102 @@ class BrowserIdentityE2ETests(unittest.TestCase):
         self.login("alice@example.com","correct horse battery");self.container.identity_service.disable_user(self.alice.id)
         self.assertEqual(self.client.get("/ui/projects",follow_redirects=False).status_code,303)
         self.assertEqual(self.login("alice@example.com","correct horse battery").status_code,401)
+
+    def test_desk_retry_obeys_project_mutation_roles(self):
+        self.login("alice@example.com", "correct horse battery")
+        created = self.client.post(
+            "/ui/projects",
+            data={"name": "Desk retry roles", "selected_methods": "DESK"},
+            follow_redirects=False,
+        )
+        project_id = created.headers["location"].rsplit("/", 1)[-1]
+        facade = self.container.project_planning_service
+        from domain.research_brief import ResearchBrief
+        project = self.container.project_service.get_project(project_id)
+        facade.save_brief(project, ResearchBrief(
+            title="Desk", business_question="What changed?",
+            objectives=("Measure",), language="en",
+        ))
+        facade.generate_design(self.container.project_service.get_project(project_id))
+        project = self.container.project_service.get_project(project_id)
+        facade.approve_design(
+            project, actor_id=self.alice.id,
+            expected_design_id=project.current_research_design.id,
+        )
+        failed = facade.activate_desk(self.container.project_service.get_project(project_id))
+        failed.ready(); failed.start(); failed.fail()
+        self.container.workflow_service.save_workflow_run(
+            failed,
+            expected_version=self.container.workflow_service.get_workflow_run_version(failed.id),
+        )
+
+        self.logout(); self.login("bob@example.com", "another correct horse")
+        unrelated = self.client.post(
+            f"/ui/projects/{project_id}/methods/DESK/retry", follow_redirects=False,
+        )
+        self.assertEqual(unrelated.status_code, 404)
+
+        self.logout(); self.login("alice@example.com", "correct horse battery")
+        self.client.post(
+            f"/ui/projects/{project_id}/members",
+            data={"user_id": self.bob.id, "role": "VIEWER"},
+        )
+        self.logout(); self.login("bob@example.com", "another correct horse")
+        viewer = self.client.post(
+            f"/ui/projects/{project_id}/methods/DESK/retry", follow_redirects=False,
+        )
+        self.assertEqual(viewer.status_code, 404)
+
+        self.logout(); self.login("alice@example.com", "correct horse battery")
+        self.client.post(
+            f"/ui/projects/{project_id}/members/{self.bob.id}/role",
+            data={"role": "RESEARCHER"},
+        )
+        self.logout(); self.login("bob@example.com", "another correct horse")
+        with patch.object(facade.planner, "run", side_effect=AssertionError("Planner rerun")):
+            researcher = self.client.post(
+                f"/ui/projects/{project_id}/methods/DESK/retry",
+                follow_redirects=False,
+            )
+        self.assertEqual(researcher.status_code, 303)
+        self.assertEqual(len(facade._desk_runs(project_id)), 2)
+
+    def test_project_owner_can_retry_failed_desk_attempt(self):
+        self.login("alice@example.com", "correct horse battery")
+        created = self.client.post(
+            "/ui/projects",
+            data={"name": "Owner Desk retry", "selected_methods": "DESK"},
+            follow_redirects=False,
+        )
+        project_id = created.headers["location"].rsplit("/", 1)[-1]
+        facade = self.container.project_planning_service
+        from domain.research_brief import ResearchBrief
+        project = self.container.project_service.get_project(project_id)
+        facade.save_brief(project, ResearchBrief(
+            title="Desk", business_question="What changed?",
+            objectives=("Measure",), language="en",
+        ))
+        facade.generate_design(self.container.project_service.get_project(project_id))
+        project = self.container.project_service.get_project(project_id)
+        facade.approve_design(
+            project, actor_id=self.alice.id,
+            expected_design_id=project.current_research_design.id,
+        )
+        failed = facade.activate_desk(self.container.project_service.get_project(project_id))
+        failed.ready(); failed.start(); failed.fail()
+        self.container.workflow_service.save_workflow_run(
+            failed,
+            expected_version=self.container.workflow_service.get_workflow_run_version(failed.id),
+        )
+
+        response = self.client.post(
+            f"/ui/projects/{project_id}/methods/DESK/retry",
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 303)
+        self.assertNotIn(failed.id, response.headers["location"])
+        self.assertEqual(len(facade._desk_runs(project_id)), 2)
 
 
 if __name__=="__main__":unittest.main()

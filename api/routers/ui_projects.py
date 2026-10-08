@@ -227,6 +227,16 @@ def project_method_activate(request: Request, project_id: str, method: str):
         return templates.TemplateResponse(request, "projects/error.html", {"request": request, "message": "Проєкт не знайдено"}, status_code=404)
     except ValueError as exc:
         return templates.TemplateResponse(request, "projects/error.html", {"request": request, "message": str(exc)}, status_code=409)
+
+@router.post("/{project_id}/methods/DESK/retry", include_in_schema=False)
+def project_desk_retry(request: Request, project_id: str):
+    try:
+        run = _facade(request).retry_desk(project_id)
+        return RedirectResponse(f"/ui/research/{run.id}/overview", status_code=303)
+    except (AccessDeniedError, EntityNotFoundError):
+        return templates.TemplateResponse(request, "projects/error.html", {"request": request, "message": "Проєкт не знайдено"}, status_code=404)
+    except ValueError as exc:
+        return templates.TemplateResponse(request, "projects/error.html", {"request": request, "message": str(exc)}, status_code=409)
 @router.get("/{project_id}/desk/new", response_class=HTMLResponse, include_in_schema=False)
 def desk_new(request: Request, project_id: str):
     try:

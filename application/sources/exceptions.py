@@ -9,7 +9,7 @@ class SourceAcquisitionError(RuntimeError):
     """Raised when source acquisition cannot satisfy the minimum contract."""
 
 
-class SearchConfigurationError(RuntimeError):
+class SearchConfigurationError(SearchProviderError):
     """Raised when search capability is invoked without required configuration."""
 
 
