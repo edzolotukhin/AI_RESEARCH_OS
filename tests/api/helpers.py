@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from unittest.mock import Mock
+from dataclasses import replace
 
 from fastapi.testclient import TestClient
 
@@ -10,11 +11,14 @@ from application.composition_root import create_application_container
 from application.config import ApplicationConfig, ApplicationOverrides
 from application.container import ApplicationContainer
 from domain.ai.llm_response import LLMResponse
+from domain.research_brief import ResearchBrief
 
 from api.app import create_fastapi_app
 
 from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
 from tests.helpers.brief_aligned_planner_llm import create_brief_aligned_llm_mock
+from infrastructure.search.deterministic_search_adapter import DeterministicSourceRetriever
+from infrastructure.evidence.deterministic_evidence_extractor import DeterministicEvidenceExtractor
 
 
 def build_test_container(
@@ -77,6 +81,54 @@ def drain_background_runs(
     return container.worker_execution_service.drain_runnable_runs(
         worker_id,
         max_runs=max_runs,
+    )
+
+
+def prepare_approved_desk_project(container, project_id: str, brief_payload: dict) -> None:
+    """Prepare the canonical approved-design precondition for Desk API tests."""
+    project = container.project_service.get_project(project_id)
+    project.selected_methods = ("DESK",)
+    container.project_service.save_project(project)
+    brief = ResearchBrief.from_dict(brief_payload)
+    container.project_planning_service.save_brief(project, brief)
+    project = container.project_service.get_project(project_id)
+    container.project_planning_service.generate_design(project)
+    project = container.project_service.get_project(project_id)
+    container.project_planning_service.approve_design(
+        project,
+        actor_id=project.owner_principal_id or "test-owner",
+        expected_design_id=project.current_research_design.id,
+    )
+
+
+def dated_desk_overrides(llm_client):
+    """Use deterministic material with an explicit observation period."""
+    class DatedRetriever(DeterministicSourceRetriever):
+        def retrieve(self, candidate):
+            source = super().retrieve(candidate)
+            if source.content_text:
+                source = replace(
+                    source,
+                    content_text=source.content_text + " Pet food Germany brand awareness. Observation period: 2026.",
+                )
+            return source
+
+    class DatedExtractor(DeterministicEvidenceExtractor):
+        def extract(self, **kwargs):
+            return [
+                replace(
+                    item,
+                    statement=item.statement + " Pet food Germany.",
+                    source_excerpt=item.source_excerpt + " Pet food Germany brand awareness. Observation period: 2026.",
+                    metadata={**item.metadata, "observation_period": "2026"},
+                )
+                for item in super().extract(**kwargs)
+            ]
+
+    return ApplicationOverrides(
+        llm_client=llm_client,
+        source_retriever=DatedRetriever(),
+        evidence_extractor=DatedExtractor(),
     )
 
 

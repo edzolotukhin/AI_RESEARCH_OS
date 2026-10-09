@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from tests.api.helpers import ApiTestCase, drain_background_runs
+from tests.api.helpers import ApiTestCase, drain_background_runs, prepare_approved_desk_project
 
 from application.exceptions.capability_not_implemented_error import (
     CapabilityNotImplementedError,
@@ -79,13 +79,14 @@ class ResearchEndpointTests(ApiTestCase):
                 def retrieve(self, candidate):
                     source = super().retrieve(candidate)
                     if source.content_text:
-                        source = replace(source, content_text=source.content_text + f" Observation period: {period}.")
+                        source = replace(source, content_text=source.content_text + f" Pet food Germany brand awareness. Observation period: {period}.")
                     return source
 
             class DatedExtractor(DeterministicEvidenceExtractor):
                 def extract(self, **kwargs):
                     return [replace(item,
-                        source_excerpt=item.source_excerpt + f" Observation period: {period}.",
+                        statement=item.statement + " Pet food Germany.",
+                        source_excerpt=item.source_excerpt + f" Pet food Germany brand awareness. Observation period: {period}.",
                         metadata={**item.metadata, "observation_period": period})
                         for item in super().extract(**kwargs)]
 
@@ -122,10 +123,13 @@ class ResearchEndpointTests(ApiTestCase):
                         "/projects",
                         json={"name": "Completed Pipeline Project"},
                     ).json()["id"]
-                    run_id = client.post(
-                        f"/projects/{project_id}/research",
-                        json={"brief": BRIEF},
-                    ).json()["run_id"]
+                    prepare_approved_desk_project(container, project_id, BRIEF)
+                    activated = client.post(
+                        f"/ui/projects/{project_id}/methods/DESK/activate",
+                        follow_redirects=False,
+                    )
+                    self.assertEqual(activated.status_code, 303)
+                    run_id = container.project_planning_service._desk_run(project_id).id
                     drain_background_runs(container)
                     terminal = client.get(f"/workflow-runs/{run_id}").json()
                     self.assertTrue(terminal["is_terminal"])

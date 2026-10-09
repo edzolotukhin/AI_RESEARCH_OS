@@ -15,6 +15,8 @@ from tests.api.helpers import (
     close_test_client,
     drain_background_runs,
     open_test_client,
+    prepare_approved_desk_project,
+    dated_desk_overrides,
 )
 from tests.fixtures.research_brief import CANONICAL_BRIEF_REQUEST as BRIEF
 from tests.helpers.brief_aligned_planner_llm import create_brief_aligned_llm_mock
@@ -36,9 +38,7 @@ class SourceApiTests(unittest.TestCase):
                     report_engine="deterministic",
                     review_engine="deterministic",
                 ),
-                overrides=ApplicationOverrides(
-                    llm_client=create_brief_aligned_llm_mock(),
-                ),
+                overrides=dated_desk_overrides(create_brief_aligned_llm_mock()),
             )
             bootstrap_test_api_key(container)
             raw, _, context = open_test_client(container)
@@ -51,10 +51,12 @@ class SourceApiTests(unittest.TestCase):
                     "/projects",
                     json={"name": "Source API Project"},
                 ).json()["id"]
-                client.post(
-                    f"/projects/{project_id}/research",
-                    json={"brief": BRIEF},
+                prepare_approved_desk_project(container, project_id, BRIEF)
+                activated = client.post(
+                    f"/ui/projects/{project_id}/methods/DESK/activate",
+                    follow_redirects=False,
                 )
+                self.assertEqual(activated.status_code, 303)
                 try:
                     drain_background_runs(container)
                 except CapabilityNotImplementedError:
