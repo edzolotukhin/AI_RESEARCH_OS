@@ -13,6 +13,8 @@ from tests.api.helpers import (
     close_test_client,
     drain_background_runs,
     open_test_client,
+    prepare_approved_desk_project,
+    submit_approved_desk_run,
 )
 from tests.fixtures.research_brief import CANONICAL_BRIEF_REQUEST as BRIEF
 from tests.helpers.brief_aligned_planner_llm import create_brief_aligned_llm_mock
@@ -62,21 +64,28 @@ class RepeatedRunSameProjectPostgreSQLTests(PostgreSQLIntegrationTestCase):
         project_id = client.post("/projects", json={"name": "Repeated Brief Project"}).json()[
             "id"
         ]
+        approved = prepare_approved_desk_project(container, project_id, BRIEF)
+        subject = approved.current_research_design.research_subject
 
-        run_1_id = client.post(
-            f"/projects/{project_id}/research",
-            json={"brief": BRIEF},
-            headers={"Idempotency-Key": f"run-1-{uuid4()}"},
-        ).json()["run_id"]
+        run_1_id = submit_approved_desk_run(
+            container, project_id, run_id=str(uuid4()),
+        ).id
         drain_background_runs(container)
         run_1 = self._assert_completed_run(client, run_1_id)
 
-        run_2_id = client.post(
-            f"/projects/{project_id}/research",
-            json={"brief": BRIEF},
-            headers={"Idempotency-Key": f"run-2-{uuid4()}"},
-        ).json()["run_id"]
+        run_2_id = submit_approved_desk_run(
+            container, project_id, run_id=str(uuid4()),
+        ).id
         self.assertNotEqual(run_1_id, run_2_id)
+        frozen_2 = container.workflow_service.get_template(
+            container.workflow_service.get_workflow_run(run_2_id).workflow_template_id,
+        ).research_design_snapshot.research_subject
+        self.assertEqual(
+            (frozen_2.subject_id, frozen_2.version, frozen_2.semantic_fingerprint,
+             frozen_2.lexical_representations),
+            (subject.subject_id, subject.version, subject.semantic_fingerprint,
+             subject.lexical_representations),
+        )
         drain_background_runs(container)
         run_2 = self._assert_completed_run(client, run_2_id)
 
@@ -176,26 +185,35 @@ class RepeatedRunSameProjectPostgreSQLTests(PostgreSQLIntegrationTestCase):
         project_id = client.post("/projects", json={"name": "Idempotent Project"}).json()[
             "id"
         ]
+        approved = prepare_approved_desk_project(container, project_id, BRIEF)
         idempotency_key = f"shared-key-{uuid4()}"
-        headers = {"Idempotency-Key": idempotency_key}
-
-        first = client.post(
-            f"/projects/{project_id}/research",
-            json={"brief": BRIEF},
-            headers=headers,
+        fingerprint = approved.current_research_design.research_subject.semantic_fingerprint
+        first = container.research_submission_service.resolve_submission(
+            project_id=project_id,
+            idempotency_key=idempotency_key,
+            request_fingerprint=fingerprint,
+            correlation_id=None,
+            source="ow10-postgresql-fixture",
         )
-        self.assertEqual(first.status_code, 202)
-        run_id = first.json()["run_id"]
+        run_id = submit_approved_desk_run(
+            container, project_id, run_id=first.run_id,
+        ).id
+        container.research_submission_service.mark_completed(
+            project_id=project_id,
+            idempotency_key=idempotency_key,
+        )
         drain_background_runs(container)
         self._assert_completed_run(client, run_id)
 
-        second = client.post(
-            f"/projects/{project_id}/research",
-            json={"brief": BRIEF},
-            headers=headers,
+        replay = container.research_submission_service.resolve_submission(
+            project_id=project_id,
+            idempotency_key=idempotency_key,
+            request_fingerprint=fingerprint,
+            correlation_id=None,
+            source="ow10-postgresql-fixture",
         )
-        self.assertEqual(second.status_code, 202)
-        self.assertEqual(second.json()["run_id"], run_id)
+        self.assertTrue(replay.replay)
+        self.assertEqual(replay.run_id, run_id)
 
         runs = client.get(f"/projects/{project_id}/workflow-runs").json()["items"]
         self.assertEqual(len(runs), 1)
@@ -229,11 +247,11 @@ class RepeatedRunSameProjectPostgreSQLTests(PostgreSQLIntegrationTestCase):
         project_id = client_1.post("/projects", json={"name": "Restart Project"}).json()[
             "id"
         ]
-        run_1_id = client_1.post(
-            f"/projects/{project_id}/research",
-            json={"brief": BRIEF},
-            headers={"Idempotency-Key": f"restart-run-1-{uuid4()}"},
-        ).json()["run_id"]
+        approved = prepare_approved_desk_project(container_1, project_id, BRIEF)
+        subject = approved.current_research_design.research_subject
+        run_1_id = submit_approved_desk_run(
+            container_1, project_id, run_id=str(uuid4()),
+        ).id
         drain_background_runs(container_1)
         self._assert_completed_run(client_1, run_1_id)
 
@@ -253,14 +271,21 @@ class RepeatedRunSameProjectPostgreSQLTests(PostgreSQLIntegrationTestCase):
             auth_headers(container_1._test_api_key_plaintext),
         )
 
-        run_2_id = client_2.post(
-            f"/projects/{project_id}/research",
-            json={"brief": BRIEF},
-            headers={"Idempotency-Key": f"restart-run-2-{uuid4()}"},
-        ).json()["run_id"]
+        run_2_id = submit_approved_desk_run(
+            container_2, project_id, run_id=str(uuid4()),
+        ).id
         drain_background_runs(container_2)
         self._assert_completed_run(client_2, run_2_id)
         self.assertNotEqual(run_1_id, run_2_id)
+        frozen_2 = container_2.workflow_service.get_template(
+            container_2.workflow_service.get_workflow_run(run_2_id).workflow_template_id,
+        ).research_design_snapshot.research_subject
+        self.assertEqual(
+            (frozen_2.subject_id, frozen_2.version, frozen_2.semantic_fingerprint,
+             frozen_2.lexical_representations),
+            (subject.subject_id, subject.version, subject.semantic_fingerprint,
+             subject.lexical_representations),
+        )
 
 
 if __name__ == "__main__":

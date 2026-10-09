@@ -8,6 +8,7 @@ from application.composition_root import create_application_container
 
 from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
 from tests.api.helpers import (
+    activate_approved_desk_project,
     AuthenticatedTestClient,
     close_test_client,
     drain_background_runs,
@@ -45,10 +46,7 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
         ))
 
         project_id = client.post("/projects", json={"name": "PG DR-05 Honesty"}).json()["id"]
-        run_id = client.post(
-            f"/projects/{project_id}/research",
-            json={"brief": BRIEF},
-        ).json()["run_id"]
+        run_id = activate_approved_desk_project(container, project_id, BRIEF).id
 
         drain_background_runs(container)
 

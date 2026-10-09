@@ -9,6 +9,7 @@ from application.report.deduplication import compute_content_checksum
 
 from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
 from tests.api.helpers import (
+    activate_approved_desk_project,
     AuthenticatedTestClient,
     close_test_client,
     drain_background_runs,
@@ -46,10 +47,7 @@ class Dr06IntegrityPostgreSQLTests(PostgreSQLIntegrationTestCase):
         )
 
         project_id = client.post("/projects", json={"name": "Integrity Project"}).json()["id"]
-        run_id = client.post(
-            f"/projects/{project_id}/research",
-            json={"brief": BRIEF},
-        ).json()["run_id"]
+        run_id = activate_approved_desk_project(container, project_id, BRIEF).id
         drain_background_runs(container)
 
         artifact_id = client.get(f"/workflow-runs/{run_id}/artifacts").json()["items"][0]["id"]
@@ -99,10 +97,7 @@ class Dr06IntegrityPostgreSQLTests(PostgreSQLIntegrationTestCase):
         )
 
         project_id = client.post("/projects", json={"name": "Citation Project"}).json()["id"]
-        run_id = client.post(
-            f"/projects/{project_id}/research",
-            json={"brief": BRIEF},
-        ).json()["run_id"]
+        run_id = activate_approved_desk_project(container, project_id, BRIEF).id
         drain_background_runs(container)
 
         report = client.get(

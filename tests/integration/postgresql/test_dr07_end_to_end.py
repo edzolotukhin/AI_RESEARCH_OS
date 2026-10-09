@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import unittest
-from uuid import uuid4
 
 from dataclasses import replace
 
@@ -13,6 +12,7 @@ from application.review.exceptions import ReviewError
 
 from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
 from tests.api.helpers import (
+    activate_approved_desk_project,
     AuthenticatedTestClient,
     close_test_client,
     drain_background_runs,
@@ -57,11 +57,7 @@ class Dr07EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
     def test_clean_report_approves_and_completes(self) -> None:
         client, container = self._build_client()
         project_id = client.post("/projects", json={"name": "DR-07 Approve"}).json()["id"]
-        run_id = client.post(
-            f"/projects/{project_id}/research",
-            json={"brief": BRIEF},
-            headers={"Idempotency-Key": f"dr07-approve-{uuid4()}"},
-        ).json()["run_id"]
+        run_id = activate_approved_desk_project(container, project_id, BRIEF).id
         drain_background_runs(container)
 
         terminal = client.get(f"/workflow-runs/{run_id}").json()
@@ -87,11 +83,7 @@ class Dr07EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
         self.addCleanup(os.environ.pop, "DETERMINISTIC_REVIEW_SCENARIO", None)
         client, container = self._build_client(max_revision_attempts=1)
         project_id = client.post("/projects", json={"name": "DR-07 Revise"}).json()["id"]
-        run_id = client.post(
-            f"/projects/{project_id}/research",
-            json={"brief": BRIEF},
-            headers={"Idempotency-Key": f"dr07-revise-{uuid4()}"},
-        ).json()["run_id"]
+        run_id = activate_approved_desk_project(container, project_id, BRIEF).id
         drain_background_runs(container)
 
         terminal = client.get(f"/workflow-runs/{run_id}").json()
@@ -125,11 +117,7 @@ class Dr07EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
         self.addCleanup(os.environ.pop, "DETERMINISTIC_REVIEW_SCENARIO", None)
         client, container = self._build_client()
         project_id = client.post("/projects", json={"name": "DR-07 Reject"}).json()["id"]
-        run_id = client.post(
-            f"/projects/{project_id}/research",
-            json={"brief": BRIEF},
-            headers={"Idempotency-Key": f"dr07-reject-{uuid4()}"},
-        ).json()["run_id"]
+        run_id = activate_approved_desk_project(container, project_id, BRIEF).id
         with self.assertRaises(ReviewError):
             drain_background_runs(container)
 
@@ -147,11 +135,7 @@ class Dr07EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
         self.addCleanup(os.environ.pop, "DETERMINISTIC_REVIEW_SCENARIO", None)
         client, container = self._build_client(max_revision_attempts=0)
         project_id = client.post("/projects", json={"name": "DR-07 Exhaust"}).json()["id"]
-        run_id = client.post(
-            f"/projects/{project_id}/research",
-            json={"brief": BRIEF},
-            headers={"Idempotency-Key": f"dr07-exhaust-{uuid4()}"},
-        ).json()["run_id"]
+        run_id = activate_approved_desk_project(container, project_id, BRIEF).id
         with self.assertRaises(ReviewError):
             drain_background_runs(container)
 

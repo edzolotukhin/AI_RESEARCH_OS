@@ -12,7 +12,12 @@ from tests.application.test_ark02_desk import fixture, Search, Retriever, EmptyL
 from tests.application.test_ark02_kernel import Crash
 from tests.integration.postgresql.helpers import PostgreSQLIntegrationTestCase, postgresql_application_config
 from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
-from tests.api.helpers import AuthenticatedTestClient, close_test_client, open_test_client
+from tests.api.helpers import (
+    AuthenticatedTestClient,
+    close_test_client,
+    open_test_client,
+    prepare_approved_desk_project,
+)
 from tests.fixtures.research_brief import CANONICAL_BRIEF_REQUEST
 from tests.helpers.brief_aligned_planner_llm import create_brief_aligned_llm_mock
 
@@ -117,9 +122,13 @@ class DeskWorkerTests(PostgreSQLIntegrationTestCase):
         self.addCleanup(lambda: close_test_client(context, api))
         client = AuthenticatedTestClient(raw, auth_headers(api._test_api_key_plaintext))
         project_id = client.post("/projects", json={"name": "ARK API replay"}).json()["id"]
-        response = client.post(f"/projects/{project_id}/research", json={"brief": CANONICAL_BRIEF_REQUEST})
-        self.assertEqual(response.status_code, 202, response.text)
-        run_id = response.json()["run_id"]
+        prepare_approved_desk_project(api, project_id, CANONICAL_BRIEF_REQUEST)
+        response = client.post(
+            f"/ui/projects/{project_id}/methods/DESK/activate",
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 303, response.text)
+        run_id = api.project_planning_service._desk_run(project_id).id
         pin = self.results(run_id)[PIN]
         llm = EmptyLLM()
         worker, _ = self.container(llm, enabled=False)

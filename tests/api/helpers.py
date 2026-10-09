@@ -84,7 +84,7 @@ def drain_background_runs(
     )
 
 
-def prepare_approved_desk_project(container, project_id: str, brief_payload: dict) -> None:
+def prepare_approved_desk_project(container, project_id: str, brief_payload: dict):
     """Prepare the canonical approved-design precondition for Desk API tests."""
     project = container.project_service.get_project(project_id)
     project.selected_methods = ("DESK",)
@@ -99,6 +99,28 @@ def prepare_approved_desk_project(container, project_id: str, brief_payload: dic
         actor_id=project.owner_principal_id or "test-owner",
         expected_design_id=project.current_research_design.id,
     )
+    return container.project_service.get_project(project_id)
+
+
+def activate_approved_desk_project(container, project_id: str, brief_payload: dict):
+    """Prepare and activate Desk through the canonical approved-design boundary."""
+    project = prepare_approved_desk_project(container, project_id, brief_payload)
+    return container.project_planning_service.activate_desk(project)
+
+
+def submit_approved_desk_run(container, project_id: str, *, run_id: str):
+    """Submit another run from the same approved, frozen Desk design."""
+    project = container.project_service.get_project(project_id)
+    container.project_planning_service._require_activation(project, "DESK")
+    template = container.project_planning_service.workflow_mapper.from_research_design(
+        project.current_research_design,
+        project,
+    )
+    return container.agency.start_research_from_template(
+        project,
+        template,
+        run_id=run_id,
+    ).workflow_run
 
 
 def dated_desk_overrides(llm_client):

@@ -12,6 +12,7 @@ from application.executors.stage_executors import UnimplementedCapabilityExecuto
 
 from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
 from tests.api.helpers import (
+    activate_approved_desk_project,
     AuthenticatedTestClient,
     close_test_client,
     drain_background_runs,
@@ -53,11 +54,7 @@ class Dr03EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
         ))
 
         project_id = client.post("/projects", json={"name": "DR-03 E2E"}).json()["id"]
-        started = client.post(
-            f"/projects/{project_id}/research",
-            json={"brief": BRIEF},
-        ).json()
-        run_id = started["run_id"]
+        run_id = activate_approved_desk_project(container, project_id, BRIEF).id
 
         with self.assertRaises(CapabilityNotImplementedError) as exc:
             drain_background_runs(container)

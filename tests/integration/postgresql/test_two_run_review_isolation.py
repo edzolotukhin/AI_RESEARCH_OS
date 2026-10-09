@@ -13,6 +13,8 @@ from application.review.exceptions import ReviewError
 
 from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
 from tests.api.helpers import (
+    prepare_approved_desk_project,
+    submit_approved_desk_run,
     AuthenticatedTestClient,
     close_test_client,
     drain_background_runs,
@@ -56,12 +58,12 @@ class TwoRunReviewIsolationPostgreSQLTests(PostgreSQLIntegrationTestCase):
     def test_two_runs_keep_independent_review_and_artifact_state(self) -> None:
         client, container = self._build_client()
         project_id = client.post("/projects", json={"name": "Two-Run Review"}).json()["id"]
+        approved = prepare_approved_desk_project(container, project_id, BRIEF)
+        subject = approved.current_research_design.research_subject
 
-        run_a = client.post(
-            f"/projects/{project_id}/research",
-            json={"brief": BRIEF},
-            headers={"Idempotency-Key": f"dr07-run-a-{uuid4()}"},
-        ).json()["run_id"]
+        run_a = submit_approved_desk_run(
+            container, project_id, run_id=str(uuid4()),
+        ).id
         drain_background_runs(container)
         terminal_a = client.get(f"/workflow-runs/{run_a}").json()
         self.assertEqual(terminal_a["status"], "completed")
@@ -71,11 +73,18 @@ class TwoRunReviewIsolationPostgreSQLTests(PostgreSQLIntegrationTestCase):
 
         os.environ["DETERMINISTIC_REVIEW_SCENARIO"] = "reject"
         self.addCleanup(os.environ.pop, "DETERMINISTIC_REVIEW_SCENARIO", None)
-        run_b = client.post(
-            f"/projects/{project_id}/research",
-            json={"brief": BRIEF},
-            headers={"Idempotency-Key": f"dr07-run-b-{uuid4()}"},
-        ).json()["run_id"]
+        run_b = submit_approved_desk_run(
+            container, project_id, run_id=str(uuid4()),
+        ).id
+        frozen_b = container.workflow_service.get_template(
+            container.workflow_service.get_workflow_run(run_b).workflow_template_id,
+        ).research_design_snapshot.research_subject
+        self.assertEqual(
+            (frozen_b.subject_id, frozen_b.version, frozen_b.semantic_fingerprint,
+             frozen_b.lexical_representations),
+            (subject.subject_id, subject.version, subject.semantic_fingerprint,
+             subject.lexical_representations),
+        )
         with self.assertRaises(ReviewError):
             drain_background_runs(container)
         terminal_b = client.get(f"/workflow-runs/{run_b}").json()
