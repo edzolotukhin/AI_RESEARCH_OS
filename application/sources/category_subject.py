@@ -10,7 +10,7 @@ from domain.research_brief import ResearchBrief
 
 from application.sources.url_canonicalizer import normalize_query_text
 
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 
 # Domain-neutral research, geography, time, and task language.  These words
 # cannot establish the market/category/entity being researched.

@@ -44,3 +44,4 @@ class ResearchDesignDTO:
     assumptions: tuple[str, ...]
     limitations: tuple[str, ...]
     language: str
+    research_subject_proposal: dict | None = None

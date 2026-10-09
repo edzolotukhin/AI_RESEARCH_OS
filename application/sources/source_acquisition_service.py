@@ -588,6 +588,19 @@ class SourceAcquisitionService:
                         }
                     )
                     continue
+                if design.research_subject is not None:
+                    metadata = dict(item.candidate.metadata)
+                    metadata.update({
+                        "subject_id": design.research_subject.subject_id,
+                        "subject_version": design.research_subject.version,
+                        "subject_fingerprint": design.research_subject.semantic_fingerprint,
+                        "subject_decision": decision.subject_decision,
+                        "matched_concept_refs": ",".join(decision.matched_concept_refs),
+                        "supporting_relation_id": decision.supporting_relation_id or "",
+                    })
+                    item.candidate = SourceCandidate(
+                        **{**item.candidate.to_dict(), "metadata": metadata}
+                    )
                 fetchable.append(decision)
 
             if not fetchable:
@@ -1018,6 +1031,14 @@ class SourceAcquisitionService:
                         "provider_result_count",
                         "",
                     ),
+                    subject_id=item.candidate.metadata.get("subject_id", ""),
+                    subject_version=item.candidate.metadata.get("subject_version", ""),
+                    subject_fingerprint=item.candidate.metadata.get("subject_fingerprint", ""),
+                    subject_decision=item.candidate.metadata.get("subject_decision", ""),
+                    matched_concept_refs=tuple(filter(None, item.candidate.metadata.get(
+                        "matched_concept_refs", ""
+                    ).split(","))),
+                    supporting_relation_id=item.candidate.metadata.get("supporting_relation_id", ""),
                 ),
             )
         return ProvenanceDelta(

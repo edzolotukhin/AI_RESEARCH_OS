@@ -60,6 +60,11 @@ class ResearchDesignParser:
                     "limitations",
                 ),
                 language=self._optional_string(response, "language") or "en",
+                research_subject_proposal=(
+                    dict(response["research_subject"])
+                    if isinstance(response.get("research_subject"), Mapping)
+                    else None
+                ),
             )
         except PlannerParserError:
             raise

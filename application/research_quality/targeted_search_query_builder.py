@@ -14,6 +14,7 @@ from application.sources.category_subject import resolve_category_subject
 from application.sources.query_temporal_intent import observation_window
 from application.sources.provider_query_projector import project_provider_query_text
 from application.sources.url_canonicalizer import normalize_query_text
+from application.evidence.subject_relevance import subject_query_label
 
 SEMANTIC_TARGET_MISSING_ASPECTS = "missing_aspects"
 SEMANTIC_TARGET_EE_FALLBACK = "EE_fallback"
@@ -57,7 +58,12 @@ class TargetedSearchQueryBuilder:
             None,
         )
         subject_context = question.question if question is not None else ""
-        category = resolve_category_subject(brief=brief, design=design)
+        frozen_subject = design.research_subject
+        if frozen_subject is not None:
+            category_text = subject_query_label(frozen_subject, design.language)
+        else:
+            category = resolve_category_subject(brief=brief, design=design)
+            category_text = category.text if category is not None else ""
         timeframe = observation_window(need, brief)
         semantic_targets, target_source = self._resolve_semantic_targets(
             need=need,
@@ -65,7 +71,7 @@ class TargetedSearchQueryBuilder:
         )
         base_text = build_expectation_aware_query_text(
             subject_context=subject_context,
-            category_context=category.text if category is not None else "",
+            category_context=category_text,
             description=need.description,
             geography=need.geography,
             timeframe=timeframe,
@@ -90,7 +96,7 @@ class TargetedSearchQueryBuilder:
                 ),
                 provider_query_text=(
                     project_provider_query_text(
-                        category_subject=category.text if category is not None else None,
+                        category_subject=category_text or None,
                         geography=need.geography,
                         core_intent=need.description,
                         timeframe=timeframe,
@@ -119,7 +125,7 @@ class TargetedSearchQueryBuilder:
                     information_need_id=need.id,
                     query_text=build_expectation_aware_query_text(
                         subject_context=subject_context,
-                        category_context=category.text if category is not None else "",
+                        category_context=category_text,
                         description=directive_text,
                         geography=need.geography,
                         timeframe=timeframe,
@@ -135,7 +141,7 @@ class TargetedSearchQueryBuilder:
                     ),
                     provider_query_text=(
                         project_provider_query_text(
-                            category_subject=category.text if category is not None else None,
+                            category_subject=category_text or None,
                             geography=need.geography,
                             core_intent=directive_text,
                             timeframe=timeframe,

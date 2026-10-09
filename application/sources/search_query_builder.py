@@ -11,6 +11,7 @@ from application.sources.expectation_aware_query_intent import (
 from application.sources.category_subject import resolve_category_subject
 from application.sources.query_temporal_intent import observation_window
 from application.sources.provider_query_projector import project_provider_query_text
+from application.evidence.subject_relevance import subject_query_label
 
 
 class SearchQueryBuilder:
@@ -69,14 +70,21 @@ class SearchQueryBuilder:
             None,
         )
         subject_context = question.question if question is not None else ""
-        category = resolve_category_subject(brief=brief, design=design)
+        frozen_subject = design.research_subject
+        if frozen_subject is not None:
+            category_text = subject_query_label(frozen_subject, design.language)
+            category_source = "approved_research_subject"
+        else:
+            category = resolve_category_subject(brief=brief, design=design)
+            category_text = category.text if category is not None else ""
+            category_source = category.source if category is not None else ""
         timeframe = observation_window(need, brief)
         semantic_targets: tuple[str, ...] = ()
         if need.evidence_expectation is not None:
             semantic_targets = need.evidence_expectation.required_aspects
         query_text = build_expectation_aware_query_text(
             subject_context=subject_context,
-            category_context=category.text if category is not None else "",
+            category_context=category_text,
             description=need.description,
             geography=need.geography,
             timeframe=timeframe,
@@ -86,8 +94,8 @@ class SearchQueryBuilder:
         rationale_parts = [f"Derived from information need {need.id}"]
         if subject_context:
             rationale_parts.append("subject_context=parent_research_question")
-        if category is not None:
-            rationale_parts.append(f"category_subject={category.source}")
+        if category_text:
+            rationale_parts.append(f"category_subject={category_source}")
         if need.geography:
             rationale_parts.append(f"geography={need.geography}")
         if need.timeframe:
@@ -106,7 +114,7 @@ class SearchQueryBuilder:
             rationale="; ".join(rationale_parts),
             provider_query_text=(
                 project_provider_query_text(
-                    category_subject=category.text if category is not None else None,
+                    category_subject=category_text or None,
                     geography=need.geography,
                     core_intent=need.description,
                     timeframe=timeframe,

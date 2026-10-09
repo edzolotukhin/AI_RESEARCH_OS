@@ -5,6 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 from domain.planning.evidence_expectation import EvidenceExpectation
+from domain.planning.research_subject import ResearchSubject
 
 
 @dataclass(frozen=True)
@@ -104,6 +105,7 @@ class ResearchDesign:
     assumptions: tuple[str, ...] = ()
     limitations: tuple[str, ...] = ()
     language: str = "en"
+    research_subject: ResearchSubject | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -120,6 +122,9 @@ class ResearchDesign:
             "assumptions": list(self.assumptions),
             "limitations": list(self.limitations),
             "language": self.language,
+            "research_subject": (
+                self.research_subject.to_dict() if self.research_subject is not None else None
+            ),
         }
 
     @classmethod
@@ -142,6 +147,7 @@ class ResearchDesign:
             assumptions=_tuple_of_str(payload.get("assumptions")),
             limitations=_tuple_of_str(payload.get("limitations")),
             language=str(payload.get("language", "en") or "en"),
+            research_subject=ResearchSubject.from_dict(payload.get("research_subject")),
         )
 
 

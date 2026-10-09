@@ -36,8 +36,13 @@ from domain.sources.source_candidate import SourceCandidate
 from application.sources.expectation_aware_query_intent import render_aspect_query_terms
 from application.sources.category_subject import resolve_category_subject
 from application.sources.url_canonicalizer import normalize_query_text
+from application.evidence.subject_relevance import (
+    SUBJECT_IRRELEVANT, SUBJECT_RELEVANT, SUBJECT_UNRESOLVED,
+    assess_subject_text,
+)
+from domain.planning.research_subject import ResearchSubject
 
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 
 _STOPWORDS = frozenset(
     {
@@ -375,6 +380,7 @@ class RelevanceContext:
     quantitative_expectation: bool = False
     preferred_source_type_tokens: frozenset[str] = frozenset()
     category_subject_tokens: frozenset[str] = frozenset()
+    research_subject: ResearchSubject | None = None
 
 
 @dataclass(frozen=True)
@@ -392,6 +398,9 @@ class SourceRelevanceDecision:
     statistics_signal: int = 0
     category_alignment: str = CATEGORY_UNSCORED
     category_overlap: int = 0
+    subject_decision: str = "legacy_unavailable"
+    matched_concept_refs: tuple[str, ...] = ()
+    supporting_relation_id: str | None = None
 
     @property
     def is_fetch_eligible(self) -> bool:
@@ -438,6 +447,9 @@ class SourceRelevanceDecision:
             "category_alignment": self.category_alignment,
             "category_overlap": self.category_overlap,
             "category_subject_available": bool(self.category_alignment != CATEGORY_UNSCORED),
+            "subject_decision": self.subject_decision,
+            "matched_concept_refs": list(self.matched_concept_refs),
+            "supporting_relation_id": self.supporting_relation_id,
         }
 
 
@@ -510,6 +522,7 @@ def build_relevance_context(
         quantitative_expectation=quantitative,
         preferred_source_type_tokens=preferred_tokens,
         category_subject_tokens=category_subject_tokens,
+        research_subject=design.research_subject,
     )
 
 
@@ -542,6 +555,14 @@ def evaluate_candidate(
     authority_score = _authority_score(url)
     statistics_signal = _statistics_signal(candidate_tokens, url)
     category_overlap = len(context.category_subject_tokens & candidate_tokens)
+    subject_result = None
+    if context.research_subject is not None:
+        subject_result = assess_subject_text(
+            subject=context.research_subject,
+            statement=blob,
+            excerpt=blob,
+            information_need_id=context.information_need_id,
+        )
     if not context.category_subject_tokens:
         category_alignment = CATEGORY_UNSCORED
     elif category_overlap > 0:
@@ -583,7 +604,14 @@ def evaluate_candidate(
             statistics_signal=statistics_signal,
             category_alignment=category_alignment,
             category_overlap=category_overlap,
+            subject_decision=(subject_result.decision if subject_result else "legacy_unavailable"),
+            matched_concept_refs=(subject_result.matched_concept_refs if subject_result else ()),
+            supporting_relation_id=(subject_result.supporting_relation_id if subject_result else None),
         )
+
+    if subject_result is not None and subject_result.decision == SUBJECT_IRRELEVANT:
+        return _decision(eligibility=ELIGIBILITY_INELIGIBLE, topic_score=0,
+                         reason="subject_irrelevant")
 
     if not context.has_distinctive_anchors or context.legacy_expectation:
         reason = (
@@ -599,6 +627,8 @@ def evaluate_candidate(
                 else ELIGIBILITY_PROXY
             )
             reason = f"legacy_topic_aligned_geo_{geo_alignment}"
+        if subject_result is not None and subject_result.decision == SUBJECT_UNRESOLVED:
+            reason = "subject_unresolved_bounded_fallback"
         return _decision(
             eligibility=eligibility,
             topic_score=anchor_overlap,
@@ -621,6 +651,9 @@ def evaluate_candidate(
         and distinctive_overlap == 0
         and generic_contract_overlap
     ):
+        if subject_result is not None and subject_result.decision == SUBJECT_UNRESOLVED:
+            return _decision(eligibility=ELIGIBILITY_UNSCORED, topic_score=0,
+                             reason="subject_unresolved_bounded_fallback")
         return _decision(
             eligibility=ELIGIBILITY_INELIGIBLE,
             topic_score=need_overlap,
@@ -628,6 +661,9 @@ def evaluate_candidate(
         )
 
     if distinctive_overlap == 0 and context.has_distinctive_anchors:
+        if subject_result is not None and subject_result.decision == SUBJECT_UNRESOLVED:
+            return _decision(eligibility=ELIGIBILITY_UNSCORED, topic_score=0,
+                             reason="subject_unresolved_bounded_fallback")
         return _decision(
             eligibility=ELIGIBILITY_UNSCORED,
             topic_score=0,
@@ -653,6 +689,10 @@ def evaluate_candidate(
             if conflicting_title_geography
             else f"topic_aligned_geo_{geo_alignment}"
         )
+
+    if subject_result is not None and subject_result.decision == SUBJECT_UNRESOLVED:
+        eligibility = ELIGIBILITY_UNSCORED
+        reason = "subject_unresolved_bounded_fallback"
 
     return _decision(
         eligibility=eligibility,
@@ -772,6 +812,13 @@ def _derive_category_subject_tokens(
     brief: ResearchBrief | None = None,
 ) -> frozenset[str]:
     """Compatibility wrapper over the shared P1-23.1 subject resolver."""
+    if design.research_subject is not None:
+        return frozenset(
+            token
+            for item in design.research_subject.approved_representations
+            for phrase in item.normalized_phrases
+            for token in tokenize(phrase, min_length=2)
+        )
     subject = resolve_category_subject(brief=brief, design=design)
     return subject.tokens if subject is not None else frozenset()
 

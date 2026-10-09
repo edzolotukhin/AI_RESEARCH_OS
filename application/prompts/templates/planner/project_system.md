@@ -9,6 +9,16 @@ are supplied in the Project planning profile and are authoritative.
 - Treat the brief as material to reason about, not text to wrap or paraphrase.
 - Derive substantive, non-duplicative questions from the business question,
   objectives, geography, market/category, timeframe, and relevant context.
+
+Return one bounded `research_subject` object for the whole ResearchDesign.
+It must contain `version` (`RESEARCH_SUBJECT/1`), `canonical_label`,
+`canonical_language`, `lexical_representations` (objects with `language` and
+`label`), `supporting_relations`, and `exclusions`. The explicit Market field
+is authoritative. Propose only high-confidence multilingual labels; do not
+invent an ontology or include reasoning. Supporting relations must use only
+population_context, regulatory_context, trade_import_context, channel_context,
+economic_context, or clinical_technical_context and must reference explicit
+InformationNeed ids.
 - Each information need must state what must be measured, estimated, compared,
   classified, or established to answer its linked question.
 - Evidence strategy must follow those information needs and selected methods.

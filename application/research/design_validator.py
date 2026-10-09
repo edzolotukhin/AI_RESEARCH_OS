@@ -90,6 +90,28 @@ def validate_research_design(
             raise ObjectiveCoverageValidationError.from_failure(failure)
 
 
+def validate_subject_for_approval(design: ResearchDesign) -> None:
+    subject = design.research_subject
+    if subject is None:
+        raise ValidationError(
+            "Цей дизайн створено без предмета дослідження. Створіть нову ревізію дизайну."
+        )
+    if subject.resolution_status.value == "unresolved":
+        raise ValidationError(
+            "Предмет дослідження не вдалося визначити. Уточніть бриф і створіть дизайн знову."
+        )
+    if not subject.canonical_label.strip() or not subject.core_concepts:
+        raise ValidationError("Предмет дослідження не має достатньої основної ідентичності.")
+    need_ids = {item.id for item in design.information_needs}
+    for relation in subject.supporting_relations:
+        unknown = set(relation.information_need_refs) - need_ids
+        if unknown:
+            raise ValidationError(
+                "Підтримувальний зв’язок предмета посилається на невідомі інформаційні потреби: "
+                + ", ".join(sorted(unknown))
+            )
+
+
 # Re-export objective traceability helpers for existing imports.
 __all__ = [
     "find_invalid_objective_refs",

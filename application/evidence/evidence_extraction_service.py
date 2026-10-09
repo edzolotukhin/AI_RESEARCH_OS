@@ -1041,6 +1041,10 @@ class EvidenceExtractionService:
         research_design_id: str,
     ) -> tuple[str, bool]:
         metadata = dict(candidate.metadata or {})
+        metadata.pop("research_subject", None)
+        subject_audit = metadata.pop("_research_subject_audit", None)
+        if isinstance(subject_audit, dict):
+            metadata["research_subject"] = dict(subject_audit)
         # A candidate must not self-certify a lineage group. Only the grounded
         # source-text attribution below can establish it at this boundary.
         metadata.pop("data_lineage", None)

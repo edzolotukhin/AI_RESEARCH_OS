@@ -7,6 +7,7 @@ from domain.planning.research_design import ResearchDesign
 from application.evidence.run_scoped_provenance import RunScopedSourceContext
 from application.ports.evidence_ports import EvidenceCandidate
 from application.evidence.relevance_validation import relevant_need_refs
+from application.evidence.subject_relevance import SUBJECT_RELEVANT, assess_subject_text
 
 
 class InvalidProvenanceError(ValueError):
@@ -45,11 +46,54 @@ def validate_candidate_provenance(
             "Candidate information_need_refs are outside the run-scoped context",
         )
 
-    validated_need_refs = relevant_need_refs(
+    locally_relevant_need_refs = relevant_need_refs(
         replace(candidate, information_need_refs=validated_need_refs), design=design,
     )
-    if not validated_need_refs:
-        raise InvalidProvenanceError("Candidate subject relevance is unsupported for assigned needs")
+    if design.research_subject is None and not locally_relevant_need_refs:
+        raise InvalidProvenanceError(
+            "Candidate subject relevance is unsupported for assigned needs (local relevance)"
+        )
+    if design.research_subject is None:
+        validated_need_refs = locally_relevant_need_refs
+
+    subject_metadata = None
+    if design.research_subject is not None:
+        retained: tuple[str, ...] = ()
+        accepted_decisions = []
+        for need_id in validated_need_refs:
+            decision = assess_subject_text(
+                subject=design.research_subject,
+                statement=candidate.statement,
+                excerpt=candidate.source_excerpt,
+                information_need_id=need_id,
+            )
+            cross_language = any(
+                language.casefold() != design.language.casefold()
+                for language in decision.matched_languages
+                if language and language != "und"
+            )
+            if decision.decision == SUBJECT_RELEVANT and (
+                need_id in locally_relevant_need_refs or cross_language
+            ):
+                retained = _append_unique(retained, need_id)
+                accepted_decisions.append(decision)
+        validated_need_refs = retained
+        if not validated_need_refs:
+            raise InvalidProvenanceError(
+                "Candidate subject relevance is unsupported for assigned needs"
+            )
+        accepted = accepted_decisions[0]
+        subject_metadata = {
+            "subject_id": design.research_subject.subject_id,
+            "subject_version": design.research_subject.version,
+            "subject_fingerprint": design.research_subject.semantic_fingerprint,
+            "subject_decision": accepted.decision,
+            "matched_concept_refs": list(accepted.matched_concept_refs),
+            "resolver_path": accepted.resolver_path,
+            "matched_languages": list(accepted.matched_languages),
+        }
+        if accepted.supporting_relation_id:
+            subject_metadata["supporting_relation_id"] = accepted.supporting_relation_id
 
     validated_question_refs: tuple[str, ...] = ()
     for need_id in validated_need_refs:
@@ -63,6 +107,11 @@ def validate_candidate_provenance(
             need.research_question_id,
         )
 
+    metadata = dict(candidate.metadata or {})
+    metadata.pop("research_subject", None)
+    metadata.pop("_research_subject_audit", None)
+    if subject_metadata is not None:
+        metadata["_research_subject_audit"] = subject_metadata
     return EvidenceCandidate(
         statement=candidate.statement,
         source_excerpt=candidate.source_excerpt,
@@ -71,7 +120,7 @@ def validate_candidate_provenance(
         information_need_refs=validated_need_refs,
         confidence=candidate.confidence,
         direct=candidate.direct,
-        metadata=dict(candidate.metadata or {}),
+        metadata=metadata,
     )
 
 

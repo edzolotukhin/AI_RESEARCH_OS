@@ -8,6 +8,7 @@ from application.parsers.research_design_parser import ResearchDesignParser
 from application.research.design_validator import validate_research_design
 from domain.planning.research_design import ResearchDesign
 from domain.project import Project
+from application.research.subject_resolution import resolve_subject_proposal
 
 from .contracts import PlannerDesignService
 
@@ -29,7 +30,11 @@ class PlannerDesignServiceImpl(PlannerDesignService):
         design_data: Mapping[str, Any],
     ) -> ResearchDesign:
         dto = self._response_parser.parse(design_data)
-        design = self._design_factory.create(dto)
+        subject = resolve_subject_proposal(
+            project.research_brief,
+            dto.research_subject_proposal,
+        ) if project.research_brief is not None else None
+        design = self._design_factory.create(dto, research_subject=subject)
         validate_research_design(
             design,
             brief=project.research_brief,

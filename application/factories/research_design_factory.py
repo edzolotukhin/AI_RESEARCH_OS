@@ -20,7 +20,7 @@ from domain.planning.research_design import (
 class ResearchDesignFactory:
     """Creates ResearchDesign value objects from validated DTOs."""
 
-    def create(self, dto: ResearchDesignDTO) -> ResearchDesign:
+    def create(self, dto: ResearchDesignDTO, *, research_subject=None) -> ResearchDesign:
         return ResearchDesign(
             id=str(uuid4()),
             research_questions=tuple(
@@ -35,6 +35,7 @@ class ResearchDesignFactory:
             assumptions=dto.assumptions,
             limitations=dto.limitations,
             language=dto.language,
+            research_subject=research_subject,
         )
 
     @staticmethod

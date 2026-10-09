@@ -34,6 +34,11 @@ def build_deterministic_design_response(prompt: Prompt) -> str:
         heading="Geography:",
         stop_before=("Market:", "Target Entities:", "Timeframe:"),
     )
+    market = _parse_scalar(
+        prompt.user,
+        heading="Market:",
+        stop_before=("Target Entities:", "Timeframe:"),
+    )
     timeframe = _parse_scalar(
         prompt.user,
         heading="Timeframe:",
@@ -109,6 +114,17 @@ def build_deterministic_design_response(prompt: Prompt) -> str:
         "research_questions": questions,
         "information_needs": needs,
         "language": language,
+        "research_subject": {
+            "version": "RESEARCH_SUBJECT/1",
+            "canonical_label": market if market and market != "Not specified" else "",
+            "canonical_language": language,
+            "lexical_representations": ([{
+                "language": language,
+                "label": market,
+            }] if market and market != "Not specified" else []),
+            "supporting_relations": [],
+            "exclusions": [],
+        },
     }
     if project_profile:
         payload.update(_project_level_sections(

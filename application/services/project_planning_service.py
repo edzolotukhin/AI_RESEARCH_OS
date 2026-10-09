@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from contextlib import nullcontext
+from dataclasses import replace
 import hashlib
 import json
 from uuid import NAMESPACE_URL, uuid5
@@ -13,7 +14,7 @@ from application.planner.project_planning_profile import (
     PROJECT_PLANNING_PROFILE_KEY,
     ProjectPlanningProfile,
 )
-from application.research.design_validator import validate_research_design
+from application.research.design_validator import validate_research_design, validate_subject_for_approval
 from domain.project import Project
 from domain.common.exceptions import ValidationError
 from domain.research_brief import ResearchBrief
@@ -158,10 +159,17 @@ class ProjectPlanningService:
             raise ProjectPlanningError("Дизайн потребує оновлення")
         try:
             validate_research_design(design, brief=project.research_brief)
+            if DESK in self.explicit_or_inferred_methods(project):
+                validate_subject_for_approval(design)
         except (ValidationError, ValueError) as exc:
             raise ProjectPlanningError(str(exc)) from exc
         if project.research_design_status == "APPROVED":
             return project
+        if design.research_subject is not None and design.research_subject.resolution_status.value != "unresolved":
+            project.current_research_design = replace(
+                design,
+                research_subject=design.research_subject.approve(),
+            )
         project.research_design_status = "APPROVED"
         project.research_design_approved_by = actor_id
         project.research_design_approved_at = datetime.now(UTC).isoformat()
@@ -299,6 +307,9 @@ class ProjectPlanningService:
                 validate_research_design(
                     project.current_research_design, brief=project.research_brief,
                 )
+                validate_subject_for_approval(project.current_research_design)
+                if not project.current_research_design.research_subject.executable:
+                    raise ValidationError("Затверджений предмет дослідження не готовий до виконання")
             except (ValidationError, ValueError) as exc:
                 raise ProjectPlanningError(str(exc)) from exc
 

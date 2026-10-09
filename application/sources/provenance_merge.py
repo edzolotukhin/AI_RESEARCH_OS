@@ -54,6 +54,12 @@ def build_discovery_record(
     provider_country: str = "",
     provider_query_text: str = "",
     provider_result_count: str = "",
+    subject_id: str = "",
+    subject_version: str = "",
+    subject_fingerprint: str = "",
+    subject_decision: str = "",
+    matched_concept_refs: tuple[str, ...] = (),
+    supporting_relation_id: str = "",
 ) -> dict[str, Any]:
     return {
         "provider": provider,
@@ -67,6 +73,12 @@ def build_discovery_record(
         "provider_country": provider_country,
         "provider_query_text": provider_query_text,
         "provider_result_count": provider_result_count,
+        "subject_id": subject_id,
+        "subject_version": subject_version,
+        "subject_fingerprint": subject_fingerprint,
+        "subject_decision": subject_decision,
+        "matched_concept_refs": list(matched_concept_refs),
+        "supporting_relation_id": supporting_relation_id,
     }
 
 
