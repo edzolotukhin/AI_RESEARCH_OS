@@ -52,10 +52,18 @@ class N8nSuccessPayload:
 class N8nOrchestrationHarness:
     """API-level harness mirroring the canonical n8n product-acceptance workflow."""
 
-    def __init__(self, client, *, auth_headers: dict[str, str], worker_drain) -> None:
+    def __init__(
+        self,
+        client,
+        *,
+        auth_headers: dict[str, str],
+        worker_drain,
+        canonical_run_activator=None,
+    ) -> None:
         self._client = client
         self._auth_headers = auth_headers
         self._worker_drain = worker_drain
+        self._canonical_run_activator = canonical_run_activator
 
     def create_project(self, *, name: str = "n8n Product Acceptance") -> str:
         response = self._request_with_retry(
@@ -117,6 +125,11 @@ class N8nOrchestrationHarness:
 
     def drain_workers(self, container) -> None:
         self._worker_drain(container)
+
+    def activate_research(self, project_id: str) -> str:
+        if self._canonical_run_activator is None:
+            raise AssertionError("Canonical Desk activation fixture is not configured")
+        return self._canonical_run_activator(project_id)
 
     def assert_approved_finality(self, terminal: dict[str, Any]) -> None:
         if terminal.get("status") != "completed":
@@ -188,16 +201,7 @@ class N8nOrchestrationHarness:
         idempotency_key = idempotency_key or f"n8n-accept-{uuid4()}"
         correlation_id = correlation_id or f"corr-{uuid4()}"
         project_id = self.create_project(name=project_name)
-        submit = self.submit_research(
-            project_id,
-            idempotency_key=idempotency_key,
-            correlation_id=correlation_id,
-        )
-        if submit.status_code != 202:
-            raise AssertionError(
-                f"Submit failed: {submit.status_code} {submit.text}",
-            )
-        run_id = submit.json()["run_id"]
+        run_id = self.activate_research(project_id)
         if drain:
             self.drain_workers(container)
         terminal = self.poll_until_terminal(run_id)

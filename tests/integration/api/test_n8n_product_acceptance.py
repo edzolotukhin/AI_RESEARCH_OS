@@ -12,6 +12,7 @@ from api.app import create_fastapi_app
 from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
 from tests.api.helpers import (
     AuthenticatedTestClient,
+    activate_approved_desk_project,
     close_test_client,
     drain_background_runs,
     open_test_client,
@@ -59,6 +60,9 @@ class N8nProductAcceptanceTests(PostgreSQLIntegrationTestCase):
             client,
             auth_headers=headers,
             worker_drain=drain_background_runs,
+            canonical_run_activator=lambda project_id: (
+                activate_approved_desk_project(container, project_id, BRIEF).id
+            ),
         )
         return harness, container, headers
 
@@ -213,15 +217,8 @@ class N8nProductAcceptanceTests(PostgreSQLIntegrationTestCase):
 
     def test_orchestrator_interruption_replay_same_key(self) -> None:
         harness, container, headers = self._build_harness()
-        key = f"interrupt-{uuid4()}"
-        corr = f"corr-{uuid4()}"
         project_id = harness.create_project()
-        first = harness.submit_research(
-            project_id,
-            idempotency_key=key,
-            correlation_id=corr,
-        )
-        run_id = first.json()["run_id"]
+        run_id = harness.activate_research(project_id)
 
         mock_llm = create_brief_aligned_llm_mock()
         replay_container = create_application_container(
@@ -246,15 +243,15 @@ class N8nProductAcceptanceTests(PostgreSQLIntegrationTestCase):
                 replay_client,
                 auth_headers=headers,
                 worker_drain=drain_background_runs,
+                canonical_run_activator=lambda replay_project_id: (
+                    activate_approved_desk_project(
+                        replay_container,
+                        replay_project_id,
+                        BRIEF,
+                    ).id
+                ),
             )
-            replay = replay_harness.submit_research(
-                project_id,
-                idempotency_key=key,
-                correlation_id=corr,
-            )
-            self.assertEqual(replay.status_code, 202)
-            self.assertEqual(replay.json()["run_id"], run_id)
-            self.assertTrue(replay.json()["idempotent_replay"])
+            self.assertEqual(replay_harness.activate_research(project_id), run_id)
             replay_harness.drain_workers(replay_container)
             terminal = replay_harness.poll_until_terminal(run_id)
             replay_harness.assert_approved_finality(terminal)
@@ -266,14 +263,8 @@ class N8nProductAcceptanceTests(PostgreSQLIntegrationTestCase):
 
     def test_worker_restart_continues_to_approved_artifact(self) -> None:
         harness, container, headers = self._build_harness()
-        key = f"worker-restart-{uuid4()}"
         project_id = harness.create_project()
-        submit = harness.submit_research(
-            project_id,
-            idempotency_key=key,
-            correlation_id=f"corr-{uuid4()}",
-        )
-        run_id = submit.json()["run_id"]
+        run_id = harness.activate_research(project_id)
 
         mock_llm = create_brief_aligned_llm_mock()
         worker_b = create_application_container(
@@ -298,15 +289,8 @@ class N8nProductAcceptanceTests(PostgreSQLIntegrationTestCase):
 
     def test_api_restart_preserves_run_and_finality(self) -> None:
         harness, container, headers = self._build_harness()
-        key = f"api-restart-{uuid4()}"
-        corr = f"corr-{uuid4()}"
         project_id = harness.create_project()
-        submit = harness.submit_research(
-            project_id,
-            idempotency_key=key,
-            correlation_id=corr,
-        )
-        run_id = submit.json()["run_id"]
+        run_id = harness.activate_research(project_id)
         harness.drain_workers(container)
 
         mock_llm = create_brief_aligned_llm_mock()
