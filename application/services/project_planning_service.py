@@ -114,9 +114,18 @@ class ProjectPlanningService:
         if project.research_brief is None:
             raise ProjectPlanningError("Спочатку збережіть дослідницький бриф")
         fingerprint = self.input_fingerprint(project.research_brief, methods)
+        current_subject = (
+            project.current_research_design.research_subject
+            if project.current_research_design is not None
+            else None
+        )
         if (
             project.current_research_design is not None
             and project.research_design_input_fingerprint == fingerprint
+            and (
+                current_subject is None
+                or current_subject.resolution_status.value != "unresolved"
+            )
         ):
             return project.current_research_design
         if self._has_any_activation(project.id) and all(

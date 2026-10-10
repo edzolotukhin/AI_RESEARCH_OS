@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 from unittest.mock import patch
 
+from application.planner.deterministic_design_response import build_deterministic_design_response
+from domain.ai.llm_response import LLMResponse
+from domain.planning.research_design import ResearchDesign
 from domain.planning.research_subject import SubjectResolutionStatus
 from domain.research_brief import ResearchBrief
 from domain.workflow_status import WorkflowStatus
@@ -10,6 +14,52 @@ from tests.api.helpers import ApiTestCase
 
 
 class Ow07ResearchSubjectLifecycleTests(ApiTestCase):
+    def test_ukrainian_market_subject_persists_and_renders_when_planner_wording_differs(self):
+        project = self.container.project_service.create_project(
+            "Обручальні кільця — Україна",
+            owner_principal_id=self.owner_id,
+            selected_methods=("DESK", "QUANTITATIVE"),
+        )
+        brief = ResearchBrief(
+            title="Обручальні кільця — Україна",
+            business_question="Як запустити новий бренд на українському ринку?",
+            objectives=("Оцінити гравців, асортимент, ціни та вподобання",),
+            geography=("Україна",),
+            market="Ринок обручальних кілець в Україні",
+            language="uk",
+            context="Аналіз ключових гравців, матеріалів, дизайну й каналів продажу.",
+        )
+        self.container.project_planning_service.save_brief(project, brief)
+
+        def planner_response(prompt, *, options=None):
+            payload = json.loads(build_deterministic_design_response(prompt))
+            payload["research_subject"]["canonical_label"] = (
+                "Український ринок обручальних кілець"
+            )
+            payload["research_subject"]["lexical_representations"] = [{
+                "language": "uk", "label": "обручальні кільця в Україні",
+            }]
+            return LLMResponse(content=json.dumps(payload, ensure_ascii=False))
+
+        self.container._test_llm_client.generate.side_effect = planner_response
+        self.container.project_planning_service.generate_design(
+            self.container.project_service.get_project(project.id),
+        )
+
+        reloaded = self.container.project_service.get_project(project.id)
+        subject = reloaded.current_research_design.research_subject
+        self.assertEqual(subject.canonical_label, brief.market)
+        self.assertEqual(subject.resolution_status, SubjectResolutionStatus.RESOLVED)
+        self.assertEqual(
+            ResearchDesign.from_dict(reloaded.current_research_design.to_dict())
+            .research_subject.to_dict(),
+            subject.to_dict(),
+        )
+        page = self.client.get(f"/ui/projects/{project.id}/design")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(brief.market, page.text)
+        self.assertNotIn("Предмет дослідження не вдалося визначити", page.text)
+
     def _draft_project(self):
         project = self.container.project_service.create_project(
             "OW-07 lifecycle",
@@ -125,7 +175,39 @@ class Ow07ResearchSubjectLifecycleTests(ApiTestCase):
         page = self.client.get(f"/ui/projects/{project.id}/design")
         self.assertEqual(page.status_code, 200)
         self.assertIn("Предмет дослідження не вдалося визначити", page.text)
+        self.assertIn("Сформувати дизайн знову", page.text)
         self.assertEqual(self._approve(project).status_code, 409)
+
+    def test_unresolved_design_can_be_regenerated_without_brief_mutation(self):
+        project = self._draft_project()
+        original_design = project.current_research_design
+        project.current_research_design = replace(
+            original_design,
+            research_subject=replace(
+                original_design.research_subject,
+                canonical_label="",
+                core_concepts=(),
+                lexical_representations=(),
+                resolution_status=SubjectResolutionStatus.UNRESOLVED,
+                semantic_fingerprint="",
+            ),
+        )
+        self.container.project_service.save_project(project)
+        self.container._test_llm_client.reset_mock()
+
+        response = self.client.post(
+            f"/ui/projects/{project.id}/design/generate",
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 303)
+        reloaded = self.container.project_service.get_project(project.id)
+        self.assertNotEqual(reloaded.current_research_design.id, original_design.id)
+        self.assertEqual(
+            reloaded.current_research_design.research_subject.resolution_status,
+            SubjectResolutionStatus.RESOLVED,
+        )
+        self.container._test_llm_client.generate.assert_called()
 
     def test_legacy_subjectless_design_remains_viewable_but_cannot_activate_desk(self):
         project = self._draft_project()

@@ -277,11 +277,46 @@ def test_brief_market_is_canonical_and_planner_aliases_are_proposals():
     assert value.approve().executable
 
 
-def test_conflicting_subject_proposal_is_unresolved():
+def test_explicit_market_remains_authoritative_when_planner_label_differs():
     brief = ResearchBrief("Study", "Question", market="Premium dog food", language="en")
     value = resolve_subject_proposal(brief, {
         "canonical_label": "Automotive market", "canonical_language": "en",
+        "lexical_representations": [{"language": "en", "label": "automotive market"}],
     })
+    assert value.resolution_status is SubjectResolutionStatus.RESOLVED
+    assert value.canonical_label == brief.market
+    assert {item.label for item in value.lexical_representations} == {brief.market}
+    validate_subject_for_approval(replace(design(), research_subject=value))
+
+
+def test_ukrainian_market_brief_survives_inflected_planner_label_and_round_trip():
+    brief = ResearchBrief(
+        title="Обручальні кільця — Україна",
+        business_question="Як запустити новий бренд на українському ринку?",
+        geography=("Україна",),
+        market="Ринок обручальних кілець в Україні",
+        language="uk",
+        context="Аналіз ключових гравців, асортименту, цін і споживчих вподобань.",
+    )
+    value = resolve_subject_proposal(brief, {
+        "canonical_label": "Український ринок обручальних кілець",
+        "canonical_language": "uk",
+        "lexical_representations": [
+            {"language": "uk", "label": "обручальні кільця в Україні"},
+        ],
+    })
+
+    assert value.resolution_status is SubjectResolutionStatus.RESOLVED
+    assert value.canonical_label == "Ринок обручальних кілець в Україні"
+    assert ResearchSubject.from_dict(value.to_dict()) == value
+
+
+def test_genuinely_insufficient_brief_remains_unresolved():
+    value = resolve_subject_proposal(
+        ResearchBrief(title="", business_question="", language="uk"),
+        None,
+    )
+
     assert value.resolution_status is SubjectResolutionStatus.UNRESOLVED
     with pytest.raises(Exception, match="Предмет дослідження"):
         validate_subject_for_approval(replace(design(), research_subject=value))

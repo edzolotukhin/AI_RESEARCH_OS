@@ -17,8 +17,8 @@ def resolve_subject_proposal(brief: ResearchBrief, proposal: dict | None = None)
         proposed_label = str(proposal.get("canonical_label") or "").strip()
         if explicit and proposed_label and normalize_subject_text(explicit) != normalize_subject_text(proposed_label):
             return ResearchSubject.proposed(
-                canonical_label="", canonical_language=brief.language,
-                provenance="conflicting_brief_and_planner_subject",
+                canonical_label=explicit, canonical_language=brief.language,
+                provenance="brief_market_planner_mismatch_ignored",
             )
         aliases = tuple(
             (str(item.get("language") or "und"), str(item.get("label") or ""))
