@@ -101,7 +101,10 @@ class DeskAdapter:
     def propose(self, state, observation):
         ledger = Ledger(state)
         actions = []
-        initial = ledger.remaining("initial") > 0
+        # The active phase is bounded by every resource needed to execute it.
+        # Once its dedicated LLM allowance is exhausted, nominal extraction
+        # slots cannot keep continuation capacity stranded.
+        initial = ledger.remaining("initial") > 0 and ledger.remaining("initial_llm") > 0
         phase = "initial" if initial else "continuation"
         # Semantic assessment is explicit paid work, never hidden in observe.
         if self.qualified() and ledger.remaining("assessments") > 0:

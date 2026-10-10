@@ -9,6 +9,8 @@ MAX_TIMEFRAME_CHARS = 48
 
 _YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
+_CLAUSE_BOUNDARY_RE = re.compile(r"[,;:]\s*")
+MAX_CORE_INTENT_WORDS = 8
 
 
 def project_provider_query_text(
@@ -68,7 +70,9 @@ def _core_intent(value: str) -> str:
     normalized = normalize_query_text(value)
     if not normalized:
         return ""
-    return _SENTENCE_BOUNDARY_RE.split(normalized, maxsplit=1)[0].rstrip(".!?")
+    sentence = _SENTENCE_BOUNDARY_RE.split(normalized, maxsplit=1)[0].rstrip(".!?")
+    clause = _CLAUSE_BOUNDARY_RE.split(sentence, maxsplit=1)[0]
+    return " ".join(clause.split()[:MAX_CORE_INTENT_WORDS])
 
 
 def _remove_duplicate_phrase(value: str, phrase: str) -> str:

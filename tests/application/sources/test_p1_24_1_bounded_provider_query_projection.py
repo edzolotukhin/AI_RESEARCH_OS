@@ -164,6 +164,39 @@ class P1241BoundedProviderQueryProjectionTests(unittest.TestCase):
         self.assertEqual(restored.query_text, self.queries[0].query_text)
         self.assertEqual(restored.provider_query_text, "")
 
+    def test_case_36_verbose_need_is_compacted_for_provider_only(self) -> None:
+        verbose = (
+            "Identify price segments, median prices across channels, "
+            "willingness-to-pay ranges and perceived value drivers"
+        )
+        projected = project_provider_query_text(
+            category_subject="wedding rings", geography="Ukraine",
+            core_intent=verbose, timeframe="2024-2026",
+        )
+        self.assertEqual(
+            projected,
+            "wedding rings Ukraine Identify price segments 2024-2026",
+        )
+        self.assertNotIn("median prices across channels", projected)
+
+    def test_case_37_full_information_need_remains_internal(self) -> None:
+        query = self.queries[0]
+        self.assertIn(self.design.information_needs[0].description, query.query_text)
+        self.assertNotEqual(query.query_text, query.provider_query_text)
+
+    def test_case_38_production_shape_keeps_subject_geo_and_compact_intent(self) -> None:
+        projected = project_provider_query_text(
+            category_subject="обручальні кільця", geography="Україна",
+            core_intent=(
+                "Визначити цінові сегменти, медіанні/модальні ціни в каналах, "
+                "діапазони чутливості до ціни та фактори сприйнятої цінності"
+            ), timeframe="2024–2026",
+        )
+        self.assertEqual(
+            projected,
+            "обручальні кільця Україна Визначити цінові сегменти 2024–2026",
+        )
+
     @staticmethod
     def _query(provider_query_text: str = "pizza Ukraine market size") -> SearchQuery:
         return SearchQuery(

@@ -253,6 +253,75 @@ def test_source_ranking_keeps_unresolved_explicit():
                           "brand price marketplace communication", "sq", 1)
     decision = evaluate_candidate(relevance, row)
     assert decision.subject_decision == SUBJECT_UNRESOLVED
+    assert decision.reason == "subject_unresolved_no_positive_signal"
+    assert not decision.is_fetch_eligible
+
+
+def test_ukrainian_inflection_matches_without_domain_specific_aliases():
+    value = ResearchSubject(
+        subject_id="uk-subject", canonical_label="Мінеральні добрива",
+        canonical_language="uk", core_concepts=("core",),
+        lexical_representations=(
+            representation("uk-core", "uk", "мінеральні добрива"),
+        ), resolution_status=SubjectResolutionStatus.RESOLVED,
+    )
+    decision = assess_subject_text(
+        subject=value,
+        statement="Попит на мінеральне добриво зріс.",
+        excerpt="Продаж мінерального добрива зріс у регіонах.",
+        information_need_id="in-position",
+    )
+    assert decision.decision == SUBJECT_RELEVANT
+
+
+def test_inflected_ukrainian_source_and_evidence_share_subject_semantics():
+    value = ResearchSubject(
+        subject_id="rings", canonical_label="обручальні кільця",
+        canonical_language="uk", core_concepts=("core",),
+        lexical_representations=(
+            representation("rings-uk", "uk", "обручальні кільця"),
+        ), resolution_status=SubjectResolutionStatus.RESOLVED,
+    )
+    d = replace(design(), research_subject=value)
+    need = d.information_needs[0]
+    source = SourceCandidate(
+        "fixture", "https://example.test/rings", "Тренди обручок",
+        "Українські обручки: ціни, бренди та позиціонування", "sq", 1,
+    )
+    source_decision = evaluate_candidate(build_relevance_context(d, need), source)
+    assert source_decision.subject_decision == SUBJECT_RELEVANT
+    evidence_decision = assess_subject_text(
+        subject=value,
+        statement="Ціни на обручки залежать від матеріалу.",
+        excerpt="Ціни на обручки залежать від матеріалу.",
+        information_need_id=need.id,
+    )
+    assert evidence_decision.decision == SUBJECT_RELEVANT
+
+
+def test_unresolved_candidate_without_positive_topic_signal_is_ineligible():
+    d = design()
+    need = d.information_needs[0]
+    row = SourceCandidate(
+        "fixture", "https://example.test/crypto", "Crypto token forecast",
+        "Market price forecast and capitalization", "sq", 1,
+    )
+    decision = evaluate_candidate(build_relevance_context(d, need), row)
+    assert decision.subject_decision == SUBJECT_UNRESOLVED
+    assert not decision.is_fetch_eligible
+    assert decision.reason == "subject_unresolved_no_positive_signal"
+
+
+def test_unresolved_candidate_with_positive_topic_signal_keeps_bounded_fallback():
+    d = design()
+    need = d.information_needs[0]
+    row = SourceCandidate(
+        "fixture", "https://example.test/nutrition", "Позиціонування брендів корму",
+        "Ціна, якість і позиціонування брендів корму в Україні", "sq", 1,
+    )
+    decision = evaluate_candidate(build_relevance_context(d, need), row)
+    assert decision.subject_decision == SUBJECT_UNRESOLVED
+    assert decision.is_fetch_eligible
     assert decision.reason == "subject_unresolved_bounded_fallback"
 
 

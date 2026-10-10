@@ -10,6 +10,55 @@ SUBJECT_RELEVANT = "subject_relevant"
 SUBJECT_IRRELEVANT = "subject_irrelevant"
 SUBJECT_UNRESOLVED = "subject_unresolved"
 
+_UKRAINIAN_LANGUAGE_CODES = frozenset({"uk", "uk-ua", "ukrainian"})
+_UKRAINIAN_ENDINGS = tuple(sorted({
+    "ями", "ами", "ові", "еві", "ого", "ому", "ими", "ій", "ий", "а", "я",
+    "у", "ю", "і", "ї", "и", "е", "є", "ом", "ем", "ам", "ям", "ах",
+    "ях", "ою", "ею", "ки", "ка", "ку", "ок",
+}, key=len, reverse=True))
+
+
+def _ukrainian_lexeme_key(token: str) -> str:
+    """Return a conservative deterministic key for Ukrainian inflection.
+
+    This is deliberately not fuzzy matching and contains no domain vocabulary.
+    It normalizes productive endings only; semantic aliases still have to be
+    explicit approved ``LexicalRepresentation`` rows.
+    """
+
+    value = token
+    for ending in _UKRAINIAN_ENDINGS:
+        if value.endswith(ending) and len(value) - len(ending) >= 4:
+            value = value[: -len(ending)]
+            break
+    # Adjectival forms such as ``-альний/-альна/-альні`` and their derived
+    # noun forms share this productive Ukrainian base after inflection removal.
+    if value.endswith("альн") and len(value) > 6:
+        value = value[:-4]
+    if value.endswith("к") and len(value) > 5:
+        value = value[:-1]
+    return value
+
+
+def _representation_matches(text: str, row: LexicalRepresentation) -> bool:
+    text_tokens = subject_tokens(text)
+    for phrase in row.normalized_phrases:
+        phrase_tokens = subject_tokens(phrase)
+        if phrase_tokens and phrase_tokens <= text_tokens:
+            return True
+        if row.language.casefold() not in _UKRAINIAN_LANGUAGE_CODES:
+            continue
+        phrase_keys = {_ukrainian_lexeme_key(token) for token in phrase_tokens}
+        text_keys = {_ukrainian_lexeme_key(token) for token in text_tokens}
+        overlap = phrase_keys & text_keys
+        # A multi-token category can be represented by its distinctive derived
+        # noun (for example an adjective+noun category collapsed to one noun),
+        # but only when at least half of its lexical keys agree exactly.
+        required = max(1, (len(phrase_keys) + 1) // 2)
+        if len(overlap) >= required and any(len(item) >= 5 for item in overlap):
+            return True
+    return False
+
 
 @dataclass(frozen=True)
 class SubjectRelevanceDecision:
@@ -21,23 +70,17 @@ class SubjectRelevanceDecision:
 
 
 def _matching_concepts(text: str, rows: tuple[LexicalRepresentation, ...]) -> set[str]:
-    tokens = subject_tokens(text)
     matched: set[str] = set()
     for row in rows:
-        for phrase in row.normalized_phrases:
-            phrase_tokens = subject_tokens(phrase)
-            if phrase_tokens and phrase_tokens <= tokens:
-                matched.update(row.concept_refs)
-                break
+        if _representation_matches(text, row):
+            matched.update(row.concept_refs)
     return matched
 
 
 def _matching_languages(text: str, rows: tuple[LexicalRepresentation, ...]) -> set[str]:
-    tokens = subject_tokens(text)
     return {
         row.language for row in rows
-        if any(subject_tokens(phrase) and subject_tokens(phrase) <= tokens
-               for phrase in row.normalized_phrases)
+        if _representation_matches(text, row)
     }
 
 

@@ -99,6 +99,18 @@ def fixture(*, invalid_first=False):
 
 
 class DeskReplayTests(unittest.TestCase):
+    def test_exhausted_initial_llm_opens_bounded_continuation(self):
+        _, _, _, _, _, adapter, _, _ = fixture()
+        state = adapter.initial_state()
+        state.used["initial"] = 1
+        state.used["initial_llm"] = state.limits["initial_llm"]
+        actions = adapter.propose(state, adapter.observe(state))
+        self.assertTrue(actions)
+        self.assertTrue(all("initial_llm" not in dict(action.resources) for action in actions))
+        self.assertEqual(state.limits["extractions"], 8)
+        self.assertEqual(state.limits["initial"], 6)
+        self.assertEqual(state.limits["continuation"], 2)
+
     def test_expired_acquisition_deadline_is_not_reset_on_restart(self):
         _, context, _, _, llm, adapter, _, _ = fixture()
         context.shared_state["ark_acquisition_deadline"] = 0

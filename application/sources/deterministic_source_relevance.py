@@ -652,8 +652,8 @@ def evaluate_candidate(
         and generic_contract_overlap
     ):
         if subject_result is not None and subject_result.decision == SUBJECT_UNRESOLVED:
-            return _decision(eligibility=ELIGIBILITY_UNSCORED, topic_score=0,
-                             reason="subject_unresolved_bounded_fallback")
+            return _decision(eligibility=ELIGIBILITY_INELIGIBLE, topic_score=0,
+                             reason="subject_unresolved_no_positive_signal")
         return _decision(
             eligibility=ELIGIBILITY_INELIGIBLE,
             topic_score=need_overlap,
@@ -662,8 +662,8 @@ def evaluate_candidate(
 
     if distinctive_overlap == 0 and context.has_distinctive_anchors:
         if subject_result is not None and subject_result.decision == SUBJECT_UNRESOLVED:
-            return _decision(eligibility=ELIGIBILITY_UNSCORED, topic_score=0,
-                             reason="subject_unresolved_bounded_fallback")
+            return _decision(eligibility=ELIGIBILITY_INELIGIBLE, topic_score=0,
+                             reason="subject_unresolved_no_positive_signal")
         return _decision(
             eligibility=ELIGIBILITY_UNSCORED,
             topic_score=0,
