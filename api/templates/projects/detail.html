@@ -17,7 +17,7 @@
   {% if view.design_status == 'APPROVED' and view.design_current %}<h2>Дизайн затверджено</h2><p class="muted">Обрані методи можна активувати незалежно.</p>
   {% elif view.design_status == 'DRAFT' and view.design_current %}<h2>Дизайн готовий до перегляду</h2><p class="muted">Перевірте дослідницькі питання, інформаційні потреби й план аналізу.</p>
   {% else %}<h2>Потрібно сформувати дизайн</h2><p class="muted">Актуальний дизайн пов’язує бриф з обраними методами.</p>{% endif %}
-  <a class="button button-quiet" href="/ui/projects/{{ view.project_id }}/design">{{ 'Переглянути дизайн' if view.design_status else 'Сформувати дизайн' }}</a>
+  {% if view.brief and not view.design_status and view.can_mutate %}<form method="post" action="/ui/projects/{{ view.project_id }}/design/generate"><button class="button button-quiet" type="submit">Сформувати дизайн</button></form>{% else %}<a class="button button-quiet" href="/ui/projects/{{ view.project_id }}/design">{{ 'Переглянути дизайн' if view.design_status else 'Сформувати дизайн' }}</a>{% endif %}
 </section>
 <div class="section-heading"><div><p class="eyebrow">МЕТОДИ</p><h2>Дослідження в межах проєкту</h2></div><p>Кожен метод має власний стан і результати.</p></div>
 <div class="method-grid">

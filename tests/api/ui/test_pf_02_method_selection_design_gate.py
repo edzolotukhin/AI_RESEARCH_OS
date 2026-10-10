@@ -163,6 +163,23 @@ class Pf02MethodSelectionDesignGateTests(ApiTestCase):
         self.save_brief(project_id)
         self.assertEqual(self.container.workflow_service.list_workflow_runs_for_project(project_id), [])
 
+    def test_project_design_action_submits_existing_generation_route(self):
+        project_id = self.create(("DESK",))
+        self.save_brief(project_id)
+
+        page = self.client.get(f"/ui/projects/{project_id}")
+        self.assertEqual(page.status_code, 200)
+        action = f'/ui/projects/{project_id}/design/generate'
+        self.assertIn(f'<form method="post" action="{action}">', page.text)
+        self.assertNotIn(f'<a class="button button-quiet" href="/ui/projects/{project_id}/design">Сформувати дизайн</a>', page.text)
+
+        response = self.client.post(action, follow_redirects=False)
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], f"/ui/projects/{project_id}/design")
+        self.assertIsNotNone(
+            self.container.project_service.get_project(project_id).current_research_design
+        )
+
     def test_project_planning_passes_each_selected_method_shape(self):
         for methods in (("QUANTITATIVE",), ("DESK",), ("DESK", "QUANTITATIVE")):
             with self.subTest(methods=methods):
