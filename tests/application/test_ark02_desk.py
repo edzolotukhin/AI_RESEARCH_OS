@@ -37,15 +37,16 @@ from tests.application.test_ark02_kernel import Store
 
 class Search(SearchProvider):
     def search(self, query):
+        subject = query.provider_query_text or query.query_text
         return [SourceCandidate("synthetic", f"https://example.test/{query.information_need_id}/{i}",
-            "Irrigation meter definitions", "Irrigation meter definitions", query.id, i + 1)
+            subject, subject, query.id, i + 1)
             for i in range(4)]
 
 
 class Retriever(SourceRetriever):
     def retrieve(self, candidate):
         return Source("", "", candidate.url, candidate.url, candidate.title, "2026-01-01",
-            content_text="Irrigation meter definitions. Fictional material " + candidate.url,
+            content_text=candidate.title + ". Fictional material " + candidate.url,
             source_type="web")
 
 
