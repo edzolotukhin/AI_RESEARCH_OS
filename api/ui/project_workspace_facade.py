@@ -156,7 +156,7 @@ class ProjectWorkspaceFacade:
 
     def retry_desk(self, project_id: str):
         project, _ = self._project_owner(project_id, mutate=True)
-        return self.container.project_planning_service.retry_failed_desk(project)
+        return self.container.project_planning_service.replace_terminal_desk(project)
 
     def project_for_design(self, project_id: str):
         return self.authorization.require_project(self.principal, project_id)

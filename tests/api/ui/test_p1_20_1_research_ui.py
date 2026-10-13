@@ -10,10 +10,10 @@ class ResearchUiTests(ApiTestCase):
     def setUp(self):
         super().setUp(); self.ui = self._raw_client
     @staticmethod
-    def facade(view=None):
-        facade=MagicMock(); facade.get_status.return_value={"research_id":"run-a","execution_status":"TERMINAL","phase":"COMPLETED","product_outcome":"APPROVED","result_available":True,"workflow_status":"completed"}; facade.get_workbench.return_value=view or workbench_view(); return facade
-    def page(self,name,view=None):
-        with patch("api.routers.ui_research.build_research_ui_facade",return_value=self.facade(view)):
+    def facade(view=None, can_replace=False):
+        facade=MagicMock(); facade.get_status.return_value={"research_id":"run-a","execution_status":"TERMINAL","phase":"COMPLETED","product_outcome":"APPROVED","result_available":True,"workflow_status":"completed"}; facade.get_workbench.return_value=view or workbench_view(); facade.can_replace_desk.return_value=can_replace; return facade
+    def page(self,name,view=None,can_replace=False):
+        with patch("api.routers.ui_research.build_research_ui_facade",return_value=self.facade(view,can_replace)):
             return self.ui.get(f"/ui/research/run-a/{name}")
     def test_legacy_new_form_and_submission_remain_available(self):
         self.assertEqual(self.ui.get("/ui/research/new").status_code,200)
@@ -32,6 +32,16 @@ class ResearchUiTests(ApiTestCase):
     def test_running_overview_polls_without_resubmission(self):
         html=self.page("overview",workbench_view(outcome="RUNNING",execution="RUNNING")).text; self.assertIn("Виконується",html); self.assertIn("desk-workbench.js",html)
         script=(Path(__file__).resolve().parents[3]/"api"/"static"/"desk-workbench.js").read_text(encoding="utf-8"); self.assertIn("status.json",script); self.assertNotIn('method: "POST"',script)
+    def test_terminal_overview_offers_authorized_new_run_without_resume_wording(self):
+        html=self.page("overview",can_replace=True).text
+        self.assertIn("Запустити нове дослідження",html)
+        self.assertIn("Попередній запуск буде збережено",html)
+        self.assertIn('method="post"',html)
+        self.assertIn('/ui/projects/project-a/methods/DESK/retry',html)
+        self.assertNotIn("Відновити запуск",html)
+    def test_terminal_overview_hides_new_run_action_when_not_eligible(self):
+        html=self.page("overview",can_replace=False).text
+        self.assertNotIn("Запустити нове дослідження",html)
     def test_outcome_states_are_distinct(self):
         for outcome,label in {"APPROVED":"Завершено","NOT_READY":"Завершено з обмеженнями","QUALITY_REJECTED":"Потребує уваги","EXECUTION_FAILED":"Помилка"}.items():
             with self.subTest(outcome=outcome): self.assertIn(label,self.page("overview",workbench_view(outcome=outcome)).text)

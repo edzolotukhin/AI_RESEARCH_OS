@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from application.composition_root import create_application_container
 from application.config import ApplicationOverrides
 from domain.research_brief import ResearchBrief
+from domain.workflow_status import WorkflowStatus
 from tests.helpers.brief_aligned_planner_llm import create_brief_aligned_llm_mock
 from tests.integration.postgresql.helpers import (
     create_test_engine, integration_tests_enabled, postgresql_application_config,
@@ -205,6 +206,42 @@ class ActivationTransactions(TestCase):
         self.assertNotIn(chained[0].id, {failed.id, replacement.id})
         self.assertEqual(len(planner._desk_runs(project.id)), 3)
         self.assertEqual(planner._desk_run(project.id).id, chained[0].id)
+
+    def test_concurrent_completed_desk_replacement_is_one_and_preserves_history(self):
+        project = self.project("DESK")
+        planner = self.container.project_planning_service
+        completed = planner.activate_desk(project)
+        completed.ready(); completed.start(); completed.complete()
+        self.container.workflow_service.save_workflow_run(
+            completed,
+            expected_version=self.container.workflow_service.get_workflow_run_version(
+                completed.id
+            ),
+            task_results={"ow17_history": {"outcome": "insufficient_research"}},
+        )
+        before = self.container.workflow_service.get_task_results(completed.id)
+
+        with patch.object(planner.planner, "run", side_effect=AssertionError("Planner rerun")):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = [
+                    pool.submit(
+                        planner.replace_terminal_desk,
+                        self.container.project_service.get_project(project.id),
+                    )
+                    for _ in range(2)
+                ]
+                replacements = [item.result(timeout=20) for item in futures]
+
+        self.assertEqual(replacements[0].id, replacements[1].id)
+        self.assertNotEqual(replacements[0].id, completed.id)
+        self.assertEqual(len(planner._desk_runs(project.id)), 2)
+        self.assertEqual(
+            self.container.workflow_service.get_task_results(completed.id), before,
+        )
+        self.assertEqual(
+            self.container.workflow_service.get_workflow_run(completed.id).status,
+            WorkflowStatus.COMPLETED,
+        )
 
     def test_activity_insert_failure_rolls_back_both_activations(self):
         desk = self.project("DESK")

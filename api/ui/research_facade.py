@@ -207,6 +207,19 @@ class ResearchUiFacade:
             project=project,
         )
 
+    def can_replace_desk(self, research_id: str) -> bool:
+        run, project = self._authorization.require_run(self._principal, research_id)
+        if self._principal.authentication_type == "browser_session":
+            try:
+                self._container.identity_service.require(
+                    project.id, self._principal.principal_id, mutate=True,
+                )
+            except PermissionError:
+                return False
+        return self._container.project_planning_service.can_replace_terminal_desk(
+            project.id, run.id,
+        )
+
     def get_result_detail(self, research_id: str) -> dict[str, Any]:
         workflow_run, _ = self._authorization.require_run(
             self._principal,

@@ -366,8 +366,8 @@ class Pf02MethodSelectionDesignGateTests(ApiTestCase):
 
         self.fail_run(run)
         page = self.client.get(f"/ui/projects/{project_id}")
-        self.assertIn("Повторити дослідження", page.text)
-        self.assertIn("залишиться в історії", page.text)
+        self.assertIn("Запустити нове дослідження", page.text)
+        self.assertIn("Попередній запуск буде збережено", page.text)
         response = self.client.post(
             f"/ui/projects/{project_id}/methods/DESK/retry",
             follow_redirects=False,
@@ -405,6 +405,57 @@ class Pf02MethodSelectionDesignGateTests(ApiTestCase):
                     )
                 self.assertEqual(len(service._desk_runs(project_id)), 1)
 
+    def test_terminal_desk_replacement_preserves_completed_run_and_current_design(self):
+        project_id = self.create(("DESK",))
+        self.approve(project_id)
+        service = self.container.project_planning_service
+        completed = service.activate_desk(
+            self.container.project_service.get_project(project_id)
+        )
+        completed.ready(); completed.start(); completed.complete()
+        self.container.workflow_service.save_workflow_run(
+            completed,
+            expected_version=self.container.workflow_service.get_workflow_run_version(
+                completed.id
+            ),
+            task_results={"ow17_history": {"outcome": "insufficient_research"}},
+        )
+        before = self.container.workflow_service.get_task_results(completed.id)
+
+        with patch.object(service.planner, "run", side_effect=AssertionError("Planner rerun")):
+            replacement = service.replace_terminal_desk(
+                self.container.project_service.get_project(project_id)
+            )
+            replay = service.replace_terminal_desk(
+                self.container.project_service.get_project(project_id)
+            )
+
+        self.assertEqual(replay.id, replacement.id)
+        self.assertNotEqual(replacement.id, completed.id)
+        self.assertEqual(len(service._desk_runs(project_id)), 2)
+        self.assertEqual(
+            self.container.workflow_service.get_workflow_run(completed.id).status,
+            WorkflowStatus.COMPLETED,
+        )
+        self.assertEqual(
+            self.container.workflow_service.get_task_results(completed.id), before,
+        )
+        template = self.container.workflow_service.get_template(
+            replacement.workflow_template_id
+        )
+        current_design = self.container.project_service.get_project(
+            project_id
+        ).current_research_design
+        self.assertEqual(template.research_design_snapshot, current_design)
+        self.assertEqual(
+            template.research_design_snapshot.research_subject,
+            current_design.research_subject,
+        )
+
+        page = self.client.get(f"/ui/projects/{project_id}")
+        self.assertIn(replacement.id, page.text)
+        self.assertNotIn("Запустити нове дослідження", page.text)
+
     def test_failed_replacements_can_form_an_idempotent_retry_chain(self):
         project_id = self.create(("DESK",))
         self.approve(project_id)
@@ -437,7 +488,7 @@ class Pf02MethodSelectionDesignGateTests(ApiTestCase):
         page = self.client.get(f"/ui/projects/{project_id}")
         self.assertEqual(page.status_code, 200)
         self.assertIn(attempts[-1].id, page.text)
-        self.assertNotIn("Повторити дослідження", page.text)
+        self.assertNotIn("Запустити нове дослідження", page.text)
 
     def test_quantitative_activation_is_project_bound_paused_and_idempotent(self):
         project_id = self.create(("QUANTITATIVE",))

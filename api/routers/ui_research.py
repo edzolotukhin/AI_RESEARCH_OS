@@ -267,13 +267,17 @@ def research_detail_page(request: Request, research_id: str) -> Response:
 
 def _workbench_page(request: Request, research_id: str, page: str) -> Response:
     try:
-        view = build_research_ui_facade(request.app.state.container).get_workbench(
-            research_id,
-        )
+        facade = build_research_ui_facade(request.app.state.container)
+        view = facade.get_workbench(research_id)
         return templates.TemplateResponse(
             request,
             f"research/workbench_{page}.html",
-            {"request": request, "view": view, "active_page": page},
+            {
+                "request": request,
+                "view": view,
+                "active_page": page,
+                "can_replace": page == "overview" and facade.can_replace_desk(research_id),
+            },
         )
     except (AccessDeniedError, EntityNotFoundError, ValueError):
         return templates.TemplateResponse(

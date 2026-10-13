@@ -223,6 +223,10 @@ class ProjectPlanningService:
 
     def retry_failed_desk(self, project: Project):
         """Create one immutable replacement for the current failed Desk run."""
+        return self.replace_terminal_desk(project, failed_only=True)
+
+    def replace_terminal_desk(self, project: Project, *, failed_only: bool = False):
+        """Create one immutable replacement for the current terminal Desk run."""
         if self.file_activation_unavailable:
             raise ProjectPlanningError(
                 "Повторний запуск недоступний у файловому режимі зберігання"
@@ -237,18 +241,21 @@ class ProjectPlanningService:
             self._require_activation(project, DESK)
             runs = self._desk_runs(project.id)
             if not runs:
-                raise ProjectPlanningError("Немає невдалого запуску для повторення")
+                raise ProjectPlanningError("Немає завершеного запуску для повторення")
 
             current = runs[-1]
-            if current.status.value != "failed" and len(runs) >= 2:
+            eligible = {"failed"} if failed_only else {"completed", "failed", "cancelled"}
+            if current.status.value not in eligible and len(runs) >= 2:
                 predecessor = runs[-2]
-                expected = self._desk_retry_run_id(project.id, predecessor.id)
-                if predecessor.status.value == "failed" and current.id == expected:
+                predecessor_eligible = predecessor.status.value in eligible
+                expected = self._desk_replacement_run_id(project.id, predecessor.id)
+                legacy_expected = self._desk_retry_run_id(project.id, predecessor.id)
+                if predecessor_eligible and current.id in {expected, legacy_expected}:
                     return current
 
-            if current.status.value != "failed":
+            if current.status.value not in eligible:
                 raise ProjectPlanningError(
-                    "Повторити можна лише останній невдалий запуск"
+                    "Новий запуск можна створити лише після завершення попереднього"
                 )
 
             template = self.workflow_mapper.from_research_design(
@@ -258,8 +265,20 @@ class ProjectPlanningService:
             return self.agency.start_research_from_template(
                 project,
                 template,
-                run_id=self._desk_retry_run_id(project.id, current.id),
+                run_id=(
+                    self._desk_retry_run_id(project.id, current.id)
+                    if failed_only
+                    else self._desk_replacement_run_id(project.id, current.id)
+                ),
             ).workflow_run
+
+    def can_replace_terminal_desk(self, project_id: str, run_id: str) -> bool:
+        current = self._desk_run(project_id)
+        return bool(
+            current
+            and current.id == run_id
+            and current.status.value in {"completed", "failed", "cancelled"}
+        )
 
     def activate_quantitative(self, project: Project, *, owner_id: str):
         if self.file_activation_unavailable:
@@ -377,6 +396,10 @@ class ProjectPlanningService:
     @staticmethod
     def _desk_retry_run_id(project_id: str, failed_run_id: str) -> str:
         return str(uuid5(NAMESPACE_URL, f"ow03-desk-retry:{project_id}:{failed_run_id}"))
+
+    @staticmethod
+    def _desk_replacement_run_id(project_id: str, terminal_run_id: str) -> str:
+        return str(uuid5(NAMESPACE_URL, f"ow17-desk-replacement:{project_id}:{terminal_run_id}"))
 
     @staticmethod
     def _study_type():

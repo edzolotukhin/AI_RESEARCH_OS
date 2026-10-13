@@ -111,13 +111,13 @@ class ProjectWorkspaceQueryService:
             pass
         open_action = WorkspaceActionView("Відкрити кабінетне дослідження", f"/ui/research/{run.id}/overview")
         primary_action = open_action
-        if status == "failed":
+        if status in {"completed", "failed", "cancelled"}:
             explanation = (
-                "Кабінетне дослідження завершилося помилкою. Попередня спроба "
-                "залишиться в історії після повторного запуску."
+                "Попередній запуск буде збережено. Система створить новий "
+                "запуск дослідження."
             )
             primary_action = WorkspaceActionView(
-                "Повторити дослідження",
+                "Запустити нове дослідження",
                 f"/ui/projects/{project_id}/methods/DESK/retry",
             )
         return MethodWorkspaceView("Кабінетне дослідження", state, label, explanation, progress, output,
