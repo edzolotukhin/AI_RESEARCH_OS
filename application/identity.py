@@ -7,9 +7,12 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 import hashlib
 import hmac
+import logging
 import secrets
 from typing import Protocol
 from uuid import uuid4
+
+_security_log = logging.getLogger("ai_research_os.security")
 
 current_human_actor_id: ContextVar[str | None] = ContextVar("current_human_actor_id", default=None)
 
@@ -61,6 +64,7 @@ class IdentityStore(Protocol):
     def get_user_by_email(self, email: str) -> User | None: ...
     def list_users(self) -> list[User]: ...
     def set_user_status(self, user_id: str, status: UserStatus, at: datetime) -> None: ...
+    def replace_password_and_revoke_sessions(self, user_id: str, password_hash: str, at: datetime) -> None: ...
     def create_session(self, session: BrowserSession) -> None: ...
     def get_session_by_hash(self, token_hash: str) -> BrowserSession | None: ...
     def revoke_session(self, token_hash: str, at: datetime) -> None: ...
@@ -150,6 +154,26 @@ class IdentityService:
 
     def enable_user(self, user_id: str) -> None:
         self.store.set_user_status(user_id, UserStatus.ACTIVE, datetime.now(UTC))
+
+    def change_password(self, user_id: str, current_password: str, new_password: str) -> None:
+        user = self.store.get_user(user_id)
+        if user is None or user.status is not UserStatus.ACTIVE:
+            raise PermissionError("Password change is unavailable")
+        if not self.hasher.verify(current_password, user.password_hash):
+            _security_log.warning("security_event=password_change_rejected user_id=%s reason=current_password", user_id)
+            raise PermissionError("Current password is incorrect")
+        self._replace_password(user_id, new_password, actor_id=user_id, event="password_changed")
+
+    def administratively_reset_password(self, user_id: str, new_password: str, *, actor_id: str) -> None:
+        if self.store.get_user(user_id) is None:
+            raise ValueError("User does not exist")
+        self._replace_password(user_id, new_password, actor_id=actor_id, event="password_recovered")
+
+    def _replace_password(self, user_id: str, new_password: str, *, actor_id: str, event: str) -> None:
+        encoded = self.hasher.hash(new_password)
+        now = datetime.now(UTC)
+        self.store.replace_password_and_revoke_sessions(user_id, encoded, now)
+        _security_log.info("security_event=%s user_id=%s actor_id=%s sessions_revoked=true", event, user_id, actor_id)
 
     def add_membership(self, project_id: str, user_id: str, role: ProjectRole, *, actor_id: str | None) -> ProjectMembership:
         existing = self.store.get_membership(project_id, user_id)

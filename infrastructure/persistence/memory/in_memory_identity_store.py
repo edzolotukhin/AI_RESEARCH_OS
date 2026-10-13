@@ -10,6 +10,10 @@ class InMemoryIdentityStore:
     def set_user_status(self,i,status,at):
         from dataclasses import replace
         self.users[i]=replace(self.users[i],status=status,updated_at=at)
+    def replace_password_and_revoke_sessions(self,i,password_hash,at):
+        from dataclasses import replace
+        self.users[i]=replace(self.users[i],password_hash=password_hash,updated_at=at)
+        self.revoke_user_sessions(i,at)
     def create_session(self,s): self.sessions[s.token_hash]=s
     def get_session_by_hash(self,h): return self.sessions.get(h)
     def revoke_session(self,h,at):

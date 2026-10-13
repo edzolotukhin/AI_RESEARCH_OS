@@ -48,5 +48,30 @@ class IdentityServiceTests(unittest.TestCase):
         for _ in range(self.service.LOGIN_FAILURE_LIMIT):
             self.assertIsNone(self.service.authenticate("missing@example.com", "wrong password value"))
 
+    def test_password_change_preserves_identity_memberships_and_revokes_sessions(self):
+        self.service.add_membership("p", self.alice.id, ProjectRole.OWNER, actor_id=self.alice.id)
+        token, _ = self.service.create_session(self.alice)
+        with self.assertRaises(PermissionError):
+            self.service.change_password(self.alice.id, "wrong current password", "new correct horse battery")
+        self.assertEqual(self.service.resolve_session(token).id, self.alice.id)
+        with self.assertRaises(ValueError):
+            self.service.change_password(self.alice.id, "correct horse battery", "short")
+        self.service.change_password(self.alice.id, "correct horse battery", "new correct horse battery")
+        self.assertIsNone(self.service.resolve_session(token))
+        self.assertIsNone(self.service.authenticate(self.alice.email, "correct horse battery"))
+        changed = self.service.authenticate(self.alice.email, "new correct horse battery")
+        self.assertEqual(changed.id, self.alice.id)
+        self.assertEqual(self.store.get_membership("p", self.alice.id).role, ProjectRole.OWNER)
+
+    def test_administrative_recovery_preserves_disabled_status_and_revokes_sessions(self):
+        token, _ = self.service.create_session(self.bob)
+        self.service.disable_user(self.bob.id)
+        self.service.administratively_reset_password(self.bob.id, "recovered correct horse", actor_id=self.alice.id)
+        self.assertIsNone(self.service.resolve_session(token))
+        self.assertEqual(self.store.get_user(self.bob.id).status, UserStatus.DISABLED)
+        self.assertIsNone(self.service.authenticate(self.bob.email, "recovered correct horse"))
+        self.service.enable_user(self.bob.id)
+        self.assertEqual(self.service.authenticate(self.bob.email, "recovered correct horse").id, self.bob.id)
+
 
 if __name__=="__main__":unittest.main()

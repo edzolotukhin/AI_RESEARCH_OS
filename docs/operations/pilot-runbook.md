@@ -53,6 +53,25 @@ Application rollback means selecting the previous accepted commit/image and recr
 
 Docker logs are bounded to 5 × 10 MiB per service. Monitor Docker disk, PostgreSQL volume, protected volume, certificate renewal, container health, and free space. A full monitoring/retention policy belongs to OPS-01C.
 
+## Password change and account recovery
+
+Signed-in users change their own password on `/ui/account`. They must provide the current
+password. Success revokes every browser session, including the current session, and requires
+a fresh login.
+
+The configured pilot administrator may reset an existing account from `/ui/admin/users`.
+This preserves the user ID, status, memberships, and project history while revoking every
+session for the target account. Resetting a disabled account does not enable it.
+
+If the sole administrator cannot sign in, use the interactive recovery command from the exact
+deployed checkout. It reads the replacement password from a no-echo terminal prompt and calls
+the canonical identity service rather than SQL:
+
+`docker compose --env-file .env.pilot -f docker-compose.pilot.yml run --rm api python -m tools.recover_pilot_password --user-id <existing-user-id>`
+
+Run it only through authorized server access and hand off the new password out of band. The
+security log records only the event type, target user ID, actor ID, and session revocation.
+
 ## Backup boundary for OPS-01B
 
 Back up PostgreSQL consistently, `pilot_protected_data`, and Caddy state needed for continuity. Include the accepted commit SHA and non-secret configuration manifest. Do not put plaintext secrets in backups or documentation. OPS-01A does not establish backup readiness: an encrypted off-host backup and isolated restore drill remain mandatory.

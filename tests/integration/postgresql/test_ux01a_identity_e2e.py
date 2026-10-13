@@ -115,6 +115,29 @@ class UX01AIdentityPostgreSQLE2E(PostgreSQLIntegrationTestCase):
         finally:
             container.shutdown()
 
+    def test_password_recovery_persists_and_revokes_sessions(self):
+        container = self._container()
+        try:
+            user = container.identity_service.create_user(
+                "ow16@example.test", "OW-16", "original correct horse"
+            )
+            token, _ = container.identity_service.create_session(user)
+            container.identity_service.administratively_reset_password(
+                user.id, "recovered correct horse", actor_id="pilot-operator"
+            )
+            self.assertIsNone(container.identity_service.resolve_session(token))
+            self.assertIsNone(container.identity_service.authenticate(user.email, "original correct horse"))
+        finally:
+            container.shutdown()
+        restarted = self._container()
+        try:
+            recovered = restarted.identity_service.authenticate(
+                "ow16@example.test", "recovered correct horse"
+            )
+            self.assertEqual(recovered.id, user.id)
+        finally:
+            restarted.shutdown()
+
 
 if __name__ == "__main__":
     unittest.main()

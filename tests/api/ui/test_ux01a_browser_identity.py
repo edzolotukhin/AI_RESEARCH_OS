@@ -78,6 +78,34 @@ class BrowserIdentityE2ETests(unittest.TestCase):
         self.assertEqual(self.client.get("/ui/projects",follow_redirects=False).status_code,303)
         self.assertEqual(self.login("alice@example.com","correct horse battery").status_code,401)
 
+    def test_self_password_change_revokes_session_and_never_renders_secrets(self):
+        self.login("alice@example.com", "correct horse battery")
+        response = self.client.post("/ui/account/password", data={
+            "current_password": "correct horse battery", "new_password": "new correct horse battery",
+        }, follow_redirects=False)
+        self.assertEqual(response.status_code, 303)
+        self.assertTrue(response.headers["location"].startswith("/ui/login"))
+        self.assertEqual(self.client.get("/ui/account", follow_redirects=False).status_code, 303)
+        self.assertEqual(self.login("alice@example.com", "correct horse battery").status_code, 401)
+        self.assertEqual(self.login("alice@example.com", "new correct horse battery").status_code, 303)
+        account = self.client.get("/ui/account").text
+        self.assertNotIn("new correct horse battery", account)
+        self.assertNotIn("password_hash", account)
+
+    def test_admin_recovery_is_privileged_and_preserves_target_identity(self):
+        original_id = self.bob.id
+        with patch.dict("os.environ", {"PILOT_ADMIN_USER_ID": self.alice.id}):
+            self.login("bob@example.com", "another correct horse")
+            denied = self.client.post(f"/ui/admin/users/{self.alice.id}/password", data={"new_password": "forbidden correct horse"})
+            self.assertEqual(denied.status_code, 403)
+            self.logout(); self.login("alice@example.com", "correct horse battery")
+            reset = self.client.post(f"/ui/admin/users/{self.bob.id}/password", data={"new_password": "recovered correct horse"}, follow_redirects=False)
+            self.assertEqual(reset.status_code, 303)
+        self.logout()
+        self.assertEqual(self.login("bob@example.com", "another correct horse").status_code, 401)
+        self.assertEqual(self.login("bob@example.com", "recovered correct horse").status_code, 303)
+        self.assertEqual(self.container.identity_service.store.get_user(self.bob.id).id, original_id)
+
     def test_desk_retry_obeys_project_mutation_roles(self):
         self.login("alice@example.com", "correct horse battery")
         created = self.client.post(

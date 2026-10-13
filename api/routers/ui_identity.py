@@ -38,7 +38,19 @@ def logout(request: Request):
 
 @router.get("/account", response_class=HTMLResponse, include_in_schema=False)
 def account(request: Request):
-    return templates.TemplateResponse(request, "identity/account.html", {"request": request, "user": current_ui_user.get()})
+    return templates.TemplateResponse(request, "identity/account.html", {"request": request, "user": current_ui_user.get(), "password_error": None})
+
+@router.post("/account/password", response_class=HTMLResponse, include_in_schema=False)
+def change_password(request: Request, current_password: str = Form(...), new_password: str = Form(...)):
+    user = current_ui_user.get(); service = request.app.state.container.identity_service
+    try:
+        service.change_password(user.id, current_password, new_password)
+    except (PermissionError, ValueError) as exc:
+        message = "Поточний пароль неправильний." if isinstance(exc, PermissionError) else "Новий пароль має містити від 12 до 256 символів."
+        return templates.TemplateResponse(request, "identity/account.html", {"request": request, "user": user, "password_error": message}, status_code=400)
+    response = RedirectResponse("/ui/login?password_changed=1", 303)
+    response.delete_cookie(SESSION_COOKIE, path="/ui")
+    return response
 
 @router.get("/help", response_class=HTMLResponse, include_in_schema=False)
 def help_page(request: Request):
@@ -107,6 +119,19 @@ def users(request:Request):
 @router.post("/admin/users",include_in_schema=False)
 def create_user(request:Request,email:str=Form(...),display_name:str=Form(...),password:str=Form(...)):
     _require_admin();request.app.state.container.identity_service.create_user(email,display_name,password);return RedirectResponse("/ui/admin/users",303)
+
+@router.post("/admin/users/{user_id}/password", response_class=HTMLResponse, include_in_schema=False)
+def recover_password(request: Request, user_id: str, new_password: str = Form(...)):
+    admin = _require_admin(); service = request.app.state.container.identity_service
+    try:
+        service.administratively_reset_password(user_id, new_password, actor_id=admin.id)
+    except ValueError:
+        return templates.TemplateResponse(request, "identity/users.html", {"request": request, "users": service.store.list_users(), "password_error": "Пароль має містити від 12 до 256 символів."}, status_code=400)
+    response = RedirectResponse("/ui/admin/users", 303)
+    if user_id == admin.id:
+        response = RedirectResponse("/ui/login?password_changed=1", 303)
+        response.delete_cookie(SESSION_COOKIE, path="/ui")
+    return response
 
 @router.post("/admin/users/{user_id}/{action}",include_in_schema=False)
 def user_status(request:Request,user_id:str,action:str):

@@ -23,6 +23,11 @@ class PostgreSQLIdentityStore:
         with self.sessions.session() as s:return [self._user(x) for x in s.scalars(select(UserModel).order_by(UserModel.email))]
     def set_user_status(self,i,status,at):
         with self.sessions.session() as s:s.execute(update(UserModel).where(UserModel.id==i).values(status=status.value,updated_at=at));s.commit()
+    def replace_password_and_revoke_sessions(self,i,password_hash,at):
+        with self.sessions.session() as s:
+            s.execute(update(UserModel).where(UserModel.id==i).values(password_hash=password_hash,updated_at=at))
+            s.execute(update(BrowserSessionModel).where(BrowserSessionModel.user_id==i,BrowserSessionModel.revoked_at.is_(None)).values(revoked_at=at))
+            s.commit()
     def create_session(self,v):
         with self.sessions.session() as s:s.add(BrowserSessionModel(id=v.id,user_id=v.user_id,token_hash=v.token_hash,created_at=v.created_at,expires_at=v.expires_at,revoked_at=v.revoked_at));s.commit()
     def get_session_by_hash(self,h):
