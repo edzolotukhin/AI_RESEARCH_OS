@@ -28,6 +28,8 @@ class EvidenceStageFailureClassification(str, Enum):
 class CandidateRejectionReason(str, Enum):
     RELEVANCE = "relevance"
     SUBJECT_RELEVANCE = "subject_relevance"
+    SUBJECT_CONTINUITY_FAILURE = "subject_continuity_failure"
+    LOCAL_NEED_RELEVANCE_FAILURE = "local_need_relevance_failure"
     INVALID_NEED_REF = "invalid_need_ref"
     PROVENANCE = "provenance"
     GROUNDING = "grounding"
@@ -464,6 +466,10 @@ def classify_grounding_failure(
 
 def classify_provenance_rejection(message: str) -> str:
     lowered = message.lower()
+    if "local information-need relevance" in lowered:
+        return CandidateRejectionReason.LOCAL_NEED_RELEVANCE_FAILURE.value
+    if "subject continuity" in lowered:
+        return CandidateRejectionReason.SUBJECT_CONTINUITY_FAILURE.value
     if "local relevance" in lowered:
         return CandidateRejectionReason.RELEVANCE.value
     if "subject relevance" in lowered:

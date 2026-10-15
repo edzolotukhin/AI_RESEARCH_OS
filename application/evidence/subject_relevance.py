@@ -106,18 +106,41 @@ def assess_subject_text(*, subject: ResearchSubject, statement: str,
             )),
         )
 
+    # The exact grounded excerpt is allowed to carry explicit subject identity
+    # for a context-dependent statement.  This is deliberately asymmetric:
+    # statement-only identity cannot establish that the quoted source passage
+    # supports the run's subject, and source-level relevance is not consulted.
+    if excerpt_core:
+        return SubjectRelevanceDecision(
+            SUBJECT_RELEVANT, tuple(sorted(excerpt_core)),
+            resolver_path="grounded_excerpt_lexical_representation_v1",
+            matched_languages=tuple(sorted(
+                _matching_languages(excerpt, core_rows)
+            )),
+        )
+
     for relation in subject.supporting_relations:
         if information_need_id not in relation.information_need_refs:
             continue
         approved = tuple(x for x in relation.lexical_representations
                          if x.approval_status.value == "approved")
-        common = _matching_concepts(statement, approved) & _matching_concepts(excerpt, approved)
+        claim_relation = _matching_concepts(statement, approved)
+        excerpt_relation = _matching_concepts(excerpt, approved)
+        common = claim_relation & excerpt_relation
         if common:
             return SubjectRelevanceDecision(
                 SUBJECT_RELEVANT, tuple(sorted(common)), relation.relation_id,
                 matched_languages=tuple(sorted(
                     _matching_languages(statement, approved)
                     | _matching_languages(excerpt, approved)
+                )),
+            )
+        if excerpt_relation:
+            return SubjectRelevanceDecision(
+                SUBJECT_RELEVANT, tuple(sorted(excerpt_relation)), relation.relation_id,
+                resolver_path="grounded_excerpt_lexical_representation_v1",
+                matched_languages=tuple(sorted(
+                    _matching_languages(excerpt, approved)
                 )),
             )
     return SubjectRelevanceDecision(SUBJECT_UNRESOLVED)

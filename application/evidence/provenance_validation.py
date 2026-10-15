@@ -58,8 +58,8 @@ def validate_candidate_provenance(
 
     subject_metadata = None
     if design.research_subject is not None:
-        retained: tuple[str, ...] = ()
-        accepted_decisions = []
+        subject_relevant: tuple[str, ...] = ()
+        subject_decisions = {}
         for need_id in validated_need_refs:
             decision = assess_subject_text(
                 subject=design.research_subject,
@@ -67,22 +67,30 @@ def validate_candidate_provenance(
                 excerpt=candidate.source_excerpt,
                 information_need_id=need_id,
             )
+            if decision.decision == SUBJECT_RELEVANT:
+                subject_relevant = _append_unique(subject_relevant, need_id)
+                subject_decisions[need_id] = decision
+        if not subject_relevant:
+            raise InvalidProvenanceError(
+                "Candidate subject continuity is unsupported for assigned needs"
+            )
+
+        retained: tuple[str, ...] = ()
+        for need_id in subject_relevant:
+            decision = subject_decisions[need_id]
             cross_language = any(
                 language.casefold() != design.language.casefold()
                 for language in decision.matched_languages
                 if language and language != "und"
             )
-            if decision.decision == SUBJECT_RELEVANT and (
-                need_id in locally_relevant_need_refs or cross_language
-            ):
+            if need_id in locally_relevant_need_refs or cross_language:
                 retained = _append_unique(retained, need_id)
-                accepted_decisions.append(decision)
-        validated_need_refs = retained
-        if not validated_need_refs:
+        if not retained:
             raise InvalidProvenanceError(
-                "Candidate subject relevance is unsupported for assigned needs"
+                "Candidate local information-need relevance is unsupported for assigned needs"
             )
-        accepted = accepted_decisions[0]
+        validated_need_refs = retained
+        accepted = subject_decisions[validated_need_refs[0]]
         subject_metadata = {
             "subject_id": design.research_subject.subject_id,
             "subject_version": design.research_subject.version,

@@ -5,6 +5,9 @@ import pytest
 from application.evidence.provenance_validation import (
     InvalidProvenanceError, validate_candidate_provenance,
 )
+from application.evidence.evidence_extraction_diagnostics import (
+    classify_provenance_rejection,
+)
 from application.evidence.run_scoped_provenance import RunScopedSourceContext
 from application.evidence.subject_relevance import (
     SUBJECT_RELEVANT, SUBJECT_UNRESOLVED, assess_subject_text,
@@ -100,6 +103,13 @@ def candidate(text, need="in-position"):
     )
 
 
+def split_candidate(statement, excerpt, need="in-position"):
+    return EvidenceCandidate(
+        statement=statement, source_excerpt=excerpt, evidence_type="direct_excerpt",
+        research_question_refs=(), information_need_refs=(need,),
+    )
+
+
 def context(need="in-position"):
     rq = "rq-size" if need == "in-size" else "rq-position"
     return RunScopedSourceContext("run", "design", (need,), (rq,), (f"sq-{need}",))
@@ -176,13 +186,104 @@ def test_english_subject_accepts_ukrainian_source():
     "A SaaS brand uses price, marketplace channels and communication.",
 ))
 def test_generic_cross_domain_material_cannot_be_evidence(text):
-    with pytest.raises(InvalidProvenanceError, match="subject relevance"):
+    with pytest.raises(InvalidProvenanceError, match="subject continuity"):
         validate(text)
 
 
 def test_subject_match_does_not_replace_same_language_local_relevance():
     with pytest.raises(InvalidProvenanceError):
         validate("Преміальний корм для собак: загальний обсяг ринку становить 10 тонн.")
+
+
+def test_grounded_excerpt_can_carry_subject_for_context_dependent_statement():
+    result = validate_candidate_provenance(
+        split_candidate(
+            "Якість і позиціонування брендів суттєво відрізняються.",
+            "Якість і позиціонування брендів преміального корму для собак суттєво відрізняються.",
+        ),
+        design=design(), run_context=context(),
+    )
+    audit = result.metadata["_research_subject_audit"]
+    assert result.information_need_refs == ("in-position",)
+    assert audit["resolver_path"] == "grounded_excerpt_lexical_representation_v1"
+
+
+def test_statement_only_subject_identity_remains_fail_closed():
+    with pytest.raises(InvalidProvenanceError, match="subject continuity"):
+        validate_candidate_provenance(
+            split_candidate(
+                "Преміальний корм для собак має різне позиціонування брендів.",
+                "Позиціонування брендів суттєво відрізняється.",
+            ),
+            design=design(), run_context=context(),
+        )
+
+
+def test_subject_absent_from_statement_and_excerpt_remains_fail_closed():
+    with pytest.raises(InvalidProvenanceError, match="subject continuity"):
+        validate_candidate_provenance(
+            split_candidate(
+                "Позиціонування брендів суттєво відрізняється.",
+                "Ці компанії використовують різні рекламні повідомлення.",
+            ),
+            design=design(), run_context=context(),
+        )
+
+
+def test_excerpt_subject_does_not_replace_local_need_relevance():
+    with pytest.raises(InvalidProvenanceError, match="local information-need relevance") as exc:
+        validate_candidate_provenance(
+            split_candidate(
+                "Загальний обсяг ринку становить 10 тонн.",
+                "Загальний обсяг ринку преміального корму для собак становить 10 тонн.",
+            ),
+            design=design(), run_context=context(),
+        )
+    assert classify_provenance_rejection(str(exc.value)) == "local_need_relevance_failure"
+
+
+def test_unrelated_candidate_from_subject_relevant_source_remains_rejected():
+    with pytest.raises(InvalidProvenanceError, match="subject continuity") as exc:
+        validate_candidate_provenance(
+            split_candidate(
+                "Автомобільні бренди конкурують через дилерські мережі.",
+                "Автомобільні бренди конкурують через дилерські мережі.",
+            ),
+            design=design(), run_context=context(),
+        )
+    assert classify_provenance_rejection(str(exc.value)) == "subject_continuity_failure"
+
+
+def test_generic_property_fixture_passes_subject_then_local_need_gates():
+    generic_subject = ResearchSubject(
+        subject_id="category-x", canonical_label="Product category X",
+        canonical_language="en", core_concepts=("core",),
+        lexical_representations=(
+            representation("category-x-en", "en", "Product category X"),
+        ), resolution_status=SubjectResolutionStatus.RESOLVED,
+    )
+    generic_design = ResearchDesign(
+        id="generic-design", language="en", research_subject=generic_subject,
+        research_questions=(ResearchQuestion("rq-materials", "Which materials define Product category X assortment?"),),
+        information_needs=(InformationNeed(
+            "in-materials", "rq-materials", "Materials and assortment offered for Product category X",
+            evidence_expectation=EvidenceExpectation(EvidenceNature.QUALITATIVE),
+        ),), source_strategy=("industry",), analysis_plan=("compare",),
+        deliverable_plan=("report",),
+    )
+    result = validate_candidate_provenance(
+        split_candidate(
+            "Material Y is commonly offered.",
+            "Product category X is commonly offered in material Y.",
+            "in-materials",
+        ),
+        design=generic_design,
+        run_context=RunScopedSourceContext(
+            "run", "generic-design", ("in-materials",), ("rq-materials",),
+            ("sq-in-materials",),
+        ),
+    )
+    assert result.information_need_refs == ("in-materials",)
 
 
 def test_supporting_relation_is_need_bound():
@@ -297,6 +398,41 @@ def test_inflected_ukrainian_source_and_evidence_share_subject_semantics():
         information_need_id=need.id,
     )
     assert evidence_decision.decision == SUBJECT_RELEVANT
+
+
+@pytest.mark.parametrize("form", ("обручок", "обручки", "обручка"))
+def test_wedding_ring_ukrainian_inflections_remain_subject_relevant(form):
+    value = ResearchSubject(
+        subject_id="rings", canonical_label="обручальні кільця",
+        canonical_language="uk", core_concepts=("core",),
+        lexical_representations=(
+            representation("rings-uk", "uk", "обручальні кільця"),
+        ), resolution_status=SubjectResolutionStatus.RESOLVED,
+    )
+    decision = assess_subject_text(
+        subject=value,
+        statement="Матеріал впливає на ціну.",
+        excerpt=f"Ціна {form} залежить від матеріалу.",
+        information_need_id="in-position",
+    )
+    assert decision.decision == SUBJECT_RELEVANT
+
+
+def test_unapproved_wedding_ring_synonym_remains_unresolved():
+    value = ResearchSubject(
+        subject_id="rings", canonical_label="обручальні кільця",
+        canonical_language="uk", core_concepts=("core",),
+        lexical_representations=(
+            representation("rings-uk", "uk", "обручальні кільця"),
+        ), resolution_status=SubjectResolutionStatus.RESOLVED,
+    )
+    decision = assess_subject_text(
+        subject=value,
+        statement="Матеріал впливає на ціну.",
+        excerpt="Ціна каблучки залежить від матеріалу.",
+        information_need_id="in-position",
+    )
+    assert decision.decision == SUBJECT_UNRESOLVED
 
 
 def test_unresolved_candidate_without_positive_topic_signal_is_ineligible():

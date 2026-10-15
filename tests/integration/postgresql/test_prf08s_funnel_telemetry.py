@@ -44,3 +44,24 @@ class FunnelPostgreSQLTests(PostgreSQLIntegrationTestCase):
         loaded = repo.get_task_results(context.workflow_run.id)
         self.assertEqual(loaded[context.current_task.id]["shared_state"][funnel.KEY], context.shared_state[funnel.KEY])
         self.assertNotIn("PRIVATE_ERROR_NOT_A_TELEMETRY_FIELD", str(loaded))
+
+    def test_split_subject_and_local_need_rejections_survive_jsonb_checkpoint(self):
+        context, repo = self.prepare()
+        journal = context.shared_state[funnel.KEY]
+        journal["events"].extend((
+            {"kind": "extraction_result", "rejections": ["subject_continuity_failure"]},
+            {"kind": "extraction_result", "rejections": ["local_need_relevance_failure"]},
+        ))
+        snapshot = capture_task_progress(context, context.current_task.id)
+        repo.save(
+            context.workflow_run, expected_version=0,
+            task_results={context.current_task.id: snapshot},
+        )
+        loaded = repo.get_task_results(context.workflow_run.id)
+        context.shared_state.clear()
+        restore_runtime_state(context, loaded)
+        persisted = context.shared_state[funnel.KEY]["events"][-2:]
+        self.assertEqual(
+            [item["rejections"][0] for item in persisted],
+            ["subject_continuity_failure", "local_need_relevance_failure"],
+        )
