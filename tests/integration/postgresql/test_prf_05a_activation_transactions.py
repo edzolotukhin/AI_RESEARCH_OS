@@ -25,12 +25,13 @@ class ActivationTransactions(TestCase):
         engine = create_test_engine()
         reset_schema(engine)
         self.addCleanup(engine.dispose)
+        self.llm_client = create_brief_aligned_llm_mock()
         self.container = create_application_container(
             config=postgresql_application_config(
                 deterministic_stage_executors=True,
                 background_execution_mode="external",
             ),
-            overrides=ApplicationOverrides(llm_client=create_brief_aligned_llm_mock()),
+            overrides=ApplicationOverrides(llm_client=self.llm_client),
         )
         self.addCleanup(self.container.shutdown)
 
@@ -113,6 +114,39 @@ class ActivationTransactions(TestCase):
         self.assertEqual(studies[0].study_id, studies[1].study_id)
         self.assertEqual(len(self.container.workflow_service.list_workflow_runs_for_project(project.id)), 1)
         self.assertEqual(self.activity_count(project.id, "Кількісне дослідження активовано"), 1)
+
+    def test_concurrent_terminal_design_revision_creates_one_new_design(self):
+        project = self.project("DESK")
+        planner = self.container.project_planning_service
+        run = planner.activate_desk(project)
+        run.ready(); run.start(); run.complete()
+        self.container.workflow_service.save_workflow_run(
+            run,
+            expected_version=self.container.workflow_service.get_workflow_run_version(run.id),
+        )
+        old_design_id = project.current_research_design.id
+        self.llm_client.reset_mock()
+
+        def revise():
+            try:
+                return planner.regenerate_design_after_terminal_run(
+                    project, expected_design_id=old_design_id,
+                ).id
+            except ValueError as exc:
+                return str(exc)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = [future.result(timeout=20) for future in
+                       [pool.submit(revise), pool.submit(revise)]]
+
+        current = self.container.project_service.get_project(project.id)
+        self.assertNotEqual(current.current_research_design.id, old_design_id)
+        self.assertEqual(current.research_design_status, "DRAFT")
+        self.assertEqual(results.count(current.current_research_design.id), 1)
+        self.assertEqual(results.count("Дизайн змінився; оновіть сторінку"), 1)
+        self.assertEqual(self.llm_client.generate.call_count, 1)
+        frozen = self.container.workflow_service.get_template(run.workflow_template_id)
+        self.assertEqual(frozen.research_design_snapshot.id, old_design_id)
 
     def test_desk_run_is_pollable_after_commit_and_replayed(self):
         project = self.project("DESK")

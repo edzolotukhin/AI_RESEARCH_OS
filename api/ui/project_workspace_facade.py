@@ -125,6 +125,12 @@ class ProjectWorkspaceFacade:
         project = self.authorization.require_project(self.principal, project_id)
         return self.container.project_planning_service.generate_design(project)
 
+    def regenerate_design(self, project_id: str, expected_design_id: str):
+        project, _ = self._project_owner(project_id, mutate=True)
+        return self.container.project_planning_service.regenerate_design_after_terminal_run(
+            project, expected_design_id=expected_design_id,
+        )
+
     def approve_design(self, project_id: str, design_id: str):
         project = self.authorization.require_project(self.principal, project_id)
         return self.container.project_planning_service.approve_design(

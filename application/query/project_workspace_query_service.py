@@ -66,12 +66,21 @@ class ProjectWorkspaceQueryService:
             project.research_brief.objectives,
         )
         attention = tuple(x.name for x in methods if x.state is WorkspaceMethodState.ATTENTION)
-        return ProjectWorkspaceView(project.id, project.name, self._humanize(project.status),
-                                    brief, desk, quant, qualitative, methods,
-                                    self.planning.available_methods(project),
-                                    project.research_design_status,
-                                    self.planning.design_is_current(project),
-                                    attention)
+        can_regenerate, regeneration_reason = (
+            self.planning.design_regeneration_eligibility(project)
+        )
+        return ProjectWorkspaceView(
+            project_id=project.id, project_name=project.name,
+            lifecycle=self._humanize(project.status), brief=brief,
+            desk=desk, quantitative=quant, qualitative=qualitative,
+            methods=methods,
+            available_methods=self.planning.available_methods(project),
+            design_status=project.research_design_status,
+            design_current=self.planning.design_is_current(project),
+            attention_items=attention,
+            can_regenerate_design=can_regenerate,
+            design_regeneration_block_reason=regeneration_reason,
+        )
 
     @staticmethod
     def _study_type():

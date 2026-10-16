@@ -202,5 +202,63 @@ class BrowserIdentityE2ETests(unittest.TestCase):
         self.assertNotIn(failed.id, response.headers["location"])
         self.assertEqual(len(facade._desk_runs(project_id)), 2)
 
+    def test_design_revision_obeys_project_mutation_roles(self):
+        self.logout()
+        self.assertEqual(self.client.post(
+            "/ui/projects/not-a-project/design/regenerate",
+            data={"expected_design_id": "not-a-design"}, follow_redirects=False,
+        ).status_code, 303)
+        self.login("alice@example.com", "correct horse battery")
+        created = self.client.post(
+            "/ui/projects",
+            data={"name": "Design revision roles", "selected_methods": "DESK"},
+            follow_redirects=False,
+        )
+        project_id = created.headers["location"].rsplit("/", 1)[-1]
+        planning = self.container.project_planning_service
+        from domain.research_brief import ResearchBrief
+        planning.save_brief(
+            self.container.project_service.get_project(project_id),
+            ResearchBrief(title="Desk", business_question="What changed?",
+                          objectives=("Measure",), language="en"),
+        )
+        planning.generate_design(self.container.project_service.get_project(project_id))
+        project = self.container.project_service.get_project(project_id)
+        planning.approve_design(
+            project, actor_id=self.alice.id,
+            expected_design_id=project.current_research_design.id,
+        )
+        run = planning.activate_desk(self.container.project_service.get_project(project_id))
+        run.ready(); run.start(); run.complete()
+        self.container.workflow_service.save_workflow_run(
+            run,
+            expected_version=self.container.workflow_service.get_workflow_run_version(run.id),
+        )
+        expected = project.current_research_design.id
+
+        self.logout(); self.login("bob@example.com", "another correct horse")
+        self.assertEqual(self.client.post(
+            f"/ui/projects/{project_id}/design/regenerate",
+            data={"expected_design_id": expected}, follow_redirects=False,
+        ).status_code, 404)
+
+        self.logout(); self.login("alice@example.com", "correct horse battery")
+        self.client.post(f"/ui/projects/{project_id}/members",
+                         data={"user_id": self.bob.id, "role": "VIEWER"})
+        self.logout(); self.login("bob@example.com", "another correct horse")
+        self.assertEqual(self.client.post(
+            f"/ui/projects/{project_id}/design/regenerate",
+            data={"expected_design_id": expected}, follow_redirects=False,
+        ).status_code, 404)
+
+        self.logout(); self.login("alice@example.com", "correct horse battery")
+        self.client.post(f"/ui/projects/{project_id}/members/{self.bob.id}/role",
+                         data={"role": "RESEARCHER"})
+        self.logout(); self.login("bob@example.com", "another correct horse")
+        self.assertEqual(self.client.post(
+            f"/ui/projects/{project_id}/design/regenerate",
+            data={"expected_design_id": expected}, follow_redirects=False,
+        ).status_code, 303)
+
 
 if __name__=="__main__":unittest.main()

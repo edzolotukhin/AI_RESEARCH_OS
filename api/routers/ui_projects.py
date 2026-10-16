@@ -186,6 +186,30 @@ def project_design_generate(request: Request, project_id: str):
         facade = _facade(request); project = facade.project_for_design(project_id)
         return templates.TemplateResponse(request, "projects/design.html", {"request": request, "project": project, "view": facade.get_workspace(project_id), "error": str(exc)}, status_code=422)
 
+@router.post("/{project_id}/design/regenerate", include_in_schema=False)
+def project_design_regenerate(
+    request: Request,
+    project_id: str,
+    expected_design_id: str = Form(""),
+):
+    try:
+        _facade(request).regenerate_design(project_id, expected_design_id)
+        return RedirectResponse(f"/ui/projects/{project_id}/design", status_code=303)
+    except (AccessDeniedError, EntityNotFoundError):
+        return templates.TemplateResponse(
+            request, "projects/error.html",
+            {"request": request, "message": "Проєкт не знайдено"}, status_code=404,
+        )
+    except ValueError as exc:
+        facade = _facade(request)
+        project = facade.project_for_design(project_id)
+        return templates.TemplateResponse(
+            request, "projects/design.html",
+            {"request": request, "project": project,
+             "view": facade.get_workspace(project_id), "error": str(exc)},
+            status_code=409,
+        )
+
 @router.post("/{project_id}/design/approve", include_in_schema=False)
 def project_design_approve(request: Request, project_id: str, design_id: str = Form("")):
     try:

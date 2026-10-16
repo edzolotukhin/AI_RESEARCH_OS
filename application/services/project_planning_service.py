@@ -9,6 +9,7 @@ import json
 from uuid import NAMESPACE_URL, uuid5
 
 from application.quantitative.workflow import build_quantitative_workflow_template, CMF_QUANTITATIVE_WORKFLOW_ID
+from application.persistence.exceptions import EntityNotFoundError
 from application.qualitative.service import QUAL_TEMPLATE
 from application.planner.project_planning_profile import (
     PROJECT_PLANNING_PROFILE_VERSION,
@@ -133,6 +134,59 @@ class ProjectPlanningService:
             self._is_activated(project.id, method) for method in methods
         ):
             raise ProjectPlanningError("Дизайн не можна переформувати після активації методу")
+        return self._generate_new_design(project, methods=methods, fingerprint=fingerprint)
+
+    def regenerate_design_after_terminal_run(
+        self, project: Project, *, expected_design_id: str,
+    ):
+        """Create a new draft design while preserving terminal run snapshots."""
+        boundary = (
+            self.activation_sessions.activation(project.id)
+            if self.activation_sessions is not None else nullcontext()
+        )
+        with boundary:
+            if self.activation_sessions is not None:
+                project = self.projects.get_project(project.id)
+            design = project.current_research_design
+            if design is None or design.id != expected_design_id:
+                raise ProjectPlanningError("Дизайн змінився; оновіть сторінку")
+            eligible, reason = self.design_regeneration_eligibility(project)
+            if not eligible:
+                raise ProjectPlanningError(reason)
+            methods = self.explicit_or_inferred_methods(project)
+            return self._generate_new_design(
+                project,
+                methods=methods,
+                fingerprint=self.input_fingerprint(project.research_brief, methods),
+            )
+
+    def design_regeneration_eligibility(self, project: Project) -> tuple[bool, str]:
+        design = project.current_research_design
+        if design is None:
+            return False, "Поточний дизайн дослідження відсутній"
+        if project.research_design_status != "APPROVED":
+            return False, "Нову ревізію можна створити лише для затвердженого дизайну"
+        if not self.design_is_current(project):
+            return False, "Поточний дизайн потребує оновлення"
+
+        bound_runs = []
+        for run in self.workflows.list_workflow_runs_for_project(project.id):
+            try:
+                template = self.workflows.get_template(run.workflow_template_id)
+            except EntityNotFoundError:
+                if not run.is_terminal:
+                    return False, "Дочекайтеся завершення активного дослідження"
+                continue
+            snapshot = template.research_design_snapshot
+            if snapshot is not None and snapshot.id == design.id:
+                bound_runs.append(run)
+        if not bound_runs:
+            return False, "Немає завершеного дослідження для поточного дизайну"
+        if any(not run.is_terminal for run in bound_runs):
+            return False, "Дочекайтеся завершення активного дослідження"
+        return True, ""
+
+    def _generate_new_design(self, project: Project, *, methods, fingerprint):
         context = WorkflowContext(
             project=project,
             workflow_run=WorkflowRun(id="planning"),

@@ -61,6 +61,8 @@ class ProjectWorkspaceView:
     design_status: str | None
     design_current: bool
     attention_items: tuple[str, ...]
+    can_regenerate_design: bool = False
+    design_regeneration_block_reason: str = ""
     role: str = "OWNER"
     can_mutate: bool = True
     can_manage_access: bool = True
