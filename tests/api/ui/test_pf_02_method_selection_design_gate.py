@@ -7,6 +7,8 @@ from application.services.project_planning_service import ProjectPlanningError
 from application.persistence.exceptions import ConcurrentModificationError
 from domain.research_brief import ResearchBrief
 from domain.planning.research_design import ResearchQuestion
+from domain.task import Task
+from domain.workflow_run import WorkflowRun
 from domain.workflow_status import WorkflowStatus
 from tests.api.helpers import ApiTestCase
 
@@ -489,6 +491,50 @@ class Pf02MethodSelectionDesignGateTests(ApiTestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn(attempts[-1].id, page.text)
         self.assertNotIn("Запустити нове дослідження", page.text)
+
+    def test_desk_attempt_order_uses_replacement_lineage_not_uuid_or_timestamp(self):
+        service = self.container.project_planning_service
+        project_id = "ow19c-ordering-project"
+        timestamp = "2026-01-01T00:00:00+00:00"
+
+        def attempt(run_id):
+            run = WorkflowRun(id=run_id, project_id=project_id)
+            run.tasks = [Task(
+                id=f"task-{run_id}",
+                definition_id="research",
+                name="Research",
+                created_at=timestamp,
+            )]
+            return run
+
+        first = attempt("zzzz-initial-attempt")
+        second = attempt(service._desk_retry_run_id(project_id, first.id))
+        third = attempt(service._desk_retry_run_id(project_id, second.id))
+
+        self.assertLess(second.id, first.id)  # UUID order conflicts with lineage.
+        ordered = service._order_desk_attempts(
+            [third, first, second], project_id,
+        )
+        self.assertEqual([run.id for run in ordered], [first.id, second.id, third.id])
+
+    def test_unrelated_legacy_attempts_retain_timestamp_compatibility_order(self):
+        service = self.container.project_planning_service
+        project_id = "ow19c-legacy-ordering-project"
+
+        def attempt(run_id, created_at):
+            run = WorkflowRun(id=run_id, project_id=project_id)
+            run.tasks = [Task(
+                id=f"task-{run_id}",
+                definition_id="research",
+                name="Research",
+                created_at=created_at,
+            )]
+            return run
+
+        earlier = attempt("legacy-z", "2025-01-01T00:00:00+00:00")
+        later = attempt("legacy-a", "2026-01-01T00:00:00+00:00")
+        ordered = service._order_desk_attempts([later, earlier], project_id)
+        self.assertEqual([run.id for run in ordered], [earlier.id, later.id])
 
     def test_quantitative_activation_is_project_bound_paused_and_idempotent(self):
         project_id = self.create(("QUANTITATIVE",))

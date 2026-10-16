@@ -51,10 +51,10 @@ class ProjectWorkspaceQueryService:
                 quant_run = run
             elif run.workflow_template_id not in {quant_template_id, QUAL_TEMPLATE}:
                 desk_runs.append(run)
-        desk_run = max(
-            desk_runs,
-            key=self.planning._desk_attempt_order,
-        ) if desk_runs else None
+        ordered_desk_runs = self.planning._order_desk_attempts(
+            desk_runs, project_id,
+        )
+        desk_run = ordered_desk_runs[-1] if ordered_desk_runs else None
         selected = self.planning.explicit_or_inferred_methods(project)
         desk = self._desk(project_id, desk_run, project) if DESK in selected else None
         quant = self._quant(project_id, quant_study, quant_run, project) if QUANTITATIVE in selected else None

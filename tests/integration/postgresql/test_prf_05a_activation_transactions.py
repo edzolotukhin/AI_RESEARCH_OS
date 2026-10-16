@@ -159,7 +159,10 @@ class ActivationTransactions(TestCase):
     def test_concurrent_failed_desk_retry_creates_one_immutable_replacement(self):
         project = self.project("DESK")
         planner = self.container.project_planning_service
+        identical_created_at = "2026-01-01T00:00:00+00:00"
         failed = planner.activate_desk(project)
+        for task in failed.tasks:
+            task.created_at = identical_created_at
         failed.ready(); failed.start(); failed.fail()
         self.container.workflow_service.save_workflow_run(
             failed,
@@ -186,6 +189,8 @@ class ActivationTransactions(TestCase):
         self.assertEqual(planner._desk_run(project.id).id, replacements[0].id)
 
         replacement = replacements[0]
+        for task in replacement.tasks:
+            task.created_at = identical_created_at
         replacement.ready(); replacement.start(); replacement.fail()
         self.container.workflow_service.save_workflow_run(
             replacement,

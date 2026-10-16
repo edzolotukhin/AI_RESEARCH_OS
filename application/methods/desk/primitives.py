@@ -16,6 +16,7 @@ from application.sources.retrieval_portfolio import derive_initial_retrieval_por
 from application.sources.query_opportunities import KEY as QUERY_HISTORY
 from application.research_kernel.dispatch import invoke, current_dispatch
 from domain.sources.source_candidate import SourceCandidate
+from domain.sources.search_query import SearchQuery
 
 
 class _MeteredPort:
@@ -79,13 +80,19 @@ class DeskPrimitives:
                 for field in ("provider", "title", "snippet", "provider_result_id", "published_at", "source_type"):
                     if dto.get(field) is not None:
                         dto[field] = funnel.safe_text(dto[field])
-                rows.append({"candidate": dto, "query_id": query.id, "canonical_url": group.canonical_url})
+                rows.append({"candidate": dto, "query_id": query.id,
+                             "query": query.to_dict(), "canonical_url": group.canonical_url})
         return rows
 
     def groups(self, rows, queries):
         grouped = {}
         for row in rows:
-            query = queries[row["query_id"]]
+            query = queries.get(row["query_id"])
+            if query is None and isinstance(row.get("query"), dict):
+                query = SearchQuery.from_dict(row["query"])
+                queries[query.id] = query
+            if query is None:
+                raise ValueError("durable frontier references an unknown search query")
             item = _PendingCandidate(SourceCandidate.from_dict(row["candidate"]), query, row["canonical_url"])
             grouped.setdefault(item.canonical_url, []).append(item)
         return self.acquisition._select_groups(grouped, design=self.design, brief=self.brief,

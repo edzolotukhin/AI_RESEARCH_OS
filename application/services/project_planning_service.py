@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from contextlib import nullcontext
 from dataclasses import replace
+import heapq
 import hashlib
 import json
 from uuid import NAMESPACE_URL, uuid5
@@ -383,15 +384,61 @@ class ProjectPlanningService:
             ):
                 continue
             result.append(run)
-        return sorted(result, key=self._desk_attempt_order)
+        return self._order_desk_attempts(result, project_id)
+
+    @classmethod
+    def _order_desk_attempts(cls, runs, project_id: str):
+        """Order attempts by their persisted replacement lineage.
+
+        OW-03/OW-17 replacement identities encode the predecessor run ID.
+        Reconstructing that relationship makes lifecycle order independent of
+        equal task timestamps, repository insertion order, and UUID sorting.
+        Timestamps remain only a compatibility order between unrelated legacy
+        roots for which no replacement relationship was persisted.
+        """
+        runs = tuple(runs)
+        by_id = {run.id: run for run in runs}
+        children_by_id = {run.id: [] for run in runs}
+        indegree = {run.id: 0 for run in runs}
+        for parent in runs:
+            for child_id in (
+                cls._desk_retry_run_id(project_id, parent.id),
+                cls._desk_replacement_run_id(project_id, parent.id),
+            ):
+                if child_id in by_id:
+                    children_by_id[parent.id].append(child_id)
+                    indegree[child_id] += 1
+
+        # Stable Kahn ordering preserves each explicit predecessor edge while
+        # retaining timestamp compatibility among unrelated historical roots.
+        available = [
+            (cls._desk_attempt_created_at(run), run.id)
+            for run in runs if indegree[run.id] == 0
+        ]
+        heapq.heapify(available)
+        ordered = []
+        while available:
+            _, run_id = heapq.heappop(available)
+            ordered.append(by_id[run_id])
+            for child_id in sorted(children_by_id[run_id]):
+                indegree[child_id] -= 1
+                if indegree[child_id] == 0:
+                    child = by_id[child_id]
+                    heapq.heappush(
+                        available,
+                        (cls._desk_attempt_created_at(child), child.id),
+                    )
+        if len(ordered) != len(runs):
+            raise ProjectPlanningError("Виявлено циклічну історію запусків Desk")
+        return ordered
 
     @staticmethod
-    def _desk_attempt_order(run):
+    def _desk_attempt_created_at(run):
         created_at = min(
             (task.created_at for task in run.tasks if task.created_at),
             default="",
         )
-        return created_at, run.id
+        return created_at
 
     @staticmethod
     def _desk_retry_run_id(project_id: str, failed_run_id: str) -> str:
