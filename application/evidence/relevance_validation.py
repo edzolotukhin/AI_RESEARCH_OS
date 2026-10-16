@@ -7,6 +7,7 @@ This is a deterministic negative guard, not a semantic sufficiency evaluator.
 import re
 
 from application.sources.category_subject import _NON_SUBJECT_WORDS
+from application.sources.expectation_aware_query_intent import render_aspect_query_terms
 
 _GENERIC = _NON_SUBJECT_WORDS | frozenset("""
     a an as at be been being by can do does each evidence fact facts find given
@@ -59,6 +60,12 @@ def relevant_need_refs(candidate, *, design):
             shared = anchors & _tokens(question.question)
             if shared:
                 anchors = shared
-        if not anchors or (anchors & claim and anchors & excerpt):
+        aspect_match = False
+        for aspect_id in need.evidence_expectation.required_aspects:
+            aspect_tokens = _tokens(render_aspect_query_terms(aspect_id))
+            if aspect_tokens and aspect_tokens <= claim and aspect_tokens <= excerpt:
+                aspect_match = True
+                break
+        if not anchors or (anchors & claim and anchors & excerpt) or aspect_match:
             retained.append(ref)
     return tuple(retained)

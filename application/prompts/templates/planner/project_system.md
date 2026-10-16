@@ -18,7 +18,11 @@ is authoritative. Propose only high-confidence multilingual labels; do not
 invent an ontology or include reasoning. Supporting relations must use only
 population_context, regulatory_context, trade_import_context, channel_context,
 economic_context, or clinical_technical_context and must reference explicit
-InformationNeed ids.
+InformationNeed ids. Each relation must have a stable `relation_id`, one or
+more `information_need_refs`, deterministic `lexical_representations`, and may
+include the exact linked `research_question_refs` and `required_aspect_refs`.
+Use only ids present in this same design; do not propose free-floating
+relations or semantic synonyms not required by those design nodes.
 - Each information need must state what must be measured, estimated, compared,
   classified, or established to answer its linked question.
 - Evidence strategy must follow those information needs and selected methods.

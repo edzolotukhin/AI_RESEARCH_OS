@@ -97,6 +97,8 @@ class SupportingRelation:
     concepts: tuple[str, ...]
     lexical_representations: tuple[LexicalRepresentation, ...]
     explanation: str
+    research_question_refs: tuple[str, ...] = ()
+    required_aspect_refs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.relation_type not in ALLOWED_RELATION_TYPES:
@@ -105,7 +107,7 @@ class SupportingRelation:
             raise ValueError("Supporting relation requires information_need_refs")
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "relation_id": self.relation_id,
             "relation_type": self.relation_type,
             "information_need_refs": list(self.information_need_refs),
@@ -113,6 +115,11 @@ class SupportingRelation:
             "lexical_representations": [x.to_dict() for x in self.lexical_representations],
             "explanation": self.explanation,
         }
+        if self.research_question_refs:
+            payload["research_question_refs"] = list(self.research_question_refs)
+        if self.required_aspect_refs:
+            payload["required_aspect_refs"] = list(self.required_aspect_refs)
+        return payload
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "SupportingRelation":
@@ -126,6 +133,12 @@ class SupportingRelation:
                 for x in value.get("lexical_representations", ())
             ),
             explanation=str(value.get("explanation") or ""),
+            research_question_refs=tuple(
+                str(x) for x in value.get("research_question_refs", ())
+            ),
+            required_aspect_refs=tuple(
+                str(x) for x in value.get("required_aspect_refs", ())
+            ),
         )
 
 
@@ -200,7 +213,7 @@ class ResearchSubject:
             }
 
         def relation_payload(item: SupportingRelation) -> dict[str, Any]:
-            return {
+            payload = {
                 "relation_id": item.relation_id,
                 "relation_type": item.relation_type,
                 "information_need_refs": sorted(item.information_need_refs),
@@ -211,6 +224,13 @@ class ResearchSubject:
                 ),
                 "explanation": normalize_subject_text(item.explanation),
             }
+            # Omit empty scopes to preserve fingerprints of historical
+            # RESEARCH_SUBJECT/1 values written before scoped relation fields.
+            if item.research_question_refs:
+                payload["research_question_refs"] = sorted(item.research_question_refs)
+            if item.required_aspect_refs:
+                payload["required_aspect_refs"] = sorted(item.required_aspect_refs)
+            return payload
         return {
             "version": self.version,
             "subject_id": self.subject_id,

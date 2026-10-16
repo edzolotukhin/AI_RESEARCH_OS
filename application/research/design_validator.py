@@ -103,12 +103,34 @@ def validate_subject_for_approval(design: ResearchDesign) -> None:
     if not subject.canonical_label.strip() or not subject.core_concepts:
         raise ValidationError("Предмет дослідження не має достатньої основної ідентичності.")
     need_ids = {item.id for item in design.information_needs}
+    question_ids = {item.id for item in design.research_questions}
+    needs = {item.id: item for item in design.information_needs}
     for relation in subject.supporting_relations:
         unknown = set(relation.information_need_refs) - need_ids
         if unknown:
             raise ValidationError(
                 "Підтримувальний зв’язок предмета посилається на невідомі інформаційні потреби: "
                 + ", ".join(sorted(unknown))
+            )
+        unknown_questions = set(relation.research_question_refs) - question_ids
+        if unknown_questions:
+            raise ValidationError(
+                "Підтримувальний зв’язок предмета посилається на невідомі дослідницькі питання: "
+                + ", ".join(sorted(unknown_questions))
+            )
+        allowed_aspects = {
+            aspect
+            for need_id in relation.information_need_refs
+            for aspect in (
+                needs[need_id].evidence_expectation.required_aspects
+                if needs[need_id].evidence_expectation is not None else ()
+            )
+        }
+        unknown_aspects = set(relation.required_aspect_refs) - allowed_aspects
+        if unknown_aspects:
+            raise ValidationError(
+                "Підтримувальний зв’язок предмета посилається на невідомі аспекти: "
+                + ", ".join(sorted(unknown_aspects))
             )
 
 
