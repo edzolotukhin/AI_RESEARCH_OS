@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import replace
 
 from application.sources.expectation_aware_query_intent import render_aspect_query_terms
 from domain.planning.research_design import ResearchDesign
@@ -9,6 +10,18 @@ from domain.planning.research_subject import (
     SupportingRelation, normalize_subject_text, subject_tokens,
 )
 from domain.research_brief import ResearchBrief
+
+
+RELATION_REJECTION_CATEGORIES = (
+    "malformed_shape",
+    "invalid_relation_type",
+    "missing_or_stale_information_need",
+    "invalid_research_question_scope",
+    "invalid_required_aspect_scope",
+    "missing_semantic_grounding",
+    "aspect_lexical_mismatch",
+    "missing_lexical_representation",
+)
 
 
 _NON_GROUNDING_TOKENS = frozenset({
@@ -36,11 +49,13 @@ def _relation_text(raw: dict) -> tuple[str, ...]:
 
 def _validated_relation(
     raw: dict, *, design: ResearchDesign, ordinal: int,
-) -> SupportingRelation | None:
+) -> tuple[SupportingRelation | None, str | None]:
     relation_id = str(raw.get("relation_id") or "").strip()
     relation_type = str(raw.get("relation_type") or "")
-    if not relation_id or relation_type not in ALLOWED_RELATION_TYPES:
-        return None
+    if not relation_id:
+        return None, "malformed_shape"
+    if relation_type not in ALLOWED_RELATION_TYPES:
+        return None, "invalid_relation_type"
     sequence_fields = (
         "information_need_refs", "research_question_refs", "required_aspect_refs",
         "concepts", "lexical_representations",
@@ -49,21 +64,21 @@ def _validated_relation(
         field in raw and not isinstance(raw[field], (list, tuple))
         for field in sequence_fields
     ):
-        return None
+        return None, "malformed_shape"
     for representation in raw.get("lexical_representations", ()):
         if not isinstance(representation, dict):
-            return None
+            return None, "malformed_shape"
         if any(
             field in representation
             and not isinstance(representation[field], (list, tuple))
             for field in ("normalized_phrases", "concept_refs")
         ):
-            return None
+            return None, "malformed_shape"
     needs = {item.id: item for item in design.information_needs}
     questions = {item.id: item for item in design.research_questions}
     need_refs = tuple(dict.fromkeys(str(x) for x in raw.get("information_need_refs", ())))
     if not need_refs or any(ref not in needs for ref in need_refs):
-        return None
+        return None, "missing_or_stale_information_need"
     raw_question_refs = tuple(dict.fromkeys(
         str(x) for x in raw.get("research_question_refs", ())
     ))
@@ -73,7 +88,7 @@ def _validated_relation(
     question_refs = raw_question_refs or inferred_question_refs
     if (any(ref not in questions for ref in question_refs)
             or any(needs[ref].research_question_id not in question_refs for ref in need_refs)):
-        return None
+        return None, "invalid_research_question_scope"
     allowed_aspects = tuple(dict.fromkeys(
         aspect
         for ref in need_refs
@@ -86,23 +101,23 @@ def _validated_relation(
         str(x) for x in raw.get("required_aspect_refs", ())
     ))
     if raw_aspects and any(aspect not in allowed_aspects for aspect in raw_aspects):
-        return None
+        return None, "invalid_required_aspect_scope"
     relation_tokens = _semantic_tokens(_relation_text(raw))
     if not relation_tokens:
-        return None
+        return None, "missing_semantic_grounding"
     matched_aspects = tuple(
         aspect for aspect in allowed_aspects
         if relation_tokens & _semantic_tokens((render_aspect_query_terms(aspect),))
     )
     if raw_aspects and not set(raw_aspects) <= set(matched_aspects):
-        return None
+        return None, "aspect_lexical_mismatch"
     aspect_refs = raw_aspects or matched_aspects
     design_tokens = _semantic_tokens(
         tuple(needs[ref].description for ref in need_refs)
         + tuple(questions[ref].question for ref in question_refs)
     )
     if not aspect_refs and not (relation_tokens & design_tokens):
-        return None
+        return None, "missing_semantic_grounding"
     relation_concepts = tuple(dict.fromkeys(
         str(x) for x in raw.get("concepts", ()) if str(x).strip()
     )) or (f"support-{ordinal}",)
@@ -123,7 +138,7 @@ def _validated_relation(
         if isinstance(item, dict) and str(item.get("label") or "").strip()
     )
     if not representations:
-        return None
+        return None, "missing_lexical_representation"
     return SupportingRelation(
         relation_id=relation_id,
         relation_type=relation_type,
@@ -133,7 +148,37 @@ def _validated_relation(
         explanation=str(raw.get("explanation") or ""),
         research_question_refs=question_refs,
         required_aspect_refs=aspect_refs,
-    )
+    ), None
+
+
+def _resolve_relations(
+    proposal: dict, *, design: ResearchDesign | None,
+) -> tuple[tuple[SupportingRelation, ...], dict[str, object]]:
+    raw_relations = proposal.get("supporting_relations", ())
+    if not isinstance(raw_relations, (list, tuple)):
+        rows = (raw_relations,)
+    else:
+        rows = tuple(raw_relations)
+    rejection_counts = {category: 0 for category in RELATION_REJECTION_CATEGORIES}
+    accepted: list[SupportingRelation] = []
+    for index, raw in enumerate(rows, start=1):
+        if not isinstance(raw, dict) or design is None:
+            rejection_counts["malformed_shape"] += 1
+            continue
+        relation, rejection = _validated_relation(raw, design=design, ordinal=index)
+        if relation is not None:
+            accepted.append(relation)
+        else:
+            rejection_counts[rejection or "malformed_shape"] += 1
+    rejected = len(rows) - len(accepted)
+    diagnostics: dict[str, object] = {
+        "subject_proposal_present": True,
+        "proposed_relation_count": len(rows),
+        "accepted_relation_count": len(accepted),
+        "rejected_relation_count": rejected,
+        "rejection_category_counts": rejection_counts,
+    }
+    return tuple(accepted), diagnostics
 
 
 def _validated_aliases(
@@ -180,14 +225,8 @@ def resolve_subject_proposal(
             proposal, canonical=canonical, canonical_matches=canonical_matches,
             design=design,
         )
-        relations = tuple(
-            relation
-            for index, raw in enumerate(proposal.get("supporting_relations", ()), start=1)
-            if isinstance(raw, dict) and design is not None
-            for relation in (_validated_relation(raw, design=design, ordinal=index),)
-            if relation is not None
-        )
-        return ResearchSubject.proposed(
+        relations, relation_diagnostics = _resolve_relations(proposal, design=design)
+        subject = ResearchSubject.proposed(
             canonical_label=canonical or proposed_label,
             canonical_language=str(proposal.get("canonical_language") or brief.language),
             aliases=aliases,
@@ -196,8 +235,31 @@ def resolve_subject_proposal(
             supporting_relations=relations,
             exclusions=tuple(str(x) for x in proposal.get("exclusions", ())),
         )
-    return ResearchSubject.proposed(
+        return replace_subject_provenance(subject, relation_diagnostics)
+    subject = ResearchSubject.proposed(
         canonical_label=canonical,
         canonical_language=brief.language,
         provenance="brief_market" if explicit else "brief_title_fallback",
+    )
+    return replace_subject_provenance(subject, {
+        "subject_proposal_present": False,
+        "proposed_relation_count": 0,
+        "accepted_relation_count": 0,
+        "rejected_relation_count": 0,
+        "rejection_category_counts": {
+            category: 0 for category in RELATION_REJECTION_CATEGORIES
+        },
+    })
+
+
+def replace_subject_provenance(
+    subject: ResearchSubject, diagnostics: dict[str, object],
+) -> ResearchSubject:
+    return replace(
+        subject,
+        provenance={
+            **dict(subject.provenance or {}),
+            "relation_diagnostics": diagnostics,
+        },
+        semantic_fingerprint="",
     )

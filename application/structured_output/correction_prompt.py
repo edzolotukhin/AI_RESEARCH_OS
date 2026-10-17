@@ -2,50 +2,13 @@ from __future__ import annotations
 
 from application.exceptions.structured_output_error import StructuredOutputError
 from application.planner.planner_bounds import PlannerBounds
+from application.planner.research_design_payload_schema import (
+    PLANNER_PAYLOAD_SCHEMA,
+    RESEARCH_DESIGN_PAYLOAD_SCHEMA,
+)
 
 from domain.ai.llm_response import LLMResponse
 from domain.ai.prompt import Prompt
-
-RESEARCH_DESIGN_PAYLOAD_SCHEMA = """
-{
-  "research_questions": [
-    {
-      "id": "string",
-      "question": "string",
-      "objective_refs": ["string"],
-      "priority": 1,
-      "rationale": "string"
-    }
-  ],
-  "information_needs": [
-    {
-      "id": "string",
-      "research_question_id": "string",
-      "description": "string",
-      "priority": 1,
-      "preferred_source_types": ["string"],
-      "timeframe": "string",
-      "geography": "string",
-      "evidence_expectation": {
-        "nature": "quantitative|qualitative|mixed",
-        "required_aspects": ["string"],
-        "geography": "string",
-        "timeframe": "string",
-        "minimum_independent_sources": 1,
-        "requires_quantitative_evidence": false
-      }
-    }
-  ],
-  "source_strategy": ["string"],
-  "analysis_plan": ["string"],
-  "deliverable_plan": ["string"],
-  "assumptions": ["string"],
-  "limitations": ["string"],
-  "language": "string"
-}
-""".strip()
-
-PLANNER_PAYLOAD_SCHEMA = RESEARCH_DESIGN_PAYLOAD_SCHEMA
 
 _INVALID_RESPONSE_PREVIEW_LIMIT = 800
 

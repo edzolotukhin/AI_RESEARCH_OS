@@ -28,6 +28,10 @@ from tests.integration.postgresql.helpers import (
     postgresql_application_config,
     reset_schema,
 )
+from tests.application.planner.test_ow20d_composite_subject_contract import (
+    _design as ow20d_design,
+    planner_payload as ow20d_planner_payload,
+)
 
 
 @unittest.skipUnless(
@@ -227,6 +231,32 @@ class Ow07ResearchSubjectPostgreSQLTests(unittest.TestCase):
         restarted = self._container()
         restored = restarted.project_service.get_project(project.id)
         self.assertIsNone(restored.current_research_design.research_subject)
+
+    def test_ow20d_planner_relations_and_sanitized_diagnostics_round_trip(self):
+        container = self._container()
+        project = container.project_service.create_project(
+            "OW-20D PostgreSQL",
+            owner_principal_id="owner",
+            selected_methods=("DESK",),
+        )
+        design = ow20d_design(ow20d_planner_payload())
+        project.current_research_design = design
+        project.research_design_status = "DRAFT"
+        container.project_service.save_project(project)
+
+        restored = container.project_service.get_project(project.id)
+        self.assertEqual(restored.current_research_design, design)
+        self.assertEqual(
+            {item.relation_id for item in restored.current_research_design
+             .research_subject.supporting_relations},
+            {"repeat-rate", "cancellation-rate"},
+        )
+        diagnostics = restored.current_research_design.research_subject.provenance[
+            "relation_diagnostics"
+        ]
+        self.assertEqual(diagnostics["proposed_relation_count"], 10)
+        self.assertEqual(diagnostics["accepted_relation_count"], 2)
+        self.assertEqual(diagnostics["rejected_relation_count"], 8)
 
 
 if __name__ == "__main__":

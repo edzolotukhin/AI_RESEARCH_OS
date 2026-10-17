@@ -2,6 +2,9 @@ from pathlib import Path
 
 from application.planner.executor_catalog import ExecutorCatalog
 from application.planner.planner_bounds import PlannerBounds
+from application.planner.research_design_payload_schema import (
+    RESEARCH_DESIGN_PAYLOAD_SCHEMA,
+)
 from application.prompts.builders.prompt_builder import PromptBuilder
 from application.prompts.prompt_renderer import PromptRenderer
 from application.prompts.template_loader import TemplateLoader
@@ -77,6 +80,7 @@ class PlannerPromptBuilder(PromptBuilder):
             "executor_catalog": self._executor_catalog.format_for_prompt(),
             "planner_bounds": self._bounds.format_for_prompt(),
             "planner_compact_instruction": self._bounds.format_compact_instruction(),
+            "research_design_payload_schema": RESEARCH_DESIGN_PAYLOAD_SCHEMA,
         }
 
         profile_data = context.execution_metadata.get(PROJECT_PLANNING_PROFILE_KEY)

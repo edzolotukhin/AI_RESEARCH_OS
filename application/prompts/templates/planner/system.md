@@ -86,42 +86,7 @@ Keep all string fields concise (typically one sentence).
 
 The JSON must match this schema:
 
-{{
-  "research_questions": [
-    {{
-      "id": "string",
-      "question": "string",
-      "objective_refs": ["string"],
-      "priority": 1,
-      "rationale": "string"
-    }}
-  ],
-  "information_needs": [
-    {{
-      "id": "string",
-      "research_question_id": "string",
-      "description": "string",
-      "priority": 1,
-      "preferred_source_types": ["string"],
-      "timeframe": "string",
-      "geography": "string",
-      "evidence_expectation": {{
-        "nature": "quantitative|qualitative|mixed",
-        "required_aspects": ["string"],
-        "geography": "string",
-        "timeframe": "string",
-        "minimum_independent_sources": 1,
-        "requires_quantitative_evidence": false
-      }}
-    }}
-  ],
-  "source_strategy": ["string"],
-  "analysis_plan": ["string"],
-  "deliverable_plan": ["string"],
-  "assumptions": ["string"],
-  "limitations": ["string"],
-  "language": "string"
-}}
+{research_design_payload_schema}
 
 Requirements:
 
@@ -142,5 +107,13 @@ Requirements:
 - An empty, null, or missing `evidence_expectation` is invalid.
 - Use high-level source types only (e.g. official statistics, company reports, industry associations, regulator/government, reputable media, academic research).
 - Do not include search queries, URLs, or executor IDs.
+- Treat the explicit Market field as the authoritative final canonical subject.
+- Emit a bounded supporting relation only when it bridges that subject to an
+  explicit current question, information need, or required aspect for evidence
+  continuity or local relevance. Use only the six relation types in the schema,
+  exact ids from this response, and at least one information need reference.
+  Deduplicate equivalent relations; do not cross scopes, invent ids, expand an
+  ontology, or create speculative synonyms. An empty list is valid only when no
+  semantic bridge is needed.
 
 Produce a clear professional research design that fits within the limits above.

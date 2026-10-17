@@ -23,6 +23,18 @@ more `information_need_refs`, deterministic `lexical_representations`, and may
 include the exact linked `research_question_refs` and `required_aspect_refs`.
 Use only ids present in this same design; do not propose free-floating
 relations or semantic synonyms not required by those design nodes.
+
+Emit a supporting relation only when a bounded semantic bridge is needed
+between the authoritative canonical subject and an explicit current
+ResearchQuestion, InformationNeed, or required aspect for evidence subject
+continuity or local relevance. Such a bridge may represent a narrower metric,
+component, attribute, population scope, outcome, indicator, or other context
+already present in the Design. Do not create a relation for every phrase.
+Deduplicate equivalent relations, reference at least one exact current
+InformationNeed id, and use exact current ResearchQuestion and required-aspect
+ids when those scopes are supplied. Never invent ids, cross InformationNeed
+scope, expand an ontology, or add speculative synonyms. An empty relation list
+is valid only when no such bridge is needed.
 - Each information need must state what must be measured, estimated, compared,
   classified, or established to answer its linked question.
 - Evidence strategy must follow those information needs and selected methods.
@@ -35,30 +47,7 @@ relations or semantic synonyms not required by those design nodes.
 
 Return only valid JSON matching this schema:
 
-{{
-  "research_questions": [{{
-    "id": "string", "question": "string", "objective_refs": ["string"],
-    "priority": 1, "rationale": "string"
-  }}],
-  "information_needs": [{{
-    "id": "string", "research_question_id": "string",
-    "description": "string", "priority": 1,
-    "preferred_source_types": ["string"], "timeframe": "string",
-    "geography": "string",
-    "evidence_expectation": {{
-      "nature": "quantitative|qualitative|mixed",
-      "required_aspects": ["stable_snake_case_identifier"],
-      "geography": "string", "timeframe": "string",
-      "requires_quantitative_evidence": false
-    }}
-  }}],
-  "source_strategy": ["string"],
-  "analysis_plan": ["string"],
-  "deliverable_plan": ["string"],
-  "assumptions": ["string"],
-  "limitations": ["string"],
-  "language": "string"
-}}
+{research_design_payload_schema}
 
 Every question and information need must have a unique id. Every information
 need must reference an existing question and contain a non-empty evidence
