@@ -38,6 +38,8 @@ is valid only when no such bridge is needed.
 An exact current `required_aspect_ref` is the structural binding to that aspect;
 relation wording must remain grounded in its linked InformationNeed or
 ResearchQuestion, but need not reproduce the aspect identifier literally.
+When practical, the relation's lexical representations should collectively
+describe the semantic concepts of its referenced aspects.
 - Each information need must state what must be measured, estimated, compared,
   classified, or established to answer its linked question.
 - Evidence strategy must follow those information needs and selected methods.

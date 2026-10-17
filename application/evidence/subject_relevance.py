@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from domain.planning.research_subject import (
     LexicalRepresentation, ResearchSubject, subject_tokens,
 )
+from domain.planning.research_design import ResearchDesign
+from application.sources.expectation_aware_query_intent import render_aspect_query_terms
 
 SUBJECT_RELEVANT = "subject_relevant"
 SUBJECT_IRRELEVANT = "subject_irrelevant"
@@ -13,7 +15,7 @@ SUBJECT_UNRESOLVED = "subject_unresolved"
 _UKRAINIAN_LANGUAGE_CODES = frozenset({"uk", "uk-ua", "ukrainian"})
 _UKRAINIAN_ENDINGS = tuple(sorted({
     "ями", "ами", "ові", "еві", "ого", "ому", "ими", "ій", "ий", "а", "я",
-    "у", "ю", "і", "ї", "и", "е", "є", "ом", "ем", "ам", "ям", "ах",
+    "у", "ю", "і", "ї", "и", "е", "є", "ої", "ом", "ем", "ам", "ям", "ах",
     "ях", "ою", "ею", "ки", "ка", "ку", "ок",
 }, key=len, reverse=True))
 
@@ -84,8 +86,52 @@ def _matching_languages(text: str, rows: tuple[LexicalRepresentation, ...]) -> s
     }
 
 
+def _lexeme_keys(text: str, *, language: str) -> set[str]:
+    tokens = subject_tokens(text)
+    if language.casefold() in _UKRAINIAN_LANGUAGE_CODES:
+        return {_ukrainian_lexeme_key(token) for token in tokens}
+    return set(tokens)
+
+
+def _matches_aspect_semantics(
+    text: str, *, aspect_id: str, need_text: str, question_text: str,
+    language: str,
+) -> bool:
+    """Match one exact Design aspect without treating its ID as authority.
+
+    The exact ID establishes scope only.  Positive grounding still comes from
+    candidate text matching either the rendered aspect phrase or conservative
+    lexical anchors shared by the linked IN/RQ context.
+    """
+
+    phrase = render_aspect_query_terms(aspect_id)
+    if phrase:
+        row = LexicalRepresentation(
+            representation_id=f"aspect:{aspect_id}",
+            language=language,
+            label=phrase,
+            normalized_phrases=(phrase,),
+            concept_refs=(f"aspect:{aspect_id}",),
+            provenance="current_design_required_aspect",
+            approval_status="approved",
+        )
+        if _representation_matches(text, row):
+            return True
+
+    need_keys = _lexeme_keys(need_text, language=language)
+    question_keys = _lexeme_keys(question_text, language=language)
+    anchors = need_keys & question_keys
+    text_keys = _lexeme_keys(text, language=language)
+    overlap = anchors & text_keys
+    required = 1 if len(anchors) == 1 else 2
+    return bool(anchors) and len(overlap) >= required and any(
+        len(item) >= 5 for item in overlap
+    )
+
+
 def assess_subject_text(*, subject: ResearchSubject, statement: str,
-                        excerpt: str, information_need_id: str) -> SubjectRelevanceDecision:
+                        excerpt: str, information_need_id: str,
+                        design: ResearchDesign | None = None) -> SubjectRelevanceDecision:
     if not subject.executable:
         return SubjectRelevanceDecision(SUBJECT_UNRESOLVED)
     exclusion_tokens = tuple(subject_tokens(item) for item in subject.exclusions)
@@ -143,6 +189,41 @@ def assess_subject_text(*, subject: ResearchSubject, statement: str,
                     _matching_languages(excerpt, approved)
                 )),
             )
+        if design is None or not relation.required_aspect_refs:
+            continue
+        need = next(
+            (item for item in design.information_needs
+             if item.id == information_need_id),
+            None,
+        )
+        if need is None or need.evidence_expectation is None:
+            continue
+        allowed_aspects = set(need.evidence_expectation.required_aspects)
+        question = next(
+            (item for item in design.research_questions
+             if item.id == need.research_question_id),
+            None,
+        )
+        if question is None:
+            continue
+        for aspect_id in relation.required_aspect_refs:
+            if aspect_id not in allowed_aspects:
+                continue
+            excerpt_match = _matches_aspect_semantics(
+                excerpt,
+                aspect_id=aspect_id,
+                need_text=need.description,
+                question_text=question.question,
+                language=design.language,
+            )
+            if excerpt_match:
+                return SubjectRelevanceDecision(
+                    SUBJECT_RELEVANT,
+                    (f"aspect:{aspect_id}",),
+                    relation.relation_id,
+                    resolver_path="grounded_excerpt_aspect_semantics_v1",
+                    matched_languages=(design.language,),
+                )
     return SubjectRelevanceDecision(SUBJECT_UNRESOLVED)
 
 

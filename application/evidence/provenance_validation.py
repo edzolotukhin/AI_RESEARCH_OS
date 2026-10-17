@@ -66,6 +66,7 @@ def validate_candidate_provenance(
                 statement=candidate.statement,
                 excerpt=candidate.source_excerpt,
                 information_need_id=need_id,
+                design=design,
             )
             if decision.decision == SUBJECT_RELEVANT:
                 subject_relevant = _append_unique(subject_relevant, need_id)
@@ -78,12 +79,25 @@ def validate_candidate_provenance(
         retained: tuple[str, ...] = ()
         for need_id in subject_relevant:
             decision = subject_decisions[need_id]
+            need = need_by_id[need_id]
+            allowed_aspects = set(
+                need.evidence_expectation.required_aspects
+                if need.evidence_expectation is not None else ()
+            )
+            aspect_grounded = (
+                decision.resolver_path == "grounded_excerpt_aspect_semantics_v1"
+                and any(
+                    ref.removeprefix("aspect:") in allowed_aspects
+                    for ref in decision.matched_concept_refs
+                    if ref.startswith("aspect:")
+                )
+            )
             cross_language = any(
                 language.casefold() != design.language.casefold()
                 for language in decision.matched_languages
                 if language and language != "und"
             )
-            if need_id in locally_relevant_need_refs or cross_language:
+            if need_id in locally_relevant_need_refs or cross_language or aspect_grounded:
                 retained = _append_unique(retained, need_id)
         if not retained:
             raise InvalidProvenanceError(
