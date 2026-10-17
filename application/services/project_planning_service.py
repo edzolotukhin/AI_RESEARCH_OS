@@ -164,12 +164,13 @@ class ProjectPlanningService:
         design = project.current_research_design
         if design is None:
             return False, "Поточний дизайн дослідження відсутній"
-        if project.research_design_status != "APPROVED":
+        if project.research_design_status not in {"APPROVED", "DRAFT"}:
             return False, "Нову ревізію можна створити лише для затвердженого дизайну"
         if not self.design_is_current(project):
             return False, "Поточний дизайн потребує оновлення"
 
         bound_runs = []
+        historical_design_runs = []
         for run in self.workflows.list_workflow_runs_for_project(project.id):
             try:
                 template = self.workflows.get_template(run.workflow_template_id)
@@ -177,13 +178,18 @@ class ProjectPlanningService:
                 if not run.is_terminal:
                     return False, "Дочекайтеся завершення активного дослідження"
                 continue
+            if not run.is_terminal:
+                return False, "Дочекайтеся завершення активного дослідження"
             snapshot = template.research_design_snapshot
             if snapshot is not None and snapshot.id == design.id:
                 bound_runs.append(run)
-        if not bound_runs:
-            return False, "Немає завершеного дослідження для поточного дизайну"
-        if any(not run.is_terminal for run in bound_runs):
-            return False, "Дочекайтеся завершення активного дослідження"
+            elif snapshot is not None:
+                historical_design_runs.append(run)
+        if project.research_design_status == "APPROVED":
+            if not bound_runs:
+                return False, "Немає завершеного дослідження для поточного дизайну"
+        elif bound_runs or not historical_design_runs:
+            return False, "Чернетка не належить до завершеного циклу ревізії дизайну"
         return True, ""
 
     def _generate_new_design(self, project: Project, *, methods, fingerprint):

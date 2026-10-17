@@ -164,6 +164,94 @@ class Ow20cDesignRevisionTests(ApiTestCase):
                 self.assertTrue(eligible, reason)
                 self.assertTrue(run.is_terminal)
 
+    def test_post_terminal_draft_can_create_another_draft_revision(self):
+        project, run = self._approved_with_run()
+        planning = self.container.project_planning_service
+        first_design = project.current_research_design
+        first_draft = planning.regenerate_design_after_terminal_run(
+            project, expected_design_id=first_design.id,
+        )
+        project = self.container.project_service.get_project(project.id)
+
+        eligible, reason = planning.design_regeneration_eligibility(project)
+        self.assertTrue(eligible, reason)
+        page = self.client.get(f"/ui/projects/{project.id}/design")
+        self.assertIn("Створити нову ревізію дизайну", page.text)
+        second_draft = planning.regenerate_design_after_terminal_run(
+            project, expected_design_id=first_draft.id,
+        )
+
+        self.assertNotEqual(second_draft.id, first_draft.id)
+        self.assertNotEqual(
+            second_draft.research_subject.subject_id,
+            first_draft.research_subject.subject_id,
+        )
+        self.assertEqual(
+            self.container.project_service.get_project(project.id).research_design_status,
+            "DRAFT",
+        )
+        self.assertEqual(
+            self.container.workflow_service.get_workflow_run(run.id).status,
+            WorkflowStatus.COMPLETED,
+        )
+
+    def test_arbitrary_draft_without_terminal_design_history_is_blocked(self):
+        project = self.container.project_service.create_project(
+            "OW-20C arbitrary draft",
+            owner_principal_id=self.owner_id,
+            selected_methods=("DESK",),
+        )
+        planning = self.container.project_planning_service
+        planning.save_brief(project, ResearchBrief(
+            title="New study", business_question="What changed?",
+            objectives=("Measure",), language="en",
+        ))
+        planning.generate_design(self.container.project_service.get_project(project.id))
+        project = self.container.project_service.get_project(project.id)
+
+        eligible, reason = planning.design_regeneration_eligibility(project)
+        self.assertFalse(eligible)
+        self.assertEqual(
+            reason, "Чернетка не належить до завершеного циклу ревізії дизайну",
+        )
+        page = self.client.get(f"/ui/projects/{project.id}/design")
+        self.assertNotIn("Створити нову ревізію дизайну", page.text)
+
+    def test_post_terminal_draft_stale_expected_design_id_is_blocked(self):
+        project, _ = self._approved_with_run()
+        planning = self.container.project_planning_service
+        old_design_id = project.current_research_design.id
+        planning.regenerate_design_after_terminal_run(
+            project, expected_design_id=old_design_id,
+        )
+
+        response = self.client.post(
+            f"/ui/projects/{project.id}/design/regenerate",
+            data={"expected_design_id": old_design_id},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 409)
+
+    def test_post_terminal_draft_is_blocked_while_any_run_is_active(self):
+        project, terminal_run = self._approved_with_run()
+        planning = self.container.project_planning_service
+        planning.regenerate_design_after_terminal_run(
+            project, expected_design_id=project.current_research_design.id,
+        )
+        old_template = self.container.workflow_service.get_template(
+            terminal_run.workflow_template_id,
+        )
+        self.container.workflow_service.create_workflow_run(
+            old_template, project_id=project.id,
+        )
+        project = self.container.project_service.get_project(project.id)
+
+        eligible, reason = planning.design_regeneration_eligibility(project)
+
+        self.assertFalse(eligible)
+        self.assertEqual(reason, "Дочекайтеся завершення активного дослідження")
+
     def test_ordinary_generation_and_replacement_semantics_remain_distinct(self):
         project, run = self._approved_with_run()
         planning = self.container.project_planning_service
