@@ -109,14 +109,12 @@ def _validated_relation(
         aspect for aspect in allowed_aspects
         if relation_tokens & _semantic_tokens((render_aspect_query_terms(aspect),))
     )
-    if raw_aspects and not set(raw_aspects) <= set(matched_aspects):
-        return None, "aspect_lexical_mismatch"
     aspect_refs = raw_aspects or matched_aspects
     design_tokens = _semantic_tokens(
         tuple(needs[ref].description for ref in need_refs)
         + tuple(questions[ref].question for ref in question_refs)
     )
-    if not aspect_refs and not (relation_tokens & design_tokens):
+    if not matched_aspects and not (relation_tokens & design_tokens):
         return None, "missing_semantic_grounding"
     relation_concepts = tuple(dict.fromkeys(
         str(x) for x in raw.get("concepts", ()) if str(x).strip()

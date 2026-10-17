@@ -194,8 +194,8 @@ def test_real_planner_shaped_payload_preserves_valid_siblings_and_diagnostics():
             "missing_or_stale_information_need": 1,
             "invalid_research_question_scope": 1,
             "invalid_required_aspect_scope": 1,
-            "missing_semantic_grounding": 1,
-            "aspect_lexical_mismatch": 1,
+            "missing_semantic_grounding": 2,
+            "aspect_lexical_mismatch": 0,
             "missing_lexical_representation": 1,
         },
     }
@@ -217,6 +217,70 @@ def test_empty_planner_relation_list_is_distinguishable_from_rejection():
     assert diagnostics["accepted_relation_count"] == 0
     assert diagnostics["rejected_relation_count"] == 0
     assert set(diagnostics["rejection_category_counts"].values()) == {0}
+
+
+def test_exact_aspect_ref_accepts_ukrainian_inflection_grounded_in_linked_need():
+    payload = planner_payload(relations=[_relation(
+        "income-level", aspect="household_income_level",
+        label="динаміка доходів домогосподарств",
+    )])
+    payload["research_questions"][0]["question"] = (
+        "Як змінюються доходи домогосподарств?"
+    )
+    payload["information_needs"][0]["description"] = (
+        "Встановити динаміку доходів домогосподарств."
+    )
+    payload["information_needs"][0]["evidence_expectation"]["required_aspects"] = [
+        "household_income_level"
+    ]
+
+    subject = _design(payload).research_subject
+
+    assert [row.relation_id for row in subject.supporting_relations] == ["income-level"]
+    assert subject.supporting_relations[0].required_aspect_refs == (
+        "household_income_level",
+    )
+
+
+def test_exact_aspect_ref_accepts_other_language_grounded_in_linked_need():
+    payload = planner_payload(relations=[_relation(
+        "retention-es", aspect="customer_retention_rate",
+        label="retención de clientes",
+    )])
+    payload["research_questions"][0]["question"] = (
+        "¿Cómo cambia la retención de clientes?"
+    )
+    payload["information_needs"][0]["description"] = (
+        "Establecer la retención de clientes durante el período."
+    )
+    payload["information_needs"][0]["evidence_expectation"]["required_aspects"] = [
+        "customer_retention_rate"
+    ]
+
+    subject = _design(payload).research_subject
+
+    assert [row.relation_id for row in subject.supporting_relations] == ["retention-es"]
+
+
+def test_invalid_stale_or_wrong_scope_aspect_refs_remain_rejected():
+    subject = _design(planner_payload(relations=[
+        _relation("stale-aspect", aspect="missing_aspect", label="repeat purchase rate"),
+        _relation("wrong-scope", aspect="cancellation_rate", label="repeat purchase rate"),
+    ])).research_subject
+
+    assert subject.supporting_relations == ()
+    diagnostics = subject.provenance["relation_diagnostics"]
+    assert diagnostics["rejection_category_counts"]["invalid_required_aspect_scope"] == 2
+
+
+def test_exact_aspect_ref_does_not_admit_unrelated_relation_text():
+    subject = _design(planner_payload(relations=[
+        _relation("unrelated", label="satellite weather patterns"),
+    ])).research_subject
+
+    assert subject.supporting_relations == ()
+    diagnostics = subject.provenance["relation_diagnostics"]
+    assert diagnostics["rejection_category_counts"]["missing_semantic_grounding"] == 1
 
 
 def test_initial_and_correction_contracts_share_complete_subject_schema():

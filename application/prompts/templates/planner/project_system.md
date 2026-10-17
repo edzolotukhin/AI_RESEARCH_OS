@@ -35,6 +35,9 @@ InformationNeed id, and use exact current ResearchQuestion and required-aspect
 ids when those scopes are supplied. Never invent ids, cross InformationNeed
 scope, expand an ontology, or add speculative synonyms. An empty relation list
 is valid only when no such bridge is needed.
+An exact current `required_aspect_ref` is the structural binding to that aspect;
+relation wording must remain grounded in its linked InformationNeed or
+ResearchQuestion, but need not reproduce the aspect identifier literally.
 - Each information need must state what must be measured, estimated, compared,
   classified, or established to answer its linked question.
 - Evidence strategy must follow those information needs and selected methods.
