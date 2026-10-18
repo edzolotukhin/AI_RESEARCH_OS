@@ -1,6 +1,5 @@
 from functools import lru_cache
-
-import pytest
+import unittest
 
 from application.evidence.semantic_assignment import ValidatedSemanticAssignment
 from application.research_quality.deterministic_sufficiency_evaluator import (
@@ -260,9 +259,8 @@ def test_insufficient_need_is_not_analysis_eligible():
     assert result.analysis_eligible_information_need_ids == ()
 
 
-@pytest.mark.parametrize(
-    "assessment",
-    (
+def test_blocked_stale_or_contradictory_need_is_not_eligible():
+    assessments = (
         _need_assessment(
             need_id="in-a", status=SufficiencyStatus.BLOCKED,
             supported=("aspect_a1",), gaps=(GapType.UNRESOLVABLE,),
@@ -276,10 +274,10 @@ def test_insufficient_need_is_not_analysis_eligible():
             supported=("aspect_a1",), contradictions=("conflict",),
             gaps=(GapType.CONFLICTING_EVIDENCE,),
         ),
-    ),
-)
-def test_blocked_stale_or_contradictory_need_is_not_eligible(assessment):
-    assert _result(assessment).analysis_ready is False
+    )
+    for assessment in assessments:
+        with unittest.TestCase().subTest(status=assessment.status.value):
+            assert _result(assessment).analysis_ready is False
 
 
 def test_all_needs_sufficient_makes_both_readiness_decisions_true():
@@ -337,3 +335,11 @@ def test_stale_v2_assignment_contributes_no_coverage():
     assert signals.evidence_count == 1
     assert signals.v2_semantic_assignment_count == 0
     assert signals.declared_supported_aspects == ()
+
+
+def load_tests(loader, tests, pattern):
+    suite = unittest.TestSuite()
+    for name, value in sorted(globals().items()):
+        if name.startswith("test_") and callable(value):
+            suite.addTest(unittest.FunctionTestCase(value))
+    return suite

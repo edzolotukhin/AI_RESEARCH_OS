@@ -197,19 +197,25 @@ class P1AcceptanceReplayTests(unittest.TestCase):
             scorecard.final_research_outcome,
             ResearchOutcome.INSUFFICIENT_RESEARCH.value,
         )
-        self.assertEqual(scorecard.analysis_calls, 0)
+        self.assertFalse(readiness["complete_design_ready"])
+        self.assertTrue(readiness["analysis_ready"])
+        self.assertEqual(
+            readiness["analysis_eligible_information_need_ids"],
+            [IN_RQ1_SUFFICIENT, IN_RQ1_PARTIAL, IN_RQ2_SUFFICIENT],
+        )
+        self.assertEqual(scorecard.analysis_calls, 1)
         self.assertFalse(scorecard.technical_failure)
         self.assertEqual(context.workflow_run.status, WorkflowStatus.COMPLETED)
-        self.assertEqual(task_statuses(context)["task-analyze"], TaskStatus.SKIPPED)
-        self.assertEqual(task_statuses(context)["task-write-report"], TaskStatus.SKIPPED)
-        self.assertEqual(task_statuses(context)["task-review-report"], TaskStatus.SKIPPED)
+        self.assertEqual(task_statuses(context)["task-analyze"], TaskStatus.COMPLETED)
+        self.assertEqual(task_statuses(context)["task-write-report"], TaskStatus.COMPLETED)
+        self.assertEqual(task_statuses(context)["task-review-report"], TaskStatus.COMPLETED)
         self.assertIn(
             scorecard.termination_reason,
             {"no_material_improvement", "max_research_rounds"},
         )
         self.assertIn(IN_RQ2_BLOCKED, readiness["blocking_information_need_ids"])
         self.assertFalse(scorecard.final_ready_for_analysis)
-        self.assertEqual(scorecard.analysis_calls, 0)
+        self.assertEqual(scorecard.analysis_calls, 1)
         self.assertFalse(scorecard.technical_failure)
 
     def test_gap_starvation_three_actionable_gaps(self) -> None:
@@ -352,9 +358,19 @@ class P1AcceptanceReplayTests(unittest.TestCase):
         self.assertEqual(runner.calls, 0)
         readiness = context.read_shared("research_readiness")
         self.assertFalse(readiness["ready_for_analysis"])
+        self.assertFalse(readiness["complete_design_ready"])
+        self.assertTrue(readiness["analysis_ready"])
+        self.assertEqual(
+            readiness["analysis_eligible_information_need_ids"],
+            [IN_RQ1_SUFFICIENT, IN_RQ2_SUFFICIENT],
+        )
         self.assertEqual(readiness["research_outcome"], ResearchOutcome.INSUFFICIENT_RESEARCH.value)
         self.assertEqual(readiness.get("termination_reason"), "blocked_gaps")
-        self.assertEqual(analysis.calls, 0)
+        self.assertIn(IN_RQ2_BLOCKED, readiness["blocking_information_need_ids"])
+        self.assertEqual(analysis.calls, 1)
+        self.assertEqual(task_statuses(context)["task-analyze"], TaskStatus.COMPLETED)
+        self.assertEqual(task_statuses(context)["task-write-report"], TaskStatus.COMPLETED)
+        self.assertEqual(task_statuses(context)["task-review-report"], TaskStatus.COMPLETED)
         self.assertEqual(context.workflow_run.status, WorkflowStatus.COMPLETED)
 
     def test_cross_need_isolation(self) -> None:
@@ -684,7 +700,21 @@ class P1AcceptanceReplayTests(unittest.TestCase):
             readiness["research_outcome"],
             ResearchOutcome.INSUFFICIENT_RESEARCH.value,
         )
-        self.assertEqual(analysis.calls, 0)
+        self.assertFalse(readiness["complete_design_ready"])
+        self.assertTrue(readiness["analysis_ready"])
+        self.assertEqual(
+            readiness["analysis_eligible_information_need_ids"],
+            [
+                "in-channels",
+                "in-competitors",
+                "in-geography",
+                "in-horeca-demand",
+                "in-market-maturity",
+                "in-market-size",
+                "in-pricing",
+            ],
+        )
+        self.assertEqual(analysis.calls, 1)
         self.assertIn("in-regulatory-coverage", readiness["blocking_information_need_ids"])
 
     def test_acceptance_scorecard_summary(self) -> None:

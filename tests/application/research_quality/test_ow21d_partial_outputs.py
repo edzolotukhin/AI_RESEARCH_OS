@@ -1,6 +1,5 @@
 from types import SimpleNamespace
-
-import pytest
+import unittest
 
 from application.analysis.exceptions import InvalidAnalysisProvenanceError
 from application.analysis.provenance_validation import (
@@ -140,18 +139,21 @@ def test_finding_is_limited_to_eligible_evidence_scope():
 
 def test_finding_missing_ineligible_need_is_rejected():
     candidate = FindingCandidate("Statement", "Why", ("e-in2",), information_need_refs=("in2",))
-    with pytest.raises(InvalidAnalysisProvenanceError):
+    with unittest.TestCase().assertRaises(InvalidAnalysisProvenanceError):
         validate_finding_candidate(candidate, evidence_by_id={"e-in2": _evidence("in2")}, project_id="p", workflow_run_id="run", research_design_id="design", design=_design(), eligible_information_need_ids=("in1",), supported_aspects_by_information_need={"in1": ("a1",)})
 
 
 def test_finding_unsupported_aspect_is_rejected():
     candidate = FindingCandidate("Statement", "Why", ("e-in1",), information_need_refs=("in1",), metadata={"required_aspect_refs": ["a2"]})
-    with pytest.raises(InvalidAnalysisProvenanceError, match="unsupported required aspect"):
+    with unittest.TestCase().assertRaisesRegex(
+        InvalidAnalysisProvenanceError,
+        "unsupported required aspect",
+    ):
         validate_finding_candidate(candidate, evidence_by_id={"e-in1": _evidence()}, project_id="p", workflow_run_id="run", research_design_id="design", design=_design(), eligible_information_need_ids=("in1",), supported_aspects_by_information_need={"in1": ("a1",)})
 
 
 def test_existing_cross_run_finding_provenance_remains_enforced():
-    with pytest.raises(InvalidAnalysisProvenanceError):
+    with unittest.TestCase().assertRaises(InvalidAnalysisProvenanceError):
         validate_finding_candidate(FindingCandidate("x", "y", ("e-in1",)), evidence_by_id={"e-in1": _evidence()}, project_id="p", workflow_run_id="other", research_design_id="design", design=_design())
 
 
@@ -163,13 +165,13 @@ def test_insight_over_valid_finding_is_allowed():
 
 def test_insight_unsupported_scope_is_rejected():
     finding = _finding(need_id="in2")
-    with pytest.raises(InvalidAnalysisProvenanceError):
+    with unittest.TestCase().assertRaises(InvalidAnalysisProvenanceError):
         validate_insight_candidate(InsightCandidate("Insight", "Implication", (finding.id,)), findings_by_id={finding.id: finding}, project_id="p", workflow_run_id="run", research_design_id="design", design=_design(), eligible_information_need_ids=("in1",))
 
 
 def test_insight_explicit_unsupported_rq_is_rejected():
     finding = _finding()
-    with pytest.raises(InvalidAnalysisProvenanceError):
+    with unittest.TestCase().assertRaises(InvalidAnalysisProvenanceError):
         validate_insight_candidate(InsightCandidate("Insight", "Implication", (finding.id,), research_question_refs=("rq2",)), findings_by_id={finding.id: finding}, project_id="p", workflow_run_id="run", research_design_id="design", design=_design(), eligible_information_need_ids=("in1",))
 
 
@@ -192,18 +194,21 @@ def test_limited_report_section_supported_scope_is_allowed():
 
 def test_limited_report_unsupported_rq_is_rejected():
     finding, evidence = _finding(), _evidence()
-    with pytest.raises(InvalidReportProvenanceError):
+    with unittest.TestCase().assertRaises(InvalidReportProvenanceError):
         validate_section_candidate(_section_candidate(research_question_refs=("rq2",)), findings_by_id={finding.id: finding}, insights_by_id={}, evidence_by_id={evidence.id: evidence}, project_id="p", workflow_run_id="run", research_design_id="design", design=_design(), allowed_research_question_ids=("rq1",))
 
 
 def test_limited_report_complete_claim_is_rejected():
     finding, evidence = _finding(), _evidence()
-    with pytest.raises(InvalidReportProvenanceError, match="complete research"):
+    with unittest.TestCase().assertRaisesRegex(
+        InvalidReportProvenanceError,
+        "complete research",
+    ):
         validate_section_candidate(_section_candidate(metadata={"report_scope": "complete"}), findings_by_id={finding.id: finding}, insights_by_id={}, evidence_by_id={evidence.id: evidence}, project_id="p", workflow_run_id="run", research_design_id="design", design=_design(), allowed_research_question_ids=("rq1",))
 
 
 def test_report_provenance_remains_enforced():
-    with pytest.raises(InvalidReportProvenanceError):
+    with unittest.TestCase().assertRaises(InvalidReportProvenanceError):
         validate_section_candidate(_section_candidate(finding_refs=("unknown",)), findings_by_id={}, insights_by_id={}, evidence_by_id={"e-in1": _evidence()}, project_id="p", workflow_run_id="run", research_design_id="design", design=_design(), allowed_research_question_ids=("rq1",))
 
 
@@ -258,3 +263,11 @@ def test_zero_insights_with_valid_finding_produces_limited_report():
     assert report.metadata["report_scope"] == "limited"
     assert report.metadata["covered_information_need_ids"] == ["in1"]
     assert "in2" in report.metadata["missing_information_need_ids"]
+
+
+def load_tests(loader, tests, pattern):
+    suite = unittest.TestSuite()
+    for name, value in sorted(globals().items()):
+        if name.startswith("test_") and callable(value):
+            suite.addTest(unittest.FunctionTestCase(value))
+    return suite
