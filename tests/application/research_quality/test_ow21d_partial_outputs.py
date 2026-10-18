@@ -8,7 +8,7 @@ from application.analysis.provenance_validation import (
 )
 from application.ports.analysis_ports import FindingCandidate, InsightCandidate
 from application.ports.report_ports import ReportSectionCandidate
-from application.report.exceptions import InvalidReportProvenanceError
+from application.report.exceptions import InvalidReportProvenanceError, ReportError
 from application.report.provenance_validation import validate_section_candidate
 from application.report.substantive_coverage import validate_two_dimensional_coverage
 from application.research_quality.analysis_coverage import (
@@ -218,6 +218,20 @@ def test_limited_coverage_requires_only_supported_rq():
     assert validate_two_dimensional_coverage((section,), findings=(finding,), insights=(), design=_design(), required_research_question_ids=("rq1",)) == ()
 
 
+def test_limited_coverage_requires_every_finding_backed_rq():
+    first = _finding()
+    second = _finding(need_id="in2")
+    section = ReportSection(id="s1", title="rq1", content="Supported", research_question_refs=("rq1",), finding_refs=(first.id,), evidence_refs=("e-in1",))
+    errors = validate_two_dimensional_coverage(
+        (section,),
+        findings=(first, second),
+        insights=(),
+        design=_design(),
+        required_research_question_ids=("rq1", "rq2"),
+    )
+    assert "substantive_coverage_missing:rq2" in errors
+
+
 def test_complete_coverage_still_requires_all_rqs():
     finding = _finding()
     section = ReportSection(id="s1", title="rq1", content="Supported", research_question_refs=("rq1",), finding_refs=(finding.id,), evidence_refs=("e-in1",))
@@ -263,6 +277,129 @@ def test_zero_insights_with_valid_finding_produces_limited_report():
     assert report.metadata["report_scope"] == "limited"
     assert report.metadata["covered_information_need_ids"] == ["in1"]
     assert "in2" in report.metadata["missing_information_need_ids"]
+
+
+def test_limited_report_uses_validated_finding_rqs_and_retains_no_finding_gap():
+    from tests.application.report.test_report_coverage import _context, _deterministic_service
+    from application.research_quality.research_readiness_service import SHARED_STATE_KEY
+    from tests.helpers.citation_fixtures import sources_for
+
+    question_ids = ("rq1", "rq3", "rq4", "rq5")
+    needs = tuple(
+        InformationNeed(
+            f"in-{rq_id}",
+            rq_id,
+            f"Need for {rq_id}",
+            evidence_expectation=EvidenceExpectation(
+                EvidenceNature.MIXED,
+                required_aspects=(f"aspect-{rq_id}",),
+            ),
+        )
+        for rq_id in question_ids
+    )
+    design = ResearchDesign(
+        id="design-coverage",
+        research_questions=tuple(
+            ResearchQuestion(rq_id, f"Question {rq_id}") for rq_id in question_ids
+        ),
+        information_needs=needs,
+        limitations=("Desk research only",),
+        language="en",
+    )
+    assessments = tuple(
+        build_research_readiness_assessment(
+            research_question_id=rq_id,
+            need_assessments=(
+                InformationNeedAssessment(
+                    information_need_id=f"in-{rq_id}",
+                    research_question_id=rq_id,
+                    status=SufficiencyStatus.PARTIAL,
+                    evidence_count=1,
+                    independent_source_count=1,
+                    supported_aspects=(f"aspect-{rq_id}",),
+                    required_aspect_ids=(f"aspect-{rq_id}",),
+                ),
+            ),
+        )
+        for rq_id in question_ids
+    )
+    readiness = build_research_readiness_result(assessments)
+    assert readiness.analysis_eligible_information_need_ids == tuple(
+        sorted(f"in-{rq_id}" for rq_id in question_ids)
+    )
+
+    service = _deterministic_service()
+    context = _context(design=design)
+    persisted_evidence = []
+    for rq_id in ("rq1", "rq4", "rq5"):
+        need_id = f"in-{rq_id}"
+        evidence = Evidence(
+            id=f"e-{rq_id}",
+            project_id=context.project.id,
+            source_id=f"s-{rq_id}",
+            source_content_checksum="pending",
+            workflow_run_id=context.workflow_run.id,
+            research_design_id=design.id,
+            statement=f"Supported evidence for {rq_id}",
+            source_excerpt=f"Supported evidence for {rq_id}",
+            created_at="2026-01-01T00:00:00Z",
+            research_question_refs=(rq_id,),
+            information_need_refs=(need_id,),
+            deduplication_key=f"e-{rq_id}",
+        )
+        persisted_evidence.append(evidence)
+        service._evidence_repository.create(evidence)
+        service._finding_repository.create(
+            Finding(
+                id=f"f-{rq_id}",
+                project_id=context.project.id,
+                workflow_run_id=context.workflow_run.id,
+                research_design_id=design.id,
+                statement=f"Validated finding for {rq_id}",
+                rationale="Supported rationale",
+                evidence_refs=(evidence.id,),
+                created_at="2026-01-01T00:00:00Z",
+                research_question_refs=(rq_id,),
+                information_need_refs=(need_id,),
+                deduplication_key=f"f-{rq_id}",
+            ),
+        )
+    sources_for(tuple(persisted_evidence), service._source_repository)
+    context.write_shared(SHARED_STATE_KEY, readiness.to_dict())
+
+    summary = service.write_for_context(context)
+    report = service._report_repository.get_by_id(summary.report_id)
+    assert report is not None
+    assert report.metadata["report_scope"] == "limited"
+    assert report.metadata["analysis_eligible_information_need_ids"] == [
+        "in-rq1", "in-rq3", "in-rq4", "in-rq5",
+    ]
+    reported_rq_ids = {
+        ref
+        for section in report.sections
+        if section.metadata.get("section_kind") != "limitations"
+        for ref in section.research_question_refs
+    }
+    assert reported_rq_ids == {
+        "rq1", "rq4", "rq5",
+    }, reported_rq_ids
+    assert any("ResearchQuestions without validated Findings: rq3." == item for item in report.limitations)
+    assert any("InformationNeeds without validated Findings" in item for item in report.limitations)
+    assert all("complete research" not in item.lower() for item in report.limitations)
+
+
+def test_limited_report_with_zero_validated_findings_remains_blocked():
+    from tests.application.report.test_report_coverage import _context, _deterministic_service
+    from application.research_quality.research_readiness_service import SHARED_STATE_KEY
+
+    service = _deterministic_service()
+    context = _context(design=_design())
+    context.write_shared(SHARED_STATE_KEY, _partial_result().to_dict())
+    with unittest.TestCase().assertRaisesRegex(
+        ReportError,
+        "No run-scoped findings available",
+    ):
+        service.write_for_context(context)
 
 
 def load_tests(loader, tests, pattern):

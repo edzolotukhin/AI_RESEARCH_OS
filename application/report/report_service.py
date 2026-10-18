@@ -138,7 +138,10 @@ class ReportService:
             coverage.eligible_information_need_ids if coverage is not None else ()
         )
         need_to_rq = {need.id: need.research_question_id for need in design.information_needs}
-        allowed_rq_ids = tuple(sorted({need_to_rq[item] for item in eligible_need_ids}))
+        eligible_rq_ids = tuple(sorted({need_to_rq[item] for item in eligible_need_ids}))
+        allowed_rq_ids = eligible_rq_ids
+        eligible_need_ids_without_findings: tuple[str, ...] = ()
+        eligible_rq_ids_without_findings: tuple[str, ...] = ()
 
         findings = self._finding_repository.list_for_project(
             project_id,
@@ -162,6 +165,23 @@ class ReportService:
             insights = [item for item in insights if set(item.finding_refs) <= finding_ids]
             if not findings:
                 raise ReportError("Limited report has no eligible validated Findings")
+            finding_backed_need_ids = {
+                need_id
+                for item in findings
+                for need_id in item.information_need_refs
+            }
+            finding_backed_rq_ids = {
+                rq_id
+                for item in findings
+                for rq_id in item.research_question_refs
+            }
+            allowed_rq_ids = tuple(sorted(finding_backed_rq_ids))
+            eligible_need_ids_without_findings = tuple(
+                sorted(eligible_need_ids - finding_backed_need_ids),
+            )
+            eligible_rq_ids_without_findings = tuple(
+                sorted(set(eligible_rq_ids) - finding_backed_rq_ids),
+            )
 
         evidence_items = self._evidence_repository.list_for_project(
             project_id,
@@ -414,7 +434,18 @@ class ReportService:
                 [
                     *report_candidate.limitations,
                     *design.limitations,
-                    *(_coverage_limitations(coverage) if limited else ()),
+                    *(
+                        _coverage_limitations(
+                            coverage,
+                            eligible_need_ids_without_findings=(
+                                eligible_need_ids_without_findings
+                            ),
+                            eligible_rq_ids_without_findings=(
+                                eligible_rq_ids_without_findings
+                            ),
+                        )
+                        if limited else ()
+                    ),
                 ],
             ),
         )
@@ -920,7 +951,12 @@ def _section_requires_citations(
     return False
 
 
-def _coverage_limitations(coverage) -> tuple[str, ...]:
+def _coverage_limitations(
+    coverage,
+    *,
+    eligible_need_ids_without_findings: tuple[str, ...] = (),
+    eligible_rq_ids_without_findings: tuple[str, ...] = (),
+) -> tuple[str, ...]:
     if coverage is None or coverage.complete_design_ready:
         return ()
     payload = coverage.to_dict()
@@ -943,6 +979,18 @@ def _coverage_limitations(coverage) -> tuple[str, ...]:
         limitations.append(
             "Source-diversity limitations: "
             + ", ".join(payload["source_diversity_limited_information_need_ids"])
+            + "."
+        )
+    if eligible_need_ids_without_findings:
+        limitations.append(
+            "Analysis-eligible InformationNeeds without validated Findings: "
+            + ", ".join(eligible_need_ids_without_findings)
+            + "."
+        )
+    if eligible_rq_ids_without_findings:
+        limitations.append(
+            "ResearchQuestions without validated Findings: "
+            + ", ".join(eligible_rq_ids_without_findings)
             + "."
         )
     return tuple(limitations)
