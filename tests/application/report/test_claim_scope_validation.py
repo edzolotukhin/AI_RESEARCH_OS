@@ -59,3 +59,39 @@ class ClaimScopeValidationTests(unittest.TestCase):
             ),
             (),
         )
+
+    def test_unsupported_rate_is_rejected(self) -> None:
+        self.assertTrue(self._check("Each hour costs about $45m."))
+
+    def test_numeric_substitution_is_rejected(self) -> None:
+        self.assertTrue(self._check("Kyiv recorded wages of 32000 грн."))
+
+    def test_supported_numeric_statement_is_retained(self) -> None:
+        self.evidence.statement = "Kyiv had wages of 45000 грн."
+        self.evidence.source_excerpt = self.evidence.statement
+        self.finding.statement = self.evidence.statement
+        self.assertEqual(self._check("Kyiv recorded wages of 45000 грн."), ())
+
+    def test_unit_change_is_rejected(self) -> None:
+        self.evidence.statement = "The increase was 10 percent."
+        self.evidence.source_excerpt = self.evidence.statement
+        self.finding.statement = self.evidence.statement
+        self.assertTrue(self._check("The increase was 10 percentage points."))
+
+    def test_supported_quantifier_is_retained(self) -> None:
+        self.evidence.statement = "All surveyed regions had wages below the average."
+        self.evidence.source_excerpt = self.evidence.statement
+        self.finding.statement = self.evidence.statement
+        self.assertEqual(self._check("All surveyed regions had wages below average."), ())
+
+    def test_numeric_geography_binding_is_rejected(self) -> None:
+        self.evidence.statement = "Kyiv had wages of 45000 грн."
+        self.evidence.source_excerpt = self.evidence.statement
+        self.finding.statement = self.evidence.statement
+        self.assertTrue(self._check("Luhansk had wages of 45000 грн."))
+
+    def test_numeric_period_binding_is_rejected(self) -> None:
+        self.evidence.statement = "In 2025 wages were 45000 грн."
+        self.evidence.source_excerpt = self.evidence.statement
+        self.finding.statement = self.evidence.statement
+        self.assertTrue(self._check("In 2026 wages were 45000 грн."))
