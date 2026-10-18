@@ -8,8 +8,16 @@ from domain.sources.source import Source
 
 from application.evidence.expectation_aware_extraction_context import (
     EXTRACTION_SYSTEM_GUIDANCE,
+    V2_EXTRACTION_SYSTEM_GUIDANCE,
     build_extraction_need_payload,
+    build_extraction_vocabulary,
     format_extraction_need_line,
+    format_extraction_vocabulary,
+)
+from application.evidence.semantic_assignment import (
+    CONTRACT_VERSION,
+    MAX_REQUIRED_ASPECT_REFS,
+    MAX_SEMANTIC_JUSTIFICATION_CHARS,
 )
 from application.evidence.evidence_extractor_response_shape import (
     publish_response_shape,
@@ -78,13 +86,15 @@ class LlmEvidenceExtractor(EvidenceExtractor):
             return []
 
         prompt = Prompt(
-            system=EXTRACTION_SYSTEM_GUIDANCE + (
+            system=EXTRACTION_SYSTEM_GUIDANCE + V2_EXTRACTION_SYSTEM_GUIDANCE + (
                 " This is targeted continuation. Prioritize the explicit target_information_need_id. "
                 "Do not substitute another need for an unsupported target. Cross-need facts may "
                 "be retained with their true listed IDs; they do not repair the target."
                 if run_context.target_information_need_id else ""
             ),
-            user=self._build_user_payload(source=source, needs_payload=needs_payload) + (
+            user=self._build_user_payload(
+                source=source, needs_payload=needs_payload, design=design,
+            ) + (
                 f"\ntarget_information_need_id: {run_context.target_information_need_id}"
                 if run_context.target_information_need_id else ""
             ),
@@ -194,6 +204,12 @@ class LlmEvidenceExtractor(EvidenceExtractor):
         response_shape: ResponseShapeDiagnostics,
     ) -> list[EvidenceCandidate]:
         allowed_need_ids = set(run_context.information_need_ids)
+        response_contract_version = payload.get("contract_version")
+        if response_contract_version not in (None, CONTRACT_VERSION):
+            raise EvidenceResponseOutcomeError(
+                "Unsupported Evidence candidate contract version",
+                classification=EvidenceResponseClassification.SCHEMA_CONTRACT_MISMATCH.value,
+            )
         question_for_need = {
             need.id: need.research_question_id
             for need in design.information_needs
@@ -224,6 +240,14 @@ class LlmEvidenceExtractor(EvidenceExtractor):
                     or not isinstance(item["confidence"], (int, float))
                 ))
             ):
+                response_shape.record_item_rejection(
+                    item_index=item_index, outcome="rejected_schema_invalid_item",
+                )
+                continue
+            contract_version = item.get(
+                "contract_version", response_contract_version,
+            )
+            if contract_version not in (None, CONTRACT_VERSION):
                 response_shape.record_item_rejection(
                     item_index=item_index, outcome="rejected_schema_invalid_item",
                 )
@@ -266,6 +290,37 @@ class LlmEvidenceExtractor(EvidenceExtractor):
                 value = item.get(field)
                 if isinstance(value, str) and value.strip():
                     metadata[field] = value.strip()
+            required_aspect_refs: tuple[str, ...] = ()
+            subject_binding = None
+            semantic_justification = ""
+            geography_applicability: tuple[str, ...] = ()
+            if contract_version == CONTRACT_VERSION:
+                raw_aspects = item.get("required_aspect_refs")
+                raw_binding = item.get("subject_binding")
+                raw_justification = item.get("semantic_justification")
+                raw_geography = item.get("geography_applicability")
+                if (
+                    not isinstance(raw_aspects, list)
+                    or len(raw_aspects) > MAX_REQUIRED_ASPECT_REFS
+                    or not all(isinstance(value, str) and value.strip() for value in raw_aspects)
+                    or len(raw_aspects) != len(set(raw_aspects))
+                    or not isinstance(raw_binding, dict)
+                    or not isinstance(raw_justification, str)
+                    or not raw_justification.strip()
+                    or len(raw_justification.strip()) > MAX_SEMANTIC_JUSTIFICATION_CHARS
+                    or not isinstance(raw_geography, list)
+                    or len(raw_geography) > 8
+                    or not all(isinstance(value, str) and value.strip() for value in raw_geography)
+                    or len(raw_geography) != len(set(raw_geography))
+                ):
+                    response_shape.record_item_rejection(
+                        item_index=item_index, outcome="rejected_schema_invalid_item",
+                    )
+                    continue
+                required_aspect_refs = tuple(value.strip() for value in raw_aspects)
+                subject_binding = dict(raw_binding)
+                semantic_justification = raw_justification.strip()
+                geography_applicability = tuple(value.strip() for value in raw_geography)
             try:
                 candidates.append(
                     EvidenceCandidate(
@@ -277,6 +332,11 @@ class LlmEvidenceExtractor(EvidenceExtractor):
                         confidence=float(confidence) if confidence is not None else None,
                         direct=bool(item.get("direct", True)),
                         metadata=metadata,
+                        contract_version=contract_version,
+                        required_aspect_refs=required_aspect_refs,
+                        subject_binding=subject_binding,
+                        semantic_justification=semantic_justification,
+                        geography_applicability=geography_applicability,
                     ),
                 )
             except (TypeError, ValueError):
@@ -294,7 +354,9 @@ class LlmEvidenceExtractor(EvidenceExtractor):
         return candidates
 
     @staticmethod
-    def _build_user_payload(*, source: Source, needs_payload: list[dict[str, Any]]) -> str:
+    def _build_user_payload(
+        *, source: Source, needs_payload: list[dict[str, Any]], design: ResearchDesign,
+    ) -> str:
         lines = [
             f"source_title: {source.title}",
             "source_text:",
@@ -303,6 +365,12 @@ class LlmEvidenceExtractor(EvidenceExtractor):
         ]
         for need in needs_payload:
             lines.append(format_extraction_need_line(need))
+        lines.extend([
+            "extraction_vocabulary:",
+            format_extraction_vocabulary(
+                build_extraction_vocabulary(design=design, needs_payload=needs_payload),
+            ),
+        ])
         return "\n".join(lines)
 
     def _parse_payload(self, content: str) -> dict[str, Any]:

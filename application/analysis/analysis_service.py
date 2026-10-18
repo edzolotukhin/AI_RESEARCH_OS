@@ -60,6 +60,9 @@ from application.ports.evidence_ports import EvidenceRepository
 
 from application.execution.exceptions import BudgetExhaustedError
 from application.execution.budget_utils import is_budget_exhaustion
+from application.evidence.semantic_assignment import required_aspect_refs
+from application.research_quality.analysis_coverage import coverage_snapshot_from_payload
+from application.research_quality.research_readiness_service import SHARED_STATE_KEY
 from runtime.workflow_context import WorkflowContext
 
 logger = logging.getLogger("ai_research_os.analysis")
@@ -128,6 +131,13 @@ class AnalysisService:
         workflow_run_id = context.workflow_run.id
         research_design_id = design.id
         questions_by_id = {question.id: question for question in design.research_questions}
+        coverage = coverage_snapshot_from_payload(context.read_shared(SHARED_STATE_KEY))
+        eligible_need_ids = (
+            coverage.eligible_information_need_ids if coverage is not None else None
+        )
+        supported_aspects = (
+            coverage.supported_aspects_by_information_need if coverage is not None else None
+        )
 
         evidence_items = self._evidence_repository.list_for_project(
             project_id,
@@ -137,6 +147,12 @@ class AnalysisService:
             design=design, evidence=evidence_items, brief=brief,
             source_repository=self._source_repository,
         )
+        if eligible_need_ids is not None:
+            eligible = set(eligible_need_ids)
+            evidence_items = [
+                item for item in evidence_items
+                if eligible.intersection(item.information_need_refs)
+            ]
         if not evidence_items:
             raise AnalysisError(
                 f"No run-scoped evidence available for analysis in run {workflow_run_id}",
@@ -172,6 +188,9 @@ class AnalysisService:
                 design=design,
                 evidence_batch=evidence_batch,
                 batch_question_id=normalized_question_id,
+                allowed_information_need_ids=eligible_need_ids or (),
+                supported_aspects_by_information_need=supported_aspects,
+                coverage_snapshot=coverage.to_dict() if coverage is not None else None,
             )
             try:
                 candidates = self._analysis_engine.analyze_findings(analysis_input)
@@ -245,6 +264,16 @@ class AnalysisService:
                         workflow_run_id=workflow_run_id,
                         research_design_id=research_design_id,
                         design=design,
+                        eligible_information_need_ids=eligible_need_ids,
+                        supported_aspects_by_information_need=(
+                            _evidence_supported_aspects(
+                                candidate.evidence_refs,
+                                evidence_by_id=evidence_by_id,
+                                eligible_information_need_ids=eligible_need_ids,
+                                readiness_supported_aspects=supported_aspects,
+                            )
+                            if coverage is not None else None
+                        ),
                     )
                 except InvalidAnalysisProvenanceError as exc:
                     finding_candidates_rejected += 1
@@ -354,6 +383,9 @@ class AnalysisService:
             design=design,
             evidence_batch=tuple(evidence_items),
             persisted_findings=tuple(findings),
+            allowed_information_need_ids=eligible_need_ids or (),
+            supported_aspects_by_information_need=supported_aspects,
+            coverage_snapshot=coverage.to_dict() if coverage is not None else None,
         )
 
         insight_ids: list[str] = []
@@ -382,6 +414,7 @@ class AnalysisService:
                     workflow_run_id=workflow_run_id,
                     research_design_id=research_design_id,
                     design=design,
+                    eligible_information_need_ids=eligible_need_ids,
                 )
                 insight_id = self._persist_insight(
                     candidate=validated,
@@ -639,3 +672,30 @@ class AnalysisService:
         raise AnalysisError(
             f"Failed to resolve concurrent insight persistence for run {workflow_run_id}",
         )
+
+
+def _evidence_supported_aspects(
+    evidence_refs: tuple[str, ...],
+    *,
+    evidence_by_id: dict[str, Evidence],
+    eligible_information_need_ids: tuple[str, ...] | None,
+    readiness_supported_aspects: dict[str, tuple[str, ...]] | None,
+) -> dict[str, tuple[str, ...]]:
+    eligible = set(eligible_information_need_ids or ())
+    readiness = readiness_supported_aspects or {}
+    collected: dict[str, set[str]] = {}
+    for evidence_ref in evidence_refs:
+        evidence = evidence_by_id.get(evidence_ref)
+        if evidence is None:
+            continue
+        declared = set(required_aspect_refs(evidence))
+        for need_id in evidence.information_need_refs:
+            if eligible and need_id not in eligible:
+                continue
+            allowed = set(readiness.get(need_id, ()))
+            if declared:
+                collected.setdefault(need_id, set()).update(declared & allowed)
+            elif need_id in readiness:
+                # Legacy Evidence inherits only readiness-validated need coverage.
+                collected.setdefault(need_id, set()).update(allowed)
+    return {key: tuple(sorted(value)) for key, value in sorted(collected.items())}

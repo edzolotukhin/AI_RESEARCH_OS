@@ -48,6 +48,9 @@ class AnalysisInput:
     evidence_batch: tuple[Evidence, ...]
     batch_question_id: str | None = None
     persisted_findings: tuple[Finding, ...] = ()
+    allowed_information_need_ids: tuple[str, ...] = ()
+    supported_aspects_by_information_need: dict[str, tuple[str, ...]] | None = None
+    coverage_snapshot: dict[str, Any] | None = None
 
 
 class AnalysisEngine(Protocol):

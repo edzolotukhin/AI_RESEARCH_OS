@@ -8,6 +8,10 @@ from domain.research_quality.deterministic_sufficiency_signals import (
     DeterministicSufficiencySignals,
 )
 from domain.research_quality.gap_type import GapType
+from application.evidence.semantic_assignment import (
+    MAX_REQUIRED_ASPECT_REFS,
+    semantic_assignment,
+)
 
 _SCORE_KEYS = {
     "freshness": ("freshness_score", "freshness"),
@@ -80,6 +84,7 @@ class DeterministicSufficiencyEvaluator:
                 need=need,
                 mapped=mapped_evidence[need.id],
                 warnings=need_warnings[need.id],
+                design=design,
             )
             for need in sorted_needs
         )
@@ -90,10 +95,16 @@ class DeterministicSufficiencyEvaluator:
         need: InformationNeed,
         mapped: list[Evidence],
         warnings: list[str],
+        design: ResearchDesign,
     ) -> DeterministicSufficiencySignals:
         unique_evidence, duplicate_count = _deduplicate_evidence(mapped)
         evidence_ids = tuple(sorted(item.id for item in unique_evidence))
         source_ids, lineage_warnings = _independent_lineages(unique_evidence)
+        declared_aspects, v2_assignment_count = _declared_v2_aspect_coverage(
+            unique_evidence,
+            need=need,
+            design=design,
+        )
 
         freshness_available, freshness_score = _aggregate_score(
             unique_evidence,
@@ -142,7 +153,70 @@ class DeterministicSufficiencyEvaluator:
             contradictions=_collect_contradictions(unique_evidence),
             deterministic_gap_types=tuple(gap_types),
             warnings=normalized_warnings,
+            declared_supported_aspects=declared_aspects,
+            v2_semantic_assignment_count=v2_assignment_count,
         )
+
+
+def _declared_v2_aspect_coverage(
+    evidence_items: Sequence[Evidence],
+    *,
+    need: InformationNeed,
+    design: ResearchDesign,
+) -> tuple[tuple[str, ...], int]:
+    subject = design.research_subject
+    if subject is None:
+        return (), 0
+    allowed = set(
+        need.evidence_expectation.required_aspects
+        if need.evidence_expectation is not None else ()
+    )
+    supported: set[str] = set()
+    assignment_count = 0
+    for item in evidence_items:
+        assignment = semantic_assignment(item)
+        if assignment is None:
+            continue
+        if (
+            assignment.get("information_need_id") != need.id
+            or assignment.get("subject_id") != subject.subject_id
+            or assignment.get("subject_fingerprint") != subject.semantic_fingerprint
+        ):
+            continue
+        refs = assignment.get("required_aspect_refs")
+        if not isinstance(refs, list) or any(
+            not isinstance(ref, str) or ref not in allowed for ref in refs
+        ) or len(refs) > MAX_REQUIRED_ASPECT_REFS or len(refs) != len(set(refs)):
+            continue
+        binding_type = assignment.get("binding_type")
+        relation_id = assignment.get("supporting_relation_id")
+        if binding_type == "canonical_subject":
+            if relation_id not in (None, ""):
+                continue
+        elif binding_type == "supporting_relation":
+            relation = next(
+                (
+                    item
+                    for item in subject.supporting_relations
+                    if item.relation_id == relation_id
+                ),
+                None,
+            )
+            if (
+                relation is None
+                or need.id not in relation.information_need_refs
+                or (
+                    relation.research_question_refs
+                    and need.research_question_id not in relation.research_question_refs
+                )
+                or any(ref not in relation.required_aspect_refs for ref in refs)
+            ):
+                continue
+        else:
+            continue
+        assignment_count += 1
+        supported.update(refs)
+    return tuple(sorted(supported)), assignment_count
 
 
 def _deduplicate_evidence(

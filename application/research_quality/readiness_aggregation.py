@@ -62,6 +62,7 @@ def build_information_need_assessment(
             reason=_missing_reason(signals),
             quality_contract_mode=quality_contract_mode,
             required_aspect_ids=required_aspect_ids,
+            supported_aspects=(),
         )
 
     if semantic is None:
@@ -83,6 +84,11 @@ def build_information_need_assessment(
         gap_types=gap_types,
         missing_aspects=semantic.missing_aspects,
         search_directives=semantic.search_directives,
+    )
+    supported_aspects = _supported_aspects(
+        signals=signals,
+        required_aspect_ids=required_aspect_ids,
+        semantic=semantic,
     )
     return InformationNeedAssessment(
         information_need_id=signals.information_need_id,
@@ -106,6 +112,7 @@ def build_information_need_assessment(
         required_aspect_ids=required_aspect_ids,
         confidence=semantic.confidence,
         reason=semantic.reason,
+        supported_aspects=supported_aspects,
     )
 
 
@@ -183,13 +190,62 @@ def build_research_readiness_result(
     else:
         targeted = has_actionable
 
+    eligible_need_ids = _analysis_eligible_need_ids(sorted_assessments)
+
     return ResearchReadinessResult(
         research_question_assessments=sorted_assessments,
         ready_for_analysis=all_ready,
         blocking_research_question_ids=blocking_rq_ids if not all_ready else (),
         blocking_information_need_ids=blocking_need_ids if not all_ready else (),
         targeted_research_required=targeted,
+        complete_design_ready=all_ready,
+        analysis_ready=bool(eligible_need_ids),
+        analysis_eligible_information_need_ids=eligible_need_ids,
     )
+
+
+def _supported_aspects(
+    *,
+    signals: DeterministicSufficiencySignals,
+    required_aspect_ids: tuple[str, ...],
+    semantic: SemanticSufficiencyAssessment,
+) -> tuple[str, ...]:
+    if signals.v2_semantic_assignment_count > 0:
+        return tuple(
+            aspect
+            for aspect in required_aspect_ids
+            if aspect in set(signals.declared_supported_aspects)
+        )
+    missing = set(semantic.missing_aspects)
+    return tuple(aspect for aspect in required_aspect_ids if aspect not in missing)
+
+
+def _analysis_eligible_need_ids(
+    assessments: Sequence[ResearchReadinessAssessment],
+) -> tuple[str, ...]:
+    eligible: list[str] = []
+    integrity_gaps = {
+        GapType.STALE_EVIDENCE,
+        GapType.CONFLICTING_EVIDENCE,
+        GapType.UNRESOLVABLE,
+    }
+    for assessment in assessments:
+        for need in assessment.information_need_assessments:
+            if (
+                not need.assessment_current
+                or need.evidence_count == 0
+                or need.contradictions
+                or any(gap in integrity_gaps for gap in need.gap_types)
+            ):
+                continue
+            if need.status == SufficiencyStatus.SUFFICIENT:
+                eligible.append(need.information_need_id)
+            elif (
+                need.status == SufficiencyStatus.PARTIAL
+                and bool(need.supported_aspects)
+            ):
+                eligible.append(need.information_need_id)
+    return tuple(sorted(eligible))
 
 
 def _missing_reason(signals: DeterministicSufficiencySignals) -> str:

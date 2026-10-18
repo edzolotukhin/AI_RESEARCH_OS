@@ -20,6 +20,14 @@ _UKRAINIAN_ENDINGS = tuple(sorted({
 }, key=len, reverse=True))
 
 
+def matches_subject_exclusion(subject: ResearchSubject, text: str) -> bool:
+    combined = subject_tokens(text)
+    return any(
+        tokens and tokens <= combined
+        for tokens in (subject_tokens(item) for item in subject.exclusions)
+    )
+
+
 def _ukrainian_lexeme_key(token: str) -> str:
     """Return a conservative deterministic key for Ukrainian inflection.
 
@@ -134,9 +142,7 @@ def assess_subject_text(*, subject: ResearchSubject, statement: str,
                         design: ResearchDesign | None = None) -> SubjectRelevanceDecision:
     if not subject.executable:
         return SubjectRelevanceDecision(SUBJECT_UNRESOLVED)
-    exclusion_tokens = tuple(subject_tokens(item) for item in subject.exclusions)
-    combined = subject_tokens(statement + " " + excerpt)
-    if any(tokens and tokens <= combined for tokens in exclusion_tokens):
+    if matches_subject_exclusion(subject, statement + " " + excerpt):
         return SubjectRelevanceDecision(SUBJECT_IRRELEVANT)
 
     core_rows = subject.approved_representations

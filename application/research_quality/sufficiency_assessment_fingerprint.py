@@ -62,6 +62,7 @@ def build_sufficiency_assessment_fingerprint(
                 "research_question_refs": sorted(item.research_question_refs),
                 "data_lineage": item.metadata.get("data_lineage"),
                 "observation_period": item.metadata.get("observation_period"),
+                "semantic_assignment": item.metadata.get("semantic_assignment"),
             }
         )
     payload = {

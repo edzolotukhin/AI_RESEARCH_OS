@@ -34,3 +34,12 @@ class ResearchReadinessGate:
             if task.is_terminal:
                 continue
             self._lifecycle.skip(task)
+
+    def apply_analysis_gate(
+        self,
+        context: WorkflowContext,
+        result: ResearchReadinessResult,
+    ) -> None:
+        """Skip downstream only when no defensible Analysis scope exists."""
+        if not result.analysis_ready:
+            self.apply_not_ready(context)

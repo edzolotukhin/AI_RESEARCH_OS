@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -297,6 +298,11 @@ class LlmReportEngine:
             *[f"- {item}" for item in report_input.section_titles],
             "findings:",
         ]
+        if report_input.coverage_snapshot is not None:
+            lines.append(
+                "deterministic_report_coverage: "
+                + json.dumps(report_input.coverage_snapshot, sort_keys=True)
+            )
         for finding in report_input.findings:
             lines.append(
                 f"- id={finding.id} statement={finding.statement} "
@@ -323,6 +329,11 @@ class LlmReportEngine:
             f"language: {report_input.brief.language}",
             "section_summaries:",
         ]
+        if report_input.coverage_snapshot is not None:
+            lines.append(
+                "deterministic_report_coverage: "
+                + json.dumps(report_input.coverage_snapshot, sort_keys=True)
+            )
         for section in sections:
             lines.append(f"- {section.title}: {section.content[:500]}")
         lines.append("design_limitations:")

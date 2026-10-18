@@ -416,8 +416,7 @@ class DeskAdapter:
         result = self.readiness._finalize_terminal_readiness(self.context, self.last_result)
         if state.terminal != Stop.READY and result.ready_for_analysis:
             raise RuntimeError("ARK handoff lacks a current ready verdict")
-        if not result.ready_for_analysis:
-            self.readiness._gate.apply_not_ready(self.context)
+        self.readiness._gate.apply_analysis_gate(self.context, result)
         self.readiness._persist(self.context, result, None)
         self.context.shared_state["ark_stop"] = state.terminal.value
         self.context.shared_state.setdefault(CONTINUATION, []).append({

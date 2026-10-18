@@ -32,6 +32,9 @@ class ResearchReadinessResult:
     blocking_information_need_ids: tuple[str, ...] = ()
     targeted_research_required: bool = False
     termination_reason: str = ""
+    complete_design_ready: bool | None = None
+    analysis_ready: bool | None = None
+    analysis_eligible_information_need_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -50,6 +53,47 @@ class ResearchReadinessResult:
             tuple_of_str(self.blocking_information_need_ids),
         )
         object.__setattr__(self, "termination_reason", str(self.termination_reason))
+        object.__setattr__(
+            self,
+            "complete_design_ready",
+            self.ready_for_analysis
+            if self.complete_design_ready is None
+            else bool(self.complete_design_ready),
+        )
+        legacy_default_analysis = self.analysis_ready is None
+        default_eligible = (
+            tuple(
+                need.information_need_id
+                for assessment in self.research_question_assessments
+                for need in assessment.information_need_assessments
+            )
+            if legacy_default_analysis and self.ready_for_analysis else ()
+        )
+        object.__setattr__(
+            self,
+            "analysis_eligible_information_need_ids",
+            tuple_of_str(
+                self.analysis_eligible_information_need_ids or default_eligible,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "analysis_ready",
+            (
+                bool(self.analysis_eligible_information_need_ids)
+                if legacy_default_analysis
+                else bool(self.analysis_ready)
+            ),
+        )
+
+        if self.complete_design_ready != self.ready_for_analysis:
+            raise ValidationError(
+                "complete_design_ready must preserve strict ready_for_analysis semantics",
+            )
+        if self.analysis_ready != bool(self.analysis_eligible_information_need_ids):
+            raise ValidationError(
+                "analysis_ready must match analysis_eligible_information_need_ids",
+            )
 
         rq_ids = {
             assessment.research_question_id
@@ -70,6 +114,12 @@ class ResearchReadinessResult:
             if need_id not in known_need_ids:
                 raise ValidationError(
                     f"blocking_information_need_ids contains unknown id: {need_id!r}",
+                )
+        for need_id in self.analysis_eligible_information_need_ids:
+            if need_id not in known_need_ids:
+                raise ValidationError(
+                    "analysis_eligible_information_need_ids contains unknown id: "
+                    f"{need_id!r}",
                 )
 
         all_rq_ready = all(
@@ -129,16 +179,32 @@ class ResearchReadinessResult:
             "blocking_information_need_ids": list(self.blocking_information_need_ids),
             "targeted_research_required": self.targeted_research_required,
             "termination_reason": self.termination_reason,
+            "complete_design_ready": self.complete_design_ready,
+            "analysis_ready": self.analysis_ready,
+            "analysis_eligible_information_need_ids": list(
+                self.analysis_eligible_information_need_ids,
+            ),
         }
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> ResearchReadinessResult:
+        assessments = tuple(
+            ResearchReadinessAssessment.from_dict(item)
+            for item in payload.get("research_question_assessments", [])
+        )
+        ready_for_analysis = bool(payload["ready_for_analysis"])
+        has_dual_readiness = "analysis_ready" in payload
+        historical_eligible = (
+            tuple(
+                need.information_need_id
+                for assessment in assessments
+                for need in assessment.information_need_assessments
+            )
+            if ready_for_analysis else ()
+        )
         return cls(
-            research_question_assessments=tuple(
-                ResearchReadinessAssessment.from_dict(item)
-                for item in payload.get("research_question_assessments", [])
-            ),
-            ready_for_analysis=bool(payload["ready_for_analysis"]),
+            research_question_assessments=assessments,
+            ready_for_analysis=ready_for_analysis,
             blocking_research_question_ids=tuple_of_str(
                 payload.get("blocking_research_question_ids"),
             ),
@@ -149,4 +215,16 @@ class ResearchReadinessResult:
                 payload.get("targeted_research_required", False),
             ),
             termination_reason=str(payload.get("termination_reason", "")),
+            complete_design_ready=bool(
+                payload.get("complete_design_ready", ready_for_analysis),
+            ),
+            analysis_ready=bool(
+                payload.get("analysis_ready", ready_for_analysis),
+            ),
+            analysis_eligible_information_need_ids=tuple_of_str(
+                payload.get(
+                    "analysis_eligible_information_need_ids",
+                    historical_eligible if not has_dual_readiness else (),
+                ),
+            ),
         )

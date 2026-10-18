@@ -137,6 +137,11 @@ class ChunkedEvidenceExtractor:
                         confidence=candidate.confidence,
                         direct=candidate.direct,
                         metadata=metadata,
+                        contract_version=candidate.contract_version,
+                        required_aspect_refs=candidate.required_aspect_refs,
+                        subject_binding=candidate.subject_binding,
+                        semantic_justification=candidate.semantic_justification,
+                        geography_applicability=candidate.geography_applicability,
                     ),
                 )
         return candidates

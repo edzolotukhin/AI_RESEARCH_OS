@@ -171,10 +171,14 @@ def missing_substantive_research_question_ids(
     section_batch_map: dict[str, str | None] | None = None,
     min_substantive_sections: int = DEFAULT_MIN_SUBSTANTIVE_SECTIONS_PER_RQ,
     min_finding_ratio: float = DEFAULT_MIN_FINDING_COVERAGE_RATIO,
+    required_research_question_ids: tuple[str, ...] | None = None,
 ) -> tuple[str, ...]:
     missing: list[str] = []
     evidence_counts_by_rq = evidence_counts_by_rq or {}
+    required = set(required_research_question_ids or ())
     for question in design.research_questions:
+        if required_research_question_ids is not None and question.id not in required:
+            continue
         metrics = compute_rq_coverage_metrics(
             question=question,
             sections=sections,
@@ -199,6 +203,7 @@ def validate_two_dimensional_coverage(
     design: ResearchDesign,
     evidence_counts_by_rq: dict[str, int] | None = None,
     section_batch_map: dict[str, str | None] | None = None,
+    required_research_question_ids: tuple[str, ...] | None = None,
 ) -> tuple[str, ...]:
     """Return error codes if structural or substantive coverage fails."""
     from application.report.coverage_validation import missing_research_question_ids
@@ -208,6 +213,7 @@ def validate_two_dimensional_coverage(
         sections,
         findings=findings,
         design=design,
+        required_research_question_ids=required_research_question_ids,
     )
     for rq_id in structural_missing:
         errors.append(f"structural_coverage_missing:{rq_id}")
@@ -218,6 +224,7 @@ def validate_two_dimensional_coverage(
         design=design,
         evidence_counts_by_rq=evidence_counts_by_rq,
         section_batch_map=section_batch_map,
+        required_research_question_ids=required_research_question_ids,
     )
     for rq_id in substantive_missing:
         errors.append(f"substantive_coverage_missing:{rq_id}")

@@ -68,6 +68,8 @@ from application.report.provenance_validation import (
 )
 
 from application.execution.exceptions import BudgetExhaustedError
+from application.research_quality.analysis_coverage import coverage_snapshot_from_payload
+from application.research_quality.research_readiness_service import SHARED_STATE_KEY
 from runtime.workflow_context import WorkflowContext
 
 logger = logging.getLogger("ai_research_os.report")
@@ -130,6 +132,13 @@ class ReportService:
         workflow_run_id = context.workflow_run.id
         research_design_id = design.id
         language = brief.language or design.language or "en"
+        coverage = coverage_snapshot_from_payload(context.read_shared(SHARED_STATE_KEY))
+        limited = coverage is not None and not coverage.complete_design_ready
+        eligible_need_ids = set(
+            coverage.eligible_information_need_ids if coverage is not None else ()
+        )
+        need_to_rq = {need.id: need.research_question_id for need in design.information_needs}
+        allowed_rq_ids = tuple(sorted({need_to_rq[item] for item in eligible_need_ids}))
 
         findings = self._finding_repository.list_for_project(
             project_id,
@@ -139,10 +148,20 @@ class ReportService:
             project_id,
             workflow_run_id=workflow_run_id,
         )
-        if not findings or not insights:
+        if not findings:
             raise ReportError(
-                f"No run-scoped findings/insights available for report in run {workflow_run_id}",
+                f"No run-scoped findings available for report in run {workflow_run_id}",
             )
+        if limited:
+            findings = [
+                item for item in findings
+                if bool(item.information_need_refs)
+                and set(item.information_need_refs) <= eligible_need_ids
+            ]
+            finding_ids = {item.id for item in findings}
+            insights = [item for item in insights if set(item.finding_refs) <= finding_ids]
+            if not findings:
+                raise ReportError("Limited report has no eligible validated Findings")
 
         evidence_items = self._evidence_repository.list_for_project(
             project_id,
@@ -200,6 +219,7 @@ class ReportService:
                 batch_question_id=(
                     None if batch_question_id == "__unscoped__" else batch_question_id
                 ),
+                coverage_snapshot=coverage.to_dict() if coverage is not None else None,
             )
             try:
                 candidates = self._report_engine.generate_sections(report_input)
@@ -268,6 +288,7 @@ class ReportService:
                     research_design_id=research_design_id,
                     design=design,
                     batch_diag=batch_diag,
+                    allowed_research_question_ids=(allowed_rq_ids if limited else None),
                 )
                 if not added:
                     sections_rejected += 1
@@ -293,23 +314,24 @@ class ReportService:
             )
             raise ReportError(format_zero_sections_message(failure_diagnostics))
 
-        self._correct_missing_research_question_coverage(
-            validated_sections=validated_sections,
-            section_batch_map=section_batch_map,
-            findings=findings,
-            insights=insights,
-            evidence_by_id=evidence_by_id,
-            sources_by_id=sources_by_id,
-            findings_by_id=findings_by_id,
-            insights_by_id=insights_by_id,
-            citation_registry=citation_registry,
-            brief=brief,
-            design=design,
-            section_titles=section_titles,
-            project_id=project_id,
-            workflow_run_id=workflow_run_id,
-            research_design_id=research_design_id,
-        )
+        if not limited:
+            self._correct_missing_research_question_coverage(
+                validated_sections=validated_sections,
+                section_batch_map=section_batch_map,
+                findings=findings,
+                insights=insights,
+                evidence_by_id=evidence_by_id,
+                sources_by_id=sources_by_id,
+                findings_by_id=findings_by_id,
+                insights_by_id=insights_by_id,
+                citation_registry=citation_registry,
+                brief=brief,
+                design=design,
+                section_titles=section_titles,
+                project_id=project_id,
+                workflow_run_id=workflow_run_id,
+                research_design_id=research_design_id,
+            )
 
         validated_sections = list(
             assemble_bounded_report(
@@ -343,6 +365,7 @@ class ReportService:
             insights=insights,
             design=design,
             section_batch_map=section_batch_map,
+            required_research_question_ids=(allowed_rq_ids if limited else None),
         )
         if coverage_errors:
             raise ReportError(
@@ -362,6 +385,7 @@ class ReportService:
             sources_by_id=sources_by_id,
             section_titles=section_titles,
             section_summaries=tuple(section.content for section in validated_sections),
+            coverage_snapshot=coverage.to_dict() if coverage is not None else None,
         )
         section_candidates = tuple(
             ReportSectionCandidate(
@@ -390,6 +414,7 @@ class ReportService:
                 [
                     *report_candidate.limitations,
                     *design.limitations,
+                    *(_coverage_limitations(coverage) if limited else ()),
                 ],
             ),
         )
@@ -403,6 +428,10 @@ class ReportService:
         )
 
         report_metadata = dict(report_candidate.metadata or {})
+        if limited and report_metadata.get("report_scope") == "complete":
+            raise ReportError("Limited report must not claim complete research")
+        if coverage is not None:
+            report_metadata.update(coverage.to_dict())
         scenario = context.read_shared("deterministic_review_scenario") or os.environ.get(
             "DETERMINISTIC_REVIEW_SCENARIO",
         )
@@ -708,6 +737,7 @@ class ReportService:
         research_design_id: str,
         design: ResearchDesign,
         batch_diag: ReportBatchDiagnostics,
+        allowed_research_question_ids: tuple[str, ...] | None = None,
     ) -> bool:
         try:
             validated = validate_section_candidate(
@@ -719,6 +749,7 @@ class ReportService:
                 workflow_run_id=workflow_run_id,
                 research_design_id=research_design_id,
                 design=design,
+                allowed_research_question_ids=allowed_research_question_ids,
             )
             question_refs = enrich_research_question_refs(
                 validated,
@@ -887,6 +918,34 @@ def _section_requires_citations(
         if evidence is not None and evidence.source_id in sources_by_id:
             return True
     return False
+
+
+def _coverage_limitations(coverage) -> tuple[str, ...]:
+    if coverage is None or coverage.complete_design_ready:
+        return ()
+    payload = coverage.to_dict()
+    limitations = ["Research coverage is limited; the complete Design is not ready."]
+    for label, key in (
+        ("Partial InformationNeeds", "partial_information_need_ids"),
+        ("Insufficient InformationNeeds", "insufficient_information_need_ids"),
+        ("Missing InformationNeeds", "missing_information_need_ids"),
+        ("Blocked InformationNeeds", "blocked_information_need_ids"),
+    ):
+        values = payload.get(key) or []
+        if values:
+            limitations.append(f"{label}: {', '.join(values)}.")
+    for need_id, aspects in (payload.get("missing_required_aspect_refs") or {}).items():
+        if aspects:
+            limitations.append(
+                f"Missing required aspects for {need_id}: {', '.join(aspects)}."
+            )
+    if payload.get("source_diversity_limited_information_need_ids"):
+        limitations.append(
+            "Source-diversity limitations: "
+            + ", ".join(payload["source_diversity_limited_information_need_ids"])
+            + "."
+        )
+    return tuple(limitations)
 
 
 def _classify_batch_failure(exc: Exception) -> str:

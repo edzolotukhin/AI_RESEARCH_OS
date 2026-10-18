@@ -45,6 +45,7 @@ class InformationNeedAssessment:
     assessment_evidence_fingerprint: str = ""
     terminal_evidence_fingerprint: str = ""
     terminal_evidence_count: int | None = None
+    supported_aspects: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -79,6 +80,11 @@ class InformationNeedAssessment:
             self,
             "required_aspect_ids",
             tuple_of_str(self.required_aspect_ids),
+        )
+        object.__setattr__(
+            self,
+            "supported_aspects",
+            tuple_of_str(self.supported_aspects),
         )
         object.__setattr__(
             self,
@@ -173,6 +179,7 @@ class InformationNeedAssessment:
             "assessment_evidence_fingerprint": self.assessment_evidence_fingerprint,
             "terminal_evidence_fingerprint": self.terminal_evidence_fingerprint,
             "terminal_evidence_count": self.terminal_evidence_count,
+            "supported_aspects": list(self.supported_aspects),
         }
 
     @classmethod
@@ -223,4 +230,5 @@ class InformationNeedAssessment:
                 if payload.get("terminal_evidence_count") is not None
                 else None
             ),
+            supported_aspects=tuple_of_str(payload.get("supported_aspects")),
         )

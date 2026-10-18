@@ -48,15 +48,18 @@ def missing_research_question_ids(
     *,
     findings: list[Finding] | tuple[Finding, ...],
     design: ResearchDesign,
+    required_research_question_ids: tuple[str, ...] | None = None,
 ) -> tuple[str, ...]:
     covered = covered_research_question_ids(
         sections,
         findings=findings,
         design=design,
     )
+    required = set(required_research_question_ids or ())
     return tuple(
         question.id
         for question in design.research_questions
+        if (required_research_question_ids is None or question.id in required)
         if question.id not in covered
     )
 

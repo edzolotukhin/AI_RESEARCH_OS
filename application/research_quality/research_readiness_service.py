@@ -139,8 +139,7 @@ class ResearchReadinessService:
             if not result.termination_reason:
                 result = replace(result, termination_reason="blocked_gaps")
 
-        if not result.ready_for_analysis:
-            self._gate.apply_not_ready(context)
+        self._gate.apply_analysis_gate(context, result)
 
         loop_state = self._resolve_loop_state(context, loop_state)
         self._persist(context, result, loop_state)

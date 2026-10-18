@@ -60,6 +60,7 @@ class LlmAnalysisEngine:
                 '"evidence_refs":["evidence-id"],'
                 '"research_question_refs":["rq-id"],'
                 '"information_need_refs":["in-id"],'
+                '"metadata":{"required_aspect_refs":["aspect-id"]},'
                 '"finding_type":"synthesis",'
                 '"confidence":0.7}]}. '
                 "evidence_refs MUST use only IDs from the provided evidence list. "
@@ -87,7 +88,11 @@ class LlmAnalysisEngine:
         allowed_questions = {
             question.id for question in analysis_input.design.research_questions
         }
-        allowed_needs = {need.id for need in analysis_input.design.information_needs}
+        allowed_needs = (
+            set(analysis_input.allowed_information_need_ids)
+            if analysis_input.allowed_information_need_ids
+            else {need.id for need in analysis_input.design.information_needs}
+        )
         candidates: list[FindingCandidate] = []
         raw_items = 0
         engine_dropped = 0
@@ -229,6 +234,8 @@ class LlmAnalysisEngine:
             f"research_objective: {analysis_input.brief.business_question}",
             "analysis_plan:",
         ]
+        if analysis_input.coverage_snapshot is not None:
+            lines.append(f"deterministic_analysis_scope: {analysis_input.coverage_snapshot}")
         if analysis_input.batch_question_id is not None:
             lines.append(
                 f"batch_research_question_id: {analysis_input.batch_question_id}",
@@ -242,7 +249,8 @@ class LlmAnalysisEngine:
         for evidence in analysis_input.evidence_batch:
             lines.append(
                 f"- id={evidence.id} statement={evidence.statement} "
-                f"questions={list(evidence.research_question_refs)}",
+                f"questions={list(evidence.research_question_refs)} "
+                f"information_needs={list(evidence.information_need_refs)}",
             )
         return "\n".join(lines)
 
@@ -251,6 +259,8 @@ class LlmAnalysisEngine:
             f"research_objective: {analysis_input.brief.business_question}",
             "analysis_plan:",
         ]
+        if analysis_input.coverage_snapshot is not None:
+            lines.append(f"deterministic_analysis_scope: {analysis_input.coverage_snapshot}")
         for step in analysis_input.design.analysis_plan:
             lines.append(f"- {step}")
         lines.append("findings:")

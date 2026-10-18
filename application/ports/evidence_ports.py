@@ -21,6 +21,11 @@ class EvidenceCandidate:
     confidence: float | None = None
     direct: bool = True
     metadata: dict[str, Any] | None = None
+    contract_version: str | None = None
+    required_aspect_refs: tuple[str, ...] = ()
+    subject_binding: dict[str, Any] | None = None
+    semantic_justification: str = ""
+    geography_applicability: tuple[str, ...] = ()
 
 
 class EvidenceExtractor(Protocol):

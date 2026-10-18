@@ -30,6 +30,7 @@ def validate_section_candidate(
     workflow_run_id: str,
     research_design_id: str,
     design: ResearchDesign,
+    allowed_research_question_ids: tuple[str, ...] | None = None,
 ) -> ReportSectionCandidate:
     _validate_refs_in_run(
         project_id=project_id,
@@ -108,6 +109,19 @@ def validate_section_candidate(
     question_refs = tuple(
         ref for ref in candidate.research_question_refs if ref in allowed_questions
     )
+    if allowed_research_question_ids is not None:
+        allowed_scope = set(allowed_research_question_ids)
+        claimed = set(candidate.research_question_refs)
+        if not claimed <= allowed_scope:
+            raise InvalidReportProvenanceError(
+                "Report section claims an unsupported ResearchQuestion",
+                category=REJECTION_CATEGORY_INVALID_FINDING_REF,
+            )
+        if (candidate.metadata or {}).get("report_scope") == "complete":
+            raise InvalidReportProvenanceError(
+                "Limited report section must not claim complete research",
+                category=REJECTION_CATEGORY_INVALID_FINDING_REF,
+            )
 
     return ReportSectionCandidate(
         title=candidate.title.strip(),

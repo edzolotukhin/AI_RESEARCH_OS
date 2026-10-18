@@ -46,6 +46,7 @@ class ReportInput:
     section_titles: tuple[str, ...]
     batch_question_id: str | None = None
     section_summaries: tuple[str, ...] = ()
+    coverage_snapshot: dict[str, Any] | None = None
 
 
 class ReportEngine(Protocol):

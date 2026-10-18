@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from domain.planning.research_design import InformationNeed
@@ -36,6 +37,18 @@ EXTRACTION_SYSTEM_GUIDANCE = (
     "Do not assess sufficiency, readiness, or whether aspects are satisfied. "
     "Do not treat this single-source extraction as satisfying a multi-source "
     "independence quota."
+)
+
+V2_EXTRACTION_SYSTEM_GUIDANCE = (
+    " Each item must include contract_version=desk_evidence_candidate_v2 and "
+    "required_aspect_refs (zero to eight unique supplied IDs), subject_binding with "
+    "binding_type canonical_subject or supporting_relation, the supplied subject_id, "
+    "the supplied subject_fingerprint, "
+    "and supporting_relation_id only for a relation binding; semantic_justification "
+    "of at most 500 characters; and geography_applicability using only supplied values. "
+    "Select identifiers only from extraction_vocabulary. An identifier is structural "
+    "scope, never permission to invent support. The exact excerpt must support the "
+    "statement and every assigned aspect."
 )
 
 
@@ -90,3 +103,57 @@ def format_extraction_need_line(need: dict[str, Any]) -> str:
     if extras:
         line = f"{line} {' '.join(extras)}"
     return line
+
+
+def build_extraction_vocabulary(*, design, needs_payload: list[dict[str, Any]]) -> dict[str, Any]:
+    allowed_need_ids = {str(item["id"]) for item in needs_payload}
+    subject = design.research_subject
+    if subject is None:
+        return {"subject": None, "information_needs": needs_payload}
+    relations = []
+    for relation in subject.supporting_relations:
+        scoped_needs = tuple(
+            ref for ref in relation.information_need_refs if ref in allowed_need_ids
+        )
+        if not scoped_needs:
+            continue
+        relations.append({
+            "relation_id": relation.relation_id,
+            "relation_type": relation.relation_type,
+            "information_need_refs": list(scoped_needs),
+            "research_question_refs": list(relation.research_question_refs),
+            "required_aspect_refs": list(relation.required_aspect_refs),
+            "concepts": list(relation.concepts),
+            "approved_representations": [
+                {
+                    "language": item.language,
+                    "label": item.label,
+                    "normalized_phrases": list(item.normalized_phrases),
+                }
+                for item in relation.lexical_representations
+                if item.approval_status.value == "approved"
+            ],
+        })
+    return {
+        "subject": {
+            "subject_id": subject.subject_id,
+            "subject_fingerprint": subject.semantic_fingerprint,
+            "canonical_label": subject.canonical_label,
+            "canonical_language": subject.canonical_language,
+            "approved_representations": [
+                {
+                    "language": item.language,
+                    "label": item.label,
+                    "normalized_phrases": list(item.normalized_phrases),
+                }
+                for item in subject.approved_representations
+            ],
+            "supporting_relations": relations,
+            "exclusions": list(subject.exclusions),
+        },
+        "information_needs": needs_payload,
+    }
+
+
+def format_extraction_vocabulary(value: dict[str, Any]) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)

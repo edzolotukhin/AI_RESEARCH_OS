@@ -34,6 +34,8 @@ class DeterministicSufficiencySignals:
     contradictions: tuple[str, ...] = ()
     deterministic_gap_types: tuple[GapType, ...] = ()
     warnings: tuple[str, ...] = ()
+    declared_supported_aspects: tuple[str, ...] = ()
+    v2_semantic_assignment_count: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -55,6 +57,11 @@ class DeterministicSufficiencySignals:
             tuple_of_enum(GapType, self.deterministic_gap_types),
         )
         object.__setattr__(self, "warnings", tuple_of_str(self.warnings))
+        object.__setattr__(
+            self,
+            "declared_supported_aspects",
+            tuple_of_str(self.declared_supported_aspects),
+        )
 
         if not self.information_need_id:
             raise ValidationError("information_need_id must not be empty")
@@ -69,6 +76,10 @@ class DeterministicSufficiencySignals:
         validate_non_negative_count(
             "duplicate_evidence_count",
             self.duplicate_evidence_count,
+        )
+        validate_non_negative_count(
+            "v2_semantic_assignment_count",
+            self.v2_semantic_assignment_count,
         )
         validate_unit_score("freshness_score", self.freshness_score)
         validate_unit_score("source_quality_score", self.source_quality_score)
@@ -142,6 +153,8 @@ class DeterministicSufficiencySignals:
                 gap_type.value for gap_type in self.deterministic_gap_types
             ],
             "warnings": list(self.warnings),
+            "declared_supported_aspects": list(self.declared_supported_aspects),
+            "v2_semantic_assignment_count": self.v2_semantic_assignment_count,
         }
 
     @classmethod
@@ -183,4 +196,10 @@ class DeterministicSufficiencySignals:
                 payload.get("deterministic_gap_types"),
             ),
             warnings=tuple_of_str(payload.get("warnings")),
+            declared_supported_aspects=tuple_of_str(
+                payload.get("declared_supported_aspects"),
+            ),
+            v2_semantic_assignment_count=int(
+                payload.get("v2_semantic_assignment_count", 0),
+            ),
         )

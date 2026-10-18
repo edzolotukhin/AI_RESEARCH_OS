@@ -878,6 +878,10 @@ class EvidenceExtractionService:
                 continue
 
             try:
+                verify_grounding(
+                    source_text=(canonical_source if canonical_source is not None else source).content_text,
+                    excerpt=candidate.source_excerpt,
+                )
                 validated = validate_candidate_provenance(
                     candidate,
                     run_context=run_context,
