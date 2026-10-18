@@ -21,6 +21,7 @@ from application.ports.evidence_ports import EvidenceRepository
 from application.ports.report_ports import ReportEngine, ReportInput, ReportRepository, ReportSectionCandidate
 from application.ports.source_ports import SourceRepository
 from application.report.citation_registry import CitationRegistry
+from application.report.claim_scope_validation import validate_claim_scope
 from application.report.content_batching import (
     batch_findings_by_question,
     insights_for_question,
@@ -809,6 +810,27 @@ class ReportService:
                 findings_by_id=findings_by_id,
                 insights_by_id=insights_by_id,
             )
+            scope_errors = validate_claim_scope(
+                validated.content,
+                finding_ids=(
+                    *validated.finding_refs,
+                    *tuple(
+                        finding_id
+                        for insight_id in validated.insight_refs
+                        for finding_id in insights_by_id[insight_id].finding_refs
+                        if insight_id in insights_by_id
+                    ),
+                ),
+                findings_by_id=findings_by_id,
+                insights_by_id=insights_by_id,
+                evidence_by_id=evidence_by_id,
+            )
+            if scope_errors:
+                batch_diag.rejected_section_count += 1
+                batch_diag.rejection_counts["claim_scope"] = (
+                    batch_diag.rejection_counts.get("claim_scope", 0) + 1
+                )
+                return False
             citation_ids = citation_registry.citation_ids_for_evidence_refs(
                 evidence_refs,
                 evidence_by_id=evidence_by_id,
