@@ -277,7 +277,10 @@ class LlmReviewEngine:
         if support is not None:
             support_text = support.render_for_section_indices(
                 batch.section_indices,
-                max_chars=self._max_support_chars_per_batch,
+                max_chars=max(
+                    self._max_support_chars_per_batch,
+                    support.required_chars_for_indices(batch.section_indices),
+                ),
             )
             lines.append("support_context:")
             lines.append(support_text)

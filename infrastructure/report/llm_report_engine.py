@@ -159,7 +159,12 @@ class LlmReportEngine:
         return (
             "You are a desk research report writer. Synthesize validated Findings and "
             "Insights into compact, decision-oriented report sections. You MUST NOT invent "
-            "new facts, perform web research, or reference IDs not provided. Consolidate "
+            "new facts, expand an observation period beyond the supplied Finding/Evidence, "
+            "or introduce substantive causal claims not entailed by the supplied support. "
+            "Use the authoritative support block to keep periods, scope and citations exact. "
+            "Every substantive section must retain all referenced finding/evidence IDs. "
+            "Do not use citation labels unless their mapping is present in the support block. "
+            "Do not perform web research or reference IDs not provided. Consolidate "
             "related findings into major sections rather than repeating every finding. "
             f"Return at most {self._max_sections} sections. Each section may reference up "
             f"to {self._max_findings_per_section} finding_refs and "
@@ -308,6 +313,22 @@ class LlmReportEngine:
                 f"- id={finding.id} statement={finding.statement} "
                 f"evidence_refs={list(finding.evidence_refs)}",
             )
+        lines.append("authoritative_support:")
+        for finding in report_input.findings:
+            for evidence_id in finding.evidence_refs:
+                evidence = report_input.evidence_by_id.get(evidence_id)
+                if evidence is None:
+                    continue
+                source = report_input.sources_by_id.get(evidence.source_id)
+                source_period = (source.metadata or {}).get("observation_period") if source else None
+                lines.append(
+                    f"- evidence_id={evidence.id} finding_id={finding.id} "
+                    f"statement={evidence.statement} excerpt={evidence.source_excerpt} "
+                    f"source_id={evidence.source_id} "
+                    f"source_title={source.title if source else ''} "
+                    f"published_at={source.published_at if source else None} "
+                    f"observation_period={evidence.metadata.get('observation_period') or source_period if source else evidence.metadata.get('observation_period')}"
+                )
         lines.append("insights:")
         for insight in report_input.insights:
             lines.append(

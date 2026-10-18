@@ -81,6 +81,7 @@ class ReviewSupportContext:
     report_revision: int
     sections: tuple[SectionSupportContext, ...]
     coverage_complete: bool
+    citation_registry: dict[str, dict[str, Any]] = field(default_factory=dict)
     diagnostics: dict[str, Any] = field(default_factory=dict)
 
     def section_for_index(self, section_index: int) -> SectionSupportContext | None:
@@ -89,11 +90,19 @@ class ReviewSupportContext:
                 return section
         return None
 
+    def required_chars_for_indices(self, section_indices: tuple[int, ...]) -> int:
+        """Return the bounded serialized support size for selected sections."""
+        return sum(
+            section.support_chars
+            for section in self.sections
+            if section.section_index in section_indices
+        )
+
     def render_for_section_indices(
         self,
         section_indices: tuple[int, ...],
         *,
-        max_chars: int,
+        max_chars: int | None,
     ) -> str:
         """Deterministic support text for one RQ batch."""
         parts: list[str] = []
@@ -123,6 +132,19 @@ class ReviewSupportContext:
                     f"source_excerpt={evidence.source_excerpt} "
                     f"source_id={evidence.source_id}"
                 )
+                if self.citation_registry:
+                    citation_ids = sorted(
+                        citation_id
+                        for citation_id, entry in self.citation_registry.items()
+                        if isinstance(entry, dict)
+                        and entry.get("source_id") == evidence.source_id
+                    )
+                    if citation_ids:
+                        parts.append(
+                            "CITATION_MAP "
+                            f"source_id={evidence.source_id} "
+                            f"citation_ids={citation_ids}"
+                        )
             if section.missing_finding_refs or section.missing_insight_refs or section.missing_evidence_refs:
                 parts.append(
                     "MISSING_REFS "
@@ -145,7 +167,7 @@ class ReviewSupportContext:
                     f"omitted_evidence={list(section.omitted_evidence_refs)}"
                 )
         text = "\n".join(parts)
-        return text[:max_chars]
+        return text if max_chars is None else text[:max_chars]
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -180,7 +202,8 @@ def build_review_support_context(
     max_chars_per_finding: int = DEFAULT_MAX_CHARS_PER_FINDING,
     max_chars_per_insight: int = DEFAULT_MAX_CHARS_PER_INSIGHT,
     max_chars_per_evidence: int = DEFAULT_MAX_CHARS_PER_EVIDENCE,
-    max_support_chars_per_section: int = DEFAULT_MAX_SUPPORT_CHARS_PER_SECTION,
+    max_support_chars_per_section: int | None = DEFAULT_MAX_SUPPORT_CHARS_PER_SECTION,
+    citation_registry: dict[str, dict[str, Any]] | None = None,
 ) -> ReviewSupportContext:
     """Build run/design-scoped bounded support projections for Review."""
     findings_by_id = {item.id: item for item in findings}
@@ -212,7 +235,10 @@ def build_review_support_context(
         truncated = False
 
         def _budget_allows(size: int) -> bool:
-            return used_chars + size <= max_support_chars_per_section
+            return (
+                max_support_chars_per_section is None
+                or used_chars + size <= max_support_chars_per_section
+            )
 
         # Priority 2: directly referenced Findings (stable ID order)
         for finding_id in sorted(section.finding_refs):
@@ -376,6 +402,7 @@ def build_review_support_context(
         report_revision=report.revision_number,
         sections=tuple(sections),
         coverage_complete=coverage_complete,
+        citation_registry=dict(citation_registry or {}),
         diagnostics=diagnostics,
     )
 

@@ -174,6 +174,8 @@ class ReviewService:
                 findings=findings,
                 insights=insights,
                 evidence_items=evidence_items,
+                max_support_chars_per_section=None,
+                citation_registry=report.citation_registry,
             )
             support_issues = support_reference_issues(support_context)
             self._last_support_diagnostics = dict(support_context.diagnostics)
