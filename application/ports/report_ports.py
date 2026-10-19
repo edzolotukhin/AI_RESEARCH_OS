@@ -47,6 +47,7 @@ class ReportInput:
     batch_question_id: str | None = None
     section_summaries: tuple[str, ...] = ()
     coverage_snapshot: dict[str, Any] | None = None
+    mandatory_substantive_rq_findings: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 class ReportEngine(Protocol):

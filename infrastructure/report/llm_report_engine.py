@@ -163,6 +163,9 @@ class LlmReportEngine:
             "or introduce substantive causal claims not entailed by the supplied support. "
             "Use the authoritative support block to keep periods, scope and citations exact. "
             "Every substantive section must retain all referenced finding/evidence IDs. "
+            "For every mandatory substantive RQ in the contract, emit that exact RQ ID "
+            "in research_question_refs and at least one authoritative Finding ID listed "
+            "for that RQ in finding_refs; do not omit or infer these bindings. "
             "Do not use citation labels unless their mapping is present in the support block. "
             "Do not perform web research or reference IDs not provided. Consolidate "
             "related findings into major sections rather than repeating every finding. "
@@ -272,6 +275,7 @@ class LlmReportEngine:
                 not question_refs
                 and report_input.batch_question_id
                 and report_input.batch_question_id in allowed_questions
+                and not report_input.mandatory_substantive_rq_findings
             ):
                 question_refs = (report_input.batch_question_id,)
             sections.append(
@@ -307,6 +311,14 @@ class LlmReportEngine:
             lines.append(
                 "deterministic_report_coverage: "
                 + json.dumps(report_input.coverage_snapshot, sort_keys=True)
+            )
+        if report_input.mandatory_substantive_rq_findings:
+            lines.append(
+                "mandatory_substantive_rq_findings: "
+                + json.dumps(
+                    report_input.mandatory_substantive_rq_findings,
+                    sort_keys=True,
+                )
             )
         for finding in report_input.findings:
             lines.append(

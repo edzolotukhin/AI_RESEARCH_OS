@@ -37,7 +37,11 @@ from application.report.report_assembly import (
     align_section_provenance,
     DEFAULT_REPORT_MAX_SECTIONS,
 )
-from application.report.substantive_coverage import validate_two_dimensional_coverage
+from application.report.substantive_coverage import (
+    validate_mandatory_rq_candidate_binding,
+    validate_mandatory_rq_bindings,
+    validate_two_dimensional_coverage,
+)
 from application.report.structure_validation import validate_report_structure
 from application.report.deduplication import (
     DR06_RESEARCH_REPORT_TYPE,
@@ -202,6 +206,13 @@ class ReportService:
         sources_by_id = {item.id: item for item in run_sources}
         findings_by_id = {item.id: item for item in findings}
         insights_by_id = {item.id: item for item in insights}
+        mandatory_rq_findings = {
+            rq_id: tuple(sorted(
+                item.id for item in findings
+                if rq_id in item.research_question_refs
+            ))
+            for rq_id in allowed_rq_ids
+        } if limited else {}
 
         section_titles = resolve_section_titles(brief=brief, design=design)
         batches = batch_findings_by_question(
@@ -241,6 +252,7 @@ class ReportService:
                     None if batch_question_id == "__unscoped__" else batch_question_id
                 ),
                 coverage_snapshot=coverage.to_dict() if coverage is not None else None,
+                mandatory_substantive_rq_findings=mandatory_rq_findings,
             )
             try:
                 candidates = self._report_engine.generate_sections(report_input)
@@ -294,6 +306,18 @@ class ReportService:
                 batch_diag.parse_failure_category = engine_stats.parse_failure_category
 
             for candidate in candidates:
+                binding_errors = validate_mandatory_rq_candidate_binding(
+                    candidate,
+                    mandatory_rq_findings=mandatory_rq_findings,
+                )
+                if binding_errors:
+                    batch_diag.rejected_section_count += 1
+                    for error in binding_errors:
+                        batch_diag.rejection_counts[error] = (
+                            batch_diag.rejection_counts.get(error, 0) + 1
+                        )
+                    sections_rejected += 1
+                    continue
                 added = self._append_validated_section(
                     candidate,
                     validated_sections=validated_sections,
@@ -388,7 +412,38 @@ class ReportService:
             section_batch_map=section_batch_map,
             required_research_question_ids=(allowed_rq_ids if limited else None),
         )
+        coverage_errors = (
+            *coverage_errors,
+            *validate_mandatory_rq_bindings(
+                validated_sections,
+                mandatory_rq_findings=mandatory_rq_findings,
+            ),
+        )
         if coverage_errors:
+            context.write_shared(
+                "report_generation_diagnostics",
+                {
+                    "phase": "coverage_validation",
+                    "mandatory_substantive_rq_findings": {
+                        key: list(value) for key, value in mandatory_rq_findings.items()
+                    },
+                    "finding_evidence_refs": {
+                        finding_id: list(findings_by_id[finding_id].evidence_refs)
+                        for finding_ids in mandatory_rq_findings.values()
+                        for finding_id in finding_ids
+                        if finding_id in findings_by_id
+                    },
+                    "generated_sections": [
+                        {
+                            "id": section.id,
+                            "research_question_refs": list(section.research_question_refs),
+                            "finding_refs": list(section.finding_refs),
+                        }
+                        for section in validated_sections
+                    ],
+                    "rejection_reasons": list(coverage_errors),
+                },
+            )
             raise ReportError(
                 f"Report coverage validation failed for run {workflow_run_id}: "
                 f"{list(coverage_errors)}",
@@ -407,6 +462,7 @@ class ReportService:
             section_titles=section_titles,
             section_summaries=tuple(section.content for section in validated_sections),
             coverage_snapshot=coverage.to_dict() if coverage is not None else None,
+            mandatory_substantive_rq_findings=mandatory_rq_findings,
         )
         section_candidates = tuple(
             ReportSectionCandidate(

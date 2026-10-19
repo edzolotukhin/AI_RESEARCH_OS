@@ -229,3 +229,37 @@ def validate_two_dimensional_coverage(
     for rq_id in substantive_missing:
         errors.append(f"substantive_coverage_missing:{rq_id}")
     return tuple(errors)
+
+
+def validate_mandatory_rq_bindings(
+    sections: tuple[ReportSection, ...] | list[ReportSection],
+    *,
+    mandatory_rq_findings: dict[str, tuple[str, ...]],
+) -> tuple[str, ...]:
+    """Require explicit RQ and authoritative Finding bindings in limited reports."""
+    errors: list[str] = []
+    for rq_id, finding_ids in sorted(mandatory_rq_findings.items()):
+        authoritative = set(finding_ids)
+        if not any(
+            rq_id in section.research_question_refs
+            and authoritative.intersection(section.finding_refs)
+            for section in sections
+        ):
+            errors.append(f"mandatory_rq_finding_binding_missing:{rq_id}")
+    return tuple(errors)
+
+
+def validate_mandatory_rq_candidate_binding(
+    candidate,
+    *,
+    mandatory_rq_findings: dict[str, tuple[str, ...]],
+) -> tuple[str, ...]:
+    """Reject a candidate that partially binds a mandatory RQ."""
+    errors: list[str] = []
+    for rq_id, finding_ids in sorted(mandatory_rq_findings.items()):
+        authoritative = set(finding_ids)
+        mentions_rq = rq_id in candidate.research_question_refs
+        mentions_finding = bool(authoritative.intersection(candidate.finding_refs))
+        if (mentions_rq or mentions_finding) and not (mentions_rq and mentions_finding):
+            errors.append(f"mandatory_rq_finding_binding_missing:{rq_id}")
+    return tuple(errors)
