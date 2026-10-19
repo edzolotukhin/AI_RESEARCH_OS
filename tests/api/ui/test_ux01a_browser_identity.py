@@ -165,6 +165,44 @@ class BrowserIdentityE2ETests(unittest.TestCase):
         self.assertEqual(researcher.status_code, 303)
         self.assertEqual(len(facade._desk_runs(project_id)), 2)
 
+    def test_unauthenticated_desk_retry_returns_to_project_workspace(self):
+        self.login("alice@example.com", "correct horse battery")
+        created = self.client.post(
+            "/ui/projects",
+            data={"name": "Desk retry auth redirect", "selected_methods": "DESK"},
+            follow_redirects=False,
+        )
+        project_id = created.headers["location"].rsplit("/", 1)[-1]
+        facade = self.container.project_planning_service
+        self.assertEqual(len(facade._desk_runs(project_id)), 0)
+
+        self.logout()
+        retry = self.client.post(
+            f"/ui/projects/{project_id}/methods/DESK/retry",
+            follow_redirects=False,
+        )
+        self.assertEqual(retry.status_code, 303)
+        self.assertEqual(
+            retry.headers["location"],
+            f"/ui/login?next=/ui/projects/{project_id}",
+        )
+
+        login = self.client.post(
+            "/ui/login",
+            params={"next": f"/ui/projects/{project_id}"},
+            data={"email": "alice@example.com", "password": "correct horse battery"},
+            follow_redirects=False,
+        )
+        self.assertEqual(login.status_code, 303)
+        self.assertEqual(login.headers["location"], f"/ui/projects/{project_id}")
+        self.assertEqual(self.client.get(login.headers["location"]).status_code, 200)
+        self.assertEqual(len(facade._desk_runs(project_id)), 0)
+
+        self.assertEqual(
+            self.client.get(f"/ui/projects/{project_id}/methods/DESK/retry").status_code,
+            405,
+        )
+
     def test_project_owner_can_retry_failed_desk_attempt(self):
         self.login("alice@example.com", "correct horse battery")
         created = self.client.post(
