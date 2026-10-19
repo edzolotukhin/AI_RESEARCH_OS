@@ -320,6 +320,11 @@ class LlmReportEngine:
                     sort_keys=True,
                 )
             )
+        if report_input.repair_diagnostics:
+            lines.append(
+                "deterministic_repair_diagnostics: "
+                + json.dumps(list(report_input.repair_diagnostics), sort_keys=True)
+            )
         for finding in report_input.findings:
             lines.append(
                 f"- id={finding.id} statement={finding.statement} "

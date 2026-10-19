@@ -48,6 +48,7 @@ class ReportInput:
     section_summaries: tuple[str, ...] = ()
     coverage_snapshot: dict[str, Any] | None = None
     mandatory_substantive_rq_findings: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    repair_diagnostics: tuple[str, ...] = ()
 
 
 class ReportEngine(Protocol):

@@ -419,6 +419,67 @@ class ReportService:
                 mandatory_rq_findings=mandatory_rq_findings,
             ),
         )
+        if limited and coverage_errors:
+            repair_errors = tuple(
+                error for error in coverage_errors
+                if error.startswith("substantive_coverage_missing:")
+                or error.startswith("mandatory_rq_finding_binding_missing:")
+            )
+            if repair_errors:
+                self._repair_limited_mandatory_coverage(
+                    validated_sections=validated_sections,
+                    section_batch_map=section_batch_map,
+                    findings=findings,
+                    insights=insights,
+                    evidence_by_id=evidence_by_id,
+                    sources_by_id=sources_by_id,
+                    findings_by_id=findings_by_id,
+                    insights_by_id=insights_by_id,
+                    citation_registry=citation_registry,
+                    brief=brief,
+                    design=design,
+                    section_titles=section_titles,
+                    project_id=project_id,
+                    workflow_run_id=workflow_run_id,
+                    research_design_id=research_design_id,
+                    coverage_snapshot=coverage.to_dict() if coverage is not None else None,
+                    mandatory_rq_findings=mandatory_rq_findings,
+                    diagnostics=repair_errors,
+                )
+                validated_sections = list(assemble_bounded_report(
+                    validated_sections,
+                    design=design,
+                    findings=findings,
+                    limitations=tuple(design.limitations),
+                    max_sections=self._max_sections,
+                    section_batch_map=section_batch_map,
+                ))
+                validated_sections = [
+                    align_section_provenance(
+                        section,
+                        findings_by_id=findings_by_id,
+                        registry=citation_registry.to_dict(),
+                    )
+                    for section in validated_sections
+                ]
+                section_batch_map = {
+                    section.id: (section.metadata or {}).get("primary_research_question_id")
+                    for section in validated_sections
+                }
+                coverage_errors = (
+                    *validate_two_dimensional_coverage(
+                        validated_sections,
+                        findings=findings,
+                        insights=insights,
+                        design=design,
+                        section_batch_map=section_batch_map,
+                        required_research_question_ids=allowed_rq_ids,
+                    ),
+                    *validate_mandatory_rq_bindings(
+                        validated_sections,
+                        mandatory_rq_findings=mandatory_rq_findings,
+                    ),
+                )
         if coverage_errors:
             context.write_shared(
                 "report_generation_diagnostics",
@@ -927,6 +988,103 @@ class ReportService:
                 batch_diag.rejection_counts.get(category, 0) + 1
             )
             return False
+
+    def _repair_limited_mandatory_coverage(
+        self,
+        *,
+        validated_sections: list[ReportSection],
+        section_batch_map: dict[str, str | None],
+        findings: list,
+        insights: list,
+        evidence_by_id: dict,
+        sources_by_id: dict,
+        findings_by_id: dict,
+        insights_by_id: dict,
+        citation_registry: CitationRegistry,
+        brief: ResearchBrief,
+        design: ResearchDesign,
+        section_titles: tuple[str, ...],
+        project_id: str,
+        workflow_run_id: str,
+        research_design_id: str,
+        coverage_snapshot: dict | None,
+        mandatory_rq_findings: dict[str, tuple[str, ...]],
+        diagnostics: tuple[str, ...],
+    ) -> None:
+        """Bounded repair for authoritative limited-report RQ omissions."""
+        for _ in range(self._max_rq_correction_attempts):
+            missing = tuple(
+                rq_id for rq_id, finding_ids in sorted(mandatory_rq_findings.items())
+                if finding_ids and not any(
+                    rq_id in section.research_question_refs
+                    and set(finding_ids).intersection(section.finding_refs)
+                    for section in validated_sections
+                )
+            )
+            if not missing:
+                return
+            progressed = False
+            for question_id in missing:
+                finding_batch = [
+                    finding for finding in findings
+                    if question_id in finding.research_question_refs
+                ]
+                if not finding_batch:
+                    continue
+                report_input = ReportInput(
+                    project_id=project_id,
+                    workflow_run_id=workflow_run_id,
+                    research_design_id=research_design_id,
+                    brief=brief,
+                    design=design,
+                    findings=tuple(finding_batch),
+                    insights=insights_for_question(list(insights), question_id),
+                    evidence_by_id=evidence_by_id,
+                    sources_by_id=sources_by_id,
+                    section_titles=section_titles,
+                    batch_question_id=question_id,
+                    coverage_snapshot=coverage_snapshot,
+                    mandatory_substantive_rq_findings={
+                        question_id: mandatory_rq_findings[question_id],
+                    },
+                    repair_diagnostics=diagnostics,
+                )
+                try:
+                    candidates = self._report_engine.generate_sections(report_input)
+                except Exception:
+                    continue
+                batch_diag = ReportBatchDiagnostics(
+                    batch_question_id=question_id,
+                    input_finding_count=len(finding_batch),
+                    input_insight_count=len(report_input.insights),
+                )
+                for candidate in candidates:
+                    if validate_mandatory_rq_candidate_binding(
+                        candidate,
+                        mandatory_rq_findings={
+                            question_id: mandatory_rq_findings[question_id],
+                        },
+                    ):
+                        continue
+                    if self._append_validated_section(
+                        candidate,
+                        validated_sections=validated_sections,
+                        section_batch_map=section_batch_map,
+                        batch_question_id=question_id,
+                        findings_by_id=findings_by_id,
+                        insights_by_id=insights_by_id,
+                        evidence_by_id=evidence_by_id,
+                        sources_by_id=sources_by_id,
+                        citation_registry=citation_registry,
+                        project_id=project_id,
+                        workflow_run_id=workflow_run_id,
+                        research_design_id=research_design_id,
+                        design=design,
+                        batch_diag=batch_diag,
+                    ):
+                        progressed = True
+            if not progressed:
+                return
 
     def _correct_missing_research_question_coverage(
         self,
