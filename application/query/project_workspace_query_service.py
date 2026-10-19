@@ -130,7 +130,12 @@ class ProjectWorkspaceQueryService:
                 f"/ui/projects/{project_id}/methods/DESK/retry",
             )
         return MethodWorkspaceView("Кабінетне дослідження", state, label, explanation, progress, output,
-                                   primary_action, open_action)
+                                   primary_action, open_action,
+                                   run_id=run.id,
+                                   execution_status=(
+                                       "TERMINAL"
+                                       if run.is_terminal else "RUNNING"
+                                   ))
 
     def _quant(self, project_id, study, run, project):
         if study is None:

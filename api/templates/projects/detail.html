@@ -1,6 +1,7 @@
 {% extends "projects/base.html" %}
 {% block heading %}{{ view.project_name }}{% endblock %}
 {% block content %}
+{% if view.desk and view.desk.run_id and view.desk.execution_status != 'TERMINAL' %}<div id="project-desk-live-root" data-run-id="{{ view.desk.run_id }}" data-execution-status="{{ view.desk.execution_status }}"></div>{% endif %}
 <div class="breadcrumb"><a href="/ui/projects">Проєкти</a><span>/</span><span>{{ view.project_name }}</span></div>
 <section class="project-header">
   <div><span class="lifecycle-chip">{{ view.lifecycle }}</span> <span class="role-chip">{{ {'OWNER':'Власник','RESEARCHER':'Дослідник','VIEWER':'Перегляд'}.get(view.role, view.role) }}</span><p>Методи мають спільний контекст проєкту, але їхні висновки залишаються незалежними.</p></div>

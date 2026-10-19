@@ -38,6 +38,8 @@ class MethodWorkspaceView:
     output: MethodOutputAvailabilityView
     primary_action: WorkspaceActionView
     open_action: WorkspaceActionView | None = None
+    run_id: str | None = None
+    execution_status: str | None = None
 
 
 @dataclass(frozen=True)
