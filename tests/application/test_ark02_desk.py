@@ -100,6 +100,49 @@ def fixture(*, invalid_first=False):
 
 
 class DeskReplayTests(unittest.TestCase):
+    def _finish_with_readiness(self, terminal, *, analysis_ready):
+        config, context, _, _, _, adapter, _, _ = fixture()
+        result = adapter.readiness.evaluate_for_context(context)
+        if analysis_ready:
+            result = replace(
+                result,
+                analysis_ready=True,
+                analysis_eligible_information_need_ids=("in-0",),
+            )
+        state = adapter.initial_state()
+        state.terminal = terminal
+        with patch.object(adapter, "observe"), patch.object(
+            adapter.readiness, "_finalize_terminal_readiness", return_value=result
+        ), patch.object(adapter.readiness, "_persist"), patch.object(
+            adapter.readiness._gate, "apply_analysis_gate"
+        ) as apply_gate:
+            adapter.finish(state)
+        return context, result, apply_gate
+
+    def test_budget_stop_without_analysis_readiness_remains_blocked(self):
+        context, result, apply_gate = self._finish_with_readiness(
+            Stop.BUDGET, analysis_ready=False
+        )
+        self.assertFalse(result.analysis_ready)
+        self.assertEqual(context.shared_state["ark_stop"], "insufficient_budget")
+        apply_gate.assert_called_once_with(context, result)
+
+    def test_budget_stop_with_partial_analysis_readiness_allows_downstream_handoff(self):
+        context, result, apply_gate = self._finish_with_readiness(
+            Stop.BUDGET, analysis_ready=True
+        )
+        self.assertTrue(result.analysis_ready)
+        self.assertFalse(result.ready_for_analysis)
+        self.assertEqual(context.shared_state["ark_stop"], "insufficient_budget")
+        apply_gate.assert_called_once_with(context, result)
+
+    def test_non_budget_fatal_stop_still_fails_closed(self):
+        config, context, _, _, _, adapter, _, _ = fixture()
+        state = adapter.initial_state()
+        state.terminal = Stop.TECHNICAL
+        with self.assertRaisesRegex(RuntimeError, "technical safety"):
+            adapter.finish(state)
+
     def test_exhausted_initial_llm_opens_bounded_continuation(self):
         _, _, _, _, _, adapter, _, _ = fixture()
         state = adapter.initial_state()

@@ -412,9 +412,17 @@ class DeskAdapter:
     def finish(self, state):
         if state.terminal in (Stop.RECONCILIATION, Stop.TECHNICAL, Stop.SAFETY):
             raise RuntimeError("ARK stopped for reconciliation or technical safety")
+        # Research-budget exhaustion is a bounded upstream stop, not a fatal
+        # downstream lifecycle error.  Let the readiness result decide whether
+        # partial Analysis/Report may continue; non-budget fatal stops retain
+        # their existing fail-closed behavior above.
         self.observe(state)
         result = self.readiness._finalize_terminal_readiness(self.context, self.last_result)
-        if state.terminal != Stop.READY and result.ready_for_analysis:
+        if (
+            state.terminal != Stop.READY
+            and result.ready_for_analysis
+            and not (state.terminal == Stop.BUDGET and result.analysis_ready)
+        ):
             raise RuntimeError("ARK handoff lacks a current ready verdict")
         self.readiness._gate.apply_analysis_gate(self.context, result)
         self.readiness._persist(self.context, result, None)
