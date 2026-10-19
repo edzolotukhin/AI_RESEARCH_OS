@@ -9,7 +9,7 @@ from application.evidence.temporal_scope import qualifying_evidence
 from application.execution.execution_budget_context import (
     execution_stage_scope, get_evidence_call_purpose, set_evidence_call_purpose,
 )
-from application.research_kernel.contracts import Action, Gap, Observation, Outcome, OutcomeKind, KernelState, Stop
+from application.research_kernel.contracts import Action, Gap, Observation, Outcome, OutcomeKind, KernelState, Stop, StopReason
 from application.research_kernel.ledger import Ledger
 from application.runtime.checkpoint_context import CHECKPOINT_SERVICE_KEY
 from application.sources.content_identity import acquired_content_identity
@@ -110,7 +110,10 @@ class DeskAdapter:
                      for index, n in enumerate(rq.information_need_assessments)
                      if n.information_need_id in result.blocking_information_need_ids)
         ready = saved.get("fingerprint") == digest and result.ready_for_analysis
-        return Observation(digest, gaps, ready, not ready and time.time() >= self.context.shared_state["ark_acquisition_deadline"])
+        bounded_deadline = not ready and time.time() >= self.context.shared_state["ark_acquisition_deadline"]
+        if bounded_deadline:
+            state.stop_reason = StopReason.BOUNDED_ACQUISITION_DEADLINE.value
+        return Observation(digest, gaps, ready, bounded_deadline)
 
     def _continuation_queries(self, state, observation):
         """Materialize finite authoritative gaps as deterministic query actions."""
@@ -410,7 +413,9 @@ class DeskAdapter:
         return outcome  # Existing canonical services validated persisted results.
 
     def finish(self, state):
-        if state.terminal in (Stop.RECONCILIATION, Stop.TECHNICAL, Stop.SAFETY):
+        if state.terminal in (Stop.RECONCILIATION, Stop.TECHNICAL) or (
+                state.terminal == Stop.SAFETY and
+                state.stop_reason != StopReason.BOUNDED_ACQUISITION_DEADLINE.value):
             raise RuntimeError("ARK stopped for reconciliation or technical safety")
         # Research-budget exhaustion is a bounded upstream stop, not a fatal
         # downstream lifecycle error.  Let the readiness result decide whether

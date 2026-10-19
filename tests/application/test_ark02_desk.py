@@ -12,7 +12,7 @@ from application.methods.desk.profile import profile, PIN, template_marker
 from application.methods.desk.executor import VersionedDeskExecutor
 from application.planner.research_design_workflow_mapper import ResearchDesignWorkflowMapper
 from application.research_kernel.controller import Controller
-from application.research_kernel.contracts import Stop, OutcomeKind
+from application.research_kernel.contracts import Stop, StopReason, OutcomeKind
 from application.execution.execution_budget_factory import create_execution_budget
 from application.execution.execution_budget_context import execution_budget_scope
 from application.runtime.checkpoint_context import CHECKPOINT_SERVICE_KEY
@@ -100,7 +100,7 @@ def fixture(*, invalid_first=False):
 
 
 class DeskReplayTests(unittest.TestCase):
-    def _finish_with_readiness(self, terminal, *, analysis_ready):
+    def _finish_with_readiness(self, terminal, *, analysis_ready, stop_reason=None):
         config, context, _, _, _, adapter, _, _ = fixture()
         result = adapter.readiness.evaluate_for_context(context)
         if analysis_ready:
@@ -111,6 +111,7 @@ class DeskReplayTests(unittest.TestCase):
             )
         state = adapter.initial_state()
         state.terminal = terminal
+        state.stop_reason = stop_reason
         with patch.object(adapter, "observe"), patch.object(
             adapter.readiness, "_finalize_terminal_readiness", return_value=result
         ), patch.object(adapter.readiness, "_persist"), patch.object(
@@ -140,6 +141,23 @@ class DeskReplayTests(unittest.TestCase):
         config, context, _, _, _, adapter, _, _ = fixture()
         state = adapter.initial_state()
         state.terminal = Stop.TECHNICAL
+        with self.assertRaisesRegex(RuntimeError, "technical safety"):
+            adapter.finish(state)
+
+    def test_bounded_acquisition_deadline_allows_terminal_readiness(self):
+        context, result, apply_gate = self._finish_with_readiness(
+            Stop.SAFETY, analysis_ready=True,
+            stop_reason=StopReason.BOUNDED_ACQUISITION_DEADLINE.value,
+        )
+        self.assertTrue(result.analysis_ready)
+        self.assertEqual(context.shared_state["ark_stop"], "stopped_safety")
+        apply_gate.assert_called_once_with(context, result)
+
+    def test_hard_safety_reason_remains_fail_closed(self):
+        _, context, _, _, _, adapter, _, _ = fixture()
+        state = adapter.initial_state()
+        state.terminal = Stop.SAFETY
+        state.stop_reason = StopReason.HARD_SAFETY.value
         with self.assertRaisesRegex(RuntimeError, "technical safety"):
             adapter.finish(state)
 

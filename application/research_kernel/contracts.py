@@ -15,6 +15,11 @@ class Stop(str, Enum):
     SAFETY = "stopped_safety"
 
 
+class StopReason(str, Enum):
+    BOUNDED_ACQUISITION_DEADLINE = "bounded_acquisition_deadline"
+    HARD_SAFETY = "hard_safety"
+
+
 class OutcomeKind(str, Enum):
     TARGET = "productive_target"
     CROSS = "productive_cross_only"
@@ -90,6 +95,7 @@ class KernelState:
     attempted_strategies: list[str] = field(default_factory=list)
     pending: Action | None = None
     terminal: Stop | None = None
+    stop_reason: str | None = None
     decisions: list[dict] = field(default_factory=list)
 
 
