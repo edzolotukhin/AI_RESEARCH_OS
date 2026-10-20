@@ -189,8 +189,11 @@ class BrowserIdentityE2ETests(unittest.TestCase):
 
         login = self.client.post(
             "/ui/login",
-            params={"next": f"/ui/projects/{project_id}"},
-            data={"email": "alice@example.com", "password": "correct horse battery"},
+            data={
+                "next": f"/ui/projects/{project_id}",
+                "email": "alice@example.com",
+                "password": "correct horse battery",
+            },
             follow_redirects=False,
         )
         self.assertEqual(login.status_code, 303)
