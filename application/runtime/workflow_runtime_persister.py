@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from application.persistence.exceptions import CheckpointPersistenceError
@@ -102,6 +103,7 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
                 is_quantitative_diagnostic_stage(task.definition_id)
                 or has_evidence_failure_diagnostics(context)
                 or bool(context.shared_state.get("research_funnel_v1"))
+                or _has_report_failure_diagnostics(context)
             ):
                 if is_quantitative_diagnostic_stage(task.definition_id):
                     diagnostic = build_stage_failure_diagnostic(
@@ -112,12 +114,25 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
                     ledger = context.shared_state.get(SEMANTIC_LEDGER_KEY, ())
                     if isinstance(ledger, (list, tuple)):
                         self._task_results[SEMANTIC_LEDGER_KEY] = list(ledger)
-                self._task_results[task.id] = capture_task_result(context, task.id)
+                if _has_report_failure_diagnostics(context):
+                    diagnostic_context = replace(
+                        context,
+                        shared_state={
+                            key: context.shared_state[key]
+                            for key in REPORT_FAILURE_DIAGNOSTIC_KEYS
+                            if key in context.shared_state
+                        },
+                    )
+                    self._task_results[task.id] = capture_task_result(
+                        diagnostic_context,
+                        task.id,
+                    )
+                else:
+                    self._task_results[task.id] = capture_task_result(context, task.id)
 
         self._checkpoint(context, critical=True)
         if self._audit is not None:
             self._audit.record_task_outcome(context, error=error)
-
     def on_workflow_finalized(
         self,
         context: WorkflowContext,
@@ -162,3 +177,16 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
             ) from exc
 
         self._last_fingerprint = fingerprint
+
+
+REPORT_FAILURE_DIAGNOSTIC_KEYS = (
+    "report_repair_diagnostics",
+    "report_generation_diagnostics",
+)
+
+
+def _has_report_failure_diagnostics(context: WorkflowContext) -> bool:
+    return any(
+        key in context.shared_state
+        for key in REPORT_FAILURE_DIAGNOSTIC_KEYS
+    )

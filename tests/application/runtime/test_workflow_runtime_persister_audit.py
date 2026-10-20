@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import Mock
 
 from application.persistence.exceptions import CheckpointPersistenceError
+from application.report.exceptions import ReportError
 from application.runtime.workflow_execution_audit import WorkflowExecutionAudit
 from application.runtime.workflow_runtime_persister import WorkflowRuntimePersister
 from application.quantitative.execution_diagnostics import SEMANTIC_LEDGER_KEY
@@ -91,6 +92,45 @@ class WorkflowRuntimePersisterAuditOrderingTests(unittest.TestCase):
             [{"stage": "QI", "status": "COMPLETED"}],
             persisted[SEMANTIC_LEDGER_KEY],
         )
+
+    def test_failed_report_task_persists_only_bounded_report_diagnostics(self) -> None:
+        task = self.workflow_run.tasks[0]
+        task.definition_id = "task-write-report"
+        self.context.current_task = task
+        task.ready()
+        task.start()
+        task.fail()
+        self.context.shared_state.update({
+            "report_repair_diagnostics": {"version": 1, "attempts": []},
+            "report_generation_diagnostics": {"phase": "coverage_validation"},
+            "REPORT_PROSE": "must not persist",
+            "arbitrary_shared_state": "must not persist",
+        })
+        persisted = {}
+
+        def save(run, expected_version, **kwargs):
+            persisted.update(kwargs["task_results"])
+            return expected_version + 1
+
+        self.workflow_service.save_workflow_run.side_effect = save
+        persister = WorkflowRuntimePersister(
+            workflow_service=self.workflow_service,
+            audit=self.audit,
+            run_id=self.workflow_run.id,
+            initial_version=0,
+        )
+
+        persister.on_task_finished(self.context, error=ReportError("failed"))
+
+        snapshot = persisted[task.id]
+        self.assertEqual(self.context.workflow_run.status, WorkflowStatus.RUNNING)
+        self.assertEqual(
+            snapshot["shared_state"]["report_repair_diagnostics"],
+            {"version": 1, "attempts": []},
+        )
+        self.assertIn("report_generation_diagnostics", snapshot["shared_state"])
+        self.assertNotIn("REPORT_PROSE", snapshot["shared_state"])
+        self.assertNotIn("arbitrary_shared_state", snapshot["shared_state"])
 
 
 class WorkflowExecutionAuditResumeTests(unittest.TestCase):
