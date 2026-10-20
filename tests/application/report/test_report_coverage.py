@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import unittest
-from unittest.mock import Mock
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from domain.ai.llm_response import LLMResponse
 from domain.evidence.evidence import Evidence
@@ -28,6 +29,7 @@ from application.report.coverage_validation import (
     missing_research_question_ids,
 )
 from application.report.exceptions import ReportError
+from application.report.citation_registry import CitationRegistry
 from application.report.report_service import ReportService
 from application.ports.report_ports import ReportSectionCandidate
 from infrastructure.persistence.memory.in_memory_artifact_repository import (
@@ -203,6 +205,75 @@ def _deterministic_service(*, max_rq_correction_attempts: int = 2) -> ReportServ
 
 
 class ReportCoverageValidationTests(unittest.TestCase):
+    def _repair_diagnostics_for_candidate(self, candidate: ReportSectionCandidate) -> dict:
+        service = _deterministic_service(max_rq_correction_attempts=1)
+        service._report_engine = Mock()
+        service._report_engine.generate_sections.return_value = (candidate,)
+        finding = SimpleNamespace(
+            id="finding-rq5",
+            evidence_refs=("evidence-rq5",),
+            research_question_refs=("rq5_current_status",),
+        )
+        attempts = service._repair_limited_mandatory_coverage(
+            validated_sections=[], section_batch_map={}, findings=[finding], insights=[],
+            evidence_by_id={}, sources_by_id={}, findings_by_id={}, insights_by_id={},
+            citation_registry=CitationRegistry(), brief=Mock(), design=Mock(),
+            section_titles=(), project_id=PROJECT_ID, workflow_run_id=RUN_ID,
+            research_design_id=DESIGN_ID, coverage_snapshot=None,
+            mandatory_rq_findings={"rq5_current_status": ("finding-rq5",)},
+            diagnostics=(
+                "substantive_coverage_missing:rq5_current_status",
+                "mandatory_rq_finding_binding_missing:rq5_current_status",
+            ),
+        )
+        for attempt in attempts:
+            attempt["post_validation_errors"] = [
+                "substantive_coverage_missing:rq5_current_status",
+                "mandatory_rq_finding_binding_missing:rq5_current_status",
+            ]
+        context = _context()
+        context.write_shared("report_repair_diagnostics", {"version": 1, "attempts": attempts})
+        return context.read_shared("report_repair_diagnostics")
+
+    def test_repair_diagnostics_identify_generator_invalid_binding(self) -> None:
+        diagnostics = self._repair_diagnostics_for_candidate(
+            ReportSectionCandidate(title="Invalid", content="Body"),
+        )
+        target = diagnostics["attempts"][0]["targets"][0]
+        self.assertEqual(target["rq_id"], "rq5_current_status")
+        self.assertEqual(target["finding_ids"], ["finding-rq5"])
+        self.assertEqual(target["candidate_sections"][0]["research_question_refs"], [])
+        self.assertEqual(target["candidate_sections"][0]["finding_refs"], [])
+        self.assertEqual(diagnostics["attempts"][0]["post_merge"]["rq5_current_status"], [])
+
+    def test_repair_diagnostics_identify_merge_loss(self) -> None:
+        candidate = ReportSectionCandidate(
+            title="Valid", content="Body",
+            research_question_refs=("rq5_current_status",),
+            finding_refs=("finding-rq5",),
+        )
+        service = _deterministic_service(max_rq_correction_attempts=1)
+        service._report_engine = Mock()
+        service._report_engine.generate_sections.return_value = (candidate,)
+        finding = SimpleNamespace(
+            id="finding-rq5", evidence_refs=("evidence-rq5",),
+            research_question_refs=("rq5_current_status",),
+        )
+        with patch.object(service, "_append_validated_section", return_value=False):
+            attempts = service._repair_limited_mandatory_coverage(
+                validated_sections=[], section_batch_map={}, findings=[finding], insights=[],
+                evidence_by_id={}, sources_by_id={}, findings_by_id={}, insights_by_id={},
+                citation_registry=CitationRegistry(), brief=Mock(), design=Mock(),
+                section_titles=(), project_id=PROJECT_ID, workflow_run_id=RUN_ID,
+                research_design_id=DESIGN_ID, coverage_snapshot=None,
+                mandatory_rq_findings={"rq5_current_status": ("finding-rq5",)},
+                diagnostics=("mandatory_rq_finding_binding_missing:rq5_current_status",),
+            )
+        target = attempts[0]["targets"][0]
+        self.assertEqual(target["candidate_sections"][0]["research_question_refs"], ["rq5_current_status"])
+        self.assertEqual(target["candidate_sections"][0]["finding_refs"], ["finding-rq5"])
+        self.assertEqual(attempts[0]["post_merge"]["rq5_current_status"], [])
+
     def test_enrich_research_question_refs_from_batch_and_findings(self) -> None:
         design = _design(question_count=2)
         finding = Finding(
@@ -319,7 +390,8 @@ class ReportCoverageValidationTests(unittest.TestCase):
             return _generate(prompt, options=options)
 
         llm_client.generate.side_effect = _generate_with_miss
-        summary = service.write_for_context(_context())
+        context = _context()
+        summary = service.write_for_context(context)
         report = service._report_repository.get_by_id(summary.report_id)
         assert report is not None
         covered = covered_research_question_ids(
@@ -331,6 +403,18 @@ class ReportCoverageValidationTests(unittest.TestCase):
             design=_design(),
         )
         self.assertIn("RQ5", covered)
+        diagnostics = context.read_shared("report_repair_diagnostics")
+        self.assertIsNotNone(diagnostics)
+        self.assertLessEqual(len(diagnostics["attempts"]), 2)
+        target = next(
+            item for attempt in diagnostics["attempts"]
+            for item in attempt["targets"]
+            if item["rq_id"] == "RQ5"
+        )
+        self.assertTrue(target["candidate_sections"])
+        self.assertTrue(target["candidate_sections"][0]["finding_refs"])
+        self.assertNotIn("prompt", json.dumps(diagnostics).lower())
+        self.assertNotIn("content", json.dumps(diagnostics).lower())
 
     def test_missing_rq_without_supporting_evidence_fails_explicitly(self) -> None:
         service = _deterministic_service(max_rq_correction_attempts=1)

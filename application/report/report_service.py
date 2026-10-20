@@ -80,6 +80,11 @@ from runtime.workflow_context import WorkflowContext
 logger = logging.getLogger("ai_research_os.report")
 
 _MAX_DEDUP_RETRIES = 5
+_MAX_REPAIR_DIAGNOSTIC_ATTEMPTS = 8
+_MAX_REPAIR_DIAGNOSTIC_TARGETS = 16
+_MAX_REPAIR_DIAGNOSTIC_IDS = 32
+_MAX_REPAIR_DIAGNOSTIC_SECTIONS = 32
+_MAX_REPAIR_DIAGNOSTIC_ERRORS = 32
 
 
 @dataclass(frozen=True)
@@ -419,6 +424,7 @@ class ReportService:
                 mandatory_rq_findings=mandatory_rq_findings,
             ),
         )
+        repair_attempts: list[dict[str, Any]] = []
         if limited and coverage_errors:
             repair_errors = tuple(
                 error for error in coverage_errors
@@ -426,7 +432,7 @@ class ReportService:
                 or error.startswith("mandatory_rq_finding_binding_missing:")
             )
             if repair_errors:
-                self._repair_limited_mandatory_coverage(
+                repair_attempts = self._repair_limited_mandatory_coverage(
                     validated_sections=validated_sections,
                     section_batch_map=section_batch_map,
                     findings=findings,
@@ -479,6 +485,14 @@ class ReportService:
                         validated_sections,
                         mandatory_rq_findings=mandatory_rq_findings,
                     ),
+                )
+                for attempt in repair_attempts:
+                    attempt["post_validation_errors"] = list(coverage_errors)[
+                        :_MAX_REPAIR_DIAGNOSTIC_ERRORS
+                    ]
+                context.write_shared(
+                    "report_repair_diagnostics",
+                    {"version": 1, "attempts": repair_attempts},
                 )
         if coverage_errors:
             context.write_shared(
@@ -1010,9 +1024,10 @@ class ReportService:
         coverage_snapshot: dict | None,
         mandatory_rq_findings: dict[str, tuple[str, ...]],
         diagnostics: tuple[str, ...],
-    ) -> None:
+    ) -> list[dict[str, Any]]:
         """Bounded repair for authoritative limited-report RQ omissions."""
-        for _ in range(self._max_rq_correction_attempts):
+        attempts: list[dict[str, Any]] = []
+        for attempt_number in range(1, self._max_rq_correction_attempts + 1):
             missing = tuple(
                 rq_id for rq_id, finding_ids in sorted(mandatory_rq_findings.items())
                 if finding_ids and not any(
@@ -1022,8 +1037,14 @@ class ReportService:
                 )
             )
             if not missing:
-                return
+                break
             progressed = False
+            attempt_diag: dict[str, Any] = {
+                "attempt": attempt_number,
+                "targets": [],
+                "post_merge": {},
+                "post_validation_errors": [],
+            }
             for question_id in missing:
                 finding_batch = [
                     finding for finding in findings
@@ -1031,6 +1052,23 @@ class ReportService:
                 ]
                 if not finding_batch:
                     continue
+                target_diag = {
+                    "rq_id": question_id,
+                    "finding_ids": sorted(mandatory_rq_findings[question_id])[
+                        :_MAX_REPAIR_DIAGNOSTIC_IDS
+                    ],
+                    "finding_support": {
+                        finding.id: sorted(finding.evidence_refs)
+                        [:_MAX_REPAIR_DIAGNOSTIC_IDS]
+                        for finding in finding_batch[:_MAX_REPAIR_DIAGNOSTIC_IDS]
+                        if finding.id in mandatory_rq_findings[question_id]
+                    },
+                    "triggering_errors": list(diagnostics)[
+                        :_MAX_REPAIR_DIAGNOSTIC_ERRORS
+                    ],
+                }
+                if len(attempt_diag["targets"]) < _MAX_REPAIR_DIAGNOSTIC_TARGETS:
+                    attempt_diag["targets"].append(target_diag)
                 report_input = ReportInput(
                     project_id=project_id,
                     workflow_run_id=workflow_run_id,
@@ -1052,7 +1090,29 @@ class ReportService:
                 try:
                     candidates = self._report_engine.generate_sections(report_input)
                 except Exception:
+                    if target_diag in attempt_diag["targets"]:
+                        target_diag["generator_status"] = "error"
                     continue
+                target_diag["generator_status"] = "ok"
+                target_diag["candidate_sections"] = [
+                    {
+                        "candidate_index": index,
+                        "section_id": (
+                            candidate.metadata.get("section_id")
+                            if isinstance(candidate.metadata, dict)
+                            and isinstance(candidate.metadata.get("section_id"), str)
+                            else None
+                        ),
+                        "research_question_refs": sorted(candidate.research_question_refs),
+                        "finding_refs": sorted(candidate.finding_refs),
+                        "support_refs": sorted(candidate.evidence_refs),
+                        "body_non_empty": bool(candidate.content.strip()),
+                        "schema_status": "parsed",
+                    }
+                    for index, candidate in list(enumerate(candidates))[
+                        :_MAX_REPAIR_DIAGNOSTIC_SECTIONS
+                    ]
+                ]
                 batch_diag = ReportBatchDiagnostics(
                     batch_question_id=question_id,
                     input_finding_count=len(finding_batch),
@@ -1083,8 +1143,25 @@ class ReportService:
                         batch_diag=batch_diag,
                     ):
                         progressed = True
+                if (
+                    question_id in attempt_diag["post_merge"]
+                    or len(attempt_diag["post_merge"]) < _MAX_REPAIR_DIAGNOSTIC_TARGETS
+                ):
+                    attempt_diag["post_merge"][question_id] = [
+                        {
+                            "section_id": section.id,
+                            "research_question_refs": sorted(section.research_question_refs),
+                            "finding_refs": sorted(section.finding_refs),
+                            "support_refs": sorted(section.evidence_refs),
+                        }
+                        for section in validated_sections
+                        if question_id in section.research_question_refs
+                    ][:_MAX_REPAIR_DIAGNOSTIC_SECTIONS]
+            attempts.append(attempt_diag)
+            attempts = attempts[:_MAX_REPAIR_DIAGNOSTIC_ATTEMPTS]
             if not progressed:
-                return
+                break
+        return attempts[:_MAX_REPAIR_DIAGNOSTIC_ATTEMPTS]
 
     def _correct_missing_research_question_coverage(
         self,
