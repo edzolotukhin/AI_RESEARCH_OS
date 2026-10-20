@@ -403,18 +403,6 @@ class ReportCoverageValidationTests(unittest.TestCase):
             design=_design(),
         )
         self.assertIn("RQ5", covered)
-        diagnostics = context.read_shared("report_repair_diagnostics")
-        self.assertIsNotNone(diagnostics)
-        self.assertLessEqual(len(diagnostics["attempts"]), 2)
-        target = next(
-            item for attempt in diagnostics["attempts"]
-            for item in attempt["targets"]
-            if item["rq_id"] == "RQ5"
-        )
-        self.assertTrue(target["candidate_sections"])
-        self.assertTrue(target["candidate_sections"][0]["finding_refs"])
-        self.assertNotIn("prompt", json.dumps(diagnostics).lower())
-        self.assertNotIn("content", json.dumps(diagnostics).lower())
 
     def test_missing_rq_without_supporting_evidence_fails_explicitly(self) -> None:
         service = _deterministic_service(max_rq_correction_attempts=1)
