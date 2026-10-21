@@ -132,6 +132,44 @@ class WorkflowRuntimePersisterAuditOrderingTests(unittest.TestCase):
         self.assertNotIn("REPORT_PROSE", snapshot["shared_state"])
         self.assertNotIn("arbitrary_shared_state", snapshot["shared_state"])
 
+    def test_failed_review_task_persists_only_bounded_review_diagnostics(self) -> None:
+        task = self.workflow_run.tasks[0]
+        task.definition_id = "task-review-report"
+        self.context.current_task = task
+        task.ready()
+        task.start()
+        task.fail()
+        self.context.shared_state.update({
+            "review_diagnostics": {
+                "version": 1,
+                "phase": "semantic_review",
+                "status": "failed",
+                "category": "semantic_parse_failure",
+            },
+            "review_prose": "must not persist",
+            "arbitrary_shared_state": "must not persist",
+        })
+        persisted = {}
+
+        def save(run, expected_version, **kwargs):
+            persisted.update(kwargs["task_results"])
+            return expected_version + 1
+
+        self.workflow_service.save_workflow_run.side_effect = save
+        persister = WorkflowRuntimePersister(
+            workflow_service=self.workflow_service,
+            audit=self.audit,
+            run_id=self.workflow_run.id,
+            initial_version=0,
+        )
+
+        persister.on_task_finished(self.context, error=RuntimeError("review failed"))
+
+        snapshot = persisted[task.id]
+        self.assertEqual(snapshot["shared_state"]["review_diagnostics"]["status"], "failed")
+        self.assertNotIn("review_prose", snapshot["shared_state"])
+        self.assertNotIn("arbitrary_shared_state", snapshot["shared_state"])
+
 
 class WorkflowExecutionAuditResumeTests(unittest.TestCase):
 

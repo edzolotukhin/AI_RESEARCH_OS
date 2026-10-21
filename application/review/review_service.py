@@ -113,10 +113,15 @@ class ReviewService:
         self._last_support_diagnostics: dict[str, Any] = {}
 
     def review_for_context(self, context: WorkflowContext) -> ReviewSummary:
-        design = self._report_service._resolve_design(context)
-        brief = self._report_service._resolve_brief(context)
-        project_id = context.project.id
         workflow_run_id = context.workflow_run.id
+        self._set_review_diagnostics(context, phase="entry", status="started")
+        try:
+            design = self._report_service._resolve_design(context)
+            brief = self._report_service._resolve_brief(context)
+        except Exception:
+            self._set_review_diagnostics(context, phase="entry", status="failed", category="other")
+            raise
+        project_id = context.project.id
 
         revision_count = 0
         review_attempt = 0
@@ -125,6 +130,9 @@ class ReviewService:
             review_attempt += 1
             report = self._latest_report(project_id, workflow_run_id)
             if report is None:
+                self._set_review_diagnostics(
+                    context, phase="precheck", status="failed", category="deterministic_precheck_rejection"
+                )
                 raise ReviewError(
                     f"No report available for review in run {workflow_run_id}",
                 )
@@ -196,6 +204,7 @@ class ReviewService:
             )
 
             semantic_candidates = self._run_semantic_review(
+                context=context,
                 project_id=project_id,
                 workflow_run_id=workflow_run_id,
                 design_id=design.id,
@@ -245,6 +254,7 @@ class ReviewService:
 
             if verdict == ReviewVerdict.APPROVE:
                 approved_artifact_id = self._approve_artifact(report, artifact)
+                self._set_review_diagnostics(context, phase="review", status="completed")
                 return ReviewSummary(
                     review_id=review_id,
                     verdict=verdict.value,
@@ -257,12 +267,18 @@ class ReviewService:
 
             if verdict == ReviewVerdict.REJECT:
                 self._reject_artifact(artifact)
+                self._set_review_diagnostics(
+                    context, phase="review", status="failed", category="semantic_review_rejection"
+                )
                 raise ReviewError(
                     f"Report rejected by quality gate for run {workflow_run_id}",
                 )
 
             if revision_count >= self._max_revision_attempts:
                 self._reject_artifact(artifact)
+                self._set_review_diagnostics(
+                    context, phase="review", status="failed", category="semantic_review_rejection"
+                )
                 raise ReviewError(
                     f"Review revision attempts exhausted for run {workflow_run_id}",
                 )
@@ -277,6 +293,7 @@ class ReviewService:
     def _run_semantic_review(
         self,
         *,
+        context: WorkflowContext,
         project_id: str,
         workflow_run_id: str,
         design_id: str,
@@ -304,6 +321,7 @@ class ReviewService:
         try:
             return self._semantic_review_engine.review_report(review_input)
         except BudgetExhaustedError as exc:
+            self._set_review_diagnostics(context, phase="semantic_review", status="failed", category="budget_exhausted")
             raise ReviewError(str(exc)) from exc
         except ReviewConfigurationError as exc:
             diagnostics = self._build_parse_failure_diagnostics(
@@ -315,9 +333,28 @@ class ReviewService:
                 workflow_run_id,
                 diagnostics.to_dict(),
             )
+            self._set_review_diagnostics(context, phase="semantic_review", status="failed", category="semantic_parse_failure")
             raise ReviewError(
                 format_review_parse_failure_message(diagnostics),
             ) from exc
+
+    @staticmethod
+    def _set_review_diagnostics(
+        context: WorkflowContext,
+        *,
+        phase: str,
+        status: str,
+        category: str | None = None,
+    ) -> None:
+        value: dict[str, Any] = {
+            "version": 1,
+            "phase": phase,
+            "status": status,
+            "workflow_run_id": context.workflow_run.id,
+        }
+        if category is not None:
+            value["category"] = category
+        context.write_shared("review_diagnostics", value)
 
     def _incomplete_coverage_issues(self) -> tuple:
         engine = self._semantic_review_engine

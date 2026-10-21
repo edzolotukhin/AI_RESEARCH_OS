@@ -337,6 +337,11 @@ class ReviewLiveShapeTests(unittest.TestCase):
         message = str(ctx.exception)
         self.assertIn("parse_failure_category", message)
         self.assertIn("run-1", message)
+        diagnostics = context.read_shared("review_diagnostics")
+        self.assertEqual(diagnostics["phase"], "semantic_review")
+        self.assertEqual(diagnostics["status"], "failed")
+        self.assertEqual(diagnostics["category"], "semantic_parse_failure")
+        self.assertNotIn("plain prose response", str(diagnostics))
 
 
 if __name__ == "__main__":
