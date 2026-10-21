@@ -412,6 +412,29 @@ class ReportCoverageValidationTests(unittest.TestCase):
         self.assertIn("RQ6", str(ctx.exception))
         self.assertIn("Report coverage validation failed", str(ctx.exception))
 
+    def test_early_report_failure_persists_bounded_entry_diagnostics(self) -> None:
+        service = _deterministic_service()
+        context = _context()
+        context.workflow_template.research_design_snapshot = None
+
+        with self.assertRaises(ReportError) as ctx:
+            service.write_for_context(context)
+
+        self.assertIn("missing research_design_snapshot", str(ctx.exception))
+        diagnostics = context.read_shared("report_generation_diagnostics")
+        self.assertEqual(
+            diagnostics,
+            {
+                "version": 1,
+                "phase": "entry",
+                "status": "started",
+                "workflow_run_id": RUN_ID,
+            },
+        )
+        self.assertLess(len(json.dumps(diagnostics)), 512)
+        self.assertNotIn("prompt", diagnostics)
+        self.assertNotIn("prose", diagnostics)
+
     def test_provenance_and_citations_persist(self) -> None:
         service = _deterministic_service()
         _seed_run_data(service)

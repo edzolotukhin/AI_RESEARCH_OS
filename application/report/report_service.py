@@ -136,6 +136,15 @@ class ReportService:
         self._max_sections = max_sections
 
     def write_for_context(self, context: WorkflowContext) -> ReportSummary:
+        context.write_shared(
+            "report_generation_diagnostics",
+            {
+                "version": 1,
+                "phase": "entry",
+                "status": "started",
+                "workflow_run_id": context.workflow_run.id,
+            },
+        )
         design = self._resolve_design(context)
         brief = self._resolve_brief(context)
         project_id = context.project.id
