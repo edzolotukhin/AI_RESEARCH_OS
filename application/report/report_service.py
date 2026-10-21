@@ -87,6 +87,18 @@ _MAX_REPAIR_DIAGNOSTIC_SECTIONS = 32
 _MAX_REPAIR_DIAGNOSTIC_ERRORS = 32
 
 
+def _claim_scope_rule(scope_errors: tuple[str, ...]) -> str:
+    if any(error.startswith("Report claim broadens the supported scope:") for error in scope_errors):
+        return "broadening_scope"
+    if any(error.startswith("unsupported numeric value:") for error in scope_errors):
+        return "unsupported_numeric_value"
+    if any(error.startswith("unsupported numeric unit:") for error in scope_errors):
+        return "unsupported_numeric_unit"
+    if any(error.startswith("unsupported numeric scope:") for error in scope_errors):
+        return "unsupported_numeric_scope"
+    return "other_claim_scope"
+
+
 @dataclass(frozen=True)
 class ReportSummary:
     report_id: str
@@ -972,6 +984,8 @@ class ReportService:
             )
             if scope_errors:
                 record_outcome("claim_scope_rejection")
+                if append_outcome is not None:
+                    append_outcome["rule"] = _claim_scope_rule(scope_errors)
                 batch_diag.rejected_section_count += 1
                 batch_diag.rejection_counts["claim_scope"] = (
                     batch_diag.rejection_counts.get("claim_scope", 0) + 1

@@ -31,7 +31,7 @@ from application.report.coverage_validation import (
 from application.report.exceptions import InvalidReportProvenanceError, ReportError
 from application.report.citation_registry import CitationRegistry
 from application.report.diagnostics import ReportBatchDiagnostics
-from application.report.report_service import ReportService
+from application.report.report_service import ReportService, _claim_scope_rule
 from application.ports.report_ports import ReportSectionCandidate
 from infrastructure.persistence.memory.in_memory_artifact_repository import (
     InMemoryArtifactRepository,
@@ -306,6 +306,18 @@ class ReportCoverageValidationTests(unittest.TestCase):
             )
         self.assertFalse(result)
         self.assertEqual(outcome, {"category": "validate_section_candidate:invalid_finding_ref"})
+
+    def test_claim_scope_rejection_diagnostics_use_bounded_rule_codes(self) -> None:
+        cases = {
+            "Report claim broadens the supported scope: operators=['all'] unsupported_scope=['x']": "broadening_scope",
+            "unsupported numeric value: 42": "unsupported_numeric_value",
+            "unsupported numeric unit: 42 %": "unsupported_numeric_unit",
+            "unsupported numeric scope: 42 %": "unsupported_numeric_scope",
+            "unexpected validator result": "other_claim_scope",
+        }
+        for error, expected in cases.items():
+            with self.subTest(error=error):
+                self.assertEqual(_claim_scope_rule((error,)), expected)
 
     def test_enrich_research_question_refs_from_batch_and_findings(self) -> None:
         design = _design(question_count=2)
