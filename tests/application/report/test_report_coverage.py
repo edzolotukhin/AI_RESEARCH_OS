@@ -28,8 +28,9 @@ from application.report.coverage_validation import (
     enrich_research_question_refs,
     missing_research_question_ids,
 )
-from application.report.exceptions import ReportError
+from application.report.exceptions import InvalidReportProvenanceError, ReportError
 from application.report.citation_registry import CitationRegistry
+from application.report.diagnostics import ReportBatchDiagnostics
 from application.report.report_service import ReportService
 from application.ports.report_ports import ReportSectionCandidate
 from infrastructure.persistence.memory.in_memory_artifact_repository import (
@@ -245,6 +246,10 @@ class ReportCoverageValidationTests(unittest.TestCase):
         self.assertEqual(target["candidate_sections"][0]["research_question_refs"], [])
         self.assertEqual(target["candidate_sections"][0]["finding_refs"], [])
         self.assertEqual(diagnostics["attempts"][0]["post_merge"]["rq5_current_status"], [])
+        self.assertEqual(
+            diagnostics["attempts"][0]["targets"][0]["append_outcomes"],
+            [{"category": "validate_section_candidate:empty_support"}],
+        )
 
     def test_repair_diagnostics_identify_merge_loss(self) -> None:
         candidate = ReportSectionCandidate(
@@ -259,7 +264,11 @@ class ReportCoverageValidationTests(unittest.TestCase):
             id="finding-rq5", evidence_refs=("evidence-rq5",),
             research_question_refs=("rq5_current_status",),
         )
-        with patch.object(service, "_append_validated_section", return_value=False):
+        def reject_and_record(*args, append_outcome=None, **kwargs):
+            append_outcome["category"] = "append_rejected"
+            return False
+
+        with patch.object(service, "_append_validated_section", side_effect=reject_and_record):
             attempts = service._repair_limited_mandatory_coverage(
                 validated_sections=[], section_batch_map={}, findings=[finding], insights=[],
                 evidence_by_id={}, sources_by_id={}, findings_by_id={}, insights_by_id={},
@@ -273,6 +282,30 @@ class ReportCoverageValidationTests(unittest.TestCase):
         self.assertEqual(target["candidate_sections"][0]["research_question_refs"], ["rq5_current_status"])
         self.assertEqual(target["candidate_sections"][0]["finding_refs"], ["finding-rq5"])
         self.assertEqual(attempts[0]["post_merge"]["rq5_current_status"], [])
+        self.assertEqual(
+            attempts[0]["targets"][0]["append_outcomes"],
+            [{"category": "append_rejected"}],
+        )
+
+    def test_append_diagnostics_record_validation_rejection(self) -> None:
+        service = _deterministic_service(max_rq_correction_attempts=1)
+        outcome = {}
+        with patch("application.report.report_service.validate_section_candidate") as validate:
+            validate.side_effect = InvalidReportProvenanceError(
+                "unknown finding finding-rq5",
+                category="invalid_finding_ref",
+            )
+            result = service._append_validated_section(
+                ReportSectionCandidate(title="Invalid", content="Body"),
+                validated_sections=[], section_batch_map={}, batch_question_id="rq5_current_status",
+                findings_by_id={}, insights_by_id={}, evidence_by_id={}, sources_by_id={},
+                citation_registry=CitationRegistry(), project_id=PROJECT_ID, workflow_run_id=RUN_ID,
+                research_design_id=DESIGN_ID, design=Mock(), batch_diag=ReportBatchDiagnostics(
+                    batch_question_id="rq5_current_status", input_finding_count=0, input_insight_count=0,
+                ), append_outcome=outcome,
+            )
+        self.assertFalse(result)
+        self.assertEqual(outcome, {"category": "validate_section_candidate:invalid_finding_ref"})
 
     def test_enrich_research_question_refs_from_batch_and_findings(self) -> None:
         design = _design(question_count=2)

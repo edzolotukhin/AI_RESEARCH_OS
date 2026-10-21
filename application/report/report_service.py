@@ -910,7 +910,12 @@ class ReportService:
         design: ResearchDesign,
         batch_diag: ReportBatchDiagnostics,
         allowed_research_question_ids: tuple[str, ...] | None = None,
+        append_outcome: dict[str, Any] | None = None,
     ) -> bool:
+        def record_outcome(category: str) -> None:
+            if append_outcome is not None:
+                append_outcome["category"] = category
+
         try:
             validated = validate_section_candidate(
                 candidate,
@@ -966,6 +971,7 @@ class ReportService:
                 evidence_by_id=evidence_by_id,
             )
             if scope_errors:
+                record_outcome("claim_scope_rejection")
                 batch_diag.rejected_section_count += 1
                 batch_diag.rejection_counts["claim_scope"] = (
                     batch_diag.rejection_counts.get("claim_scope", 0) + 1
@@ -981,6 +987,7 @@ class ReportService:
                 evidence_by_id=evidence_by_id,
                 sources_by_id=sources_by_id,
             ) and not citation_ids:
+                record_outcome("citation_rejection")
                 batch_diag.rejected_section_count += 1
                 batch_diag.rejection_counts["missing_citation"] = (
                     batch_diag.rejection_counts.get("missing_citation", 0) + 1
@@ -1003,8 +1010,10 @@ class ReportService:
                 None if batch_question_id == "__unscoped__" else batch_question_id
             )
             batch_diag.valid_section_count += 1
+            record_outcome("appended")
             return True
         except InvalidReportProvenanceError as exc:
+            record_outcome(f"validate_section_candidate:{classify_provenance_rejection(exc)}")
             batch_diag.rejected_section_count += 1
             category = classify_provenance_rejection(exc)
             batch_diag.rejection_counts[category] = (
@@ -1122,6 +1131,7 @@ class ReportService:
                         :_MAX_REPAIR_DIAGNOSTIC_SECTIONS
                     ]
                 ]
+                target_diag["append_outcomes"] = []
                 batch_diag = ReportBatchDiagnostics(
                     batch_question_id=question_id,
                     input_finding_count=len(finding_batch),
@@ -1150,8 +1160,10 @@ class ReportService:
                         research_design_id=research_design_id,
                         design=design,
                         batch_diag=batch_diag,
+                        append_outcome=(append_outcome := {}),
                     ):
                         progressed = True
+                    target_diag["append_outcomes"].append(append_outcome)
                 if (
                     question_id in attempt_diag["post_merge"]
                     or len(attempt_diag["post_merge"]) < _MAX_REPAIR_DIAGNOSTIC_TARGETS
