@@ -17,6 +17,11 @@ from application.report.substantive_coverage import (
     validate_two_dimensional_coverage,
     compute_rq_coverage_metrics,
 )
+from application.report.coverage_contract import (
+    ReportCoverageContract,
+    resolve_report_coverage_contract,
+    validate_report_against_coverage_contract,
+)
 
 _ACK_KEYWORDS = ("contradict", "conflict", "uncertain", "mixed", "inconsistent")
 _CITATION_MARKER = re.compile(r"\[(S\d+)\]")
@@ -28,6 +33,7 @@ def run_deterministic_pre_review(
     design: ResearchDesign,
     findings: list[Finding],
     insights: list,
+    coverage_contract: ReportCoverageContract | None = None,
 ) -> tuple[ReviewIssue, ...]:
     """Tier-1 deterministic checks before bounded semantic LLM review."""
     issues: list[ReviewIssue] = []
@@ -42,6 +48,9 @@ def run_deterministic_pre_review(
         for section in report.sections
     }
 
+    coverage_contract = coverage_contract or resolve_report_coverage_contract(
+        report=report, design=design,
+    )
     coverage_errors = validate_two_dimensional_coverage(
         report.sections,
         findings=findings,
@@ -49,6 +58,13 @@ def run_deterministic_pre_review(
         design=design,
         evidence_counts_by_rq=evidence_counts,
         section_batch_map=section_batch_map,
+        required_research_question_ids=coverage_contract.required_rq_ids,
+    )
+    coverage_errors = (
+        *coverage_errors,
+        *validate_report_against_coverage_contract(
+            report=report, contract=coverage_contract,
+        ),
     )
     for code in coverage_errors:
         issues.append(

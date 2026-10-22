@@ -48,6 +48,9 @@ class SemanticReviewInput:
     section_inputs: tuple[ReviewSectionInput, ...]
     existing_issues: tuple[ReviewIssue, ...] = ()
     support_context: ReviewSupportContext | None = None
+    report_mode: str = "complete"
+    required_research_question_ids: tuple[str, ...] = ()
+    excluded_research_question_ids: tuple[str, ...] = ()
 
 
 class SemanticReviewEngine(Protocol):

@@ -275,6 +275,13 @@ def test_zero_insights_with_valid_finding_produces_limited_report():
     assert report is not None
     assert report.insight_refs == ()
     assert report.metadata["report_scope"] == "limited"
+    assert report.metadata["rq_coverage_contract"] == {
+        "version": "desk_report_rq_coverage_v1",
+        "mode": "limited",
+        "required_rq_ids": ["rq1"],
+        "excluded_rq_ids": ["rq2"],
+    }
+    assert "Unsupported ResearchQuestions: rq2." in report.limitations
     assert report.metadata["covered_information_need_ids"] == ["in1"]
     assert "in2" in report.metadata["missing_information_need_ids"]
 

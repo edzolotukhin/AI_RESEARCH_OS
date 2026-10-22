@@ -237,6 +237,11 @@ class LlmReviewEngine:
         lines = [
             f"brief_objectives: {list(review_input.brief_objectives)}",
             f"research_questions: {list(review_input.research_questions)}",
+            f"report_mode: {review_input.report_mode}",
+            "required_research_question_ids: "
+            f"{list(review_input.required_research_question_ids)}",
+            "excluded_research_question_ids: "
+            f"{list(review_input.excluded_research_question_ids)}",
             f"section_index: {section_input.section_index}",
             f"section_id: {section.id}",
             f"section_title: {section_input.section_title}",
@@ -264,6 +269,11 @@ class LlmReviewEngine:
         lines = [
             f"brief_objectives: {list(review_input.brief_objectives)}",
             f"research_questions: {list(review_input.research_questions)}",
+            f"report_mode: {review_input.report_mode}",
+            "required_research_question_ids: "
+            f"{list(review_input.required_research_question_ids)}",
+            "excluded_research_question_ids: "
+            f"{list(review_input.excluded_research_question_ids)}",
             f"batch_id: {batch.batch_id}",
             f"batch_label: {batch.batch_label}",
             f"section_indices: {list(batch.section_indices)}",

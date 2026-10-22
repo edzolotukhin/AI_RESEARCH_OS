@@ -30,6 +30,7 @@ from application.report.coverage_validation import (
 )
 from application.report.exceptions import InvalidReportProvenanceError, ReportError
 from application.report.citation_registry import CitationRegistry
+from application.report.coverage_contract import CONTRACT_KEY, CONTRACT_VERSION
 from application.report.diagnostics import ReportBatchDiagnostics
 from application.report.report_service import ReportService, _claim_scope_rule
 from application.ports.report_ports import ReportSectionCandidate
@@ -393,6 +394,11 @@ class ReportCoverageValidationTests(unittest.TestCase):
             design=_design(),
         )
         self.assertEqual(covered, {f"RQ{index}" for index in range(1, 7)})
+        contract = report.metadata[CONTRACT_KEY]
+        self.assertEqual(contract["version"], CONTRACT_VERSION)
+        self.assertEqual(contract["mode"], "complete")
+        self.assertEqual(contract["required_rq_ids"], [f"RQ{i}" for i in range(1, 7)])
+        self.assertEqual(contract["excluded_rq_ids"], [])
 
     def test_missing_rq_triggers_bounded_correction(self) -> None:
         llm_client = Mock()

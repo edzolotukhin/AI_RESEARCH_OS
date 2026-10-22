@@ -21,6 +21,11 @@ from domain.reviews.review_verdict import ReviewVerdict
 
 from application.persistence.records import ArtifactRecord
 from application.report.coverage_validation import section_supports_question
+from application.report.coverage_contract import (
+    ReportCoverageContract,
+    resolve_report_coverage_contract,
+    validate_report_against_coverage_contract,
+)
 from application.report.deduplication import compute_content_checksum
 from application.review.exceptions import InvalidReviewProvenanceError
 
@@ -32,6 +37,7 @@ def run_structural_review(
     design: ResearchDesign,
     findings: list[Finding],
     artifact: ArtifactRecord | None = None,
+    coverage_contract: ReportCoverageContract | None = None,
 ) -> tuple[ReviewIssue, ...]:
     """Deterministic structural quality checks (DR-07)."""
     issues: list[ReviewIssue] = []
@@ -90,7 +96,13 @@ def run_structural_review(
                     ),
                 )
 
+    coverage_contract = coverage_contract or resolve_report_coverage_contract(
+        report=report, design=design,
+    )
+    required_rq_ids = set(coverage_contract.required_rq_ids)
     for question in design.research_questions:
+        if question.id not in required_rq_ids:
+            continue
         if question.id not in covered_questions:
             section_covers = any(
                 section_supports_question(section, question.id, findings)
@@ -106,11 +118,24 @@ def run_structural_review(
                     ),
                 )
 
+    for code in validate_report_against_coverage_contract(
+        report=report, contract=coverage_contract,
+    ):
+        issues.append(
+            _issue(
+                ReviewIssueType.COVERAGE_GAP,
+                ReviewIssueSeverity.MAJOR,
+                f"Report coverage contract: {code}",
+                research_question_refs=(code.split(":", 1)[1],) if ":" in code else (),
+            ),
+        )
+
     if brief.objectives:
         for objective in brief.objectives:
             linked_questions = [
                 question
                 for question in design.research_questions
+                if question.id in required_rq_ids
                 if any(
                     objective.strip().lower() in ref.lower()
                     or ref.strip().lower() in objective.strip().lower()

@@ -21,6 +21,11 @@ from application.ports.evidence_ports import EvidenceRepository
 from application.ports.report_ports import ReportEngine, ReportInput, ReportRepository, ReportSectionCandidate
 from application.ports.source_ports import SourceRepository
 from application.report.citation_registry import CitationRegistry
+from application.report.coverage_contract import (
+    CONTRACT_KEY as COVERAGE_CONTRACT_KEY,
+    build_report_coverage_contract,
+    excluded_rq_limitation,
+)
 from application.report.claim_scope_validation import validate_claim_scope_with_diagnostics
 from application.research_scope.authoritative_scope import sanitize_scope
 from application.report.content_batching import (
@@ -583,11 +588,22 @@ class ReportService:
             ) from exc
 
         title = report_candidate.title.strip() or brief.title or "Research Report"
+        coverage_contract = build_report_coverage_contract(
+            design=design,
+            limited=limited,
+            required_rq_ids=(
+                allowed_rq_ids
+                if limited
+                else tuple(question.id for question in design.research_questions)
+            ),
+        )
+        excluded_limitation = excluded_rq_limitation(coverage_contract)
         limitations = tuple(
             dict.fromkeys(
                 [
                     *report_candidate.limitations,
                     *design.limitations,
+                    *((excluded_limitation,) if excluded_limitation else ()),
                     *(
                         _coverage_limitations(
                             coverage,
@@ -617,6 +633,7 @@ class ReportService:
             raise ReportError("Limited report must not claim complete research")
         if coverage is not None:
             report_metadata.update(coverage.to_dict())
+        report_metadata[COVERAGE_CONTRACT_KEY] = coverage_contract.to_metadata()
         scenario = context.read_shared("deterministic_review_scenario") or os.environ.get(
             "DETERMINISTIC_REVIEW_SCENARIO",
         )

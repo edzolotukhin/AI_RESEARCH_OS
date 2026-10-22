@@ -23,6 +23,11 @@ from application.ports.review_ports import (
     SemanticReviewInput,
 )
 from application.report.exceptions import ReportError
+from application.report.coverage_contract import (
+    CoverageContractError,
+    required_research_question_texts,
+    resolve_report_coverage_contract,
+)
 from application.report.report_service import ReportService
 from application.review.deduplication import compute_review_deduplication_key
 from application.review.deterministic_pre_review import run_deterministic_pre_review
@@ -136,6 +141,28 @@ class ReviewService:
                 raise ReviewError(
                     f"No report available for review in run {workflow_run_id}",
                 )
+            if (
+                report.project_id != project_id
+                or report.workflow_run_id != workflow_run_id
+                or report.research_design_id != design.id
+            ):
+                self._set_review_diagnostics(
+                    context, phase="coverage_contract", status="failed",
+                    category="structural_validation_rejection",
+                    rejection_codes=("coverage_contract_lineage_mismatch",),
+                )
+                raise ReviewError("Report coverage contract lineage mismatch")
+            try:
+                coverage_contract = resolve_report_coverage_contract(
+                    report=report, design=design,
+                )
+            except CoverageContractError as exc:
+                self._set_review_diagnostics(
+                    context, phase="coverage_contract", status="failed",
+                    category="structural_validation_rejection",
+                    rejection_codes=exc.codes,
+                )
+                raise ReviewError("Invalid Report RQ coverage contract") from exc
 
             artifact = self._artifact_for_report(workflow_run_id, report.id)
             findings = self._finding_repository.list_for_project(
@@ -193,6 +220,7 @@ class ReviewService:
                 design=design,
                 findings=findings,
                 insights=insights,
+                coverage_contract=coverage_contract,
             )
 
             structural_issues = run_structural_review(
@@ -201,6 +229,7 @@ class ReviewService:
                 design=design,
                 findings=findings,
                 artifact=artifact,
+                coverage_contract=coverage_contract,
             )
 
             semantic_candidates = self._run_semantic_review(
@@ -210,11 +239,12 @@ class ReviewService:
                 design_id=design.id,
                 report=report,
                 brief_objectives=brief.objectives,
-                research_questions=tuple(
-                    question.question for question in design.research_questions
+                research_questions=required_research_question_texts(
+                    design=design, contract=coverage_contract,
                 ),
                 structural_issues=structural_issues,
                 support_context=support_context,
+                coverage_contract=coverage_contract,
             )
             coverage_issues = self._incomplete_coverage_issues()
             all_issues = deduplicate_and_cluster_review_issues(
@@ -302,6 +332,7 @@ class ReviewService:
         research_questions: tuple[str, ...],
         structural_issues: tuple,
         support_context,
+        coverage_contract,
     ):
         section_inputs = build_section_inputs(
             report,
@@ -317,6 +348,9 @@ class ReviewService:
             section_inputs=section_inputs,
             existing_issues=structural_issues,
             support_context=support_context,
+            report_mode=coverage_contract.mode,
+            required_research_question_ids=coverage_contract.required_rq_ids,
+            excluded_research_question_ids=coverage_contract.excluded_rq_ids,
         )
         try:
             return self._semantic_review_engine.review_report(review_input)
@@ -345,6 +379,7 @@ class ReviewService:
         phase: str,
         status: str,
         category: str | None = None,
+        rejection_codes: tuple[str, ...] = (),
     ) -> None:
         value: dict[str, Any] = {
             "version": 1,
@@ -354,6 +389,8 @@ class ReviewService:
         }
         if category is not None:
             value["category"] = category
+        if rejection_codes:
+            value["rejection_codes"] = list(rejection_codes[:16])
         context.write_shared("review_diagnostics", value)
 
     def _incomplete_coverage_issues(self) -> tuple:
