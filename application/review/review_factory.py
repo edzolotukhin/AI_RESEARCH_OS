@@ -54,6 +54,7 @@ def build_review_executor(
     artifact_repository: ArtifactRepository,
     review_repository: ReviewRepository,
     llm_client,
+    deliverable_finalizer=None,
 ) -> ReviewExecutor:
     report_service = build_report_service(
         config=config,
@@ -82,4 +83,4 @@ def build_review_executor(
         max_revision_attempts=config.review_max_revision_attempts,
         max_chars_per_section=config.review_max_chars_per_section,
     )
-    return ReviewExecutor(review_service=review_service)
+    return ReviewExecutor(review_service=review_service, deliverable_finalizer=deliverable_finalizer)

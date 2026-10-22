@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 from api.ui.principal import resolve_ui_principal
 from api.ui.pdf_csrf import token as pdf_csrf_token
+from application.persistence.exceptions import AccessDeniedError
 from domain.reports.report import Report
 from domain.reports.report_section import ReportSection
 from domain.reviews.review_result import ReviewResult
@@ -68,7 +69,7 @@ class DeliverableUiTests(ApiTestCase):
                                     self.container, self.owner, project_id, method, source_id)},
                                 follow_redirects=False)
 
-    def test_draft_catalog_generation_and_repeated_identical_download(self):
+    def test_draft_catalog_rejects_generation(self):
         project, run = self._desk()
         report = self._report(project, run)
         page = self.client.get(f"/ui/projects/{project.id}/outputs")
@@ -76,20 +77,11 @@ class DeliverableUiTests(ApiTestCase):
         self.assertIn("Чернетка", page.text)
         self.assertIn(report.id, page.text)
         url = f"/ui/projects/{project.id}/reports/DESK/{report.id}/pdf"
-        self.assertEqual(self._post_pdf(project.id, "DESK", report.id).status_code, 303)
-        self.assertEqual(self._post_pdf(project.id, "DESK", report.id).status_code, 303)
-        self.assertEqual(self.renderer.calls, 1)
+        self.assertEqual(self._post_pdf(project.id, "DESK", report.id).status_code, 404)
+        self.assertEqual(self.renderer.calls, 0)
         item = self.container.project_deliverables_service.source(
             project.id, "DESK", report.id, owner_id=self.owner)
-        self.assertEqual(item.pdf.status_snapshot, "Чернетка")
-        download = f"{url}/{item.pdf.id}"
-        first = self.client.get(download)
-        second = self.client.get(download)
-        self.assertEqual(first.status_code, 200)
-        self.assertEqual(first.content, second.content)
-        self.assertEqual(hashlib.sha256(first.content).hexdigest(), item.pdf.checksum)
-        self.assertEqual(first.headers["cache-control"], "private, no-store")
-        self.assertIn("attachment", first.headers["content-disposition"])
+        self.assertIsNone(item.pdf)
         self.assertIn("Збережений текст 1", self.client.get(
             f"/ui/projects/{project.id}/reports/DESK/{report.id}").text)
         self.assertEqual(self.container.report_query_service.get_report(report.id).sections[0].content,
@@ -100,6 +92,7 @@ class DeliverableUiTests(ApiTestCase):
         report = self._report(project, run, citations={
             "S1": {"title": "Вигадане джерело", "canonical_url": "https://example.invalid/a"}
         })
+        self._review(report, ReviewVerdict.APPROVE, 1)
         service = self.container.project_deliverables_service
         document = service.source(project.id, "DESK", report.id, owner_id=self.owner).document
         self.assertEqual(document.citation_registry,
@@ -119,20 +112,17 @@ class DeliverableUiTests(ApiTestCase):
         self.assertEqual(service.source(
             project.id, "DESK", report.id, owner_id=self.owner).pdf.id, current.id)
 
-    def test_review_after_draft_export_keeps_old_snapshot_downloadable(self):
+    def test_review_approval_enables_exact_revision_export(self):
         project, run = self._desk()
         report = self._report(project, run)
         service = self.container.project_deliverables_service
-        draft = service.generate(project.id, "DESK", report.id, owner_id=self.owner)
+        with self.assertRaises(AccessDeniedError):
+            service.generate(project.id, "DESK", report.id, owner_id=self.owner)
         self._review(report, ReviewVerdict.APPROVE, 1)
         current = service.source(project.id, "DESK", report.id, owner_id=self.owner)
         self.assertEqual(current.document.status, "Схвалено")
         self.assertIsNone(current.pdf)
-        old, data = service.download(project.id, "DESK", report.id, draft.id, owner_id=self.owner)
-        self.assertEqual(old.status_snapshot, "Чернетка")
-        self.assertIn("Чернетка".encode(), data)
         approved = service.generate(project.id, "DESK", report.id, owner_id=self.owner)
-        self.assertNotEqual(draft.id, approved.id)
         self.assertEqual(approved.status_snapshot, "Схвалено")
 
     def test_latest_created_differs_from_approved_and_ambiguity_is_not_approved(self):
@@ -157,6 +147,7 @@ class DeliverableUiTests(ApiTestCase):
     def test_foreign_unknown_and_wrong_method_are_safe_404(self):
         project, run = self._desk()
         report = self._report(project, run)
+        self._review(report, ReviewVerdict.APPROVE, 1)
         foreign, _ = self._desk("prf06e-foreign", "prf06e-foreign-run")
         for url in (
             f"/ui/projects/{foreign.id}/reports/DESK/{report.id}/pdf",
@@ -169,6 +160,7 @@ class DeliverableUiTests(ApiTestCase):
     def test_generation_failure_has_no_completed_record(self):
         project, run = self._desk()
         report = self._report(project, run)
+        self._review(report, ReviewVerdict.APPROVE, 1)
         self.container.project_deliverables_service.renderer = type("Fail", (), {
             "render": lambda _self, _doc: (_ for _ in ()).throw(ValueError("secret content"))})()
         response = self._post_pdf(project.id, "DESK", report.id)
@@ -184,6 +176,7 @@ class DeliverableUiTests(ApiTestCase):
     def test_pdf_generation_requires_action_bound_csrf(self):
         project, run = self._desk()
         report = self._report(project, run)
+        self._review(report, ReviewVerdict.APPROVE, 1)
         url = f"/ui/projects/{project.id}/reports/DESK/{report.id}/pdf"
         self.assertEqual(self.client.post(url, follow_redirects=False).status_code, 403)
         self.assertEqual(self.client.post(url, data={"csrf_token": "wrong"},
@@ -192,6 +185,7 @@ class DeliverableUiTests(ApiTestCase):
     def test_memory_store_concurrent_generation_has_one_record(self):
         project, run = self._desk()
         report = self._report(project, run)
+        self._review(report, ReviewVerdict.APPROVE, 1)
         service = self.container.project_deliverables_service
         def generate(_):
             return service.generate(project.id, "DESK", report.id, owner_id=self.owner).id
@@ -202,6 +196,7 @@ class DeliverableUiTests(ApiTestCase):
     def test_revoked_project_access_blocks_subsequent_download(self):
         project, run = self._desk()
         report = self._report(project, run)
+        self._review(report, ReviewVerdict.APPROVE, 1)
         service = self.container.project_deliverables_service
         pdf = service.generate(project.id, "DESK", report.id, owner_id=self.owner)
         project = self.container.project_service.get_project(project.id)

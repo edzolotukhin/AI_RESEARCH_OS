@@ -207,6 +207,14 @@ def create_application_container(
     insight_service = InsightService(insight_repository=insight_repository)
     report_query_service = ReportQueryService(report_repository=report_repository)
     review_query_service = ReviewQueryService(review_repository=review_repository)
+    project_deliverables_service = ProjectDeliverablesService(
+        projects=project_service, workflows=workflow_service,
+        reports=report_query_service, reviews=review_query_service,
+        quantitative_state=None, qualitative_reports=None,
+        store=persistence.pdf_store, renderer=ReportLabPdfRenderer(),
+        presentation_jobs=persistence.presentation_jobs,
+        pptx_renderer=PptxRenderer() if persistence.presentation_jobs is not None else None,
+    )
     research_run_result_query_service = ResearchRunResultQueryService(
         workflow_run_repository=workflow_run_repository,
         source_repository=source_repository,
@@ -308,6 +316,8 @@ def create_application_container(
         review_repository=review_repository,
         artifact_repository=persistence.artifact_repository,
         stage_llm_clients=stage_llm_clients,
+        deliverable_finalizer=(project_deliverables_service
+                               if persistence.presentation_jobs is not None else None),
     )
 
     # Always retain support for already-pinned ARK runs, even when activation is
@@ -738,15 +748,9 @@ def create_application_container(
         activity_reader = PostgreSQLProjectActivityReader(persistence.activation_sessions)
 
     qualitative_report_service = QualitativeReportService(qualitative_service)
-    project_deliverables_service = ProjectDeliverablesService(
-        projects=project_service, workflows=workflow_service,
-        reports=report_query_service, reviews=review_query_service,
-        quantitative_state=quantitative_ui_service.state if quantitative_ui_service else None,
-        qualitative_reports=qualitative_report_service,
-        store=persistence.pdf_store, renderer=ReportLabPdfRenderer(),
-        presentation_jobs=persistence.presentation_jobs,
-        pptx_renderer=PptxRenderer() if persistence.presentation_jobs is not None else None,
-    )
+    project_deliverables_service.quantitative_state = (
+        quantitative_ui_service.state if quantitative_ui_service else None)
+    project_deliverables_service.qualitative_reports = qualitative_report_service
 
     from application.operations.status import JobObservation, OperationsStatusService
     def operations_jobs():
@@ -840,6 +844,7 @@ def _build_agent_executors(
     review_repository,
     artifact_repository,
     stage_llm_clients,
+    deliverable_finalizer=None,
 ) -> dict:
     use_deterministic_stages = (
         overrides.deterministic_stage_executors
@@ -928,6 +933,7 @@ def _build_agent_executors(
             artifact_repository=artifact_repository,
             review_repository=review_repository,
             llm_client=stage_llm_clients.review,
+            deliverable_finalizer=deliverable_finalizer,
         )
     )
     return executors

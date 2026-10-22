@@ -1,0 +1,186 @@
+from __future__ import annotations
+
+import unittest
+from unittest.mock import Mock
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+
+from application.deliverables.contracts import PdfSection, PdfSourceDocument
+from application.deliverables.presentation_jobs import PresentationJob
+from application.deliverables.service import ProjectDeliverablesService, ReportCatalogItem
+from application.deliverables.store import InMemoryPdfStore
+from application.executors.review_executor import ReviewExecutor
+from application.review.review_service import ReviewSummary
+from application.persistence.exceptions import AccessDeniedError
+from domain.reports.report import Report
+from domain.reports.report_section import ReportSection
+from domain.reviews.review_result import ReviewResult
+from domain.reviews.review_verdict import ReviewVerdict
+
+
+class _Values:
+    def __init__(self, values): self.values = list(values)
+    def list_reports_for_project(self, project_id):
+        return [item for item in self.values if item.project_id == project_id]
+    def list_reviews_for_project(self, project_id, **filters):
+        return [item for item in self.values if item.project_id == project_id and
+                all(getattr(item, key) == value for key, value in filters.items())]
+
+
+class _Projects:
+    def __init__(self, project): self.project = project
+    def get_project(self, project_id):
+        if project_id != self.project.id: raise AccessDeniedError("not found")
+        return self.project
+
+
+class _Renderer:
+    def __init__(self, magic): self.magic, self.calls, self.fail = magic, 0, False
+    version = "pptx-test-v1"
+    template_version = "pptx-template-v1"
+    media_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    def render(self, document):
+        self.calls += 1
+        if self.fail: raise RuntimeError("synthetic")
+        return self.magic + document.source_id.encode()
+
+
+class _Jobs:
+    def __init__(self): self.job = None
+    def find(self, **kwargs): return self.job
+    def schedule(self, **kwargs):
+        if self.job is None:
+            now = datetime.now(timezone.utc)
+            self.job = PresentationJob(id="job", state="pending", attempts=0,
+                lease_until=None, claimed_by=None, created_at=now, updated_at=now,
+                completed_deliverable_id=None, failure_code=None, **kwargs)
+        return self.job
+    def retry(self, job_id):
+        self.job = replace(self.job, state="pending", failure_code=None)
+        return self.job
+    def claim_next(self, worker_id):
+        if self.job is None or self.job.state != "pending": return None
+        self.job = replace(self.job, state="processing", attempts=self.job.attempts + 1,
+                           claimed_by=worker_id,
+                           lease_until=datetime.now(timezone.utc) + timedelta(seconds=30))
+        return self.job
+    def complete(self, job_id, worker_id, deliverable_id):
+        self.job = replace(self.job, state="completed", claimed_by=None, lease_until=None,
+                           completed_deliverable_id=deliverable_id)
+        return True
+    def fail(self, job_id, worker_id, failure_code):
+        self.job = replace(self.job, state="failed", claimed_by=None, lease_until=None,
+                           failure_code=failure_code)
+        return True
+
+
+class DeskApprovedFinalizationTests(unittest.TestCase):
+    def setUp(self):
+        self.project = type("Project", (), {"id": "project", "owner_principal_id": "owner"})()
+        self.report = Report(id="report", project_id="project", workflow_run_id="run",
+            research_design_id="design", title="Report", language="en",
+            sections=(ReportSection("section", "Title", "Body"),), executive_summary="Summary",
+            limitations=(), created_at="2026-01-01T00:00:00Z", generation_method="test",
+            finding_refs=(), insight_refs=(), evidence_refs=(), citation_registry={},
+            revision_number=3, approval_status="draft")
+        self.review = ReviewResult(id="review", project_id="project", workflow_run_id="run",
+            research_design_id="design", report_id="report", review_attempt=1,
+            verdict=ReviewVerdict.APPROVE, quality_dimensions=(), issues=(), summary="ok",
+            review_method="test", created_at="2026-01-01T00:01:00Z", deduplication_key="review")
+        self.document = PdfSourceDocument(project_id="project", method="DESK", run_id="run",
+            study_id=None, source_id="report", source_version="revision-3-review-review-approve",
+            status="Схвалено", title="Report", summary="Summary",
+            sections=(PdfSection("Title", ("Body",)),), limitations=(), revision_number=3,
+            approval_review_id="review", approval_decision="approve")
+        self.jobs = _Jobs()
+        self.pdf_renderer = _Renderer(b"%PDF-1.4\n")
+        self.pptx_renderer = _Renderer(b"PK\x03\x04")
+        self.service = ProjectDeliverablesService(projects=_Projects(self.project), workflows=None,
+            reports=_Values([self.report]), reviews=_Values([self.review]), quantitative_state=None,
+            store=InMemoryPdfStore(), renderer=self.pdf_renderer,
+            presentation_jobs=self.jobs, pptx_renderer=self.pptx_renderer)
+        self.service.source = lambda *args, **kwargs: self._item()
+
+    def _item(self):
+        pdf = self.service.store.find(project_id="project", method="DESK", source_id="report",
+            source_version=self.document.source_version, renderer_version="prf07c-reportlab-2")
+        pptx = self.service.store.find(project_id="project", method="DESK", source_id="report",
+            source_version=self.document.source_version, renderer_version=self.pptx_renderer.version,
+            format="PPTX", template_version=self.pptx_renderer.template_version)
+        return ReportCatalogItem(self.document, pdf, self.jobs.job, pptx)
+
+    def test_exact_approval_gate_rejects_absent_revise_reject_foreign_and_conflicting(self):
+        self.assertEqual(self.service._approved_desk_review(self.report, [self.review]).id, "review")
+        bad = [
+            [],
+            [replace(self.review, verdict=ReviewVerdict.REVISE)],
+            [replace(self.review, verdict=ReviewVerdict.REJECT)],
+            [replace(self.review, report_id="other")],
+            [self.review, replace(self.review, id="conflict", verdict=ReviewVerdict.REJECT)],
+        ]
+        for reviews in bad:
+            with self.subTest(reviews=reviews), self.assertRaises(AccessDeniedError):
+                self.service._approved_desk_review(self.report, reviews)
+        with self.assertRaises(AccessDeniedError):
+            self.service._approved_desk_item(replace(self._item(), document=replace(
+                self.document, approval_review_id=None, approval_decision=None)))
+
+    def test_finalization_is_idempotent_and_tracks_exact_approval_until_pptx_complete(self):
+        first = self.service.finalize_approved_review(
+            project_id="project", report_id="report", review_id="review")
+        second = self.service.finalize_approved_review(
+            project_id="project", report_id="report", review_id="review")
+        self.assertEqual(first["status"], "pptx_queued")
+        self.assertEqual(first["pdf_id"], second["pdf_id"])
+        self.assertEqual(first["pptx_job_id"], second["pptx_job_id"])
+        self.assertEqual((first["report_revision"], first["review_id"], first["review_decision"]),
+                         ("3", "review", "approve"))
+        self.assertEqual(self.pdf_renderer.calls, 1)
+        self.assertEqual(self._item().finalization_state, "pptx_queued")
+        self.assertTrue(self.service.process_next_presentation("worker"))
+        item = self._item()
+        self.assertEqual(item.finalization_state, "complete")
+        self.assertEqual(item.pdf.checksum, __import__("hashlib").sha256(
+            self.service.store.get(item.pdf.id)[1]).hexdigest())
+        self.assertEqual(item.pptx.checksum, __import__("hashlib").sha256(
+            self.service.store.get(item.pptx.id)[1]).hexdigest())
+        self.assertIn("revision-3-review-review-approve", item.pdf.source_version)
+        self.assertEqual(self.service.download("project", "DESK", "report", item.pdf.id,
+                                               owner_id="owner")[0].id, item.pdf.id)
+        self.assertEqual(self.service.download_presentation(
+            "project", "DESK", "report", item.pptx.id, owner_id="owner")[0].id, item.pptx.id)
+
+    def test_missing_or_failed_pptx_retries_without_regenerating_pdf(self):
+        self.service.finalize_approved_review(project_id="project", report_id="report", review_id="review")
+        self.pptx_renderer.fail = True
+        self.service.process_next_presentation("worker")
+        self.assertEqual(self._item().finalization_state, "pptx_failed")
+        self.pptx_renderer.fail = False
+        state = self.service.finalize_approved_review(
+            project_id="project", report_id="report", review_id="review")
+        self.assertEqual(state["status"], "pptx_queued")
+        self.assertEqual(self.pdf_renderer.calls, 1)
+        self.service.process_next_presentation("worker")
+        self.assertEqual(self._item().finalization_state, "complete")
+
+    def test_review_approve_starts_finalization_and_records_nonterminal_pptx_state(self):
+        review_service = Mock()
+        review_service.review_for_context.return_value = ReviewSummary(
+            review_id="review", verdict="approve", report_id="report", artifact_id=None,
+            review_attempt=1, revision_count=0, issue_count=0)
+        finalizer = Mock()
+        finalizer.finalize_approved_review.return_value = {
+            "status": "pptx_queued", "report_id": "report", "review_id": "review"}
+        state = {}
+        context = Mock()
+        context.project.id = "project"
+        context.current_task = None
+        context.write_shared.side_effect = lambda key, value: state.__setitem__(key, value)
+        ReviewExecutor(review_service=review_service, deliverable_finalizer=finalizer).run(context)
+        finalizer.finalize_approved_review.assert_called_once_with(
+            project_id="project", report_id="report", review_id="review")
+        self.assertEqual(state["desk_deliverable_finalization"]["status"], "pptx_queued")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -22,12 +22,35 @@ from application.deliverables.quantitative_sources import approved_quantitative_
 from application.report.source_display import source_display
 
 
+class DeliverableFinalizationError(RuntimeError):
+    def __init__(self, state: str, code: str) -> None:
+        super().__init__(code)
+        self.state = state
+        self.code = code
+
+
 @dataclass(frozen=True)
 class ReportCatalogItem:
     document: PdfSourceDocument
     pdf: PdfDeliverable | None
     presentation_job: PresentationJob | None = None
     pptx: PdfDeliverable | None = None
+
+    @property
+    def finalization_state(self) -> str:
+        if self.document.method != "DESK" or self.document.status != "Схвалено":
+            return "not_applicable"
+        if self.pdf is None:
+            return "pending"
+        if self.presentation_job is None:
+            return "pending"
+        if self.presentation_job.state == "failed":
+            return "pptx_failed"
+        if self.presentation_job.state == "pending":
+            return "pptx_queued"
+        if self.presentation_job.state == "processing":
+            return "pptx_running"
+        return "complete" if self.pptx is not None else "pptx_failed"
 
 
 @dataclass(frozen=True)
@@ -79,6 +102,16 @@ class ProjectDeliverablesService:
             return "Статус перевірки не підтверджено", digest
         return "Потребує доопрацювання", digest
 
+    @staticmethod
+    def _approved_desk_review(report, reviews):
+        same = [item for item in reviews if item.project_id == report.project_id
+                and item.workflow_run_id == report.workflow_run_id
+                and item.report_id == report.id
+                and item.research_design_id == report.research_design_id]
+        if len(same) != 1 or same[0].verdict != ReviewVerdict.APPROVE:
+            raise AccessDeniedError("Схвалену ревізію звіту не знайдено")
+        return same[0]
+
     def _desk(self, project_id: str, run_ids: set[str]) -> list[PdfSourceDocument]:
         documents = []
         for report in self.reports.list_reports_for_project(project_id):
@@ -87,6 +120,17 @@ class ProjectDeliverablesService:
             reviews = self.reviews.list_reviews_for_project(
                 project_id, workflow_run_id=report.workflow_run_id, report_id=report.id)
             status, review_digest = self._desk_status(report, reviews)
+            approved_review = None
+            try:
+                approved_review = self._approved_desk_review(report, reviews)
+            except AccessDeniedError:
+                pass
+            source_version = (
+                f"revision-{report.revision_number}-review-{approved_review.id}-"
+                f"{approved_review.verdict.value.lower()}"
+                if approved_review is not None else
+                f"revision-{report.revision_number}-review-{review_digest}"
+            )
             sections = tuple(PdfSection(item.title, (item.content,), item.citation_ids)
                              for item in report.sections)
             registry = tuple((key, source_display(value))
@@ -96,13 +140,15 @@ class ProjectDeliverablesService:
             documents.append(PdfSourceDocument(
                 project_id=project_id, method="DESK", run_id=report.workflow_run_id,
                 study_id=None, source_id=report.id,
-                source_version=f"revision-{report.revision_number}-review-{review_digest}",
+                source_version=source_version,
                 status=status, title=report.title, summary=report.executive_summary,
                 sections=sections, limitations=report.limitations,
                 citation_registry=registry, created_at=report.created_at,
                 links=links,
                 revision_number=report.revision_number,
                 previous_report_id=report.previous_report_id,
+                approval_review_id=approved_review.id if approved_review else None,
+                approval_decision=(approved_review.verdict.value if approved_review else None),
             ))
         return sorted(documents, key=lambda item: (item.created_at or "", item.revision_number or 0, item.source_id), reverse=True)
 
@@ -215,8 +261,19 @@ class ProjectDeliverablesService:
             raise AccessDeniedError("Звіт не знайдено")
         return matches[0]
 
+    def _approved_desk_item(self, item: ReportCatalogItem) -> ReportCatalogItem:
+        document = item.document
+        if (document.method == "DESK" and
+                (document.status != "Схвалено" or not document.approval_review_id
+                 or document.approval_decision != ReviewVerdict.APPROVE.value)):
+            raise AccessDeniedError("Схвалену ревізію звіту не знайдено")
+        return item
+
     def generate(self, project_id: str, method: str, source_id: str, *, owner_id: str) -> PdfDeliverable:
-        item = self.source(project_id, method, source_id, owner_id=owner_id)
+        item = self._approved_desk_item(self.source(project_id, method, source_id, owner_id=owner_id))
+        return self._generate_item(item)
+
+    def _generate_item(self, item: ReportCatalogItem) -> PdfDeliverable:
         if item.pdf is not None:
             return item.pdf
         document = item.document
@@ -226,18 +283,18 @@ class ProjectDeliverablesService:
         checksum = hashlib.sha256(data).hexdigest()
         identifier = str(uuid4())
         record = PdfDeliverable(
-            id=identifier, project_id=project_id, method=method, run_id=document.run_id,
-            study_id=document.study_id, source_id=source_id, source_version=document.source_version,
+            id=identifier, project_id=document.project_id, method=document.method, run_id=document.run_id,
+            study_id=document.study_id, source_id=document.source_id, source_version=document.source_version,
             status_snapshot=document.status, renderer_version=RENDERER_VERSION,
             created_at=datetime.now(timezone.utc), storage_key=identifier,
             checksum=checksum, byte_size=len(data),
-            filename=f"research-{method.lower()}-{identifier}.pdf",
+            filename=f"research-{document.method.lower()}-{identifier}.pdf",
         )
         return self.store.complete(record, data)
 
     def download(self, project_id: str, method: str, source_id: str,
                  deliverable_id: str, *, owner_id: str) -> tuple[PdfDeliverable, bytes]:
-        item = self.source(project_id, method, source_id, owner_id=owner_id)
+        item = self._approved_desk_item(self.source(project_id, method, source_id, owner_id=owner_id))
         stored = self.store.get(deliverable_id)
         if stored is None:
             raise AccessDeniedError("PDF не знайдено")
@@ -252,8 +309,7 @@ class ProjectDeliverablesService:
             raise AccessDeniedError("PDF не знайдено")
         if method in {"QUANTITATIVE", "QUALITATIVE"} and record.source_version != document.source_version:
             raise AccessDeniedError("PDF не знайдено")
-        if method == "DESK" and not record.source_version.startswith(
-            f"revision-{document.revision_number}-review-"):
+        if method == "DESK" and record.source_version != document.source_version:
             raise AccessDeniedError("PDF не знайдено")
         if len(data) != record.byte_size or hashlib.sha256(data).hexdigest() != record.checksum:
             raise AccessDeniedError("PDF не знайдено")
@@ -263,16 +319,63 @@ class ProjectDeliverablesService:
                               *, owner_id: str) -> PresentationJob:
         if self.presentation_jobs is None or self.pptx_renderer is None:
             raise ValueError("Створення презентації недоступне")
-        document = self.source(project_id, method, source_id, owner_id=owner_id).document
+        item = self._approved_desk_item(self.source(project_id, method, source_id, owner_id=owner_id))
+        return self._schedule_presentation_document(item.document)
+
+    def _schedule_presentation_document(self, document: PdfSourceDocument) -> PresentationJob:
         job = self.presentation_jobs.schedule(
-            project_id=project_id, method=method, run_id=document.run_id,
-            study_id=document.study_id, source_id=source_id,
+            project_id=document.project_id, method=document.method, run_id=document.run_id,
+            study_id=document.study_id, source_id=document.source_id,
             source_version=document.source_version, status_snapshot=document.status,
             template_version=self.pptx_renderer.template_version,
             renderer_version=self.pptx_renderer.version)
         if job.state == "failed":
             return self.presentation_jobs.retry(job.id) or job
         return job
+
+    def finalize_approved_review(self, *, project_id: str, report_id: str,
+                                 review_id: str) -> dict[str, str]:
+        try:
+            reports = [item for item in self.reports.list_reports_for_project(project_id)
+                       if item.id == report_id and item.project_id == project_id]
+            if len(reports) != 1:
+                raise AccessDeniedError("not approved")
+            report = reports[0]
+            reviews = self.reviews.list_reviews_for_project(
+                project_id, workflow_run_id=report.workflow_run_id, report_id=report.id)
+            review = self._approved_desk_review(report, reviews)
+            if review.id != review_id:
+                raise AccessDeniedError("not approved")
+            project = self.projects.get_project(project_id)
+            item = self._approved_desk_item(self.source(
+                project_id, "DESK", report_id, owner_id=project.owner_principal_id))
+        except Exception as exc:
+            raise DeliverableFinalizationError("approval_gate_rejected", "approval_gate_rejected") from exc
+        try:
+            pdf = self._generate_item(item)
+        except Exception as exc:
+            raise DeliverableFinalizationError("pdf_failed", "pdf_generation_failed") from exc
+        try:
+            job = self._schedule_presentation_document(item.document)
+        except Exception as exc:
+            raise DeliverableFinalizationError("pptx_failed", "pptx_schedule_failed") from exc
+        if job.state == "completed":
+            refreshed = self._approved_desk_item(self.source(
+                project_id, "DESK", report_id, owner_id=project.owner_principal_id))
+            if refreshed.pptx is None:
+                raise DeliverableFinalizationError(
+                    "pptx_failed", "pptx_provenance_or_checksum_missing")
+        return {
+            "status": "complete" if job.state == "completed" else
+                      "pptx_failed" if job.state == "failed" else
+                      "pptx_queued" if job.state == "pending" else "pptx_running",
+            "report_id": report.id,
+            "report_revision": str(report.revision_number),
+            "review_id": review.id,
+            "review_decision": review.verdict.value,
+            "pdf_id": pdf.id,
+            "pptx_job_id": job.id,
+        }
 
     def process_next_presentation(self, worker_id: str) -> bool:
         if self.presentation_jobs is None or self.pptx_renderer is None:
@@ -282,8 +385,9 @@ class ProjectDeliverablesService:
             return False
         try:
             project = self.projects.get_project(job.project_id)
-            document = self.source(job.project_id, job.method, job.source_id,
-                                   owner_id=project.owner_principal_id).document
+            document = self._approved_desk_item(self.source(
+                job.project_id, job.method, job.source_id,
+                owner_id=project.owner_principal_id)).document
             if (document.run_id, document.study_id, document.source_version,
                 document.status) != (job.run_id, job.study_id, job.source_version,
                                      job.status_snapshot):
@@ -316,7 +420,8 @@ class ProjectDeliverablesService:
                               deliverable_id: str, *, owner_id: str) -> tuple[PdfDeliverable, bytes]:
         if self.pptx_renderer is None or self.presentation_jobs is None:
             raise AccessDeniedError("Презентацію не знайдено")
-        document = self.source(project_id, method, source_id, owner_id=owner_id).document
+        document = self._approved_desk_item(self.source(
+            project_id, method, source_id, owner_id=owner_id)).document
         stored = self.store.get(deliverable_id)
         if stored is None:
             raise AccessDeniedError("Презентацію не знайдено")
@@ -333,9 +438,7 @@ class ProjectDeliverablesService:
             project_id, method, document.run_id, document.study_id, source_id,
             "PPTX", self.pptx_renderer.media_type):
             raise AccessDeniedError("Презентацію не знайдено")
-        if (method in {"QUANTITATIVE", "QUALITATIVE"} and record.source_version != document.source_version) or (
-            method == "DESK" and not record.source_version.startswith(
-                f"revision-{document.revision_number}-review-")):
+        if record.source_version != document.source_version:
             raise AccessDeniedError("Презентацію не знайдено")
         if len(data) != record.byte_size or hashlib.sha256(data).hexdigest() != record.checksum:
             raise AccessDeniedError("Презентацію не знайдено")

@@ -109,7 +109,7 @@ class PresentationUiTests(ApiTestCase):
         return _create_run(self.container, self.owner, project_id="prf06f-test-project",
                            run_id="prf06f-test-run", title="Синтетичне дослідження")
 
-    def _report(self, project, run, revision=1, status="draft"):
+    def _report(self, project, run, revision=1, status="draft", approved=True):
         report = Report(
             id=f"{run.id}-report-{revision}", project_id=project.id,
             workflow_run_id=run.id, research_design_id="design-1",
@@ -124,6 +124,14 @@ class PresentationUiTests(ApiTestCase):
             approval_status=status, deduplication_key=f"{run.id}-{revision}",
         )
         self.container.report_query_service._report_repository.create(report)
+        if approved:
+            self.container.review_query_service._review_repository.create(ReviewResult(
+                id=f"{report.id}-review", project_id=project.id, workflow_run_id=run.id,
+                research_design_id=report.research_design_id, report_id=report.id,
+                review_attempt=1, verdict=ReviewVerdict.APPROVE,
+                quality_dimensions=(), issues=(), summary="Тест", review_method="test",
+                created_at=datetime.now(timezone.utc).isoformat(),
+                deduplication_key=f"{report.id}-review"))
         return report
 
     def _post(self, project_id, source_id, csrf=None):
@@ -146,7 +154,7 @@ class PresentationUiTests(ApiTestCase):
         item = self.container.project_deliverables_service.source(
             project.id, "DESK", report.id, owner_id=self.owner)
         self.assertEqual(item.presentation_job.state, "completed")
-        self.assertEqual(item.pptx.status_snapshot, "Чернетка")
+        self.assertEqual(item.pptx.status_snapshot, "Схвалено")
         url = f"/ui/projects/{project.id}/reports/DESK/{report.id}/pptx/{item.pptx.id}"
         first = self.client.get(url)
         self.assertEqual(first.status_code, 200)
@@ -158,27 +166,22 @@ class PresentationUiTests(ApiTestCase):
 
     def test_exact_revision_status_and_historical_content(self):
         project, run = self._desk()
-        approved = self._report(project, run, 1)
+        approved = self._report(project, run, 1, approved=False)
         self.container.review_query_service._review_repository.create(ReviewResult(
             id="prf06f-review", project_id=project.id, workflow_run_id=run.id,
             research_design_id=approved.research_design_id, report_id=approved.id,
             review_attempt=1, verdict=ReviewVerdict.APPROVE,
             quality_dimensions=(), issues=(), summary="Тест", review_method="test",
             created_at=datetime.now(timezone.utc).isoformat(), deduplication_key="prf06f-review"))
-        draft = self._report(project, run, 2)
-        for report in (approved, draft):
-            self._post(project.id, report.id)
-            self.container.project_deliverables_service.process_next_presentation("worker")
+        draft = self._report(project, run, 2, approved=False)
+        self.assertEqual(self._post(project.id, approved.id).status_code, 303)
+        self.container.project_deliverables_service.process_next_presentation("worker")
+        self.assertEqual(self._post(project.id, draft.id).status_code, 404)
         service = self.container.project_deliverables_service
         old = service.source(project.id, "DESK", approved.id, owner_id=self.owner)
-        latest = service.source(project.id, "DESK", draft.id, owner_id=self.owner)
         self.assertEqual(old.pptx.status_snapshot, "Схвалено")
-        self.assertEqual(latest.pptx.status_snapshot, "Чернетка")
-        self.assertNotEqual(old.pptx.id, latest.pptx.id)
         self.assertIn(b"1", service.download_presentation(project.id, "DESK", approved.id,
                         old.pptx.id, owner_id=self.owner)[1])
-        self.assertIn(b"2", service.download_presentation(project.id, "DESK", draft.id,
-                        latest.pptx.id, owner_id=self.owner)[1])
 
     def test_failure_retry_and_no_incomplete_download(self):
         project, run = self._desk()

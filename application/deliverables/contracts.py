@@ -53,6 +53,8 @@ class PdfSourceDocument:
     revision_number: int | None = None
     previous_report_id: str | None = None
     charts: tuple[PresentationChart, ...] = ()
+    approval_review_id: str | None = None
+    approval_decision: str | None = None
 
 
 @dataclass(frozen=True)

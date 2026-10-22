@@ -27,9 +27,11 @@
 {% if loop.first %}<article class="card">{% else %}<details class="card"><summary>Редакція {{ item.document.revision_number }} · {{ item.document.title }}</summary>{% endif %}
 <h3>{{ item.document.title }}</h3><p>Редакція {{ item.document.revision_number }} · {{ item.document.status }} · {{ item.document.source_id }}{% if item.document.created_at %} · {{ item.document.created_at }}{% endif %}</p>
 <a class="button button-quiet" href="/ui/projects/{{ view.project_id|urlencode }}/reports/DESK/{{ item.document.source_id|urlencode }}">Переглянути звіт</a>
+{% if item.document.approval_review_id and item.document.approval_decision == 'approve' %}
 {% if item.pdf %}<a class="button button-quiet" href="/ui/projects/{{ view.project_id|urlencode }}/reports/DESK/{{ item.document.source_id|urlencode }}/pdf/{{ item.pdf.id|urlencode }}">Завантажити PDF</a>
 {% else %}<form method="post" action="/ui/projects/{{ view.project_id|urlencode }}/reports/DESK/{{ item.document.source_id|urlencode }}/pdf"><input type="hidden" name="csrf_token" value="{{ pdf_csrf('DESK', item.document.source_id) }}"><button class="button button-quiet" type="submit">Створити PDF</button></form>{% endif %}
 {% include "projects/presentation_action.html" %}
+{% else %}<p class="muted">PDF і PPTX будуть доступні лише для точної схваленої редакції.</p>{% endif %}
 {% if loop.first %}</article>{% else %}</details>{% endif %}
 {% endfor %}</section>
 <section class="context compact-section"><p class="eyebrow">ЗБЕРЕЖЕНІ ЗВІТИ</p><h2>Кількісні звіти</h2>
