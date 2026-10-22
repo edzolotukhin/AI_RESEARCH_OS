@@ -307,6 +307,34 @@ class ReportCoverageValidationTests(unittest.TestCase):
         self.assertFalse(result)
         self.assertEqual(outcome, {"category": "validate_section_candidate:invalid_finding_ref"})
 
+    def test_append_diagnostics_record_bounded_scope_mismatch(self) -> None:
+        service = _deterministic_service(max_rq_correction_attempts=1)
+        outcome = {}
+        with patch(
+            "application.report.report_service.validate_claim_scope_with_diagnostics",
+            return_value=(
+                ("unsupported numeric scope: 42 %",),
+                {"rule": "unsupported_numeric_scope", "anchor_category": "period"},
+            ),
+        ):
+            result = service._append_validated_section(
+                ReportSectionCandidate(title="Valid", content="Body", finding_refs=("finding-rq5",)),
+                validated_sections=[], section_batch_map={}, batch_question_id="rq5_current_status",
+                findings_by_id={"finding-rq5": SimpleNamespace(
+                    evidence_refs=(), project_id=PROJECT_ID, workflow_run_id=RUN_ID,
+                    research_design_id=DESIGN_ID, research_question_refs=("RQ1",),
+                )}, insights_by_id={},
+                evidence_by_id={}, sources_by_id={}, citation_registry=CitationRegistry(),
+                project_id=PROJECT_ID, workflow_run_id=RUN_ID, research_design_id=DESIGN_ID,
+                design=_design(question_count=1), batch_diag=ReportBatchDiagnostics(
+                    batch_question_id="rq5_current_status", input_finding_count=1, input_insight_count=0,
+                ), append_outcome=outcome,
+            )
+        self.assertFalse(result)
+        self.assertEqual(outcome["category"], "claim_scope_rejection")
+        self.assertEqual(outcome["rule"], "unsupported_numeric_scope")
+        self.assertEqual(outcome["mismatch"], {"rule": "unsupported_numeric_scope", "anchor_category": "period"})
+
     def test_claim_scope_rejection_diagnostics_use_bounded_rule_codes(self) -> None:
         cases = {
             "Report claim broadens the supported scope: operators=['all'] unsupported_scope=['x']": "broadening_scope",

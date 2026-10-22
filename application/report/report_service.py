@@ -21,7 +21,7 @@ from application.ports.evidence_ports import EvidenceRepository
 from application.ports.report_ports import ReportEngine, ReportInput, ReportRepository, ReportSectionCandidate
 from application.ports.source_ports import SourceRepository
 from application.report.citation_registry import CitationRegistry
-from application.report.claim_scope_validation import validate_claim_scope
+from application.report.claim_scope_validation import validate_claim_scope_with_diagnostics
 from application.report.content_batching import (
     batch_findings_by_question,
     insights_for_question,
@@ -967,7 +967,7 @@ class ReportService:
                 findings_by_id=findings_by_id,
                 insights_by_id=insights_by_id,
             )
-            scope_errors = validate_claim_scope(
+            scope_errors, scope_mismatch = validate_claim_scope_with_diagnostics(
                 validated.content,
                 finding_ids=(
                     *validated.finding_refs,
@@ -986,6 +986,8 @@ class ReportService:
                 record_outcome("claim_scope_rejection")
                 if append_outcome is not None:
                     append_outcome["rule"] = _claim_scope_rule(scope_errors)
+                    if scope_mismatch is not None:
+                        append_outcome["mismatch"] = scope_mismatch
                 batch_diag.rejected_section_count += 1
                 batch_diag.rejection_counts["claim_scope"] = (
                     batch_diag.rejection_counts.get("claim_scope", 0) + 1

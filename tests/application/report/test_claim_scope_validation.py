@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import unittest
 
-from application.report.claim_scope_validation import validate_claim_scope
+from application.report.claim_scope_validation import (
+    validate_claim_scope,
+    validate_claim_scope_with_diagnostics,
+)
 from domain.evidence.evidence import Evidence
 from domain.findings.finding import Finding
 from domain.findings.insight import Insight
@@ -26,6 +29,15 @@ class ClaimScopeValidationTests(unittest.TestCase):
 
     def _check(self, content: str) -> tuple[str, ...]:
         return validate_claim_scope(
+            content,
+            finding_ids=("f1",),
+            findings_by_id={"f1": self.finding},
+            insights_by_id={},
+            evidence_by_id={"e1": self.evidence},
+        )
+
+    def _diagnose(self, content: str):
+        return validate_claim_scope_with_diagnostics(
             content,
             finding_ids=("f1",),
             findings_by_id={"f1": self.finding},
@@ -95,3 +107,44 @@ class ClaimScopeValidationTests(unittest.TestCase):
         self.evidence.source_excerpt = self.evidence.statement
         self.finding.statement = self.evidence.statement
         self.assertTrue(self._check("In 2026 wages were 45000 грн."))
+
+    def test_broadening_diagnostics_are_bounded_and_non_prose(self) -> None:
+        errors, mismatch = self._diagnose("All people in Ukraine have lower wages.")
+        self.assertTrue(errors)
+        self.assertEqual(mismatch["rule"], "broadening_scope")
+        self.assertLessEqual(len(mismatch["rejected_tokens"]), 8)
+
+    def test_numeric_value_diagnostics_are_bounded(self) -> None:
+        self.evidence.statement = "Kyiv had wages of 45000 грн."
+        self.evidence.source_excerpt = self.evidence.statement
+        self.finding.statement = self.evidence.statement
+        errors, mismatch = self._diagnose("Kyiv recorded wages of 32000 грн.")
+        self.assertTrue(errors)
+        self.assertEqual(mismatch["rule"], "unsupported_numeric_value")
+        self.assertEqual(mismatch["candidate_value"], "32000")
+        self.assertLessEqual(len(mismatch["supported_values"]), 8)
+
+    def test_numeric_unit_diagnostics_are_bounded(self) -> None:
+        self.evidence.statement = "The increase was 10%."
+        self.evidence.source_excerpt = self.evidence.statement
+        self.finding.statement = self.evidence.statement
+        errors, mismatch = self._diagnose("The increase was 10 percentage points.")
+        self.assertTrue(errors)
+        self.assertEqual(mismatch["rule"], "unsupported_numeric_unit")
+        self.assertLessEqual(len(mismatch["supported_units"]), 8)
+
+    def test_numeric_scope_diagnostics_expose_anchor_category(self) -> None:
+        self.evidence.statement = "In 2025 wages were 45000 грн."
+        self.evidence.source_excerpt = self.evidence.statement
+        self.finding.statement = self.evidence.statement
+        errors, mismatch = self._diagnose("In 2026 wages were 45000 грн.")
+        self.assertTrue(errors)
+        self.assertEqual(mismatch["rule"], "unsupported_numeric_scope")
+        self.assertEqual(mismatch["anchor_category"], "period")
+        self.assertLessEqual(len(mismatch["candidate_anchors"]), 8)
+
+    def test_diagnostics_do_not_contain_support_or_claim_prose(self) -> None:
+        _, mismatch = self._diagnose("In 2026 wages were 45000 грн.")
+        serialized = repr(mismatch)
+        self.assertNotIn("Kyiv had wages", serialized)
+        self.assertNotIn("In 2026 wages", serialized)
