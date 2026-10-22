@@ -16,6 +16,10 @@ from application.evidence.semantic_assignment import (
     ValidatedSemanticAssignment,
 )
 from domain.planning.research_subject import subject_tokens
+from application.research_scope.authoritative_scope import (
+    SCOPE_KEY,
+    build_evidence_scope,
+)
 
 
 class InvalidProvenanceError(ValueError):
@@ -282,6 +286,10 @@ def _validate_v2_candidate(
     metadata = dict(candidate.metadata or {})
     metadata.pop("semantic_assignment", None)
     metadata["semantic_assignment"] = assignment.to_metadata()
+    metadata[SCOPE_KEY] = build_evidence_scope(
+        metadata=metadata, statement=candidate.statement,
+        source_excerpt=candidate.source_excerpt,
+    )
     return EvidenceCandidate(
         statement=candidate.statement,
         source_excerpt=candidate.source_excerpt,

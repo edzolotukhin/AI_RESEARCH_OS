@@ -15,6 +15,7 @@ from application.evidence.semantic_assignment import (
     required_aspect_refs,
     semantic_assignment,
 )
+from application.research_scope.authoritative_scope import SCOPE_KEY, SCOPE_VERSION
 from application.ports.evidence_ports import EvidenceCandidate
 from application.research.subject_resolution import resolve_subject_proposal
 from domain.ai.llm_response import LLMResponse
@@ -243,6 +244,8 @@ def test_grounded_canonical_v2_candidate_is_accepted():
     result = _validate(candidate)
     assert result.information_need_refs == ("in-income",)
     assert semantic_assignment(result.metadata)["binding_type"] == "canonical_subject"
+    assert result.metadata[SCOPE_KEY]["version"] == SCOPE_VERSION
+    assert result.metadata[SCOPE_KEY]["geography"] == ["україна"]
 
 
 @pytest.mark.parametrize(

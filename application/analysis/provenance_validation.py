@@ -15,6 +15,7 @@ from application.analysis.diagnostics import (
 )
 from application.analysis.exceptions import InvalidAnalysisProvenanceError
 from application.ports.analysis_ports import FindingCandidate, InsightCandidate
+from application.research_scope.authoritative_scope import SCOPE_KEY, combine_evidence_scopes
 
 
 def validate_confidence(confidence: float | None) -> float | None:
@@ -135,6 +136,7 @@ def validate_finding_candidate(
         metadata["analysis_scope_information_need_ids"] = list(need_refs)
     if candidate.finding_type == "contradiction" or metadata.get("conflicting_evidence"):
         metadata.setdefault("conflict_signal", True)
+    metadata[SCOPE_KEY] = combine_evidence_scopes(cited_evidence)
 
     return FindingCandidate(
         statement=candidate.statement.strip(),

@@ -174,7 +174,10 @@ class LlmReportEngine:
             f"{self._max_insights_per_section} insight_refs. Return JSON only with shape "
             '{"sections":[{"title":"...","content":"...",'
             '"finding_refs":["finding-id"],"insight_refs":["insight-id"],'
-            '"research_question_refs":["rq-id"],"evidence_refs":["evidence-id"]}]}. '
+            '"research_question_refs":["rq-id"],"evidence_refs":["evidence-id"],'
+            '"claim_scope":{"version":"desk_authoritative_scope_v1",'
+            '"geography":[],"periods":[],"metrics":[],'
+            '"population_dimensions":[],"numeric_facts":[]}}]}. '
             "Each section must reference at least one finding_ref or insight_ref. "
             f"Write in language '{report_input.brief.language}'."
         )
@@ -286,6 +289,8 @@ class LlmReportEngine:
                     finding_refs=finding_refs,
                     insight_refs=insight_refs,
                     evidence_refs=evidence_refs,
+                    metadata={"claim_scope": item["claim_scope"]}
+                    if isinstance(item.get("claim_scope"), dict) else {},
                 ),
             )
             if len(sections) >= self._max_sections:

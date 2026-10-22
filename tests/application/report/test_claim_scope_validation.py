@@ -9,6 +9,7 @@ from application.report.claim_scope_validation import (
 from domain.evidence.evidence import Evidence
 from domain.findings.finding import Finding
 from domain.findings.insight import Insight
+from application.research_scope.authoritative_scope import SCOPE_KEY, SCOPE_VERSION
 
 
 class ClaimScopeValidationTests(unittest.TestCase):
@@ -188,3 +189,72 @@ class ClaimScopeValidationTests(unittest.TestCase):
         serialized = repr(mismatch)
         self.assertNotIn("Kyiv had wages", serialized)
         self.assertNotIn("In 2026 wages", serialized)
+
+    def test_structured_supported_geography_passes(self) -> None:
+        self.finding.metadata[SCOPE_KEY] = {
+            "version": SCOPE_VERSION, "geography": ["Kyiv"], "periods": ["2026"],
+            "metrics": ["wages"], "population_dimensions": ["employees"],
+            "numeric_facts": [{"value": "45000", "unit": "грн", "periods": ["2026"]}],
+        }
+        self.finding.statement = "Wages were supported by the cited record."
+        self.evidence.statement = "Kyiv wages were 45000 грн in 2026."
+        self.evidence.source_excerpt = self.evidence.statement
+        self.assertEqual(self._check("Kyiv wages were 45000 грн in 2026."), ())
+
+    def test_structured_unsupported_geography_fails_independently(self) -> None:
+        self.finding.metadata[SCOPE_KEY] = {
+            "version": SCOPE_VERSION, "geography": ["Kyiv"], "periods": ["2026"],
+            "metrics": ["wages"], "population_dimensions": [],
+            "numeric_facts": [{"value": "45000", "unit": "грн", "periods": ["2026"]}],
+        }
+        errors, mismatch = self._diagnose("Luhansk wages were 45000 грн in 2026.")
+        self.assertIn("Report claim uses unsupported geography", errors)
+        self.assertEqual(mismatch["dimension"], "geography")
+
+    def test_historical_finding_derives_only_from_authoritative_evidence(self) -> None:
+        self.finding.metadata = {}
+        self.evidence.metadata = {
+            "observation_period": "2026",
+            "semantic_assignment": {
+                "contract_version": "desk_evidence_candidate_v2",
+                "validation_version": "desk_semantic_assignment_v1",
+                "geography_applicability": ["Kyiv"],
+            },
+        }
+        self.evidence.statement = "Kyiv wages were 45000 грн in 2026."
+        self.evidence.source_excerpt = self.evidence.statement
+        self.assertEqual(self._check("Kyiv wages were 45000 грн in 2026."), ())
+        self.assertTrue(self._check("Kyiv wages were 45000 грн in 2025."))
+
+    def test_structured_metric_and_population_dimensions_are_independent(self) -> None:
+        self.finding.metadata[SCOPE_KEY] = {
+            "version": SCOPE_VERSION, "geography": ["Ukraine"],
+            "periods": ["2026"], "metrics": ["real wages"],
+            "population_dimensions": ["employees"], "numeric_facts": [],
+        }
+        common = dict(
+            finding_ids=("f1",), findings_by_id={"f1": self.finding},
+            insights_by_id={}, evidence_by_id={"e1": self.evidence},
+        )
+        self.assertEqual(validate_claim_scope(
+            "Supported result.", claim_scope={
+                "version": SCOPE_VERSION, "metrics": ["real wages"],
+                "population_dimensions": ["employees"],
+            }, **common,
+        ), ())
+        metric_errors = validate_claim_scope(
+            "Unsupported metric.", claim_scope={
+                "version": SCOPE_VERSION, "metrics": ["consumer prices"],
+            }, **common,
+        )
+        population_errors = validate_claim_scope(
+            "Unsupported population.", claim_scope={
+                "version": SCOPE_VERSION,
+                "population_dimensions": ["all households"],
+            }, **common,
+        )
+        self.assertIn("Report claim uses unsupported metric scope", metric_errors)
+        self.assertIn(
+            "Report claim uses unsupported population_dimension scope",
+            population_errors,
+        )

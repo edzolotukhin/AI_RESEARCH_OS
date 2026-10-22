@@ -17,6 +17,7 @@ from application.analysis.provenance_validation import (
     validate_insight_candidate,
 )
 from application.ports.analysis_ports import FindingCandidate, InsightCandidate
+from application.research_scope.authoritative_scope import SCOPE_KEY, SCOPE_VERSION
 
 
 def _design() -> ResearchDesign:
@@ -132,6 +133,31 @@ class ProvenanceValidationTests(unittest.TestCase):
                 research_design_id="design-1",
                 design=_design(),
             )
+
+    def test_validated_finding_inherits_authoritative_scope_and_lineage(self) -> None:
+        self.evidence.metadata = {
+            "observation_period": "2026",
+            "semantic_assignment": {
+                "contract_version": "desk_evidence_candidate_v2",
+                "validation_version": "desk_semantic_assignment_v1",
+                "geography_applicability": ["Ukraine"],
+            },
+        }
+        candidate = FindingCandidate(
+            statement="Company X reported 23% growth.", rationale="Supported.",
+            evidence_refs=("ev-1",), research_question_refs=("rq-1",),
+        )
+        validated = validate_finding_candidate(
+            candidate, evidence_by_id={"ev-1": self.evidence},
+            project_id="project-1", workflow_run_id="run-a",
+            research_design_id="design-1", design=_design(),
+        )
+        scope = validated.metadata[SCOPE_KEY]
+        self.assertEqual(scope["version"], SCOPE_VERSION)
+        self.assertEqual(scope["geography"], ["ukraine"])
+        self.assertEqual(scope["periods"], ["2026"])
+        self.assertEqual(validated.evidence_refs, ("ev-1",))
+        self.assertEqual(validated.research_question_refs, ("rq-1",))
 
 
 class DeduplicationTests(unittest.TestCase):
