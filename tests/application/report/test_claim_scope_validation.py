@@ -108,6 +108,46 @@ class ClaimScopeValidationTests(unittest.TestCase):
         self.finding.statement = self.evidence.statement
         self.assertTrue(self._check("In 2026 wages were 45000 грн."))
 
+    def test_same_supported_period_passes(self) -> None:
+        self.evidence.statement = "In 2026 wages were 45000 грн."
+        self.evidence.source_excerpt = self.evidence.statement
+        self.finding.statement = self.evidence.statement
+        self.assertEqual(self._check("During 2026 wages were 45000 грн."), ())
+
+    def test_candidate_year_subset_of_supported_years_passes(self) -> None:
+        self.evidence.statement = "In 2026 and 2028 wages were 45000 грн."
+        self.evidence.source_excerpt = self.evidence.statement
+        self.finding.statement = self.evidence.statement
+        self.assertEqual(self._check("During 2026 wages were 45000 грн."), ())
+
+    def test_unsupported_year_still_fails(self) -> None:
+        self.evidence.statement = "In 2026 wages were 45000 грн."
+        self.evidence.source_excerpt = self.evidence.statement
+        self.finding.statement = self.evidence.statement
+        self.assertIn("unsupported numeric scope", self._check("During 2025 wages were 45000 грн.")[0])
+
+    def test_lexical_period_context_does_not_create_scope_failure(self) -> None:
+        self.evidence.statement = "За 2026 рік wages were 45000 грн."
+        self.evidence.source_excerpt = self.evidence.statement
+        self.finding.statement = self.evidence.statement
+        self.assertEqual(self._check("На 2026 року wages were 45000 грн."), ())
+
+    def test_non_temporal_numbers_are_not_period_anchors(self) -> None:
+        self.evidence.statement = "Kyiv had an index of 6 and wages of 45000 грн."
+        self.evidence.source_excerpt = self.evidence.statement
+        self.finding.statement = self.evidence.statement
+        self.assertFalse(any("unsupported numeric scope" in error for error in self._check(
+            "Kyiv had an index of 8 and wages of 45000 грн."
+        )))
+
+    def test_percentages_are_not_period_anchors(self) -> None:
+        self.evidence.statement = "Kyiv recorded 6.5% growth and wages of 45000 грн."
+        self.evidence.source_excerpt = self.evidence.statement
+        self.finding.statement = self.evidence.statement
+        self.assertFalse(any("unsupported numeric scope" in error for error in self._check(
+            "Kyiv recorded 8% growth and wages of 45000 грн."
+        )))
+
     def test_broadening_diagnostics_are_bounded_and_non_prose(self) -> None:
         errors, mismatch = self._diagnose("All people in Ukraine have lower wages.")
         self.assertTrue(errors)

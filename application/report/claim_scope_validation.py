@@ -17,6 +17,8 @@ _NUMBER = re.compile(
     r"(?P<unit>%|percentage points?|відсот(?:ок|ки|ків)?|грн|uah|usd|руб|per\s+hour|на\s+годину)?",
     re.IGNORECASE,
 )
+_YEAR = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
+_DATE = re.compile(r"(?<!\d)\d{1,2}[./-]\d{1,2}[./-](?:19|20)\d{2}(?!\d)")
 
 # These are scope-changing operators, not domain vocabulary.  A claim using
 # one of them must be grounded by the authoritative support itself.
@@ -36,6 +38,9 @@ _STOP = frozenset(
         "that", "this", "was", "were", "is", "are", "as", "on", "by", "та", "і",
         "або", "у", "в", "з", "до", "для", "що", "це", "є", "як", "на", "по",
     }
+)
+_NON_SCOPE_LEXICAL = frozenset(
+    {"in", "the", "during", "за", "на", "року", "рік", "year", "and", "та"}
 )
 
 _MAX_MISMATCH_TOKENS = 8
@@ -91,13 +96,15 @@ def _numeric_facts(text: str) -> list[tuple[str, str, set[str]]]:
         value = re.sub(r"[\s,]", "", match.group("value")).replace(",", ".")
         unit = f"{prefix}{scale}{unit_value}".lower().replace(" ", "_")
         window = text[max(0, match.start() - 80):match.end() + 80]
-        anchors = {
+        # Scope anchors are deliberately separate from the numeric fact.  Do
+        # not treat every number or grammatical word in the window as time.
+        temporal = set(_YEAR.findall(window)) | set(_DATE.findall(window))
+        lexical = {
             token.lower()
             for token in _TOKEN.findall(window)
-            if token[:1].isupper()
-            or token.isdigit()
-            or token.lower() in {"year", "року", "рік", "hour", "годину", "per", "на"}
+            if token[:1].isupper() and token.lower() not in _NON_SCOPE_LEXICAL
         }
+        anchors = temporal | lexical
         facts.append((value, unit, anchors))
     return facts
 
