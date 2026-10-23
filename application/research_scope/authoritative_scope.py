@@ -153,4 +153,3 @@ def sanitize_scope(raw: dict[str, Any]) -> dict[str, Any]:
         "numeric_facts": facts,
         "source": normalize_token(raw.get("source", "")),
     }
-
