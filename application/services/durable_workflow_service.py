@@ -114,6 +114,7 @@ class DurableWorkflowService:
         workflow_template: WorkflowTemplate,
         *,
         run_id: str | None = None,
+        initial_task_results: dict | None = None,
     ) -> WorkflowContext:
         """Persist a runnable workflow run without executing it."""
         self._workflow_service.publish_template_snapshot(
@@ -130,6 +131,9 @@ class DurableWorkflowService:
             workflow_template=workflow_template,
             workflow_run=workflow_run,
         )
+        if initial_task_results:
+            self._workflow_service.save_workflow_run(
+                workflow_run, expected_version=0, task_results=initial_task_results)
         self._audit.workflow_created(workflow_run.id)
         self._notify_runnable(workflow_run.id)
         return context
@@ -285,6 +289,13 @@ class DurableWorkflowService:
             workflow_run=workflow_run,
         )
         restore_runtime_state(context, task_results)
+        from application.replay.desk_downstream_replay import REPLAY_KEY
+        replay = task_results.get(REPLAY_KEY)
+        if isinstance(replay, dict):
+            context.write_shared(REPLAY_KEY, replay)
+            readiness = task_results.get("research_readiness")
+            if isinstance(readiness, dict):
+                context.write_shared("research_readiness", readiness)
         from application.methods.quantitative.pin import METHOD_PIN, ANALYSIS_PIN, POST_ANALYSIS_PIN, REVIEW_PIN
         context.execution_metadata[METHOD_PIN] = task_results.get(METHOD_PIN)
         context.execution_metadata[ANALYSIS_PIN] = task_results.get(ANALYSIS_PIN)

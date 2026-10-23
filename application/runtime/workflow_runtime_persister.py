@@ -183,6 +183,7 @@ REPORT_FAILURE_DIAGNOSTIC_KEYS = (
     "report_repair_diagnostics",
     "report_generation_diagnostics",
     "review_diagnostics",
+    "desk_downstream_replay_v1",
 )
 
 

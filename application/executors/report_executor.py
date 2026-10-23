@@ -18,8 +18,18 @@ class ReportExecutor(BaseExecutor):
         self._report_service = report_service
 
     def run(self, context: WorkflowContext) -> WorkflowContext:
-        summary = self._report_service.write_for_context(context)
+        from application.replay.desk_downstream_replay import update_replay_stage
+        update_replay_stage(context, "report", "running")
+        try:
+            summary = self._report_service.write_for_context(context)
+        except Exception as exc:
+            update_replay_stage(
+                context, "report", "failed",
+                failure_code=getattr(exc, "code", exc.__class__.__name__),
+            )
+            raise
         context.write_shared("report", summary.to_dict())
+        update_replay_stage(context, "report", "completed")
 
         task = context.current_task
         if task is not None:

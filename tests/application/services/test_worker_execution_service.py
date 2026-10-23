@@ -97,6 +97,22 @@ class WorkerExecutionServiceTests(unittest.TestCase):
             context.workflow_run.id,
         )
 
+    def test_submit_research_persists_bounded_initial_replay_state(self) -> None:
+        initial = {
+            "desk_downstream_replay_v1": {
+                "source_workflow_run_id": "source-run",
+                "budget_scope": "downstream_report_review_only",
+            }
+        }
+        context = self.durable_service.submit_research(
+            self.project, _template("template-replay"), initial_task_results=initial,
+        )
+
+        self.assertEqual(
+            initial,
+            self.workflow_service.get_task_results(context.workflow_run.id),
+        )
+
     def test_concurrent_claim_only_one_worker_wins(self) -> None:
         self.durable_service.submit_research(self.project, _template())
         first = self.execution_repository.claim_next_runnable(

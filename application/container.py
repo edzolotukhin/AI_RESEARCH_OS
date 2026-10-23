@@ -71,6 +71,7 @@ class ApplicationContainer:
     project_planning_service: Any | None = None
     activity_reader: Any | None = None
     project_deliverables_service: Any | None = None
+    desk_downstream_replay_service: Any | None = None
     quantitative_objective_coverage_service: Any | None = None
     quantitative_authority_chain_service: Any | None = None
     quantitative_authority_chain_selection_service: Any | None = None

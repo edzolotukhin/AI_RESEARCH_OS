@@ -119,6 +119,8 @@ class ReviewService:
 
     def review_for_context(self, context: WorkflowContext) -> ReviewSummary:
         workflow_run_id = context.workflow_run.id
+        from application.replay.desk_downstream_replay import source_run_id
+        artifact_run_id = source_run_id(context)
         self._set_review_diagnostics(context, phase="entry", status="started")
         try:
             design = self._report_service._resolve_design(context)
@@ -167,15 +169,15 @@ class ReviewService:
             artifact = self._artifact_for_report(workflow_run_id, report.id)
             findings = self._finding_repository.list_for_project(
                 project_id,
-                workflow_run_id=workflow_run_id,
+                workflow_run_id=artifact_run_id,
             )
             insights = self._insight_repository.list_for_project(
                 project_id,
-                workflow_run_id=workflow_run_id,
+                workflow_run_id=artifact_run_id,
             )
             evidence_items = self._evidence_repository.list_for_project(
                 project_id,
-                workflow_run_id=workflow_run_id,
+                workflow_run_id=artifact_run_id,
             )
             evidence_items = qualifying_evidence(
                 design=design, evidence=evidence_items, brief=brief,
@@ -185,21 +187,21 @@ class ReviewService:
             findings = [
                 item
                 for item in findings
-                if item.workflow_run_id == workflow_run_id
+                if item.workflow_run_id == artifact_run_id
                 and item.research_design_id == design.id
                 and item.project_id == project_id
             ]
             insights = [
                 item
                 for item in insights
-                if item.workflow_run_id == workflow_run_id
+                if item.workflow_run_id == artifact_run_id
                 and item.research_design_id == design.id
                 and item.project_id == project_id
             ]
             evidence_items = [
                 item
                 for item in evidence_items
-                if item.workflow_run_id == workflow_run_id
+                if item.workflow_run_id == artifact_run_id
                 and item.research_design_id == design.id
                 and item.project_id == project_id
             ]

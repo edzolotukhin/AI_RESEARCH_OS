@@ -15,9 +15,20 @@ class ReviewExecutor(BaseExecutor):
         self._deliverable_finalizer = deliverable_finalizer
 
     def run(self, context: WorkflowContext) -> WorkflowContext:
-        summary = self._review_service.review_for_context(context)
+        from application.replay.desk_downstream_replay import update_replay_stage
+        update_replay_stage(context, "review", "running")
+        try:
+            summary = self._review_service.review_for_context(context)
+        except Exception as exc:
+            update_replay_stage(
+                context, "review", "failed",
+                failure_code=getattr(exc, "code", exc.__class__.__name__),
+            )
+            raise
         context.write_shared("review", summary.to_dict())
+        update_replay_stage(context, "review", "completed")
         if summary.verdict == "approve" and self._deliverable_finalizer is not None:
+            update_replay_stage(context, "deliverables", "running")
             context.write_shared("desk_deliverable_finalization", {
                 "status": "pending", "report_id": summary.report_id,
                 "review_id": summary.review_id,
@@ -34,8 +45,16 @@ class ReviewExecutor(BaseExecutor):
                     "report_id": summary.report_id,
                     "review_id": summary.review_id,
                 })
+                update_replay_stage(
+                    context, "deliverables", "failed",
+                    failure_code=getattr(exc, "code", exc.__class__.__name__),
+                )
                 raise
             context.write_shared("desk_deliverable_finalization", state)
+            final_status = "completed" if state.get("status") == "complete" else state.get("status", "running")
+            update_replay_stage(context, "deliverables", final_status)
+        else:
+            update_replay_stage(context, "deliverables", "skipped")
 
         task = context.current_task
         if task is not None:

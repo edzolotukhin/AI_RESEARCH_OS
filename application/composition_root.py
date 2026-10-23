@@ -751,6 +751,13 @@ def create_application_container(
     project_deliverables_service.quantitative_state = (
         quantitative_ui_service.state if quantitative_ui_service else None)
     project_deliverables_service.qualitative_reports = qualitative_report_service
+    from application.replay.desk_downstream_replay import DeskDownstreamReplayService
+    desk_downstream_replay_service = DeskDownstreamReplayService(
+        projects=project_service, workflows=workflow_service,
+        durable_workflows=durable_workflow_service,
+        evidence=evidence_repository, findings=finding_repository,
+        insights=insight_repository, activation_sessions=persistence.activation_sessions,
+    )
 
     from application.operations.status import JobObservation, OperationsStatusService
     def operations_jobs():
@@ -795,6 +802,7 @@ def create_application_container(
         project_planning_service=project_planning_service,
         activity_reader=activity_reader,
         project_deliverables_service=project_deliverables_service,
+        desk_downstream_replay_service=desk_downstream_replay_service,
         quantitative_objective_coverage_service=quantitative_objective_coverage_service,
         quantitative_authority_chain_service=quantitative_authority_chain_service,
         quantitative_authority_chain_selection_service=quantitative_authority_chain_selection_service,

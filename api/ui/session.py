@@ -8,7 +8,9 @@ from fastapi.responses import RedirectResponse
 from application.identity import current_human_actor_id
 
 SESSION_COOKIE = "ai_research_os_session"
-_POST_ACTION_RETRY = re.compile(r"^/ui/projects/([^/]+)/methods/[^/]+/retry$")
+_POST_ACTION_SAFE_PROJECT_RETURN = re.compile(
+    r"^/ui/projects/([^/]+)/methods/[^/]+/(?:retry|[^/]+/finalization-replay)$"
+)
 current_ui_user = ContextVar("current_ui_user", default=None)
 PROJECT_COLLECTION_PATHS = frozenset({"/ui/projects/new"})
 
@@ -31,9 +33,9 @@ async def browser_session_middleware(request: Request, call_next):
         if path.startswith("/ui") and not public and user is None:
             target = path + (("?" + request.url.query) if request.url.query else "")
             if request.method == "POST":
-                retry_match = _POST_ACTION_RETRY.fullmatch(path)
-                if retry_match:
-                    target = f"/ui/projects/{retry_match.group(1)}"
+                project_action = _POST_ACTION_SAFE_PROJECT_RETURN.fullmatch(path)
+                if project_action:
+                    target = f"/ui/projects/{project_action.group(1)}"
             return RedirectResponse(f"/ui/login?next={quote(target, safe='/')}", status_code=303)
         if path.startswith("/ui") and not public and user is not None and not hasattr(user, "authentication_type"):
             match = None if path in PROJECT_COLLECTION_PATHS else re.match(

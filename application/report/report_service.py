@@ -167,6 +167,8 @@ class ReportService:
         brief = self._resolve_brief(context)
         project_id = context.project.id
         workflow_run_id = context.workflow_run.id
+        from application.replay.desk_downstream_replay import source_run_id
+        artifact_run_id = source_run_id(context)
         research_design_id = design.id
         language = brief.language or design.language or "en"
         coverage = coverage_snapshot_from_payload(context.read_shared(SHARED_STATE_KEY))
@@ -182,11 +184,11 @@ class ReportService:
 
         findings = self._finding_repository.list_for_project(
             project_id,
-            workflow_run_id=workflow_run_id,
+            workflow_run_id=artifact_run_id,
         )
         insights = self._insight_repository.list_for_project(
             project_id,
-            workflow_run_id=workflow_run_id,
+            workflow_run_id=artifact_run_id,
         )
         if not findings:
             raise ReportError(
@@ -222,7 +224,7 @@ class ReportService:
 
         evidence_items = self._evidence_repository.list_for_project(
             project_id,
-            workflow_run_id=workflow_run_id,
+            workflow_run_id=artifact_run_id,
         )
         evidence_items = qualifying_evidence(
             design=design, evidence=evidence_items, brief=brief,
@@ -232,7 +234,7 @@ class ReportService:
         run_sources = [
             item
             for item in sources
-            if workflow_run_id in item.workflow_run_refs
+            if artifact_run_id in item.workflow_run_refs
         ]
         evidence_by_id = {item.id: item for item in evidence_items}
         sources_by_id = {item.id: item for item in run_sources}
