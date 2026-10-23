@@ -22,6 +22,8 @@ from api.ui.pdf_csrf import token as pdf_csrf_token
 from domain.workflow_template import WorkflowTemplate
 from domain.reports.report import Report
 from domain.reports.report_section import ReportSection
+from domain.reviews.review_result import ReviewResult
+from domain.reviews.review_verdict import ReviewVerdict
 
 
 @unittest.skipUnless(integration_tests_enabled(), "disposable PostgreSQL test database required")
@@ -110,6 +112,14 @@ class PostgreSQLPdfStoreTests(unittest.TestCase):
             deduplication_key=str(uuid4()),
         )
         container.report_query_service._report_repository.create(report)
+        container.review_query_service._review_repository.create(ReviewResult(
+            id=str(uuid4()), project_id=project.id, workflow_run_id=run.id,
+            research_design_id=report.research_design_id, report_id=report.id,
+            review_attempt=1, verdict=ReviewVerdict.APPROVE,
+            quality_dimensions=(), issues=(), summary="Approved fixture",
+            review_method="test", created_at=datetime.now(timezone.utc).isoformat(),
+            deduplication_key=str(uuid4()),
+        ))
         catalog = container.project_deliverables_service.catalog(project.id, owner_id=owner)
         self.assertEqual(catalog.desk[0].document.source_id, report.id)
         self.assertEqual(catalog.desk[0].document.status, "Чернетка")

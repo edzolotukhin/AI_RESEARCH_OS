@@ -12,6 +12,8 @@ from api.ui.pdf_csrf import token
 from api.ui.principal import resolve_ui_principal
 from domain.reports.report import Report
 from domain.reports.report_section import ReportSection
+from domain.reviews.review_result import ReviewResult
+from domain.reviews.review_verdict import ReviewVerdict
 from domain.workflow_template import WorkflowTemplate
 from tests.api.helpers import build_test_container, close_test_client, open_test_client
 from tests.integration.postgresql.helpers import integration_tests_enabled
@@ -43,6 +45,14 @@ class PresentationIntegrationTests(unittest.TestCase):
             deduplication_key=str(uuid4()),
         )
         self.container.report_query_service._report_repository.create(self.report)
+        self.container.review_query_service._review_repository.create(ReviewResult(
+            id=str(uuid4()), project_id=self.project.id, workflow_run_id=self.run.id,
+            research_design_id=self.report.research_design_id, report_id=self.report.id,
+            review_attempt=1, verdict=ReviewVerdict.APPROVE,
+            quality_dimensions=(), issues=(), summary="Approved fixture",
+            review_method="test", created_at=datetime.now(timezone.utc).isoformat(),
+            deduplication_key=str(uuid4()),
+        ))
         self.base = f"/ui/projects/{self.project.id}/reports/DESK/{self.report.id}"
 
     def test_explicit_schedule_worker_download_and_pdf_regression(self):
