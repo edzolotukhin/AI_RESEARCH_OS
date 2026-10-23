@@ -122,7 +122,7 @@ class PostgreSQLPdfStoreTests(unittest.TestCase):
         ))
         catalog = container.project_deliverables_service.catalog(project.id, owner_id=owner)
         self.assertEqual(catalog.desk[0].document.source_id, report.id)
-        self.assertEqual(catalog.desk[0].document.status, "Чернетка")
+        self.assertEqual(catalog.desk[0].document.status, "Схвалено")
         base = f"/ui/projects/{project.id}/reports/DESK/{report.id}/pdf"
         response = client.post(base, data={"csrf_token": pdf_csrf_token(
             container, owner, project.id, "DESK", report.id)}, follow_redirects=False)
