@@ -277,6 +277,10 @@ def _workbench_page(request: Request, research_id: str, page: str) -> Response:
                 "view": view,
                 "active_page": page,
                 "can_replace": page == "overview" and facade.can_replace_desk(research_id),
+                "can_replay_finalization": (
+                    page == "overview"
+                    and facade.can_replay_desk_finalization(research_id)
+                ),
             },
         )
     except (AccessDeniedError, EntityNotFoundError, ValueError):

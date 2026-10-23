@@ -191,6 +191,32 @@ class DeskDownstreamReplayTests(unittest.TestCase):
             project_id=project.id, source_run_id=source.id, owner_id="owner-1").id)
         self.assertEqual(1, len(durable.calls))
 
+    def test_eligibility_is_independent_of_later_failed_replay(self):
+        service, project, source, workflows, durable, *_ = _fixture()
+        failed = SimpleNamespace(
+            id="failed-replay", project_id=project.id,
+            workflow_template_id="replay-template",
+            status=WorkflowStatus.FAILED, is_terminal=True,
+        )
+        workflows.runs.append(failed)
+        workflows.results[failed.id] = {REPLAY_KEY: {"source_workflow_run_id": source.id}}
+
+        self.assertTrue(service.can_start(
+            project_id=project.id, source_run_id=source.id, owner_id="owner-1"))
+        self.assertFalse(service.can_start(
+            project_id=project.id, source_run_id=failed.id, owner_id="owner-1"))
+        self.assertFalse(service.can_start(
+            project_id=project.id, source_run_id=source.id, owner_id="other"))
+        self.assertEqual([], durable.calls)
+
+    def test_non_terminal_source_is_not_eligible(self):
+        service, project, source, _, durable, *_ = _fixture()
+        source.status = WorkflowStatus.RUNNING
+        source.is_terminal = False
+        self.assertFalse(service.can_start(
+            project_id=project.id, source_run_id=source.id, owner_id="owner-1"))
+        self.assertEqual([], durable.calls)
+
     def test_replay_source_and_bounded_stage_state(self):
         lineage = {
             "source_workflow_run_id": "source-run",

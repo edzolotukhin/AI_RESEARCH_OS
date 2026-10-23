@@ -220,6 +220,21 @@ class ResearchUiFacade:
             project.id, run.id,
         )
 
+    def can_replay_desk_finalization(self, research_id: str) -> bool:
+        run, project = self._authorization.require_run(self._principal, research_id)
+        if self._principal.authentication_type == "browser_session":
+            try:
+                self._container.identity_service.require(
+                    project.id, self._principal.principal_id, mutate=True,
+                )
+            except PermissionError:
+                return False
+        return self._container.desk_downstream_replay_service.can_start(
+            project_id=project.id,
+            source_run_id=run.id,
+            owner_id=project.owner_principal_id,
+        )
+
     def get_result_detail(self, research_id: str) -> dict[str, Any]:
         workflow_run, _ = self._authorization.require_run(
             self._principal,

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from application.methods.desk.profile import PIN
-from application.persistence.exceptions import AccessDeniedError
+from application.persistence.exceptions import AccessDeniedError, EntityNotFoundError
 from domain.task_definition import TaskDefinition
 from domain.workflow_status import WorkflowStatus
 from domain.workflow_template import WorkflowTemplate
@@ -78,7 +78,66 @@ class DeskDownstreamReplayService:
         with boundary:
             return self._start_locked(project, source_run_id)
 
+    def can_start(self, *, project_id: str, source_run_id: str, owner_id: str) -> bool:
+        """Return whether the exact run is a valid downstream replay source.
+
+        This is a read-only UI capability check. ``start`` repeats the same
+        validation under the activation boundary before creating anything.
+        """
+        try:
+            project = self.projects.get_project(project_id)
+            if project.owner_principal_id != owner_id:
+                return False
+            self._validate_source(project, source_run_id)
+            return True
+        except (AccessDeniedError, EntityNotFoundError, DeskDownstreamReplayError):
+            return False
+
     def _start_locked(self, project, source_id):
+        source, source_template, design, readiness, task_results = (
+            self._validate_source(project, source_id)
+        )
+
+        for run in self.workflows.list_workflow_runs_for_project(project.id):
+            state = self.workflows.get_task_results(run.id).get(REPLAY_KEY)
+            if isinstance(state, dict) and state.get("source_workflow_run_id") == source.id:
+                if not run.is_terminal:
+                    return run
+                if run.status == WorkflowStatus.COMPLETED:
+                    return run
+
+        attempt_id = str(uuid4())
+        template = WorkflowTemplate(
+            id=f"{REPLAY_TEMPLATE_PREFIX}{attempt_id}",
+            name="Desk downstream finalization replay",
+            task_definitions=[
+                TaskDefinition("report", "Replay: Write research report", "report"),
+                TaskDefinition("review", "Replay: Review and finalize", "review", depends_on=["report"]),
+            ],
+            research_brief_snapshot=source_template.research_brief_snapshot,
+            research_design_snapshot=design,
+        )
+        lineage = {
+            "version": 1,
+            "project_id": project.id,
+            "source_workflow_run_id": source.id,
+            "replay_attempt_id": attempt_id,
+            "research_design_id": design.id,
+            "research_subject_id": design.research_subject.subject_id,
+            "runtime_sha": os.environ.get("APP_SHA"),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "budget_scope": "downstream_report_review_only",
+            "allowed_provider_stages": ["report", "review"],
+            "status": "pending",
+            "downstream_stages": {"report": "pending", "review": "pending", "deliverables": "pending"},
+        }
+        initial = {REPLAY_KEY: lineage, "research_readiness": readiness}
+        if PIN in task_results:
+            initial[PIN] = task_results[PIN]
+        return self.durable_workflows.submit_research(
+            project, template, initial_task_results=initial).workflow_run
+
+    def _validate_source(self, project, source_id):
         source = self.workflows.get_workflow_run(source_id)
         if source.project_id != project.id or source.status not in {
                 WorkflowStatus.FAILED, WorkflowStatus.COMPLETED}:
@@ -112,42 +171,4 @@ class DeskDownstreamReplayService:
         if any(not item.finding_refs or not set(item.finding_refs) <= finding_ids or
                not set(item.research_question_refs) <= rq_ids for item in insights):
             raise DeskDownstreamReplayError("source_insight_lineage_invalid")
-
-        for run in self.workflows.list_workflow_runs_for_project(project.id):
-            state = self.workflows.get_task_results(run.id).get(REPLAY_KEY)
-            if isinstance(state, dict) and state.get("source_workflow_run_id") == source.id:
-                if not run.is_terminal:
-                    return run
-                if run.status == WorkflowStatus.COMPLETED:
-                    return run
-
-        attempt_id = str(uuid4())
-        template = WorkflowTemplate(
-            id=f"{REPLAY_TEMPLATE_PREFIX}{attempt_id}",
-            name="Desk downstream finalization replay",
-            task_definitions=[
-                TaskDefinition("report", "Replay: Write research report", "report"),
-                TaskDefinition("review", "Replay: Review and finalize", "review", depends_on=["report"]),
-            ],
-            research_brief_snapshot=brief,
-            research_design_snapshot=design,
-        )
-        lineage = {
-            "version": 1,
-            "project_id": project.id,
-            "source_workflow_run_id": source.id,
-            "replay_attempt_id": attempt_id,
-            "research_design_id": design.id,
-            "research_subject_id": design.research_subject.subject_id,
-            "runtime_sha": os.environ.get("APP_SHA"),
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "budget_scope": "downstream_report_review_only",
-            "allowed_provider_stages": ["report", "review"],
-            "status": "pending",
-            "downstream_stages": {"report": "pending", "review": "pending", "deliverables": "pending"},
-        }
-        initial = {REPLAY_KEY: lineage, "research_readiness": readiness}
-        if PIN in task_results:
-            initial[PIN] = task_results[PIN]
-        return self.durable_workflows.submit_research(
-            project, template, initial_task_results=initial).workflow_run
+        return source, source_template, design, readiness, task_results
