@@ -31,6 +31,7 @@ from application.report.exceptions import InvalidReportProvenanceError, ReportEr
 from application.report.provenance_validation import validate_section_candidate
 from application.report.report_service import ReportService
 from application.replay.desk_downstream_replay import REPLAY_KEY
+from application.research_scope.authoritative_scope import SCOPE_KEY, SCOPE_VERSION
 from application.ports.report_ports import ReportSectionCandidate
 from infrastructure.persistence.memory.in_memory_artifact_repository import (
     InMemoryArtifactRepository,
@@ -623,6 +624,72 @@ class ReportLiveShapeTests(unittest.TestCase):
             stats.rejection_counts.get(REJECTION_CATEGORY_INVALID_FINDING_REF, 0),
             0,
         )
+
+    def test_generator_input_contains_bounded_authoritative_geography(self) -> None:
+        llm_client = Mock()
+        llm_client.generate.return_value = LLMResponse(content='{"sections":[]}')
+        engine = LlmReportEngine(llm_client=llm_client)
+        from application.ports.report_ports import ReportInput
+
+        finding = _live_findings()[0]
+        finding.metadata[SCOPE_KEY] = {
+            "version": SCOPE_VERSION,
+            "geography": ["Country", "Region"],
+            "geography_anchors": [
+                {"value": "Country", "level": "country"},
+                {"value": "Region", "level": "subnational"},
+            ],
+            "numeric_facts": [],
+        }
+        report_input = ReportInput(
+            project_id=PROJECT_ID,
+            workflow_run_id=RUN_ID,
+            research_design_id=DESIGN_ID,
+            brief=ResearchBrief(title="T", business_question="Q"),
+            design=_live_design(),
+            findings=(finding,),
+            insights=(),
+            evidence_by_id={item.id: item for item in _live_evidence()},
+            sources_by_id={},
+            section_titles=("Section",),
+        )
+
+        engine.generate_sections(report_input)
+
+        prompt = llm_client.generate.call_args.args[0].user
+        self.assertIn('"geography": ["country", "region"]', prompt)
+        self.assertIn('"level": "country"', prompt)
+        self.assertIn('"level": "subnational"', prompt)
+
+    def test_normal_and_replay_inputs_use_equivalent_source_scope(self) -> None:
+        engine = LlmReportEngine(llm_client=Mock())
+        from application.ports.report_ports import ReportInput
+
+        finding = _live_findings()[0]
+        finding.metadata[SCOPE_KEY] = {
+            "version": SCOPE_VERSION,
+            "geography": ["Country", "Region"],
+            "geography_anchors": [
+                {"value": "Country", "level": "country"},
+                {"value": "Region", "level": "subnational"},
+            ],
+            "numeric_facts": [],
+        }
+        normal = ReportInput(
+            project_id=PROJECT_ID, workflow_run_id=RUN_ID,
+            research_design_id=DESIGN_ID,
+            brief=ResearchBrief(title="T", business_question="Q"),
+            design=_live_design(), findings=(finding,), insights=(),
+            evidence_by_id={item.id: item for item in _live_evidence()},
+            sources_by_id={}, section_titles=("Section",),
+        )
+        replay = replace(normal, workflow_run_id="replay-run")
+
+        normal_payload = engine._build_section_payload(normal)
+        replay_payload = engine._build_section_payload(replay)
+
+        self.assertEqual(normal_payload, replay_payload)
+        self.assertIn('"level": "subnational"', replay_payload)
 
 
 if __name__ == "__main__":

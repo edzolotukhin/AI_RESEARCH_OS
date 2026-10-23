@@ -18,6 +18,7 @@ SCOPE_KEY = "authoritative_scope"
 SCOPE_VERSION = "desk_authoritative_scope_v1"
 MAX_SCOPE_VALUES = 32
 MAX_NUMERIC_FACTS = 64
+GEOGRAPHY_LEVELS = frozenset({"country", "subnational", "unspecified"})
 
 _YEAR = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
 _DATE = re.compile(r"(?<!\d)\d{1,2}[./-]\d{1,2}[./-](?:19|20)\d{2}(?!\d)")
@@ -76,6 +77,26 @@ def _values(value: Any) -> tuple[str, ...]:
     return tuple(sorted({normalize_token(item) for item in value if normalize_token(item)}))[:MAX_SCOPE_VALUES]
 
 
+def _geography_anchors(raw: dict[str, Any]) -> tuple[dict[str, str], ...]:
+    anchors: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    raw_anchors = raw.get("geography_anchors")
+    if isinstance(raw_anchors, (list, tuple)):
+        for item in raw_anchors[:MAX_SCOPE_VALUES]:
+            if not isinstance(item, dict):
+                continue
+            value = normalize_token(item.get("value", ""))
+            level = normalize_token(item.get("level", "unspecified"))
+            if not value or level not in GEOGRAPHY_LEVELS or (value, level) in seen:
+                continue
+            seen.add((value, level))
+            anchors.append({"value": value, "level": level})
+    for value in _values(raw.get("geography")):
+        if not any(item["value"] == value for item in anchors):
+            anchors.append({"value": value, "level": "unspecified"})
+    return tuple(anchors[:MAX_SCOPE_VALUES])
+
+
 def scope_from_evidence(evidence: Evidence) -> dict[str, Any]:
     existing = evidence.metadata.get(SCOPE_KEY)
     if isinstance(existing, dict) and existing.get("version") == SCOPE_VERSION:
@@ -97,15 +118,32 @@ def build_evidence_scope(
     # Numeric fallback is permitted only from the already-grounded Evidence
     # statement/excerpt.  It never turns arbitrary context words into scope.
     grounded = f"{statement} {source_excerpt}"
+    explicit_anchors = metadata.get("geography_anchors")
+    geography = assignment.get("geography_applicability", ())
+    anchor_values = (
+        [item.get("value") for item in explicit_anchors if isinstance(item, dict)]
+        if isinstance(explicit_anchors, (list, tuple)) else []
+    )
+    evidence_geography = list(geography) + anchor_values
+    raw_numeric_facts = metadata.get("numeric_facts") or numeric_facts(grounded)
+    evidence_numeric_facts = [
+        {
+            **dict(item),
+            "geography": item.get("geography") or evidence_geography,
+        }
+        for item in raw_numeric_facts
+        if isinstance(item, dict)
+    ]
     return sanitize_scope({
         "version": SCOPE_VERSION,
-        "geography": assignment.get("geography_applicability", ()),
+        "geography": evidence_geography,
+        "geography_anchors": explicit_anchors,
         "periods": periods,
         "metrics": metadata.get("metrics", metadata.get("metric", ())),
         "population_dimensions": metadata.get(
             "population_dimensions", metadata.get("population_dimension", ()),
         ),
-        "numeric_facts": metadata.get("numeric_facts") or numeric_facts(grounded),
+        "numeric_facts": evidence_numeric_facts,
         "source": "validated_evidence_metadata",
     })
 
@@ -115,6 +153,9 @@ def combine_evidence_scopes(evidence: Iterable[Evidence]) -> dict[str, Any]:
     return sanitize_scope({
         "version": SCOPE_VERSION,
         "geography": [item for scope in scopes for item in scope["geography"]],
+        "geography_anchors": [
+            item for scope in scopes for item in scope["geography_anchors"]
+        ],
         "periods": [item for scope in scopes for item in scope["periods"]],
         "metrics": [item for scope in scopes for item in scope["metrics"]],
         "population_dimensions": [
@@ -125,7 +166,21 @@ def combine_evidence_scopes(evidence: Iterable[Evidence]) -> dict[str, Any]:
     })
 
 
+def scope_for_finding(finding: Any, evidence_by_id: dict[str, Evidence]) -> dict[str, Any]:
+    """Resolve one Finding's scope from persisted metadata or cited Evidence only."""
+    existing = getattr(finding, "metadata", {}).get(SCOPE_KEY)
+    if isinstance(existing, dict) and existing.get("version") == SCOPE_VERSION:
+        return sanitize_scope(existing)
+    return combine_evidence_scopes(
+        evidence_by_id[ref]
+        for ref in getattr(finding, "evidence_refs", ())
+        if ref in evidence_by_id
+    )
+
+
 def sanitize_scope(raw: dict[str, Any]) -> dict[str, Any]:
+    anchors = _geography_anchors(raw)
+    geography = tuple(sorted({item["value"] for item in anchors}))[:MAX_SCOPE_VALUES]
     raw_facts = raw.get("numeric_facts")
     facts: list[dict[str, Any]] = []
     if isinstance(raw_facts, (list, tuple)):
@@ -146,7 +201,8 @@ def sanitize_scope(raw: dict[str, Any]) -> dict[str, Any]:
             })
     return {
         "version": SCOPE_VERSION,
-        "geography": list(_values(raw.get("geography"))),
+        "geography": list(geography),
+        "geography_anchors": list(anchors),
         "periods": list(_values(raw.get("periods"))),
         "metrics": list(_values(raw.get("metrics"))),
         "population_dimensions": list(_values(raw.get("population_dimensions"))),

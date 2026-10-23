@@ -335,7 +335,8 @@ class ReportCoverageValidationTests(unittest.TestCase):
         self.assertFalse(result)
         self.assertEqual(outcome["category"], "claim_scope_rejection")
         self.assertEqual(outcome["rule"], "unsupported_numeric_scope")
-        self.assertEqual(outcome["mismatch"], {"rule": "unsupported_numeric_scope", "anchor_category": "period"})
+        self.assertEqual(outcome["mismatch"]["rule"], "unsupported_numeric_scope")
+        self.assertEqual(outcome["mismatch"]["anchor_category"], "period")
 
     def test_claim_scope_rejection_diagnostics_use_bounded_rule_codes(self) -> None:
         cases = {
@@ -625,6 +626,58 @@ class ReportCoverageValidationTests(unittest.TestCase):
         rejection = diagnostics["claim_scope_rejections"][0]
         self.assertEqual(rejection["replay_run_id"], replay_run_id)
         self.assertEqual(rejection["source_run_id"], RUN_ID)
+
+    def test_normal_rejection_diagnostics_keep_each_rule_correlated(self) -> None:
+        service = _deterministic_service()
+        _seed_run_data(service)
+        context = _context()
+        mismatch = {
+            "rule": "broadening_scope",
+            "dimension": "geography",
+            "candidate_anchors": ["foreign"],
+            "supported_anchors": ["supported"],
+            "rejections": [
+                {
+                    "rule": "broadening_scope",
+                    "dimension": "geography",
+                    "candidate_anchors": ["foreign"],
+                    "supported_anchors": ["supported"],
+                },
+                {
+                    "rule": "unsupported_numeric_value",
+                    "dimension": "numeric_value",
+                    "candidate_value": "99",
+                    "supported_values": ["42"],
+                },
+            ],
+        }
+        with patch(
+            "application.report.report_service.validate_claim_scope_with_diagnostics",
+            return_value=(
+                (
+                    "Report claim uses unsupported geography scope",
+                    "unsupported numeric value: 99",
+                ),
+                mismatch,
+            ),
+        ):
+            with self.assertRaises(ReportError):
+                service.write_for_context(context)
+
+        rejections = context.read_shared("report_generation_diagnostics")[
+            "claim_scope_rejections"
+        ]
+        first, second = rejections[0], rejections[1]
+        self.assertEqual((first["rule"], first["dimension"]), (
+            "broadening_scope", "geography",
+        ))
+        self.assertEqual(first["candidate_scope"], {"candidate_anchors": ["foreign"]})
+        self.assertEqual(first["supported_scope"], {"supported_anchors": ["supported"]})
+        self.assertEqual((second["rule"], second["dimension"]), (
+            "unsupported_numeric_value", "numeric_value",
+        ))
+        self.assertEqual(second["candidate_scope"], {"candidate_value": "99"})
+        self.assertEqual(second["supported_scope"], {"supported_values": ["42"]})
 
     def test_valid_normal_candidate_has_no_rejection_diagnostic(self) -> None:
         service = _deterministic_service()

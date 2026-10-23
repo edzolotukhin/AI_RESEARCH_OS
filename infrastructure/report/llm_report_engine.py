@@ -18,6 +18,7 @@ from application.report.diagnostics import (
     REJECTION_CATEGORY_MISSING_TITLE,
 )
 from application.report.exceptions import ReportConfigurationError
+from application.research_scope.authoritative_scope import scope_for_finding
 from application.execution.exceptions import BudgetExhaustedError
 from application.report.report_structured_output import (
     REPORT_SECTIONS_PAYLOAD_SCHEMA,
@@ -176,7 +177,7 @@ class LlmReportEngine:
             '"finding_refs":["finding-id"],"insight_refs":["insight-id"],'
             '"research_question_refs":["rq-id"],"evidence_refs":["evidence-id"],'
             '"claim_scope":{"version":"desk_authoritative_scope_v1",'
-            '"geography":[],"periods":[],"metrics":[],'
+            '"geography":[],"geography_anchors":[],"periods":[],"metrics":[],'
             '"population_dimensions":[],"numeric_facts":[]}}]}. '
             "Each section must reference at least one finding_ref or insight_ref. "
             f"Write in language '{report_input.brief.language}'."
@@ -331,9 +332,14 @@ class LlmReportEngine:
                 + json.dumps(list(report_input.repair_diagnostics), sort_keys=True)
             )
         for finding in report_input.findings:
+            authoritative_scope = scope_for_finding(
+                finding, report_input.evidence_by_id,
+            )
             lines.append(
                 f"- id={finding.id} statement={finding.statement} "
-                f"evidence_refs={list(finding.evidence_refs)}",
+                f"evidence_refs={list(finding.evidence_refs)} "
+                "authoritative_scope="
+                + json.dumps(authoritative_scope, sort_keys=True),
             )
         lines.append("authoritative_support:")
         for finding in report_input.findings:

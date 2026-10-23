@@ -10,6 +10,7 @@ from domain.evidence.evidence import Evidence
 from domain.findings.finding import Finding
 from domain.findings.insight import Insight
 from application.research_scope.authoritative_scope import SCOPE_KEY, SCOPE_VERSION
+from application.research_scope.authoritative_scope import sanitize_scope
 
 
 class ClaimScopeValidationTests(unittest.TestCase):
@@ -44,6 +45,16 @@ class ClaimScopeValidationTests(unittest.TestCase):
             findings_by_id={"f1": self.finding},
             insights_by_id={},
             evidence_by_id={"e1": self.evidence},
+        )
+
+    def _check_with_scope(self, content: str, claim_scope: dict) -> tuple[str, ...]:
+        return validate_claim_scope(
+            content,
+            finding_ids=("f1",),
+            findings_by_id={"f1": self.finding},
+            insights_by_id={},
+            evidence_by_id={"e1": self.evidence},
+            claim_scope=claim_scope,
         )
 
     def test_geographic_and_prevalence_broadening_is_rejected(self) -> None:
@@ -98,10 +109,53 @@ class ClaimScopeValidationTests(unittest.TestCase):
         self.assertEqual(self._check("All surveyed regions had wages below average."), ())
 
     def test_numeric_geography_binding_is_rejected(self) -> None:
-        self.evidence.statement = "Kyiv had wages of 45000 грн."
-        self.evidence.source_excerpt = self.evidence.statement
-        self.finding.statement = self.evidence.statement
-        self.assertTrue(self._check("Luhansk had wages of 45000 грн."))
+        self.finding.metadata[SCOPE_KEY] = {
+            "version": SCOPE_VERSION,
+            "geography": ["Kyiv"],
+            "geography_anchors": [{"value": "Kyiv", "level": "subnational"}],
+            "numeric_facts": [{
+                "value": "45000", "unit": "грн", "periods": ["2026"],
+                "geography": ["Kyiv"],
+            }],
+        }
+        errors = self._check_with_scope(
+            "Regional wage was 45000 грн in 2026.",
+            {
+                "version": SCOPE_VERSION,
+                "geography": ["Luhansk"],
+                "geography_anchors": [
+                    {"value": "Luhansk", "level": "subnational"},
+                ],
+                "numeric_facts": [{
+                    "value": "45000", "unit": "грн", "periods": ["2026"],
+                    "geography": ["Luhansk"],
+                }],
+            },
+        )
+        self.assertIn("Report claim uses unsupported geography scope", errors)
+        self.assertTrue(any("geography" in error for error in errors))
+
+    def test_numeric_value_keeps_supported_geography_binding(self) -> None:
+        self.finding.metadata[SCOPE_KEY] = {
+            "version": SCOPE_VERSION,
+            "geography": ["Kyiv"],
+            "geography_anchors": [{"value": "Kyiv", "level": "subnational"}],
+            "numeric_facts": [{
+                "value": "45000", "unit": "грн", "periods": ["2026"],
+                "geography": ["Kyiv"],
+            }],
+        }
+        self.assertEqual(self._check_with_scope(
+            "Regional wage was 45000 грн in 2026.",
+            {
+                "version": SCOPE_VERSION,
+                "geography": ["Kyiv"],
+                "numeric_facts": [{
+                    "value": "45000", "unit": "грн", "periods": ["2026"],
+                    "geography": ["Kyiv"],
+                }],
+            },
+        ), ())
 
     def test_numeric_period_binding_is_rejected(self) -> None:
         self.evidence.statement = "In 2025 wages were 45000 грн."
@@ -199,7 +253,10 @@ class ClaimScopeValidationTests(unittest.TestCase):
         self.finding.statement = "Wages were supported by the cited record."
         self.evidence.statement = "Kyiv wages were 45000 грн in 2026."
         self.evidence.source_excerpt = self.evidence.statement
-        self.assertEqual(self._check("Kyiv wages were 45000 грн in 2026."), ())
+        self.assertEqual(self._check_with_scope(
+            "Kyiv wages were 45000 грн in 2026.",
+            {"version": SCOPE_VERSION, "geography": ["Kyiv"]},
+        ), ())
 
     def test_structured_unsupported_geography_fails_independently(self) -> None:
         self.finding.metadata[SCOPE_KEY] = {
@@ -207,9 +264,98 @@ class ClaimScopeValidationTests(unittest.TestCase):
             "metrics": ["wages"], "population_dimensions": [],
             "numeric_facts": [{"value": "45000", "unit": "грн", "periods": ["2026"]}],
         }
-        errors, mismatch = self._diagnose("Luhansk wages were 45000 грн in 2026.")
-        self.assertIn("Report claim uses unsupported geography", errors)
+        errors, mismatch = validate_claim_scope_with_diagnostics(
+            "Luhansk wages were 45000 грн in 2026.",
+            finding_ids=("f1",), findings_by_id={"f1": self.finding},
+            insights_by_id={}, evidence_by_id={"e1": self.evidence},
+            claim_scope={"version": SCOPE_VERSION, "geography": ["Luhansk"]},
+        )
+        self.assertIn("Report claim uses unsupported geography scope", errors)
         self.assertEqual(mismatch["dimension"], "geography")
+
+    def test_generic_capitalized_ukrainian_words_are_not_geography(self) -> None:
+        self.finding.metadata[SCOPE_KEY] = {
+            "version": SCOPE_VERSION,
+            "geography": ["Україна"],
+            "geography_anchors": [{"value": "Україна", "level": "country"}],
+            "numeric_facts": [{"value": "45000", "unit": "грн"}],
+        }
+        self.assertEqual(
+            self._check_with_scope(
+                "Додатково Мінімальна Номінальна кількість становила 45000 грн.",
+                {"version": SCOPE_VERSION, "geography": ["Україна"]},
+            ),
+            (),
+        )
+
+    def test_structured_country_and_named_regions_are_independent(self) -> None:
+        self.finding.metadata[SCOPE_KEY] = {
+            "version": SCOPE_VERSION,
+            "geography": ["Ukraine", "Kyiv", "Lviv"],
+            "geography_anchors": [
+                {"value": "Ukraine", "level": "country"},
+                {"value": "Kyiv", "level": "subnational"},
+                {"value": "Lviv", "level": "subnational"},
+            ],
+            "numeric_facts": [],
+        }
+        self.assertEqual(self._check_with_scope(
+            "Supported geography.",
+            {"version": SCOPE_VERSION, "geography": ["Ukraine", "Kyiv"]},
+        ), ())
+        self.assertTrue(self._check_with_scope(
+            "Unsupported geography.",
+            {"version": SCOPE_VERSION, "geography": ["Odesa"]},
+        ))
+
+    def test_geography_anchor_levels_are_bounded_and_backward_compatible(self) -> None:
+        current = sanitize_scope({
+            "version": SCOPE_VERSION,
+            "geography": ["Ukraine", "Kyiv"],
+            "geography_anchors": [
+                {"value": "Ukraine", "level": "country"},
+                {"value": "Kyiv", "level": "subnational"},
+            ],
+        })
+        historical = sanitize_scope({
+            "version": SCOPE_VERSION,
+            "geography": ["Ukraine"],
+            "numeric_facts": [{"value": "10", "unit": "%"}],
+        })
+        self.assertEqual(
+            current["geography_anchors"],
+            [
+                {"value": "ukraine", "level": "country"},
+                {"value": "kyiv", "level": "subnational"},
+            ],
+        )
+        self.assertEqual(
+            historical["geography_anchors"],
+            [{"value": "ukraine", "level": "unspecified"}],
+        )
+        self.assertEqual(historical["numeric_facts"][0]["geography"], [])
+
+    def test_multiple_scope_errors_keep_correlated_diagnostics(self) -> None:
+        self.finding.metadata[SCOPE_KEY] = {
+            "version": SCOPE_VERSION,
+            "geography": ["Ukraine"],
+            "numeric_facts": [{"value": "45000", "unit": "грн"}],
+        }
+        errors, mismatch = validate_claim_scope_with_diagnostics(
+            "Foreign value was 99000 usd.",
+            finding_ids=("f1",), findings_by_id={"f1": self.finding},
+            insights_by_id={}, evidence_by_id={"e1": self.evidence},
+            claim_scope={"version": SCOPE_VERSION, "geography": ["Poland"]},
+        )
+        self.assertGreaterEqual(len(errors), 2)
+        rejections = mismatch["rejections"]
+        self.assertEqual(rejections[0]["dimension"], "geography")
+        self.assertEqual(rejections[0]["rule"], "broadening_scope")
+        self.assertTrue(any(
+            item["rule"] == "unsupported_numeric_value"
+            and item["dimension"] == "numeric_value"
+            for item in rejections
+        ))
 
     def test_historical_finding_derives_only_from_authoritative_evidence(self) -> None:
         self.finding.metadata = {}

@@ -107,7 +107,7 @@ def _claim_scope_rule(scope_errors: tuple[str, ...]) -> str:
     return "other_claim_scope"
 
 
-def _normal_claim_scope_rejection(
+def _normal_claim_scope_rejections(
     *,
     candidate_index: int,
     batch_question_id: str | None,
@@ -115,39 +115,52 @@ def _normal_claim_scope_rejection(
     append_outcome: dict[str, Any],
     workflow_run_id: str,
     artifact_run_id: str,
-) -> dict[str, Any]:
+) -> list[dict[str, Any]]:
     """Project an existing bounded validator mismatch into safe diagnostics."""
     mismatch = append_outcome.get("mismatch")
     mismatch = dict(mismatch) if isinstance(mismatch, dict) else {}
-    candidate_scope = {
-        key: mismatch[key]
-        for key in ("candidate_value", "candidate_unit", "candidate_anchors", "rejected_tokens")
-        if key in mismatch
-    }
-    supported_scope = {
-        key: mismatch[key]
-        for key in ("supported_values", "supported_units", "supported_anchors")
-        if key in mismatch
-    }
-    dimension = mismatch.get("dimension") or mismatch.get("anchor_category")
-    rule = str(append_outcome.get("rule") or "other_claim_scope")
-    if dimension is None:
-        dimension = {
-            "unsupported_numeric_value": "numeric_value",
-            "unsupported_numeric_unit": "unit",
-        }.get(rule)
-    return {
-        "candidate_id": f"candidate-{candidate_index}",
-        "batch_question_id": batch_question_id,
-        "finding_ids": sorted(set(candidate.finding_refs))[:_MAX_GENERATION_DIAGNOSTIC_IDS],
-        "category": "claim_scope_rejection",
-        "rule": rule,
-        "dimension": dimension,
-        "candidate_scope": candidate_scope,
-        "supported_scope": supported_scope,
-        "replay_run_id": workflow_run_id if artifact_run_id != workflow_run_id else None,
-        "source_run_id": artifact_run_id,
-    }
+    raw_rejections = mismatch.get("rejections")
+    rejection_items = (
+        [item for item in raw_rejections if isinstance(item, dict)]
+        if isinstance(raw_rejections, list) else [mismatch]
+    )
+    diagnostics: list[dict[str, Any]] = []
+    for item in rejection_items[:_MAX_REPAIR_DIAGNOSTIC_ERRORS]:
+        candidate_scope = {
+            key: item[key]
+            for key in (
+                "candidate_value", "candidate_unit", "candidate_anchors",
+                "rejected_tokens",
+            )
+            if key in item
+        }
+        supported_scope = {
+            key: item[key]
+            for key in ("supported_values", "supported_units", "supported_anchors")
+            if key in item
+        }
+        rule = str(item.get("rule") or "other_claim_scope")
+        dimension = item.get("dimension") or item.get("anchor_category")
+        if dimension is None:
+            dimension = {
+                "unsupported_numeric_value": "numeric_value",
+                "unsupported_numeric_unit": "unit",
+            }.get(rule)
+        diagnostics.append({
+            "candidate_id": f"candidate-{candidate_index}",
+            "batch_question_id": batch_question_id,
+            "finding_ids": sorted(set(candidate.finding_refs))[
+                :_MAX_GENERATION_DIAGNOSTIC_IDS
+            ],
+            "category": "claim_scope_rejection",
+            "rule": rule,
+            "dimension": dimension,
+            "candidate_scope": candidate_scope,
+            "supported_scope": supported_scope,
+            "replay_run_id": workflow_run_id if artifact_run_id != workflow_run_id else None,
+            "source_run_id": artifact_run_id,
+        })
+    return diagnostics
 
 
 @dataclass(frozen=True)
@@ -423,8 +436,12 @@ class ReportService:
                     append_outcome.get("category") == "claim_scope_rejection"
                     and len(claim_scope_rejections) < _MAX_GENERATION_DIAGNOSTIC_CANDIDATES
                 ):
-                    claim_scope_rejections.append(
-                        _normal_claim_scope_rejection(
+                    remaining = (
+                        _MAX_GENERATION_DIAGNOSTIC_CANDIDATES
+                        - len(claim_scope_rejections)
+                    )
+                    claim_scope_rejections.extend(
+                        _normal_claim_scope_rejections(
                             candidate_index=candidate_index,
                             batch_question_id=(
                                 None if batch_question_id == "__unscoped__" else batch_question_id
@@ -433,7 +450,7 @@ class ReportService:
                             append_outcome=append_outcome,
                             workflow_run_id=workflow_run_id,
                             artifact_run_id=artifact_run_id,
-                        ),
+                        )[:remaining],
                     )
                     context.write_shared(
                         "report_generation_diagnostics",
@@ -1115,7 +1132,12 @@ class ReportService:
             if scope_errors:
                 record_outcome("claim_scope_rejection")
                 if append_outcome is not None:
-                    append_outcome["rule"] = _claim_scope_rule(scope_errors)
+                    append_outcome["rule"] = (
+                        str(scope_mismatch.get("rule"))
+                        if isinstance(scope_mismatch, dict)
+                        and scope_mismatch.get("rule")
+                        else _claim_scope_rule(scope_errors)
+                    )
                     if scope_mismatch is not None:
                         append_outcome["mismatch"] = scope_mismatch
                 batch_diag.rejected_section_count += 1

@@ -10,11 +10,10 @@ from domain.evidence.evidence import Evidence
 from domain.findings.finding import Finding
 from domain.findings.insight import Insight
 from application.research_scope.authoritative_scope import (
-    SCOPE_KEY,
     SCOPE_VERSION,
-    combine_evidence_scopes,
     numeric_facts,
     sanitize_scope,
+    scope_for_finding,
 )
 
 _TOKEN = re.compile(r"[\w]+", re.UNICODE)
@@ -46,12 +45,6 @@ _STOP = frozenset(
         "або", "у", "в", "з", "до", "для", "що", "це", "є", "як", "на", "по",
     }
 )
-_NON_GEOGRAPHY_PROPER = frozenset(
-    {"in", "the", "during", "for", "from", "year", "index", "share", "total",
-     "за", "на", "року", "рік", "та", "сукупно", "слабша", "індекс", "це",
-     "частка", "менша", "так", "одночасно", "очікування"}
-)
-
 _MAX_MISMATCH_TOKENS = 8
 _MAX_MISMATCH_VALUES = 8
 _MAX_MISMATCH_ANCHORS = 8
@@ -94,37 +87,22 @@ def _support_text(
     return " ".join(parts)
 
 
-def _proper_anchors(text: str) -> set[str]:
-    return {
-        token.casefold() for token in _TOKEN.findall(text)
-        if token[:1].isupper() and token.casefold() not in _NON_GEOGRAPHY_PROPER
-        and not _YEAR.fullmatch(token)
-    }
-
-
 def _finding_support_scope(
     finding_ids: Iterable[str], *, findings_by_id: dict[str, Finding],
     evidence_by_id: dict[str, Evidence],
 ) -> dict[str, Any]:
-    evidence: list[Evidence] = []
     scopes: list[dict[str, Any]] = []
     for finding_id in finding_ids:
         finding = findings_by_id.get(finding_id)
         if finding is None:
             continue
-        raw = finding.metadata.get(SCOPE_KEY)
-        if isinstance(raw, dict) and raw.get("version") == SCOPE_VERSION:
-            scopes.append(sanitize_scope(raw))
-        else:
-            # Historical fallback is restricted to cited authoritative Evidence.
-            evidence.extend(
-                evidence_by_id[ref] for ref in finding.evidence_refs if ref in evidence_by_id
-            )
-    if evidence:
-        scopes.append(combine_evidence_scopes(evidence))
+        scopes.append(scope_for_finding(finding, evidence_by_id))
     return sanitize_scope({
         "version": SCOPE_VERSION,
         "geography": [value for scope in scopes for value in scope["geography"]],
+        "geography_anchors": [
+            value for scope in scopes for value in scope["geography_anchors"]
+        ],
         "periods": [value for scope in scopes for value in scope["periods"]],
         "metrics": [value for scope in scopes for value in scope["metrics"]],
         "population_dimensions": [
@@ -181,7 +159,14 @@ def validate_claim_scope_with_diagnostics(
     support_tokens = _tokens(support)
     operators = claim_tokens & _BROADENING
     errors: list[str] = []
-    mismatch: dict[str, Any] | None = None
+    rejections: list[dict[str, Any]] = []
+
+    def reject(error: str, mismatch: dict[str, Any]) -> None:
+        if error not in errors:
+            errors.append(error)
+            rejections.append(mismatch)
+
+    candidate_scope: dict[str, Any] | None = None
     if claim_scope is not None:
         candidate_scope = sanitize_scope(claim_scope)
         for field, dimension in (
@@ -193,68 +178,109 @@ def validate_claim_scope_with_diagnostics(
             supported_values = set(support_scope[field])
             unsupported_values = candidate_values - supported_values
             if unsupported_values:
-                errors.append(f"Report claim uses unsupported {dimension} scope")
-                mismatch = {
-                    "rule": "broadening_scope", "dimension": dimension,
-                    "rejected_tokens": _bounded(
-                        unsupported_values, _MAX_MISMATCH_TOKENS,
-                    ),
-                }
+                reject(
+                    f"Report claim uses unsupported {dimension} scope",
+                    {
+                        "rule": "broadening_scope", "dimension": dimension,
+                        "candidate_anchors": _bounded(
+                            candidate_values, _MAX_MISMATCH_TOKENS,
+                        ),
+                        "supported_anchors": _bounded(
+                            supported_values, _MAX_MISMATCH_TOKENS,
+                        ),
+                        "rejected_tokens": _bounded(
+                            unsupported_values, _MAX_MISMATCH_TOKENS,
+                        ),
+                    },
+                )
     if operators:
         unsupported = claim_tokens - support_tokens - _BROADENING
         if unsupported:
-            errors.append(
+            reject(
                 "Report claim broadens the supported scope: "
                 f"operators={sorted(operators)} unsupported_scope={sorted(unsupported)}",
+                {
+                    "rule": "broadening_scope",
+                    "dimension": "generality",
+                    "operators": _bounded(operators, _MAX_MISMATCH_TOKENS),
+                    "rejected_tokens": _bounded(unsupported, _MAX_MISMATCH_TOKENS),
+                },
             )
-            mismatch = {
-                "rule": "broadening_scope",
-                "operators": _bounded(operators, _MAX_MISMATCH_TOKENS),
-                "rejected_tokens": _bounded(unsupported, _MAX_MISMATCH_TOKENS),
-            }
     supported = support_scope["numeric_facts"]
-    supported_geography = set(support_scope["geography"])
-    supported_geo_tokens = {
-        token for value in supported_geography for token in _tokens(value)
-    } or _proper_anchors(support)
     for fact in numeric_facts(content):
         value, unit = fact["value"], fact["unit"]
         periods = set(fact["periods"])
         matches = [item for item in supported if item["value"] == value]
         if not matches:
-            error = f"unsupported numeric value: {value}"
-            errors.append(error)
-            mismatch = {"rule": "unsupported_numeric_value", "candidate_value": value,
-                        "supported_values": _bounded((item["value"] for item in supported), _MAX_MISMATCH_VALUES)}
+            reject(
+                f"unsupported numeric value: {value}",
+                {"rule": "unsupported_numeric_value", "dimension": "numeric_value",
+                 "candidate_value": value,
+                 "supported_values": _bounded(
+                     (item["value"] for item in supported), _MAX_MISMATCH_VALUES,
+                 )},
+            )
             continue
         if not any(item["unit"] == unit for item in matches):
-            error = f"unsupported numeric unit: {value} {unit}"
-            errors.append(error)
-            mismatch = {"rule": "unsupported_numeric_unit", "candidate_value": value,
-                        "candidate_unit": unit,
-                        "supported_units": _bounded((item["unit"] for item in matches), _MAX_MISMATCH_VALUES)}
+            reject(
+                f"unsupported numeric unit: {value} {unit}",
+                {"rule": "unsupported_numeric_unit", "dimension": "unit",
+                 "candidate_value": value, "candidate_unit": unit,
+                 "supported_units": _bounded(
+                     (item["unit"] for item in matches), _MAX_MISMATCH_VALUES,
+                 )},
+            )
             continue
         same_unit = [item for item in matches if item["unit"] == unit]
         if periods and not any(periods <= set(item["periods"]) for item in same_unit):
-            errors.append(f"unsupported numeric scope: {value} {unit}")
             supported_context = {anchor for item in same_unit for anchor in item["periods"]}
-            mismatch = {"rule": "unsupported_numeric_scope",
-                        "anchor_category": "period",
-                        "candidate_anchors": _bounded(periods, _MAX_MISMATCH_ANCHORS),
-                        "supported_anchors": _bounded(supported_context, _MAX_MISMATCH_ANCHORS)}
-            continue
-        # Geography is a distinct comparison and is never mixed into period
-        # anchors. Historical fallback uses proper-name tokens only for the
-        # numeric claim being checked.
-        claimed_geo_tokens = _proper_anchors(content)
-        unsupported_geo = claimed_geo_tokens - supported_geo_tokens
-        if supported_geo_tokens and unsupported_geo:
-            errors.append("Report claim uses unsupported geography")
-            mismatch = {
-                "rule": "broadening_scope", "dimension": "geography",
-                "rejected_tokens": _bounded(unsupported_geo, _MAX_MISMATCH_TOKENS),
-            }
-    return tuple(errors), mismatch
+            reject(
+                f"unsupported numeric scope: {value} {unit}",
+                {"rule": "unsupported_numeric_scope", "dimension": "period",
+                 "anchor_category": "period",
+                 "candidate_anchors": _bounded(periods, _MAX_MISMATCH_ANCHORS),
+                 "supported_anchors": _bounded(
+                     supported_context, _MAX_MISMATCH_ANCHORS,
+                 )},
+            )
+
+    if candidate_scope is not None:
+        for fact in candidate_scope["numeric_facts"]:
+            value, unit = fact["value"], fact["unit"]
+            matches = [
+                item for item in supported
+                if item["value"] == value and item["unit"] == unit
+            ]
+            if not matches:
+                continue  # value/unit rejection is already handled above or by content.
+            for field, dimension in (
+                ("periods", "period"), ("geography", "geography"),
+                ("metrics", "metric"),
+                ("population_dimensions", "population_dimension"),
+            ):
+                candidate_values = set(fact[field])
+                if not candidate_values:
+                    continue
+                if any(candidate_values <= set(item[field]) for item in matches):
+                    continue
+                supported_values = {value for item in matches for value in item[field]}
+                reject(
+                    f"unsupported numeric scope: {value} {unit} {dimension}",
+                    {"rule": "unsupported_numeric_scope", "dimension": dimension,
+                     "anchor_category": dimension,
+                     "candidate_anchors": _bounded(
+                         candidate_values, _MAX_MISMATCH_ANCHORS,
+                     ),
+                     "supported_anchors": _bounded(
+                         supported_values, _MAX_MISMATCH_ANCHORS,
+                     )},
+                )
+
+    if not rejections:
+        return tuple(errors), None
+    primary = dict(rejections[0])
+    primary["rejections"] = rejections[:_MAX_MISMATCH_VALUES]
+    return tuple(errors), primary
 
 
 def validate_claim_scope(
