@@ -162,7 +162,17 @@ class LlmReportEngine:
             "Insights into compact, decision-oriented report sections. You MUST NOT invent "
             "new facts, expand an observation period beyond the supplied Finding/Evidence, "
             "or introduce substantive causal claims not entailed by the supplied support. "
-            "Use the authoritative support block to keep periods, scope and citations exact. "
+            "The structured authoritative_scope_contract is the exclusive allowlist for "
+            "factual scope. Both section content and claim_scope MUST use only exact anchors "
+            "or complete numeric facts present for the cited Findings. Omission or less "
+            "precision is preferable to unsupported precision. A year does not authorize a "
+            "month, quarter, exact date, or narrower subperiod. An empty geography, metric, "
+            "population_dimensions, numeric_facts, or unit set authorizes no anchor in that "
+            "dimension; never fill it from Finding/Evidence prose or general knowledge. "
+            "Do not calculate, round, derive, convert, or combine numeric facts. Preserve each "
+            "allowed value together with its exact unit, geography, period, metric, and "
+            "population/dimension bindings. Use the authoritative support block only as prose "
+            "support within those structured limits and to keep citations exact. "
             "Every substantive section must retain all referenced finding/evidence IDs. "
             "For every mandatory substantive RQ in the contract, emit that exact RQ ID "
             "in research_question_refs and at least one authoritative Finding ID listed "
@@ -306,9 +316,30 @@ class LlmReportEngine:
         return tuple(sections), stats
 
     def _build_section_payload(self, report_input: ReportInput) -> str:
+        authoritative_scopes = {
+            finding.id: scope_for_finding(finding, report_input.evidence_by_id)
+            for finding in report_input.findings
+        }
+        scope_contract = {
+            "version": 1,
+            "policy": "exact_subset",
+            "authority": "cited_finding_scopes",
+            "rules": {
+                "period": "exact_anchor_only_no_finer_subperiod",
+                "geography": "exact_anchor_only",
+                "metric": "exact_anchor_only_empty_means_none",
+                "population_dimension": "exact_anchor_only_empty_means_none",
+                "numeric_fact": "exact_value_and_all_bindings_only",
+                "unit_scale": "exact_bound_numeric_fact_only",
+                "missing_dimension": "omit_do_not_infer_from_prose",
+            },
+            "finding_scopes": authoritative_scopes,
+        }
         lines = [
             f"business_question: {report_input.brief.business_question}",
             f"language: {report_input.brief.language}",
+            "authoritative_scope_contract: "
+            + json.dumps(scope_contract, sort_keys=True),
             "deliverable_plan:",
             *[f"- {item}" for item in report_input.section_titles],
             "findings:",
@@ -332,9 +363,7 @@ class LlmReportEngine:
                 + json.dumps(list(report_input.repair_diagnostics), sort_keys=True)
             )
         for finding in report_input.findings:
-            authoritative_scope = scope_for_finding(
-                finding, report_input.evidence_by_id,
-            )
+            authoritative_scope = authoritative_scopes[finding.id]
             lines.append(
                 f"- id={finding.id} statement={finding.statement} "
                 f"evidence_refs={list(finding.evidence_refs)} "

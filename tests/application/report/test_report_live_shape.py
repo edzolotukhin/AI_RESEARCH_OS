@@ -59,6 +59,12 @@ PROJECT_ID = "project-766e98ea"
 DESIGN_ID = "design-766e98ea"
 
 
+def _scope_contract(payload: str) -> dict:
+    prefix = "authoritative_scope_contract: "
+    line = next(item for item in payload.splitlines() if item.startswith(prefix))
+    return json.loads(line[len(prefix):])
+
+
 def _live_design() -> ResearchDesign:
     questions = tuple(
         ResearchQuestion(
@@ -660,6 +666,130 @@ class ReportLiveShapeTests(unittest.TestCase):
         self.assertIn('"geography": ["country", "region"]', prompt)
         self.assertIn('"level": "country"', prompt)
         self.assertIn('"level": "subnational"', prompt)
+
+    def test_generator_contract_uses_exact_authoritative_dimensions(self) -> None:
+        engine = LlmReportEngine(llm_client=Mock())
+        from application.ports.report_ports import ReportInput
+
+        finding = _live_findings()[0]
+        finding.metadata[SCOPE_KEY] = {
+            "version": SCOPE_VERSION,
+            "geography": ["Ukraine"],
+            "geography_anchors": [{"value": "Ukraine", "level": "country"}],
+            "periods": ["2026"],
+            "metrics": [],
+            "population_dimensions": ["employed population"],
+            "numeric_facts": [{
+                "value": "30515",
+                "unit": "uah",
+                "periods": ["2026"],
+                "geography": ["Ukraine"],
+                "metrics": [],
+                "population_dimensions": ["employed population"],
+            }],
+        }
+        report_input = ReportInput(
+            project_id=PROJECT_ID, workflow_run_id=RUN_ID,
+            research_design_id=DESIGN_ID,
+            brief=ResearchBrief(title="T", business_question="Q"),
+            design=_live_design(), findings=(finding,), insights=(),
+            evidence_by_id={item.id: item for item in _live_evidence()},
+            sources_by_id={}, section_titles=("Section",),
+        )
+
+        payload = engine._build_section_payload(report_input)
+        contract = _scope_contract(payload)
+        scope = contract["finding_scopes"][finding.id]
+
+        self.assertEqual(contract["policy"], "exact_subset")
+        self.assertEqual(scope["periods"], ["2026"])
+        self.assertNotIn("quarter", payload.lower())
+        self.assertNotIn("january", payload.lower())
+        self.assertEqual(scope["metrics"], [])
+        self.assertEqual(scope["geography"], ["ukraine"])
+        self.assertEqual(scope["population_dimensions"], ["employed population"])
+        self.assertEqual(scope["numeric_facts"], [{
+            "value": "30515",
+            "unit": "uah",
+            "periods": ["2026"],
+            "geography": ["ukraine"],
+            "metrics": [],
+            "population_dimensions": ["employed population"],
+        }])
+        self.assertEqual(
+            contract["rules"]["missing_dimension"],
+            "omit_do_not_infer_from_prose",
+        )
+
+    def test_generator_contract_allows_only_explicit_finer_period_and_metric(self) -> None:
+        engine = LlmReportEngine(llm_client=Mock())
+        from application.ports.report_ports import ReportInput
+
+        finding = _live_findings()[0]
+        finding.metadata[SCOPE_KEY] = {
+            "version": SCOPE_VERSION,
+            "geography": [],
+            "periods": ["q2 2026"],
+            "metrics": ["nominal wage"],
+            "population_dimensions": [],
+            "numeric_facts": [],
+        }
+        report_input = ReportInput(
+            project_id=PROJECT_ID, workflow_run_id=RUN_ID,
+            research_design_id=DESIGN_ID,
+            brief=ResearchBrief(title="T", business_question="Q"),
+            design=_live_design(), findings=(finding,), insights=(),
+            evidence_by_id={item.id: item for item in _live_evidence()},
+            sources_by_id={}, section_titles=("Section",),
+        )
+
+        contract = _scope_contract(engine._build_section_payload(report_input))
+        scope = contract["finding_scopes"][finding.id]
+
+        self.assertEqual(scope["periods"], ["q2 2026"])
+        self.assertNotIn("january 2026", json.dumps(contract).lower())
+        self.assertEqual(scope["metrics"], ["nominal wage"])
+
+    def test_repair_and_normal_generation_share_exact_scope_contract(self) -> None:
+        engine = LlmReportEngine(llm_client=Mock())
+        from application.ports.report_ports import ReportInput
+
+        finding = _live_findings()[0]
+        finding.metadata[SCOPE_KEY] = {
+            "version": SCOPE_VERSION,
+            "geography": ["Ukraine"],
+            "periods": ["2026"],
+            "metrics": [],
+            "population_dimensions": [],
+            "numeric_facts": [{"value": "10", "unit": "%", "periods": ["2026"]}],
+        }
+        normal = ReportInput(
+            project_id=PROJECT_ID, workflow_run_id=RUN_ID,
+            research_design_id=DESIGN_ID,
+            brief=ResearchBrief(title="T", business_question="Q"),
+            design=_live_design(), findings=(finding,), insights=(),
+            evidence_by_id={item.id: item for item in _live_evidence()},
+            sources_by_id={}, section_titles=("Section",),
+        )
+        repair = replace(
+            normal,
+            mandatory_substantive_rq_findings={"rq-1": (finding.id,)},
+            repair_diagnostics=("substantive_coverage_missing:rq-1",),
+        )
+
+        normal_contract = _scope_contract(engine._build_section_payload(normal))
+        repair_contract = _scope_contract(engine._build_section_payload(repair))
+
+        self.assertEqual(normal_contract, repair_contract)
+        self.assertEqual(
+            repair_contract["finding_scopes"][finding.id]["numeric_facts"][0],
+            {"value": "10", "unit": "%", "periods": ["2026"],
+             "geography": [], "metrics": [], "population_dimensions": []},
+        )
+        system_prompt = engine._section_system_prompt(repair)
+        self.assertIn("exclusive allowlist", system_prompt)
+        self.assertIn("A year does not authorize a month, quarter", system_prompt)
+        self.assertIn("never fill it from Finding/Evidence prose", system_prompt)
 
     def test_normal_and_replay_inputs_use_equivalent_source_scope(self) -> None:
         engine = LlmReportEngine(llm_client=Mock())
