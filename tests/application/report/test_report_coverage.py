@@ -33,6 +33,7 @@ from application.report.citation_registry import CitationRegistry
 from application.report.coverage_contract import CONTRACT_KEY, CONTRACT_VERSION
 from application.report.diagnostics import ReportBatchDiagnostics
 from application.report.report_service import ReportService, _claim_scope_rule
+from application.replay.desk_downstream_replay import REPLAY_KEY
 from application.ports.report_ports import ReportSectionCandidate
 from infrastructure.persistence.memory.in_memory_artifact_repository import (
     InMemoryArtifactRepository,
@@ -513,6 +514,127 @@ class ReportCoverageValidationTests(unittest.TestCase):
         self.assertLess(len(json.dumps(diagnostics)), 512)
         self.assertNotIn("prompt", diagnostics)
         self.assertNotIn("prose", diagnostics)
+
+    def test_normal_period_rejections_persist_after_zero_sections(self) -> None:
+        service = _deterministic_service()
+        _seed_run_data(service)
+        context = _context()
+        mismatch = {
+            "rule": "unsupported_numeric_scope",
+            "anchor_category": "period",
+            "candidate_anchors": ["2025"],
+            "supported_anchors": ["2026"],
+        }
+
+        with patch(
+            "application.report.report_service.validate_claim_scope_with_diagnostics",
+            return_value=(("unsupported numeric scope: 42 %",), mismatch),
+        ):
+            with self.assertRaises(ReportError) as raised:
+                service.write_for_context(context)
+
+        self.assertIn("No valid report sections produced", str(raised.exception))
+        diagnostics = context.read_shared("report_generation_diagnostics")
+        self.assertEqual(diagnostics["phase"], "candidate_validation")
+        self.assertEqual(diagnostics["status"], "failed")
+        self.assertEqual(diagnostics["valid_candidate_count"], 0)
+        rejection = diagnostics["claim_scope_rejections"][0]
+        self.assertEqual(rejection["category"], "claim_scope_rejection")
+        self.assertEqual(rejection["rule"], "unsupported_numeric_scope")
+        self.assertEqual(rejection["dimension"], "period")
+        self.assertEqual(rejection["candidate_scope"], {"candidate_anchors": ["2025"]})
+        self.assertEqual(rejection["supported_scope"], {"supported_anchors": ["2026"]})
+        self.assertTrue(rejection["candidate_id"].startswith("candidate-"))
+        self.assertTrue(rejection["finding_ids"])
+        serialized = json.dumps(diagnostics)
+        self.assertNotIn("prompt", serialized)
+        self.assertNotIn("provider", serialized)
+        self.assertNotIn("Report prose", serialized)
+
+    def test_normal_numeric_and_unit_rejections_persist_bounded_scopes(self) -> None:
+        cases = (
+            (
+                "unsupported numeric value: 99",
+                {
+                    "rule": "unsupported_numeric_value",
+                    "candidate_value": "99",
+                    "supported_values": ["42"],
+                },
+                "numeric_value",
+                {"candidate_value": "99"},
+                {"supported_values": ["42"]},
+            ),
+            (
+                "unsupported numeric unit: 42 %",
+                {
+                    "rule": "unsupported_numeric_unit",
+                    "candidate_value": "42",
+                    "candidate_unit": "%",
+                    "supported_units": ["uah"],
+                },
+                "unit",
+                {"candidate_value": "42", "candidate_unit": "%"},
+                {"supported_units": ["uah"]},
+            ),
+        )
+        for error, mismatch, dimension, candidate_scope, supported_scope in cases:
+            with self.subTest(rule=mismatch["rule"]):
+                service = _deterministic_service()
+                _seed_run_data(service)
+                context = _context()
+                with patch(
+                    "application.report.report_service.validate_claim_scope_with_diagnostics",
+                    return_value=((error,), mismatch),
+                ):
+                    with self.assertRaises(ReportError):
+                        service.write_for_context(context)
+
+                rejection = context.read_shared("report_generation_diagnostics")[
+                    "claim_scope_rejections"
+                ][0]
+                self.assertEqual(rejection["rule"], mismatch["rule"])
+                self.assertEqual(rejection["dimension"], dimension)
+                self.assertEqual(rejection["candidate_scope"], candidate_scope)
+                self.assertEqual(rejection["supported_scope"], supported_scope)
+
+    def test_replay_normal_rejection_persists_replay_and_source_lineage(self) -> None:
+        replay_run_id = "replay-run-coverage"
+        service = _deterministic_service()
+        _seed_run_data(service)
+        context = _context()
+        context.workflow_run.id = replay_run_id
+        context.write_shared(REPLAY_KEY, {"source_workflow_run_id": RUN_ID})
+
+        with patch(
+            "application.report.report_service.validate_claim_scope_with_diagnostics",
+            return_value=(
+                ("unsupported numeric value: 99",),
+                {
+                    "rule": "unsupported_numeric_value",
+                    "candidate_value": "99",
+                    "supported_values": ["42"],
+                },
+            ),
+        ):
+            with self.assertRaises(ReportError):
+                service.write_for_context(context)
+
+        diagnostics = context.read_shared("report_generation_diagnostics")
+        self.assertEqual(diagnostics["replay_run_id"], replay_run_id)
+        self.assertEqual(diagnostics["source_run_id"], RUN_ID)
+        rejection = diagnostics["claim_scope_rejections"][0]
+        self.assertEqual(rejection["replay_run_id"], replay_run_id)
+        self.assertEqual(rejection["source_run_id"], RUN_ID)
+
+    def test_valid_normal_candidate_has_no_rejection_diagnostic(self) -> None:
+        service = _deterministic_service()
+        _seed_run_data(service)
+        context = _context()
+
+        service.write_for_context(context)
+
+        diagnostics = context.read_shared("report_generation_diagnostics")
+        self.assertNotIn("claim_scope_rejections", diagnostics)
 
     def test_provenance_and_citations_persist(self) -> None:
         service = _deterministic_service()
