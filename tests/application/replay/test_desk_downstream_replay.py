@@ -154,6 +154,18 @@ class DeskDownstreamReplayTests(unittest.TestCase):
             service.start(project_id=project.id, source_run_id=source.id, owner_id="owner-1")
         self.assertEqual([], durable.calls)
 
+    def test_source_finding_rq_and_information_need_lineage_stays_fail_closed(self):
+        service, project, source, _, durable, _, finding, _ = _fixture()
+        finding.research_question_refs = ("foreign-rq",)
+        with self.assertRaisesRegex(DeskDownstreamReplayError, "finding_lineage"):
+            service.start(project_id=project.id, source_run_id=source.id, owner_id="owner-1")
+
+        finding.research_question_refs = ("rq-1",)
+        finding.information_need_refs = ("foreign-in",)
+        with self.assertRaisesRegex(DeskDownstreamReplayError, "finding_lineage"):
+            service.start(project_id=project.id, source_run_id=source.id, owner_id="owner-1")
+        self.assertEqual([], durable.calls)
+
     def test_active_and_completed_attempts_are_reused(self):
         service, project, source, workflows, durable, *_ = _fixture()
         for status, terminal in ((WorkflowStatus.RUNNING, False), (WorkflowStatus.COMPLETED, True)):

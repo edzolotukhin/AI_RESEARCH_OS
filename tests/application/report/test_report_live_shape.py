@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from dataclasses import replace
 from unittest.mock import Mock
 
 from domain.ai.llm_response import LLMResponse
@@ -22,10 +23,15 @@ from domain.value_objects.executor_type import ExecutorType
 from domain.workflow_template import WorkflowTemplate
 
 from application.report.diagnostics import (
+    REJECTION_CATEGORY_CROSS_DESIGN_REF,
+    REJECTION_CATEGORY_CROSS_RUN_REF,
     REJECTION_CATEGORY_INVALID_FINDING_REF,
 )
-from application.report.exceptions import ReportError
+from application.report.exceptions import InvalidReportProvenanceError, ReportError
+from application.report.provenance_validation import validate_section_candidate
 from application.report.report_service import ReportService
+from application.replay.desk_downstream_replay import REPLAY_KEY
+from application.ports.report_ports import ReportSectionCandidate
 from infrastructure.persistence.memory.in_memory_artifact_repository import (
     InMemoryArtifactRepository,
 )
@@ -290,6 +296,90 @@ def _summary_payload() -> str:
 
 
 class ReportLiveShapeTests(unittest.TestCase):
+    @staticmethod
+    def _validate_first_section(*, artifact_run_id: str, finding_run_id: str = RUN_ID,
+                                finding_design_id: str = DESIGN_ID) -> None:
+        finding = replace(
+            _live_findings(run_id=finding_run_id)[0],
+            research_design_id=finding_design_id,
+        )
+        insight = _live_insights(run_id=finding_run_id)[0]
+        evidence = _live_evidence(run_id=finding_run_id)[0]
+        validate_section_candidate(
+            ReportSectionCandidate(
+                title="Supported section",
+                content="Supported content",
+                research_question_refs=("rq-1",),
+                finding_refs=(finding.id,),
+                insight_refs=(insight.id,),
+                evidence_refs=(evidence.id,),
+            ),
+            findings_by_id={finding.id: finding},
+            insights_by_id={insight.id: insight},
+            evidence_by_id={evidence.id: evidence},
+            project_id=PROJECT_ID,
+            workflow_run_id=artifact_run_id,
+            research_design_id=DESIGN_ID,
+            design=_live_design(),
+        )
+
+    def test_normal_run_accepts_current_run_references(self) -> None:
+        self._validate_first_section(artifact_run_id=RUN_ID)
+
+    def test_normal_run_rejects_foreign_run_references(self) -> None:
+        with self.assertRaises(InvalidReportProvenanceError) as raised:
+            self._validate_first_section(
+                artifact_run_id=RUN_ID,
+                finding_run_id="foreign-run",
+            )
+        self.assertEqual(REJECTION_CATEGORY_CROSS_RUN_REF, raised.exception.category)
+
+    def test_replay_accepts_source_refs_and_persists_report_under_replay_run(self) -> None:
+        replay_run_id = "replay-run"
+        llm_client = Mock()
+
+        def _generate(prompt, options=None):
+            if "section_summaries:" in prompt.user:
+                return LLMResponse(content=_summary_payload())
+            question_id = _batch_question_from_prompt(prompt)
+            return LLMResponse(content=(
+                _single_section_payload_for_batch(question_id)
+                if question_id else '{"sections":[]}'
+            ))
+
+        llm_client.generate.side_effect = _generate
+        service = _build_service(llm_client)
+        _seed_repositories(service, run_id=RUN_ID)
+        context = _report_context(run_id=replay_run_id)
+        context.write_shared(REPLAY_KEY, {"source_workflow_run_id": RUN_ID})
+
+        summary = service.write_for_context(context)
+
+        report = service._report_repository.get_by_id(summary.report_id)
+        assert report is not None
+        self.assertEqual(replay_run_id, report.workflow_run_id)
+        self.assertTrue(report.finding_refs)
+        self.assertTrue(all(
+            service._finding_repository.get_by_id(ref).workflow_run_id == RUN_ID
+            for ref in report.finding_refs
+        ))
+
+    def test_replay_rejects_third_run_references(self) -> None:
+        with self.assertRaises(InvalidReportProvenanceError) as raised:
+            self._validate_first_section(
+                artifact_run_id=RUN_ID,
+                finding_run_id="third-run",
+            )
+        self.assertEqual(REJECTION_CATEGORY_CROSS_RUN_REF, raised.exception.category)
+
+    def test_replay_source_design_mismatch_still_fails(self) -> None:
+        with self.assertRaises(InvalidReportProvenanceError) as raised:
+            self._validate_first_section(
+                artifact_run_id=RUN_ID,
+                finding_design_id="foreign-design",
+            )
+        self.assertEqual(REJECTION_CATEGORY_CROSS_DESIGN_REF, raised.exception.category)
+
     def test_a_valid_multi_section_report_persists(self) -> None:
         llm_client = Mock()
 

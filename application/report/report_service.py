@@ -363,7 +363,7 @@ class ReportService:
                     sources_by_id=sources_by_id,
                     citation_registry=citation_registry,
                     project_id=project_id,
-                    workflow_run_id=workflow_run_id,
+                    workflow_run_id=artifact_run_id,
                     research_design_id=research_design_id,
                     design=design,
                     batch_diag=batch_diag,
@@ -476,6 +476,7 @@ class ReportService:
                     section_titles=section_titles,
                     project_id=project_id,
                     workflow_run_id=workflow_run_id,
+                    provenance_workflow_run_id=artifact_run_id,
                     research_design_id=research_design_id,
                     coverage_snapshot=coverage.to_dict() if coverage is not None else None,
                     mandatory_rq_findings=mandatory_rq_findings,
@@ -1089,6 +1090,7 @@ class ReportService:
         coverage_snapshot: dict | None,
         mandatory_rq_findings: dict[str, tuple[str, ...]],
         diagnostics: tuple[str, ...],
+        provenance_workflow_run_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Bounded repair for authoritative limited-report RQ omissions."""
         attempts: list[dict[str, Any]] = []
@@ -1203,7 +1205,7 @@ class ReportService:
                         sources_by_id=sources_by_id,
                         citation_registry=citation_registry,
                         project_id=project_id,
-                        workflow_run_id=workflow_run_id,
+                        workflow_run_id=(provenance_workflow_run_id or workflow_run_id),
                         research_design_id=research_design_id,
                         design=design,
                         batch_diag=batch_diag,
