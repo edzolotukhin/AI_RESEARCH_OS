@@ -29,12 +29,14 @@ from application.report.coverage_validation import (
     missing_research_question_ids,
 )
 from application.report.exceptions import InvalidReportProvenanceError, ReportError
+from application.execution.exceptions import BudgetExhaustedError
 from application.report.citation_registry import CitationRegistry
 from application.report.coverage_contract import CONTRACT_KEY, CONTRACT_VERSION
 from application.report.diagnostics import ReportBatchDiagnostics
 from application.report.report_service import ReportService, _claim_scope_rule
 from application.replay.desk_downstream_replay import REPLAY_KEY
-from application.ports.report_ports import ReportSectionCandidate
+from application.ports.report_ports import ReportCandidate, ReportSectionCandidate
+from application.research_scope.authoritative_scope import SCOPE_KEY, SCOPE_VERSION
 from infrastructure.persistence.memory.in_memory_artifact_repository import (
     InMemoryArtifactRepository,
 )
@@ -237,6 +239,42 @@ class ReportCoverageValidationTests(unittest.TestCase):
         context = _context()
         context.write_shared("report_repair_diagnostics", {"version": 1, "attempts": attempts})
         return context.read_shared("report_repair_diagnostics")
+
+    def _claim_scope_service(
+        self,
+        *,
+        authoritative_scope: dict,
+        generated_results: list[object],
+    ) -> tuple[ReportService, Mock]:
+        service = _deterministic_service()
+        _seed_run_data(service, covered_questions={"RQ1"})
+        for finding in service._finding_repository.list_for_project(
+            PROJECT_ID, workflow_run_id=RUN_ID,
+        ):
+            finding.metadata[SCOPE_KEY] = dict(authoritative_scope)
+        engine = Mock()
+        engine.method_name = "bounded-test"
+        engine.last_section_batch_stats = None
+        engine.generate_sections.side_effect = generated_results
+        engine.generate_executive_summary.return_value = ReportCandidate(
+            title="Corrected report",
+            executive_summary="Bounded summary.",
+            sections=(),
+            limitations=("Desk research only",),
+        )
+        service._report_engine = engine
+        return service, engine
+
+    @staticmethod
+    def _scope_candidate(*, content: str, claim_scope: dict) -> ReportSectionCandidate:
+        return ReportSectionCandidate(
+            title="RQ1 section",
+            content=content,
+            research_question_refs=("RQ1",),
+            finding_refs=("finding-001",),
+            evidence_refs=("evidence-001",),
+            metadata={"claim_scope": claim_scope},
+        )
 
     def test_repair_diagnostics_identify_generator_invalid_binding(self) -> None:
         diagnostics = self._repair_diagnostics_for_candidate(
@@ -516,6 +554,203 @@ class ReportCoverageValidationTests(unittest.TestCase):
         self.assertNotIn("prompt", diagnostics)
         self.assertNotIn("prose", diagnostics)
 
+    def test_normal_claim_scope_correction_repairs_production_failure_shapes(self) -> None:
+        cases = (
+            (
+                "unsupported_year",
+                {
+                    "version": SCOPE_VERSION, "geography": [], "periods": ["2026"],
+                    "metrics": [], "population_dimensions": [], "numeric_facts": [],
+                },
+                self._scope_candidate(
+                    content="The supported period is 2025 and 2026.",
+                    claim_scope={"version": SCOPE_VERSION, "periods": ["2025", "2026"]},
+                ),
+                self._scope_candidate(
+                    content="The supported period is 2026.",
+                    claim_scope={"version": SCOPE_VERSION, "periods": ["2026"]},
+                ),
+                "broadening_scope",
+            ),
+            (
+                "unsupported_value",
+                {
+                    "version": SCOPE_VERSION, "geography": [], "periods": [],
+                    "metrics": [], "population_dimensions": [],
+                    "numeric_facts": [{"value": "42", "unit": "%"}],
+                },
+                self._scope_candidate(
+                    content="The unsupported value is 10%.",
+                    claim_scope={
+                        "version": SCOPE_VERSION,
+                        "numeric_facts": [{"value": "10", "unit": "%"}],
+                    },
+                ),
+                self._scope_candidate(
+                    content="The finding supports a bounded qualitative conclusion.",
+                    claim_scope={"version": SCOPE_VERSION, "numeric_facts": []},
+                ),
+                "unsupported_numeric_value",
+            ),
+            (
+                "unsupported_numeric_period",
+                {
+                    "version": SCOPE_VERSION, "geography": [], "periods": ["2026"],
+                    "metrics": [], "population_dimensions": [],
+                    "numeric_facts": [{"value": "42", "unit": "uah", "periods": []}],
+                },
+                self._scope_candidate(
+                    content="The value is 42 UAH in 2026.",
+                    claim_scope={
+                        "version": SCOPE_VERSION, "periods": ["2026"],
+                        "numeric_facts": [
+                            {"value": "42", "unit": "uah", "periods": ["2026"]},
+                        ],
+                    },
+                ),
+                self._scope_candidate(
+                    content="The supported value is 42 UAH.",
+                    claim_scope={
+                        "version": SCOPE_VERSION,
+                        "numeric_facts": [
+                            {"value": "42", "unit": "uah", "periods": []},
+                        ],
+                    },
+                ),
+                "unsupported_numeric_scope",
+            ),
+        )
+        for name, authority, initial, corrected, expected_rule in cases:
+            with self.subTest(case=name):
+                service, engine = self._claim_scope_service(
+                    authoritative_scope=authority,
+                    generated_results=[(initial,), (corrected,)],
+                )
+                context = _context(design=_design(question_count=1))
+
+                summary = service.write_for_context(context)
+
+                self.assertIsNotNone(summary.report_id)
+                self.assertEqual(engine.generate_sections.call_count, 2)
+                correction = context.read_shared("report_generation_diagnostics")[
+                    "claim_scope_corrections"
+                ][0]
+                self.assertEqual(correction["attempt"], 1)
+                self.assertEqual(correction["status"], "corrected_and_accepted")
+                self.assertEqual(
+                    correction["original_rejections"][0]["rule"], expected_rule,
+                )
+                self.assertEqual(
+                    correction["corrected_candidate_outcomes"][0]["category"],
+                    "appended",
+                )
+
+    def test_normal_claim_scope_correction_is_bounded_and_fails_closed(self) -> None:
+        authority = {
+            "version": SCOPE_VERSION, "geography": [], "periods": ["2026"],
+            "metrics": [], "population_dimensions": [], "numeric_facts": [],
+        }
+        invalid = self._scope_candidate(
+            content="Unsupported period 2025.",
+            claim_scope={"version": SCOPE_VERSION, "periods": ["2025"]},
+        )
+        service, engine = self._claim_scope_service(
+            authoritative_scope=authority,
+            generated_results=[(invalid,), (invalid,)],
+        )
+        context = _context(design=_design(question_count=1))
+
+        with self.assertRaises(ReportError):
+            service.write_for_context(context)
+
+        self.assertEqual(engine.generate_sections.call_count, 2)
+        correction = context.read_shared("report_generation_diagnostics")[
+            "claim_scope_corrections"
+        ][0]
+        self.assertEqual(correction["attempt"], 1)
+        self.assertEqual(correction["status"], "corrected_but_rejected")
+
+    def test_normal_claim_scope_correction_records_budget_guard(self) -> None:
+        authority = {
+            "version": SCOPE_VERSION, "geography": [], "periods": ["2026"],
+            "metrics": [], "population_dimensions": [], "numeric_facts": [],
+        }
+        invalid = self._scope_candidate(
+            content="Unsupported period 2025.",
+            claim_scope={"version": SCOPE_VERSION, "periods": ["2025"]},
+        )
+        service, engine = self._claim_scope_service(
+            authoritative_scope=authority,
+            generated_results=[
+                (invalid,),
+                BudgetExhaustedError("report_max_llm_calls", stage="report"),
+            ],
+        )
+        context = _context(design=_design(question_count=1))
+
+        with self.assertRaises(ReportError):
+            service.write_for_context(context)
+
+        self.assertEqual(engine.generate_sections.call_count, 2)
+        correction = context.read_shared("report_generation_diagnostics")[
+            "claim_scope_corrections"
+        ][0]
+        self.assertEqual(correction["status"], "correction_not_attempted_budget")
+
+    def test_normal_claim_scope_correction_records_generation_failure(self) -> None:
+        authority = {
+            "version": SCOPE_VERSION, "geography": [], "periods": ["2026"],
+            "metrics": [], "population_dimensions": [], "numeric_facts": [],
+        }
+        invalid = self._scope_candidate(
+            content="Unsupported period 2025.",
+            claim_scope={"version": SCOPE_VERSION, "periods": ["2025"]},
+        )
+        service, engine = self._claim_scope_service(
+            authoritative_scope=authority,
+            generated_results=[(invalid,), RuntimeError("provider detail must not persist")],
+        )
+        context = _context(design=_design(question_count=1))
+
+        with self.assertRaises(ReportError):
+            service.write_for_context(context)
+
+        correction = context.read_shared("report_generation_diagnostics")[
+            "claim_scope_corrections"
+        ][0]
+        self.assertEqual(correction["status"], "correction_generation_failed")
+        self.assertNotIn("provider detail", str(correction))
+
+    def test_cross_run_and_lineage_rejections_do_not_trigger_correction(self) -> None:
+        authority = {
+            "version": SCOPE_VERSION, "geography": [], "periods": ["2026"],
+            "metrics": [], "population_dimensions": [], "numeric_facts": [],
+        }
+        candidate = self._scope_candidate(
+            content="Supported period 2026.",
+            claim_scope={"version": SCOPE_VERSION, "periods": ["2026"]},
+        )
+        for category in ("cross_run_ref", "cross_design_ref"):
+            with self.subTest(category=category):
+                service, engine = self._claim_scope_service(
+                    authoritative_scope=authority,
+                    generated_results=[(candidate,)],
+                )
+                context = _context(design=_design(question_count=1))
+
+                with patch(
+                    "application.report.report_service.validate_section_candidate",
+                    side_effect=InvalidReportProvenanceError(
+                        "invalid provenance", category=category,
+                    ),
+                ):
+                    with self.assertRaises(ReportError):
+                        service.write_for_context(context)
+
+                self.assertEqual(engine.generate_sections.call_count, 1)
+                diagnostics = context.read_shared("report_generation_diagnostics")
+                self.assertNotIn("claim_scope_corrections", diagnostics)
+
     def test_normal_period_rejections_persist_after_zero_sections(self) -> None:
         service = _deterministic_service()
         _seed_run_data(service)
@@ -684,10 +919,17 @@ class ReportCoverageValidationTests(unittest.TestCase):
         _seed_run_data(service)
         context = _context()
 
-        service.write_for_context(context)
+        with patch.object(
+            service._report_engine,
+            "generate_sections",
+            wraps=service._report_engine.generate_sections,
+        ) as generate_sections:
+            service.write_for_context(context)
 
         diagnostics = context.read_shared("report_generation_diagnostics")
         self.assertNotIn("claim_scope_rejections", diagnostics)
+        self.assertNotIn("claim_scope_corrections", diagnostics)
+        self.assertEqual(generate_sections.call_count, 6)
 
     def test_provenance_and_citations_persist(self) -> None:
         service = _deterministic_service()

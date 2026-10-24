@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -319,8 +319,109 @@ class ReportService:
         batch_failures = 0
         batch_diagnostics: list[ReportBatchDiagnostics] = []
         claim_scope_rejections: list[dict[str, Any]] = []
+        claim_scope_corrections: list[dict[str, Any]] = []
         candidate_index = 0
         citation_registry = CitationRegistry()
+
+        def persist_candidate_diagnostics(status: str) -> None:
+            context.write_shared(
+                "report_generation_diagnostics",
+                {
+                    "version": 1,
+                    "phase": "candidate_validation",
+                    "status": status,
+                    "workflow_run_id": workflow_run_id,
+                    "replay_run_id": (
+                        workflow_run_id if artifact_run_id != workflow_run_id else None
+                    ),
+                    "source_run_id": artifact_run_id,
+                    "claim_scope_rejections": list(claim_scope_rejections),
+                    "claim_scope_corrections": list(claim_scope_corrections),
+                },
+            )
+
+        def append_candidates(
+            candidates: tuple[ReportSectionCandidate, ...],
+            *,
+            batch_question_id: str,
+            batch_diag: ReportBatchDiagnostics,
+            correction_attempt: int | None = None,
+        ) -> tuple[int, list[dict[str, Any]], list[dict[str, Any]]]:
+            nonlocal candidate_index, sections_rejected
+            added_count = 0
+            outcomes: list[dict[str, Any]] = []
+            local_scope_rejections: list[dict[str, Any]] = []
+            for candidate in candidates:
+                candidate_index += 1
+                binding_errors = validate_mandatory_rq_candidate_binding(
+                    candidate,
+                    mandatory_rq_findings=mandatory_rq_findings,
+                )
+                if binding_errors:
+                    batch_diag.rejected_section_count += 1
+                    for error in binding_errors:
+                        batch_diag.rejection_counts[error] = (
+                            batch_diag.rejection_counts.get(error, 0) + 1
+                        )
+                    sections_rejected += 1
+                    outcomes.append({
+                        "candidate_id": f"candidate-{candidate_index}",
+                        "category": "mandatory_rq_binding_rejection",
+                        "errors": list(binding_errors)[:_MAX_REPAIR_DIAGNOSTIC_ERRORS],
+                    })
+                    continue
+                append_outcome: dict[str, Any] = {}
+                added = self._append_validated_section(
+                    candidate,
+                    validated_sections=validated_sections,
+                    section_batch_map=section_batch_map,
+                    batch_question_id=batch_question_id,
+                    findings_by_id=findings_by_id,
+                    insights_by_id=insights_by_id,
+                    evidence_by_id=evidence_by_id,
+                    sources_by_id=sources_by_id,
+                    citation_registry=citation_registry,
+                    project_id=project_id,
+                    workflow_run_id=artifact_run_id,
+                    research_design_id=research_design_id,
+                    design=design,
+                    batch_diag=batch_diag,
+                    allowed_research_question_ids=(allowed_rq_ids if limited else None),
+                    append_outcome=append_outcome,
+                )
+                outcome = {
+                    "candidate_id": f"candidate-{candidate_index}",
+                    "category": append_outcome.get("category", "rejected"),
+                }
+                if append_outcome.get("rule"):
+                    outcome["rule"] = append_outcome["rule"]
+                outcomes.append(outcome)
+                if append_outcome.get("category") == "claim_scope_rejection":
+                    projected = _normal_claim_scope_rejections(
+                        candidate_index=candidate_index,
+                        batch_question_id=(
+                            None if batch_question_id == "__unscoped__" else batch_question_id
+                        ),
+                        candidate=candidate,
+                        append_outcome=append_outcome,
+                        workflow_run_id=workflow_run_id,
+                        artifact_run_id=artifact_run_id,
+                    )
+                    if correction_attempt is not None:
+                        for item in projected:
+                            item["correction_attempt"] = correction_attempt
+                    local_scope_rejections.extend(projected)
+                    remaining = (
+                        _MAX_GENERATION_DIAGNOSTIC_CANDIDATES
+                        - len(claim_scope_rejections)
+                    )
+                    claim_scope_rejections.extend(projected[:max(remaining, 0)])
+                    persist_candidate_diagnostics("in_progress")
+                if added:
+                    added_count += 1
+                else:
+                    sections_rejected += 1
+            return added_count, outcomes, local_scope_rejections
 
         for batch_question_id, finding_batch in batches:
             batch_insights = insights_for_question(list(insights), batch_question_id)
@@ -399,75 +500,80 @@ class ReportService:
                 batch_diag.reasoning_effort = engine_stats.reasoning_effort
                 batch_diag.parse_failure_category = engine_stats.parse_failure_category
 
-            for candidate in candidates:
-                candidate_index += 1
-                binding_errors = validate_mandatory_rq_candidate_binding(
-                    candidate,
-                    mandatory_rq_findings=mandatory_rq_findings,
+            added_count, initial_outcomes, original_scope_rejections = append_candidates(
+                candidates,
+                batch_question_id=batch_question_id,
+                batch_diag=batch_diag,
+            )
+            correction_eligible = (
+                bool(candidates)
+                and added_count == 0
+                and len(initial_outcomes) == len(candidates)
+                and all(
+                    item.get("category") == "claim_scope_rejection"
+                    for item in initial_outcomes
                 )
-                if binding_errors:
-                    batch_diag.rejected_section_count += 1
-                    for error in binding_errors:
-                        batch_diag.rejection_counts[error] = (
-                            batch_diag.rejection_counts.get(error, 0) + 1
+                and batch_diag.engine_dropped_count == 0
+            )
+            if correction_eligible:
+                correction_diag: dict[str, Any] = {
+                    "attempt": 1,
+                    "batch_question_id": (
+                        None if batch_question_id == "__unscoped__" else batch_question_id
+                    ),
+                    "status": "in_progress",
+                    "original_rejections": original_scope_rejections[
+                        :_MAX_REPAIR_DIAGNOSTIC_ERRORS
+                    ],
+                    "corrected_candidate_outcomes": [],
+                }
+                claim_scope_corrections.append(correction_diag)
+                correction_request = {
+                    "type": "claim_scope_correction",
+                    "attempt": 1,
+                    "target_rq": correction_diag["batch_question_id"],
+                    "finding_ids": sorted({
+                        finding_id
+                        for item in original_scope_rejections
+                        for finding_id in item.get("finding_ids", [])
+                    })[:_MAX_GENERATION_DIAGNOSTIC_IDS],
+                    "instruction": "remove_unsupported_scope_do_not_substitute",
+                    "rejections": original_scope_rejections[
+                        :_MAX_REPAIR_DIAGNOSTIC_ERRORS
+                    ],
+                }
+                persist_candidate_diagnostics("in_progress")
+                try:
+                    corrected_candidates = self._report_engine.generate_sections(
+                        replace(report_input, repair_diagnostics=(correction_request,)),
+                    )
+                except BudgetExhaustedError:
+                    correction_diag["status"] = "correction_not_attempted_budget"
+                except Exception:
+                    correction_diag["status"] = "correction_generation_failed"
+                else:
+                    corrected_stats = getattr(
+                        self._report_engine, "last_section_batch_stats", None,
+                    )
+                    if corrected_stats is not None:
+                        batch_diag.candidate_section_count += (
+                            corrected_stats.candidate_section_count
                         )
-                    sections_rejected += 1
-                    continue
-                append_outcome: dict[str, Any] = {}
-                added = self._append_validated_section(
-                    candidate,
-                    validated_sections=validated_sections,
-                    section_batch_map=section_batch_map,
-                    batch_question_id=batch_question_id,
-                    findings_by_id=findings_by_id,
-                    insights_by_id=insights_by_id,
-                    evidence_by_id=evidence_by_id,
-                    sources_by_id=sources_by_id,
-                    citation_registry=citation_registry,
-                    project_id=project_id,
-                    workflow_run_id=artifact_run_id,
-                    research_design_id=research_design_id,
-                    design=design,
-                    batch_diag=batch_diag,
-                    allowed_research_question_ids=(allowed_rq_ids if limited else None),
-                    append_outcome=append_outcome,
-                )
-                if (
-                    append_outcome.get("category") == "claim_scope_rejection"
-                    and len(claim_scope_rejections) < _MAX_GENERATION_DIAGNOSTIC_CANDIDATES
-                ):
-                    remaining = (
-                        _MAX_GENERATION_DIAGNOSTIC_CANDIDATES
-                        - len(claim_scope_rejections)
+                        batch_diag.engine_dropped_count += corrected_stats.engine_dropped_count
+                    corrected_added, corrected_outcomes, _ = append_candidates(
+                        corrected_candidates,
+                        batch_question_id=batch_question_id,
+                        batch_diag=batch_diag,
+                        correction_attempt=1,
                     )
-                    claim_scope_rejections.extend(
-                        _normal_claim_scope_rejections(
-                            candidate_index=candidate_index,
-                            batch_question_id=(
-                                None if batch_question_id == "__unscoped__" else batch_question_id
-                            ),
-                            candidate=candidate,
-                            append_outcome=append_outcome,
-                            workflow_run_id=workflow_run_id,
-                            artifact_run_id=artifact_run_id,
-                        )[:remaining],
+                    correction_diag["corrected_candidate_outcomes"] = corrected_outcomes[
+                        :_MAX_REPAIR_DIAGNOSTIC_SECTIONS
+                    ]
+                    correction_diag["status"] = (
+                        "corrected_and_accepted"
+                        if corrected_added > 0 else "corrected_but_rejected"
                     )
-                    context.write_shared(
-                        "report_generation_diagnostics",
-                        {
-                            "version": 1,
-                            "phase": "candidate_validation",
-                            "status": "in_progress",
-                            "workflow_run_id": workflow_run_id,
-                            "replay_run_id": (
-                                workflow_run_id if artifact_run_id != workflow_run_id else None
-                            ),
-                            "source_run_id": artifact_run_id,
-                            "claim_scope_rejections": list(claim_scope_rejections),
-                        },
-                    )
-                if not added:
-                    sections_rejected += 1
+                persist_candidate_diagnostics("in_progress")
 
             batch_diagnostics.append(batch_diag)
 
@@ -504,6 +610,7 @@ class ReportService:
                         "valid_candidate_count": 0,
                         "rejected_candidate_count": sections_rejected,
                         "claim_scope_rejections": list(claim_scope_rejections),
+                        "claim_scope_corrections": list(claim_scope_corrections),
                     },
                 )
             raise ReportError(format_zero_sections_message(failure_diagnostics))
@@ -640,6 +747,7 @@ class ReportService:
                     {"version": 1, "attempts": repair_attempts},
                 )
         if coverage_errors:
+            candidate_diagnostics = context.read_shared("report_generation_diagnostics") or {}
             context.write_shared(
                 "report_generation_diagnostics",
                 {
@@ -662,6 +770,12 @@ class ReportService:
                         for section in validated_sections
                     ],
                     "rejection_reasons": list(coverage_errors),
+                    "claim_scope_rejections": list(
+                        candidate_diagnostics.get("claim_scope_rejections", [])
+                    ),
+                    "claim_scope_corrections": list(
+                        candidate_diagnostics.get("claim_scope_corrections", [])
+                    ),
                 },
             )
             raise ReportError(
