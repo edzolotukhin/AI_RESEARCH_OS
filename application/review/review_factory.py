@@ -6,6 +6,7 @@ from application.ports.analysis_ports import FindingRepository, InsightRepositor
 from application.ports.artifact_repository import ArtifactRepository
 from application.ports.evidence_ports import EvidenceRepository
 from application.ports.report_ports import ReportRepository
+from application.ports.report_claim_repository import ReportClaimRepository
 from application.ports.review_ports import ReviewRepository, SemanticReviewEngine
 from application.ports.source_ports import SourceRepository
 from application.report.report_factory import build_report_service
@@ -51,6 +52,7 @@ def build_review_executor(
     evidence_repository: EvidenceRepository,
     source_repository: SourceRepository,
     report_repository: ReportRepository,
+    report_claim_repository: ReportClaimRepository,
     artifact_repository: ArtifactRepository,
     review_repository: ReviewRepository,
     llm_client,
@@ -64,6 +66,7 @@ def build_review_executor(
         evidence_repository=evidence_repository,
         source_repository=source_repository,
         report_repository=report_repository,
+        report_claim_repository=report_claim_repository,
         artifact_repository=artifact_repository,
         llm_client=llm_client,
     )

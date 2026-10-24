@@ -155,6 +155,7 @@ def build_persistence_bundle(
 
     if backend == "memory":
         workflow_run_repository = InMemoryWorkflowRunRepository()
+        report_repository = InMemoryReportRepository()
         return PersistenceBundle(
             project_repository=InMemoryProjectRepository(),
             workflow_template_repository=InMemoryWorkflowTemplateRepository(),
@@ -170,8 +171,8 @@ def build_persistence_bundle(
             evidence_repository=InMemoryEvidenceRepository(),
             finding_repository=InMemoryFindingRepository(),
             insight_repository=InMemoryInsightRepository(),
-            report_repository=InMemoryReportRepository(),
-            report_claim_repository=InMemoryReportClaimRepository(),
+            report_repository=report_repository,
+            report_claim_repository=InMemoryReportClaimRepository(report_repository),
             review_repository=InMemoryReviewRepository(),
             execution_log_store=InMemoryExecutionLogStore(),
             pdf_store=InMemoryPdfStore(),
@@ -183,6 +184,7 @@ def build_persistence_bundle(
 
     if backend == "file":
         workflow_run_repository = InMemoryWorkflowRunRepository()
+        report_repository = InMemoryReportRepository()
         return PersistenceBundle(
             project_repository=FileProjectRepository(projects_root=projects_root),
             workflow_template_repository=InMemoryWorkflowTemplateRepository(),
@@ -196,8 +198,8 @@ def build_persistence_bundle(
             evidence_repository=InMemoryEvidenceRepository(),
             finding_repository=InMemoryFindingRepository(),
             insight_repository=InMemoryInsightRepository(),
-            report_repository=InMemoryReportRepository(),
-            report_claim_repository=InMemoryReportClaimRepository(),
+            report_repository=report_repository,
+            report_claim_repository=InMemoryReportClaimRepository(report_repository),
             review_repository=InMemoryReviewRepository(),
             execution_log_store=InMemoryExecutionLogStore(),
             pdf_store=InMemoryPdfStore(),

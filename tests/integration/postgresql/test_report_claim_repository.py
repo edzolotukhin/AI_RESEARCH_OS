@@ -16,6 +16,18 @@ from tests.integration.postgresql.helpers import PostgreSQLIntegrationTestCase, 
 
 @unittest.skipUnless(integration_tests_enabled(), "PostgreSQL integration tests require an isolated disposable database.")
 class PostgreSQLReportClaimRepositoryTests(PostgreSQLIntegrationTestCase):
+    def test_atomic_report_and_claim_creation(self) -> None:
+        fixture = claim_fixtures.ReportClaimContractTests(); fixture.setUp()
+        project = ProjectFactory().create("Atomic ReportClaim project")
+        PostgreSQLProjectRepository(self.session_factory).create(project)
+        report = Report(id=str(uuid4()), project_id=project.id, workflow_run_id="source-run", research_design_id="design-1", title="R", language="en", sections=(), executive_summary="S", limitations=(), created_at=datetime.now(timezone.utc).isoformat(), generation_method="claim-first:deterministic", finding_refs=(), insight_refs=(), evidence_refs=(), citation_registry={}, deduplication_key=str(uuid4()), revision_number=1)
+        claim = fixture.claim().__class__.from_dict({**fixture.claim().to_dict(), "project_id": project.id})
+        repository = PostgreSQLReportClaimRepository(self.session_factory)
+
+        self.assertEqual(repository.create_with_report(report, (claim,)), 1)
+        self.assertIsNotNone(PostgreSQLReportRepository(self.session_factory).get_by_id(report.id))
+        self.assertEqual(repository.list_for_report(report.id, 1), [claim])
+
     def test_round_trip_conflict_and_exact_revision_ownership(self) -> None:
         fixture = claim_fixtures.ReportClaimContractTests(); fixture.setUp()
         project = ProjectFactory().create("ReportClaim project")

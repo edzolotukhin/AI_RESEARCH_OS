@@ -12,6 +12,8 @@ from application.report.content_batching import (
     DEFAULT_REPORT_MAX_FINDINGS_PER_BATCH,
 )
 from application.report.report_service import ReportService
+from application.report.claim_first_report_service import ClaimFirstReportService
+from application.ports.report_claim_repository import ReportClaimRepository
 from infrastructure.report.deterministic_report_engine import DeterministicReportEngine
 from infrastructure.report.llm_report_engine import LlmReportEngine
 
@@ -54,10 +56,12 @@ def build_report_service(
     evidence_repository: EvidenceRepository,
     source_repository: SourceRepository,
     report_repository: ReportRepository,
+    report_claim_repository: ReportClaimRepository,
     artifact_repository: ArtifactRepository,
     llm_client,
 ) -> ReportService:
-    return ReportService(
+    return ClaimFirstReportService(
+        report_claim_repository=report_claim_repository,
         report_engine=build_report_engine(config, overrides, llm_client=llm_client),
         finding_repository=finding_repository,
         insight_repository=insight_repository,
@@ -81,6 +85,7 @@ def build_report_executor(
     evidence_repository: EvidenceRepository,
     source_repository: SourceRepository,
     report_repository: ReportRepository,
+    report_claim_repository: ReportClaimRepository,
     artifact_repository: ArtifactRepository,
     llm_client,
 ) -> ReportExecutor:
@@ -93,6 +98,7 @@ def build_report_executor(
             evidence_repository=evidence_repository,
             source_repository=source_repository,
             report_repository=report_repository,
+            report_claim_repository=report_claim_repository,
             artifact_repository=artifact_repository,
             llm_client=llm_client,
         ),

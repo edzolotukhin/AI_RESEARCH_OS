@@ -200,6 +200,7 @@ def create_application_container(
     report_repository = (
         overrides.report_repository or persistence.report_repository
     )
+    report_claim_repository = persistence.report_claim_repository
     review_repository = (
         overrides.review_repository or persistence.review_repository
     )
@@ -313,6 +314,7 @@ def create_application_container(
         finding_repository=finding_repository,
         insight_repository=insight_repository,
         report_repository=report_repository,
+        report_claim_repository=report_claim_repository,
         review_repository=review_repository,
         artifact_repository=persistence.artifact_repository,
         stage_llm_clients=stage_llm_clients,
@@ -849,6 +851,7 @@ def _build_agent_executors(
     finding_repository,
     insight_repository,
     report_repository,
+    report_claim_repository,
     review_repository,
     artifact_repository,
     stage_llm_clients,
@@ -923,6 +926,7 @@ def _build_agent_executors(
             evidence_repository=evidence_repository,
             source_repository=source_repository,
             report_repository=report_repository,
+            report_claim_repository=report_claim_repository,
             artifact_repository=artifact_repository,
             llm_client=stage_llm_clients.report,
         )
@@ -938,6 +942,7 @@ def _build_agent_executors(
             evidence_repository=evidence_repository,
             source_repository=source_repository,
             report_repository=report_repository,
+            report_claim_repository=report_claim_repository,
             artifact_repository=artifact_repository,
             review_repository=review_repository,
             llm_client=stage_llm_clients.review,
