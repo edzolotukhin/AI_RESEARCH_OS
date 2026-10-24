@@ -18,6 +18,7 @@ from infrastructure.persistence.postgresql.models.workflow_run_model import (
 from infrastructure.persistence.postgresql.models.evidence_model import EvidenceModel
 from infrastructure.persistence.postgresql.models.finding_model import FindingModel, InsightModel
 from infrastructure.persistence.postgresql.models.report_model import ReportModel
+from infrastructure.persistence.postgresql.models.report_claim_model import ReportClaimModel
 from infrastructure.persistence.postgresql.models.review_model import ReviewModel
 from infrastructure.persistence.postgresql.models.source_model import SourceModel
 from infrastructure.persistence.postgresql.models.workflow_template_model import (
@@ -38,6 +39,7 @@ __all__ = [
     "FindingModel",
     "InsightModel",
     "ReportModel",
+    "ReportClaimModel",
     "ReviewModel",
     "SourceModel",
     "WorkflowRunModel",

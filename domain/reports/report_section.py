@@ -16,6 +16,7 @@ class ReportSection:
     insight_refs: tuple[str, ...] = ()
     evidence_refs: tuple[str, ...] = ()
     citation_ids: tuple[str, ...] = ()
+    claim_refs: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -28,6 +29,7 @@ class ReportSection:
             "insight_refs": list(self.insight_refs),
             "evidence_refs": list(self.evidence_refs),
             "citation_ids": list(self.citation_ids),
+            "claim_refs": list(self.claim_refs),
             "metadata": dict(self.metadata),
         }
 
@@ -42,5 +44,6 @@ class ReportSection:
             insight_refs=tuple(payload.get("insight_refs", ())),
             evidence_refs=tuple(payload.get("evidence_refs", ())),
             citation_ids=tuple(payload.get("citation_ids", ())),
+            claim_refs=tuple(payload.get("claim_refs", ())),
             metadata=dict(payload.get("metadata", {})),
         )

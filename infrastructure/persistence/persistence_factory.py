@@ -45,6 +45,7 @@ from infrastructure.persistence.memory.in_memory_insight_repository import (
 from infrastructure.persistence.memory.in_memory_report_repository import (
     InMemoryReportRepository,
 )
+from infrastructure.persistence.memory.in_memory_report_claim_repository import InMemoryReportClaimRepository
 from infrastructure.persistence.memory.in_memory_review_repository import (
     InMemoryReviewRepository,
 )
@@ -95,6 +96,7 @@ from infrastructure.persistence.postgresql.repositories.postgresql_insight_repos
 from infrastructure.persistence.postgresql.repositories.postgresql_report_repository import (
     PostgreSQLReportRepository,
 )
+from infrastructure.persistence.postgresql.repositories.postgresql_report_claim_repository import PostgreSQLReportClaimRepository
 from infrastructure.persistence.postgresql.repositories.postgresql_review_repository import (
     PostgreSQLReviewRepository,
 )
@@ -127,6 +129,7 @@ class PersistenceBundle:
     finding_repository: object
     insight_repository: object
     report_repository: object
+    report_claim_repository: object
     review_repository: object
     execution_log_store: object
     pdf_store: object | None = None
@@ -168,6 +171,7 @@ def build_persistence_bundle(
             finding_repository=InMemoryFindingRepository(),
             insight_repository=InMemoryInsightRepository(),
             report_repository=InMemoryReportRepository(),
+            report_claim_repository=InMemoryReportClaimRepository(),
             review_repository=InMemoryReviewRepository(),
             execution_log_store=InMemoryExecutionLogStore(),
             pdf_store=InMemoryPdfStore(),
@@ -193,6 +197,7 @@ def build_persistence_bundle(
             finding_repository=InMemoryFindingRepository(),
             insight_repository=InMemoryInsightRepository(),
             report_repository=InMemoryReportRepository(),
+            report_claim_repository=InMemoryReportClaimRepository(),
             review_repository=InMemoryReviewRepository(),
             execution_log_store=InMemoryExecutionLogStore(),
             pdf_store=InMemoryPdfStore(),
@@ -228,6 +233,7 @@ def build_persistence_bundle(
             finding_repository=PostgreSQLFindingRepository(session_factory),
             insight_repository=PostgreSQLInsightRepository(session_factory),
             report_repository=PostgreSQLReportRepository(session_factory),
+            report_claim_repository=PostgreSQLReportClaimRepository(session_factory),
             review_repository=PostgreSQLReviewRepository(session_factory),
             execution_log_store=PostgreSQLExecutionLogStore(session_factory),
             pdf_store=PostgreSQLPdfStore(session_factory),
