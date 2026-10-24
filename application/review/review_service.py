@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -17,8 +17,10 @@ from application.ports.analysis_ports import FindingRepository, InsightRepositor
 from application.ports.artifact_repository import ArtifactRepository
 from application.ports.evidence_ports import EvidenceRepository
 from application.ports.report_ports import ReportRepository
+from application.ports.report_claim_repository import ReportClaimRepository
 from application.ports.review_ports import (
     ReviewRepository,
+    ReviewIssueCandidate,
     SemanticReviewEngine,
     SemanticReviewInput,
 )
@@ -52,6 +54,7 @@ from application.review.structural_review import (
     compute_verdict,
     run_structural_review,
 )
+from application.review.claim_review import review_structured_claim_contract
 from infrastructure.review.deterministic_review_engine import (
     build_section_inputs,
     candidates_to_issues,
@@ -104,12 +107,14 @@ class ReviewService:
         report_service: ReportService,
         max_revision_attempts: int,
         max_chars_per_section: int = 8000,
+        report_claim_repository: ReportClaimRepository | None = None,
     ) -> None:
         self._semantic_review_engine = semantic_review_engine
         self._finding_repository = finding_repository
         self._insight_repository = insight_repository
         self._evidence_repository = evidence_repository
         self._report_repository = report_repository
+        self._report_claim_repository = report_claim_repository
         self._artifact_repository = artifact_repository
         self._review_repository = review_repository
         self._report_service = report_service
@@ -205,6 +210,16 @@ class ReviewService:
                 and item.research_design_id == design.id
                 and item.project_id == project_id
             ]
+            structured = report.metadata.get("structured_claim_contract") == "desk_report_claim_v1"
+            report_claims = tuple(
+                self._report_claim_repository.list_for_report(report.id, report.revision_number)
+            ) if structured and self._report_claim_repository is not None else ()
+            claim_issues = review_structured_claim_contract(
+                report=report, claims=report_claims, design=design,
+                findings=findings, insights=insights, evidence_items=evidence_items,
+                source_workflow_run_id=artifact_run_id,
+                coverage_contract=coverage_contract,
+            ) if structured else ()
 
             support_context = build_review_support_context(
                 report=report,
@@ -213,6 +228,7 @@ class ReviewService:
                 evidence_items=evidence_items,
                 max_support_chars_per_section=None,
                 citation_registry=report.citation_registry,
+                authority_workflow_run_id=artifact_run_id,
             )
             support_issues = support_reference_issues(support_context)
             self._last_support_diagnostics = dict(support_context.diagnostics)
@@ -223,6 +239,7 @@ class ReviewService:
                 findings=findings,
                 insights=insights,
                 coverage_contract=coverage_contract,
+                report_claims=report_claims,
             )
 
             structural_issues = run_structural_review(
@@ -232,6 +249,7 @@ class ReviewService:
                 findings=findings,
                 artifact=artifact,
                 coverage_contract=coverage_contract,
+                report_claims=report_claims,
             )
 
             semantic_candidates = self._run_semantic_review(
@@ -247,10 +265,16 @@ class ReviewService:
                 structural_issues=structural_issues,
                 support_context=support_context,
                 coverage_contract=coverage_contract,
+                report_claims=report_claims,
             )
+            if structured:
+                semantic_candidates = self._target_structured_semantic_issues(
+                    semantic_candidates, report=report, report_claims=report_claims,
+                )
             coverage_issues = self._incomplete_coverage_issues()
             all_issues = deduplicate_and_cluster_review_issues(
                 pre_review_issues
+                + claim_issues
                 + structural_issues
                 + support_issues
                 + coverage_issues
@@ -280,6 +304,7 @@ class ReviewService:
                         report_id=report.id,
                         review_attempt=review_attempt,
                     ),
+                    metadata={"report_revision": report.revision_number, "structured_claim_contract": ("desk_report_claim_v1" if structured else "legacy_unstructured")},
                 ),
                 workflow_run_id=workflow_run_id,
             )
@@ -306,7 +331,8 @@ class ReviewService:
                     f"Report rejected by quality gate for run {workflow_run_id}",
                 )
 
-            if revision_count >= self._max_revision_attempts:
+            max_revisions = min(self._max_revision_attempts, 1) if structured else self._max_revision_attempts
+            if revision_count >= max_revisions:
                 self._reject_artifact(artifact)
                 self._set_review_diagnostics(
                     context, phase="review", status="failed", category="semantic_review_rejection"
@@ -335,6 +361,7 @@ class ReviewService:
         structural_issues: tuple,
         support_context,
         coverage_contract,
+        report_claims=(),
     ):
         section_inputs = build_section_inputs(
             report,
@@ -353,6 +380,8 @@ class ReviewService:
             report_mode=coverage_contract.mode,
             required_research_question_ids=coverage_contract.required_rq_ids,
             excluded_research_question_ids=coverage_contract.excluded_rq_ids,
+            report_claim_ids=tuple(item.claim_id for item in report_claims),
+            summary_units=tuple(item for item in report.metadata.get("summary_units", []) if isinstance(item, dict)),
         )
         try:
             return self._semantic_review_engine.review_report(review_input)
@@ -373,6 +402,37 @@ class ReviewService:
             raise ReviewError(
                 format_review_parse_failure_message(diagnostics),
             ) from exc
+
+    @staticmethod
+    def _target_structured_semantic_issues(candidates, *, report: Report, report_claims):
+        claims = {item.claim_id for item in report_claims}
+        sections = {item.id: item for item in report.sections}
+        summary_units = [item for item in report.metadata.get("summary_units", []) if isinstance(item, dict)]
+        targeted = []
+        for candidate in candidates:
+            section = sections.get(candidate.report_section_id or "")
+            summary_indices = candidate.metadata.get("summary_unit_indices", []) if isinstance(candidate.metadata, dict) else []
+            valid_summary = isinstance(summary_indices, list) and bool(summary_indices) and all(isinstance(index, int) and 0 <= index < len(summary_units) for index in summary_indices)
+            summary_claims = tuple(dict.fromkeys(str(claim_id) for index in summary_indices for claim_id in summary_units[index].get("claim_ids", []))) if valid_summary else ()
+            claim_refs = candidate.claim_refs or (section.claim_refs if section is not None else summary_claims)
+            rq_refs = candidate.research_question_refs or (section.research_question_refs if section is not None else ())
+            valid = (
+                candidate.report_revision in {None, report.revision_number}
+                and bool(section is not None or valid_summary or claim_refs or rq_refs)
+                and set(claim_refs) <= claims
+            )
+            if not valid:
+                targeted.append(
+                    ReviewIssueCandidate(
+                        issue_type="brief_mismatch", severity="major",
+                        message="Semantic Review issue target is invalid for the exact Report revision",
+                        report_revision=report.revision_number,
+                        metadata={"code": "semantic_issue_target_invalid", "non_repairable": True},
+                    )
+                )
+                continue
+            targeted.append(replace(candidate, claim_refs=tuple(claim_refs), research_question_refs=tuple(rq_refs), report_revision=report.revision_number))
+        return tuple(targeted)
 
     @staticmethod
     def _set_review_diagnostics(

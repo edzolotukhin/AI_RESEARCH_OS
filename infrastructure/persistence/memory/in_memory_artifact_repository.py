@@ -26,6 +26,7 @@ class InMemoryArtifactRepository:
             raise DuplicateArtifactError(
                 f"Artifact already exists for run/key: {artifact.run_id}/{artifact.deduplication_key}",
             )
+        artifact.version = 1
         self._artifacts[artifact.id] = copy.deepcopy(artifact)
         self._dedup_index[key] = artifact.id
         project_items = self._project_index.setdefault(artifact.project_id, [])
@@ -34,7 +35,6 @@ class InMemoryArtifactRepository:
         run_items = self._run_index.setdefault(artifact.run_id, [])
         if artifact.id not in run_items:
             run_items.append(artifact.id)
-        artifact.version = 1
         self._versions[artifact.id] = 1
         return 1
 
@@ -64,6 +64,8 @@ class InMemoryArtifactRepository:
                 f"expected {expected_version}, found {current_version}."
             )
 
+        new_version = current_version + 1
+        artifact.version = new_version
         self._artifacts[artifact.id] = copy.deepcopy(artifact)
         project_items = self._project_index.setdefault(artifact.project_id, [])
         if artifact.id not in project_items:
@@ -74,9 +76,7 @@ class InMemoryArtifactRepository:
             if artifact.id not in run_items:
                 run_items.append(artifact.id)
 
-        new_version = current_version + 1
         self._versions[artifact.id] = new_version
-        artifact.version = new_version
         return new_version
 
     def get_by_id(self, artifact_id: str) -> ArtifactRecord | None:

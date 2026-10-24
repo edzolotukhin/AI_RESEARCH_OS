@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from application.evidence.temporal_scope import qualifying_evidence
 from application.persistence.records import ArtifactRecord
@@ -10,7 +11,9 @@ from application.report.citation_registry import CitationRegistry
 from application.report.claim_coverage import validate_claim_backed_coverage
 from application.report.claim_generation import ClaimGenerationError, generate_validated_claims
 from application.report.claim_rendering import ClaimRenderingError, render_validated_claims, repair_missing_claim_sections
-from application.report.coverage_contract import CONTRACT_KEY, build_report_coverage_contract, excluded_rq_limitation
+from application.report.claim_authority import derive_claim_authority
+from application.report.claim_validation import validate_report_claim
+from application.report.coverage_contract import CONTRACT_KEY, build_report_coverage_contract, excluded_rq_limitation, resolve_report_coverage_contract
 from application.report.deduplication import DR06_RESEARCH_REPORT_TYPE, compute_artifact_deduplication_key, compute_content_checksum, compute_report_deduplication_key
 from application.report.exceptions import ReportError
 from application.report.markdown_renderer import render_report_markdown, safe_report_filename
@@ -18,6 +21,8 @@ from application.report.report_service import ReportService, ReportSummary
 from application.research_quality.analysis_coverage import coverage_snapshot_from_payload
 from application.research_quality.research_readiness_service import SHARED_STATE_KEY
 from domain.reports.report import Report
+from domain.reports.report_claim import ReportClaim
+from domain.reviews.review_result import ReviewResult
 from runtime.workflow_context import WorkflowContext
 
 
@@ -96,3 +101,105 @@ class ClaimFirstReportService(ReportService):
         artifact_id = self._persist_artifact(artifact=ArtifactRecord(id=str(uuid4()), project_id=project_id, artifact_type="research_report", title=persisted.title, content=markdown, run_id=report_run_id, status="draft", media_type="text/markdown", filename=safe_report_filename(persisted.title), content_checksum=checksum, deduplication_key=artifact_dedup, report_id=report_id), workflow_run_id=report_run_id, deduplication_key=artifact_dedup)
         context.write_shared("report_generation_diagnostics", {"version": 2, "phase": "persisted", "status": "completed", "workflow_run_id": report_run_id, "source_run_id": source_run, "report_id": report_id, "claim_count": len(claims)})
         return ReportSummary(report_id=report_id, artifact_id=artifact_id, section_count=len(sections), sections_rejected=0, batch_failures=0)
+
+    def revise_for_context(self, context: WorkflowContext, *, review_result: ReviewResult) -> ReportSummary:
+        current = self._latest_report(context.project.id, context.workflow_run.id)
+        if current is None or current.metadata.get("structured_claim_contract") != "desk_report_claim_v1":
+            return super().revise_for_context(context, review_result=review_result)
+        if review_result.report_id != current.id or review_result.review_attempt != 1:
+            raise ReportError("Structured Report revision must target the exact first reviewed revision")
+        if any(issue.metadata.get("non_repairable") for issue in review_result.issues):
+            raise ReportError("Non-repairable Review issue cannot create a structured revision")
+        affected_ids = {issue.report_section_id for issue in review_result.issues if issue.report_section_id}
+        affected_claims = {claim_id for issue in review_result.issues for claim_id in issue.claim_refs}
+        affected_rqs = {rq for issue in review_result.issues for rq in issue.research_question_refs}
+        affected_summary = any(bool(issue.metadata.get("summary_unit_indices")) for issue in review_result.issues)
+        for section in current.sections:
+            if set(section.claim_refs) & affected_claims:
+                affected_ids.add(section.id)
+            if set(section.research_question_refs) & affected_rqs:
+                affected_ids.add(section.id)
+        if not affected_ids and not affected_summary:
+            raise ReportError("Structured REVISE issues must target affected Report units")
+
+        old_claims = tuple(self._report_claim_repository.list_for_report(current.id, current.revision_number))
+        if not old_claims:
+            raise ReportError("Structured Report revision has no persisted ReportClaims")
+        report_id = str(uuid4()); next_revision = current.revision_number + 1
+        claim_map = {
+            claim.claim_id: str(uuid5(NAMESPACE_URL, f"{report_id}:{next_revision}:{claim.claim_id}"))
+            for claim in old_claims
+        }
+        new_claims = tuple(
+            ReportClaim.from_dict({**claim.to_dict(), "claim_id": claim_map[claim.claim_id]})
+            for claim in old_claims
+        )
+        design = self._resolve_design(context)
+        from application.replay.desk_downstream_replay import source_run_id
+        source_run = source_run_id(context)
+        findings = self._finding_repository.list_for_project(context.project.id, workflow_run_id=source_run)
+        evidence = self._evidence_repository.list_for_project(context.project.id, workflow_run_id=source_run)
+        finding_by_id = {item.id: item for item in findings}; evidence_by_id = {item.id: item for item in evidence}
+        for claim in new_claims:
+            authority = derive_claim_authority(
+                project_id=context.project.id, source_workflow_run_id=source_run,
+                report_workflow_run_id=context.workflow_run.id, design=design,
+                findings=tuple(finding_by_id[item] for item in claim.finding_ids),
+                evidence_by_id=evidence_by_id,
+            )
+            validate_report_claim(claim, authority)
+
+        rerendered = render_validated_claims(claims=new_claims, design=design)
+        replacement_by_rq = {
+            rq: section for section in rerendered.sections for rq in section.research_question_refs
+        }
+        revised_sections = []
+        for section in current.sections:
+            if section.id in affected_ids:
+                replacements = [replacement_by_rq[rq] for rq in section.research_question_refs if rq in replacement_by_rq]
+                if not replacements:
+                    raise ReportError("Affected structured section cannot be rerendered from validated claims")
+                revised_sections.extend(replacements)
+                continue
+            metadata = dict(section.metadata)
+            paragraphs = metadata.get("paragraphs")
+            if isinstance(paragraphs, list):
+                metadata["paragraphs"] = [
+                    {**item, "claim_ids": [claim_map.get(value, value) for value in item.get("claim_ids", [])]}
+                    if isinstance(item, dict) else item for item in paragraphs
+                ]
+            revised_sections.append(replace(section, claim_refs=tuple(claim_map[item] for item in section.claim_refs), metadata=metadata))
+
+        metadata = dict(current.metadata)
+        metadata.update({"revision_of": current.id, "triggering_review_id": review_result.id})
+        metadata["summary_units"] = list(rerendered.summary_units) if affected_summary else [
+            {**item, "claim_ids": [claim_map.get(value, value) for value in item.get("claim_ids", [])]}
+            for item in metadata.get("summary_units", []) if isinstance(item, dict)
+        ]
+        dedup = compute_report_deduplication_key(workflow_run_id=context.workflow_run.id, report_type=DR06_RESEARCH_REPORT_TYPE, generation_method=current.generation_method, revision_number=next_revision)
+        revised = replace(
+            current, id=report_id, sections=tuple(revised_sections), metadata=metadata,
+            executive_summary=(rerendered.executive_summary if affected_summary else current.executive_summary),
+            created_at=datetime.now(timezone.utc).isoformat(), revision_number=next_revision,
+            previous_report_id=current.id, approval_status="draft", deduplication_key=dedup, version=0,
+        )
+        contract = resolve_report_coverage_contract(report=revised, design=design)
+        mandatory = {
+            rq: tuple(sorted(item.id for item in findings if rq in item.research_question_refs))
+            for rq in contract.required_rq_ids
+        }
+        coverage_errors = validate_claim_backed_coverage(
+            claims=new_claims, sections=revised.sections, contract=contract,
+            mandatory_rq_findings=mandatory,
+        )
+        if coverage_errors:
+            raise ReportError(f"Structured revision coverage failed: {list(coverage_errors)}")
+        self._report_claim_repository.create_with_report(revised, new_claims)
+        artifact_dedup = compute_artifact_deduplication_key(workflow_run_id=context.workflow_run.id, artifact_type=DR06_RESEARCH_REPORT_TYPE)
+        existing_artifact = self._artifact_repository.get_by_deduplication_key(context.workflow_run.id, artifact_dedup)
+        if existing_artifact is None:
+            raise ReportError("No draft artifact to revise for structured Report")
+        markdown = render_report_markdown(revised)
+        updated = replace(existing_artifact, title=revised.title, content=markdown, filename=safe_report_filename(revised.title), content_checksum=compute_content_checksum(markdown), report_id=revised.id)
+        self._artifact_repository.save(updated, expected_version=existing_artifact.version)
+        return ReportSummary(report_id=revised.id, artifact_id=existing_artifact.id, section_count=len(revised.sections), sections_rejected=0, batch_failures=0)

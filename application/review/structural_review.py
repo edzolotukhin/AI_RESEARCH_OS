@@ -6,6 +6,7 @@ from domain.findings.finding import Finding
 from domain.findings.finding_type import FindingType
 from domain.planning.research_design import ResearchDesign
 from domain.reports.report import Report
+from domain.reports.report_claim import ReportClaim
 from domain.research_brief import ResearchBrief
 from domain.reviews.quality_dimension import (
     QualityDimension,
@@ -38,6 +39,7 @@ def run_structural_review(
     findings: list[Finding],
     artifact: ArtifactRecord | None = None,
     coverage_contract: ReportCoverageContract | None = None,
+    report_claims: tuple[ReportClaim, ...] = (),
 ) -> tuple[ReviewIssue, ...]:
     """Deterministic structural quality checks (DR-07)."""
     issues: list[ReviewIssue] = []
@@ -74,7 +76,7 @@ def run_structural_review(
     for section in report.sections:
         kind = (section.metadata or {}).get("section_kind")
         if kind not in {"limitations", "contradictions"} and (
-            not section.finding_refs and not section.insight_refs
+            (not section.claim_refs if report_claims else (not section.finding_refs and not section.insight_refs))
         ):
             issues.append(
                 _issue(
@@ -273,6 +275,8 @@ def compute_quality_dimensions(
 def compute_verdict(
     issues: tuple[ReviewIssue, ...],
 ) -> ReviewVerdict:
+    if any(bool(issue.metadata.get("non_repairable")) for issue in issues):
+        return ReviewVerdict.REJECT
     if any(
         issue.issue_type == ReviewIssueType.BRIEF_MISMATCH
         and issue.severity == ReviewIssueSeverity.MAJOR

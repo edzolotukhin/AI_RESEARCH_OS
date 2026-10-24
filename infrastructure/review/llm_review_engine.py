@@ -215,7 +215,7 @@ class LlmReviewEngine:
             '"insight_refs":["insight-id"],'
             '"evidence_refs":["evidence-id"],'
             '"source_refs":["source-id"],'
-            '"research_question_refs":["rq-id"],'
+            '"research_question_refs":["rq-id"],"claim_refs":["claim-id"],'
             '"suggested_action":"..."}]}. '
             "issue_type must be one of: "
             f"{', '.join(sorted(_VALID_ISSUE_TYPES))}. "
@@ -250,6 +250,8 @@ class LlmReviewEngine:
             f"insight_refs: {list(section_input.insight_refs)}",
             f"citation_ids: {list(section_input.citation_ids)}",
             f"research_question_refs: {list(section_input.research_question_refs)}",
+            f"claim_refs: {list(section_input.claim_refs)}",
+            f"summary_units: {list(review_input.summary_units)[:8]}",
         ]
         if review_input.existing_issues:
             lines.append("existing_structural_issues:")
@@ -282,6 +284,8 @@ class LlmReviewEngine:
             f"insight_refs: {list(batch.insight_refs)}",
             f"citation_ids: {list(batch.citation_ids)}",
             f"research_question_refs: {list(batch.research_question_refs)}",
+            f"claim_refs: {list(batch.claim_refs)}",
+            f"summary_units: {list(review_input.summary_units)[:8]}",
         ]
         support = review_input.support_context
         if support is not None:
@@ -347,6 +351,7 @@ class LlmReviewEngine:
             if isinstance(entry, dict)
         }
         allowed_questions = set(batch.research_question_refs)
+        allowed_claims = set(batch.claim_refs)
 
         mapped: list[ReviewIssueCandidate] = []
         rejection_counts: dict[str, int] = {}
@@ -400,18 +405,22 @@ class LlmReviewEngine:
                 for value in item.get("research_question_refs", [])
                 if str(value).strip()
             ]
+            raw_claim = [
+                str(value).strip() for value in item.get("claim_refs", []) if str(value).strip()
+            ]
 
             finding_refs = tuple(ref for ref in raw_finding if ref in allowed_findings)
             insight_refs = tuple(ref for ref in raw_insight if ref in allowed_insights)
             evidence_refs = tuple(ref for ref in raw_evidence if ref in allowed_evidence)
             source_refs = tuple(ref for ref in raw_source if ref in allowed_sources)
             question_refs = tuple(ref for ref in raw_question if ref in allowed_questions)
+            claim_refs = tuple(ref for ref in raw_claim if ref in allowed_claims)
 
             had_refs = bool(
-                raw_finding or raw_insight or raw_evidence or raw_source or raw_question,
+                raw_finding or raw_insight or raw_evidence or raw_source or raw_question or raw_claim,
             )
             validated_refs = bool(
-                finding_refs or insight_refs or evidence_refs or source_refs or question_refs,
+                finding_refs or insight_refs or evidence_refs or source_refs or question_refs or claim_refs,
             )
             if had_refs and not validated_refs:
                 rejection_counts["foreign_refs"] = (
@@ -440,6 +449,8 @@ class LlmReviewEngine:
                     evidence_refs=evidence_refs,
                     source_refs=source_refs,
                     research_question_refs=question_refs,
+                    claim_refs=claim_refs,
+                    report_revision=review_input.report.revision_number,
                     suggested_action=suggested_action,
                     metadata=metadata,
                 ),
@@ -469,6 +480,7 @@ class LlmReviewEngine:
             if isinstance(entry, dict)
         }
         allowed_questions = set(section_input.research_question_refs)
+        allowed_claims = set(section_input.claim_refs)
 
         mapped: list[ReviewIssueCandidate] = []
         rejection_counts: dict[str, int] = {}
@@ -522,18 +534,22 @@ class LlmReviewEngine:
                 for value in item.get("research_question_refs", [])
                 if str(value).strip()
             ]
+            raw_claim = [
+                str(value).strip() for value in item.get("claim_refs", []) if str(value).strip()
+            ]
 
             finding_refs = tuple(ref for ref in raw_finding if ref in allowed_findings)
             insight_refs = tuple(ref for ref in raw_insight if ref in allowed_insights)
             evidence_refs = tuple(ref for ref in raw_evidence if ref in allowed_evidence)
             source_refs = tuple(ref for ref in raw_source if ref in allowed_sources)
             question_refs = tuple(ref for ref in raw_question if ref in allowed_questions)
+            claim_refs = tuple(ref for ref in raw_claim if ref in allowed_claims)
 
             had_refs = bool(
-                raw_finding or raw_insight or raw_evidence or raw_source or raw_question,
+                raw_finding or raw_insight or raw_evidence or raw_source or raw_question or raw_claim,
             )
             validated_refs = bool(
-                finding_refs or insight_refs or evidence_refs or source_refs or question_refs,
+                finding_refs or insight_refs or evidence_refs or source_refs or question_refs or claim_refs,
             )
             if had_refs and not validated_refs:
                 rejection_counts["foreign_refs"] = (
@@ -555,6 +571,8 @@ class LlmReviewEngine:
                     evidence_refs=evidence_refs,
                     source_refs=source_refs,
                     research_question_refs=question_refs,
+                    claim_refs=claim_refs,
+                    report_revision=review_input.report.revision_number,
                     suggested_action=suggested_action,
                     metadata=(
                         dict(item["metadata"])

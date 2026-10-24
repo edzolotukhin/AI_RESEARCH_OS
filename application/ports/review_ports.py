@@ -20,6 +20,7 @@ class ReviewSectionInput:
     insight_refs: tuple[str, ...]
     citation_ids: tuple[str, ...]
     research_question_refs: tuple[str, ...] = ()
+    claim_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,8 @@ class ReviewIssueCandidate:
     evidence_refs: tuple[str, ...] = ()
     source_refs: tuple[str, ...] = ()
     research_question_refs: tuple[str, ...] = ()
+    claim_refs: tuple[str, ...] = ()
+    report_revision: int | None = None
     suggested_action: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -51,6 +54,8 @@ class SemanticReviewInput:
     report_mode: str = "complete"
     required_research_question_ids: tuple[str, ...] = ()
     excluded_research_question_ids: tuple[str, ...] = ()
+    report_claim_ids: tuple[str, ...] = ()
+    summary_units: tuple[dict[str, Any], ...] = ()
 
 
 class SemanticReviewEngine(Protocol):

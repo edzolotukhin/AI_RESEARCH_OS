@@ -204,11 +204,13 @@ def build_review_support_context(
     max_chars_per_evidence: int = DEFAULT_MAX_CHARS_PER_EVIDENCE,
     max_support_chars_per_section: int | None = DEFAULT_MAX_SUPPORT_CHARS_PER_SECTION,
     citation_registry: dict[str, dict[str, Any]] | None = None,
+    authority_workflow_run_id: str | None = None,
 ) -> ReviewSupportContext:
     """Build run/design-scoped bounded support projections for Review."""
     findings_by_id = {item.id: item for item in findings}
     insights_by_id = {item.id: item for item in insights}
     evidence_by_id = {item.id: item for item in evidence_items}
+    authority_run_id = authority_workflow_run_id or report.workflow_run_id
 
     sections: list[SectionSupportContext] = []
     total_missing = 0
@@ -248,7 +250,7 @@ def build_review_support_context(
                 continue
             if not _is_in_scope(
                 project_id=report.project_id,
-                workflow_run_id=report.workflow_run_id,
+                workflow_run_id=authority_run_id,
                 research_design_id=report.research_design_id,
                 candidate_project_id=finding.project_id,
                 candidate_run_id=finding.workflow_run_id,
@@ -279,7 +281,7 @@ def build_review_support_context(
                 continue
             if not _is_in_scope(
                 project_id=report.project_id,
-                workflow_run_id=report.workflow_run_id,
+                workflow_run_id=authority_run_id,
                 research_design_id=report.research_design_id,
                 candidate_project_id=insight.project_id,
                 candidate_run_id=insight.workflow_run_id,
@@ -322,7 +324,7 @@ def build_review_support_context(
                 continue
             if not _is_in_scope(
                 project_id=report.project_id,
-                workflow_run_id=report.workflow_run_id,
+                workflow_run_id=authority_run_id,
                 research_design_id=report.research_design_id,
                 candidate_project_id=evidence.project_id,
                 candidate_run_id=evidence.workflow_run_id,

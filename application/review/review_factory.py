@@ -80,6 +80,7 @@ def build_review_executor(
         insight_repository=insight_repository,
         evidence_repository=evidence_repository,
         report_repository=report_repository,
+        report_claim_repository=report_claim_repository,
         artifact_repository=artifact_repository,
         review_repository=review_repository,
         report_service=report_service,

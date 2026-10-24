@@ -6,6 +6,7 @@ from uuid import uuid4
 from domain.findings.finding import Finding
 from domain.planning.research_design import ResearchDesign
 from domain.reports.report import Report
+from domain.reports.report_claim import ReportClaim
 from domain.reviews.review_issue import ReviewIssue, ReviewIssueSeverity, ReviewIssueType
 
 from application.report.report_assembly import (
@@ -34,6 +35,7 @@ def run_deterministic_pre_review(
     findings: list[Finding],
     insights: list,
     coverage_contract: ReportCoverageContract | None = None,
+    report_claims: tuple[ReportClaim, ...] = (),
 ) -> tuple[ReviewIssue, ...]:
     """Tier-1 deterministic checks before bounded semantic LLM review."""
     issues: list[ReviewIssue] = []
@@ -51,7 +53,7 @@ def run_deterministic_pre_review(
     coverage_contract = coverage_contract or resolve_report_coverage_contract(
         report=report, design=design,
     )
-    coverage_errors = validate_two_dimensional_coverage(
+    coverage_errors = () if report_claims else validate_two_dimensional_coverage(
         report.sections,
         findings=findings,
         insights=insights,
@@ -112,7 +114,7 @@ def run_deterministic_pre_review(
                     finding_refs=section.finding_refs,
                 ),
             )
-        unsupported = detect_unsupported_numeric_claims(
+        unsupported = () if report_claims else detect_unsupported_numeric_claims(
             section.content,
             finding_refs=section.finding_refs,
             findings_by_id=findings_by_id,
@@ -138,7 +140,7 @@ def run_deterministic_pre_review(
                 ),
             )
 
-    if not report.limitations:
+    if not report_claims and not report.limitations:
         issues.append(
             _issue(
                 issue_type=ReviewIssueType.MISSING_LIMITATION,

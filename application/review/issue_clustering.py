@@ -53,13 +53,15 @@ def normalize_issue_theme(message: str, issue_type: str) -> str:
     return f"{issue_type}_other"
 
 
-def review_issue_cluster_key(issue: ReviewIssue) -> tuple[str, ...]:
+def review_issue_cluster_key(issue: ReviewIssue) -> tuple[object, ...]:
     """Stable identity: type + severity + theme + RQ refs (message excluded)."""
     return (
         issue.issue_type.value,
         issue.severity.value,
         normalize_issue_theme(issue.message, issue.issue_type.value),
         tuple(sorted(issue.research_question_refs)),
+        tuple(sorted(issue.claim_refs)),
+        issue.report_revision,
     )
 
 
@@ -67,8 +69,8 @@ def cluster_review_issues(
     issues: tuple[ReviewIssue, ...] | list[ReviewIssue],
 ) -> tuple[ReviewIssue, ...]:
     """Collapse semantically equivalent issues; aggregate section refs in metadata."""
-    clusters: dict[tuple[str, ...], ReviewIssue] = {}
-    section_ids_by_key: dict[tuple[str, ...], set[str]] = {}
+    clusters: dict[tuple[object, ...], ReviewIssue] = {}
+    section_ids_by_key: dict[tuple[object, ...], set[str]] = {}
 
     for issue in issues:
         key = review_issue_cluster_key(issue)
@@ -101,6 +103,8 @@ def cluster_review_issues(
                 evidence_refs=issue.evidence_refs,
                 source_refs=issue.source_refs,
                 research_question_refs=issue.research_question_refs,
+                claim_refs=issue.claim_refs,
+                report_revision=issue.report_revision,
                 suggested_action=issue.suggested_action,
                 metadata=metadata,
             ),

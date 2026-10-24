@@ -33,6 +33,8 @@ class ReviewIssue:
     evidence_refs: tuple[str, ...] = ()
     source_refs: tuple[str, ...] = ()
     research_question_refs: tuple[str, ...] = ()
+    claim_refs: tuple[str, ...] = ()
+    report_revision: int | None = None
     suggested_action: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -48,7 +50,10 @@ class ReviewIssue:
             "evidence_refs": list(self.evidence_refs),
             "source_refs": list(self.source_refs),
             "research_question_refs": list(self.research_question_refs),
+            "claim_refs": list(self.claim_refs),
+            "report_revision": self.report_revision,
             "suggested_action": self.suggested_action,
+            "requested_action": self.suggested_action,
             "metadata": dict(self.metadata),
         }
 
@@ -65,6 +70,8 @@ class ReviewIssue:
             evidence_refs=tuple(payload.get("evidence_refs", ())),
             source_refs=tuple(payload.get("source_refs", ())),
             research_question_refs=tuple(payload.get("research_question_refs", ())),
-            suggested_action=str(payload.get("suggested_action", "")),
+            claim_refs=tuple(payload.get("claim_refs", ())),
+            report_revision=(int(payload["report_revision"]) if payload.get("report_revision") is not None else None),
+            suggested_action=str(payload.get("requested_action", payload.get("suggested_action", ""))),
             metadata=dict(payload.get("metadata", {})),
         )

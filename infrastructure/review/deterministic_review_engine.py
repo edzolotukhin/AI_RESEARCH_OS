@@ -41,6 +41,9 @@ class DeterministicReviewEngine:
                         report_section_id=review_input.report.sections[
                             section_input.section_index
                         ].id,
+                        claim_refs=section_input.claim_refs,
+                        report_revision=review_input.report.revision_number,
+                        research_question_refs=section_input.research_question_refs,
                         suggested_action="Support or remove the unsupported claim",
                     ),
                 )
@@ -74,6 +77,8 @@ def candidates_to_issues(
                 evidence_refs=candidate.evidence_refs,
                 source_refs=candidate.source_refs,
                 research_question_refs=candidate.research_question_refs,
+                claim_refs=candidate.claim_refs,
+                report_revision=candidate.report_revision,
                 suggested_action=candidate.suggested_action,
                 metadata=dict(candidate.metadata),
             ),
@@ -96,6 +101,7 @@ def build_section_inputs(
             insight_refs=section.insight_refs,
             citation_ids=section.citation_ids,
             research_question_refs=section.research_question_refs,
+            claim_refs=section.claim_refs,
         )
         for index, section in enumerate(report.sections)
     )
@@ -111,6 +117,7 @@ class ReviewBatchInput:
     insight_refs: tuple[str, ...]
     citation_ids: tuple[str, ...]
     research_question_refs: tuple[str, ...] = ()
+    claim_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -158,11 +165,13 @@ def build_rq_batch_inputs(
         insight_refs: set[str] = set()
         citation_ids: set[str] = set()
         rq_refs: set[str] = set()
+        claim_refs: set[str] = set()
         for section in sections:
             finding_refs.update(section.finding_refs)
             insight_refs.update(section.insight_refs)
             citation_ids.update(section.citation_ids)
             rq_refs.update(section.research_question_refs)
+            claim_refs.update(section.claim_refs)
         label = batch_id if batch_id != "__global__" else "global_report"
         batches.append(
             ReviewBatchInput(
@@ -174,6 +183,7 @@ def build_rq_batch_inputs(
                 insight_refs=tuple(sorted(insight_refs)),
                 citation_ids=tuple(sorted(citation_ids)),
                 research_question_refs=tuple(sorted(rq_refs)),
+                claim_refs=tuple(sorted(claim_refs)),
             ),
         )
     return ReviewBatchPlan(
