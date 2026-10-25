@@ -24,6 +24,8 @@ from tests.fixtures.research_brief import CANONICAL_BRIEF_REQUEST as BRIEF
 from tests.helpers.brief_aligned_planner_llm import create_brief_aligned_llm_mock
 from tests.helpers.dated_desk_integration_fixture import dated_desk_overrides
 from tests.integration.postgresql.helpers import (
+    assert_structured_finalization_complete,
+    configure_structured_finalization_test_boundary,
     PostgreSQLIntegrationTestCase,
     postgresql_application_config,
 )
@@ -45,6 +47,7 @@ class TwoRunReviewIsolationPostgreSQLTests(PostgreSQLIntegrationTestCase):
             ),
             overrides=dated_desk_overrides(llm_client=mock_llm),
         )
+        configure_structured_finalization_test_boundary(container)
         bootstrap_test_api_key(container)
         self.addCleanup(container.shutdown)
         raw_client, _, context = open_test_client(container)
@@ -67,6 +70,10 @@ class TwoRunReviewIsolationPostgreSQLTests(PostgreSQLIntegrationTestCase):
         drain_background_runs(container)
         terminal_a = client.get(f"/workflow-runs/{run_a}").json()
         self.assertEqual(terminal_a["status"], "completed")
+        assert_structured_finalization_complete(self, container, run_a)
+        finalization_a = dict(container.workflow_service.get_task_results(run_a)[
+            "desk_deliverable_finalization"
+        ])
         self.assertEqual(terminal_a["final_review_verdict"], "approve")
         review_count_a = terminal_a["review_count"]
         artifact_a = terminal_a["final_artifact_id"]
@@ -95,6 +102,15 @@ class TwoRunReviewIsolationPostgreSQLTests(PostgreSQLIntegrationTestCase):
         self.assertEqual(terminal_a_after["review_count"], review_count_a)
         self.assertEqual(terminal_a_after["final_review_verdict"], "approve")
         self.assertEqual(terminal_a_after["final_artifact_id"], artifact_a)
+        self.assertEqual(
+            container.workflow_service.get_task_results(run_a)[
+                "desk_deliverable_finalization"
+            ],
+            finalization_a,
+        )
+        jobs = container.project_deliverables_service.presentation_jobs.list_recent()
+        self.assertEqual(len([job for job in jobs if job.run_id == run_a]), 1)
+        self.assertEqual(len([job for job in jobs if job.run_id == run_b]), 0)
 
         approved_a = [
             item

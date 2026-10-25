@@ -20,6 +20,8 @@ from tests.fixtures.research_brief import CANONICAL_BRIEF_REQUEST as BRIEF
 from tests.helpers.brief_aligned_planner_llm import create_brief_aligned_llm_mock
 from tests.helpers.dated_desk_integration_fixture import dated_desk_overrides
 from tests.integration.postgresql.helpers import (
+    assert_structured_finalization_complete,
+    configure_structured_finalization_test_boundary,
     PostgreSQLIntegrationTestCase,
     postgresql_application_config,
 )
@@ -38,6 +40,7 @@ class RepeatedRunSameProjectPostgreSQLTests(PostgreSQLIntegrationTestCase):
             ),
             overrides=dated_desk_overrides(llm_client=mock_llm),
         )
+        configure_structured_finalization_test_boundary(container)
         bootstrap_test_api_key(container)
         self.addCleanup(container.shutdown)
         raw_client, _, context = open_test_client(container)
@@ -48,9 +51,11 @@ class RepeatedRunSameProjectPostgreSQLTests(PostgreSQLIntegrationTestCase):
         )
         return client, container
 
-    def _assert_completed_run(self, client: AuthenticatedTestClient, run_id: str) -> dict:
+    def _assert_completed_run(self, client: AuthenticatedTestClient, container,
+                              run_id: str) -> dict:
         terminal = client.get(f"/workflow-runs/{run_id}").json()
         self.assertEqual(terminal["status"], "completed")
+        assert_structured_finalization_complete(self, container, run_id)
         self.assertGreater(terminal["source_count"], 0)
         self.assertGreater(terminal["evidence_count"], 0)
         self.assertGreater(terminal["finding_count"], 0)
@@ -71,7 +76,7 @@ class RepeatedRunSameProjectPostgreSQLTests(PostgreSQLIntegrationTestCase):
             container, project_id, run_id=str(uuid4()),
         ).id
         drain_background_runs(container)
-        run_1 = self._assert_completed_run(client, run_1_id)
+        run_1 = self._assert_completed_run(client, container, run_1_id)
 
         run_2_id = submit_approved_desk_run(
             container, project_id, run_id=str(uuid4()),
@@ -87,7 +92,7 @@ class RepeatedRunSameProjectPostgreSQLTests(PostgreSQLIntegrationTestCase):
              subject.lexical_representations),
         )
         drain_background_runs(container)
-        run_2 = self._assert_completed_run(client, run_2_id)
+        run_2 = self._assert_completed_run(client, container, run_2_id)
 
         sources = container.source_service.list_sources_for_project(project_id)
         acquired = [source for source in sources if source.content_text.strip()]
@@ -203,7 +208,7 @@ class RepeatedRunSameProjectPostgreSQLTests(PostgreSQLIntegrationTestCase):
             idempotency_key=idempotency_key,
         )
         drain_background_runs(container)
-        self._assert_completed_run(client, run_id)
+        self._assert_completed_run(client, container, run_id)
 
         replay = container.research_submission_service.resolve_submission(
             project_id=project_id,
@@ -235,6 +240,7 @@ class RepeatedRunSameProjectPostgreSQLTests(PostgreSQLIntegrationTestCase):
             ),
             overrides=dated_desk_overrides(llm_client=mock_llm),
         )
+        configure_structured_finalization_test_boundary(container_1)
         bootstrap_test_api_key(container_1)
         self.addCleanup(container_1.shutdown)
         raw_1, _, ctx_1 = open_test_client(container_1)
@@ -253,7 +259,7 @@ class RepeatedRunSameProjectPostgreSQLTests(PostgreSQLIntegrationTestCase):
             container_1, project_id, run_id=str(uuid4()),
         ).id
         drain_background_runs(container_1)
-        self._assert_completed_run(client_1, run_1_id)
+        self._assert_completed_run(client_1, container_1, run_1_id)
 
         container_1.shutdown()
         container_2 = create_application_container(
@@ -263,6 +269,7 @@ class RepeatedRunSameProjectPostgreSQLTests(PostgreSQLIntegrationTestCase):
             ),
             overrides=dated_desk_overrides(llm_client=mock_llm),
         )
+        configure_structured_finalization_test_boundary(container_2)
         self.addCleanup(container_2.shutdown)
         raw_2, _, ctx_2 = open_test_client(container_2)
         self.addCleanup(lambda: close_test_client(ctx_2, container_2))
@@ -275,7 +282,7 @@ class RepeatedRunSameProjectPostgreSQLTests(PostgreSQLIntegrationTestCase):
             container_2, project_id, run_id=str(uuid4()),
         ).id
         drain_background_runs(container_2)
-        self._assert_completed_run(client_2, run_2_id)
+        self._assert_completed_run(client_2, container_2, run_2_id)
         self.assertNotEqual(run_1_id, run_2_id)
         frozen_2 = container_2.workflow_service.get_template(
             container_2.workflow_service.get_workflow_run(run_2_id).workflow_template_id,

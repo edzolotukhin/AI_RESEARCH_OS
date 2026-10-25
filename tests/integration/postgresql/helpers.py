@@ -16,6 +16,68 @@ from infrastructure.persistence.postgresql.database import Base
 from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
 
 
+class DeterministicStructuredPptxRenderer:
+    """Provider-free renderer; PostgreSQL job persistence remains production-real."""
+
+    version = "pptx-postgresql-test-v1"
+    template_version = "desk-postgresql-test-v1"
+    media_type = (
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    )
+
+    @staticmethod
+    def render(document) -> bytes:
+        return b"PK\x03\x04" + document.source_id.encode("utf-8")
+
+
+def configure_structured_finalization_test_boundary(container) -> None:
+    """Replace only external PPTX rendering, never the PostgreSQL job repository."""
+
+    if container.project_deliverables_service.presentation_jobs is None:
+        raise AssertionError("PostgreSQL presentation job repository is required")
+    container.project_deliverables_service.pptx_renderer = (
+        DeterministicStructuredPptxRenderer()
+    )
+
+
+def assert_structured_finalization_complete(test_case, container, run_id: str) -> None:
+    state = container.workflow_service.get_task_results(run_id).get(
+        "desk_deliverable_finalization"
+    )
+    test_case.assertIsInstance(state, dict)
+    test_case.assertEqual(state.get("status"), "finalization_complete")
+    test_case.assertTrue(state.get("pdf_id"))
+    test_case.assertTrue(state.get("pptx_id"))
+    run = container.workflow_service.get_workflow_run(run_id)
+    finalization_tasks = [task for task in run.tasks if task.executor_id == "finalization"]
+    test_case.assertEqual(len(finalization_tasks), 1)
+    test_case.assertEqual(finalization_tasks[0].status.value, "completed")
+    report = container.report_query_service._report_repository.get_by_id(
+        state["report_id"]
+    )
+    test_case.assertIsNotNone(report)
+    test_case.assertEqual(report.workflow_run_id, run_id)
+    reviews = container.review_query_service._review_repository.list_for_project(
+        report.project_id, workflow_run_id=run_id, report_id=report.id
+    )
+    approved = [item for item in reviews if item.id == state["review_id"]]
+    test_case.assertEqual(len(approved), 1)
+    test_case.assertEqual(approved[0].verdict.value, "approve")
+    test_case.assertEqual(approved[0].report_id, report.id)
+    jobs = [
+        job for job in container.project_deliverables_service.presentation_jobs.list_recent()
+        if job.run_id == run_id
+    ]
+    test_case.assertEqual(len(jobs), 1)
+    test_case.assertEqual(jobs[0].state, "finalization_complete")
+    test_case.assertEqual(jobs[0].completed_deliverable_id, state["pptx_id"])
+    test_case.assertEqual(jobs[0].source_run_id, state["source_run_id"])
+    pdf, _ = container.project_deliverables_service.store.get(state["pdf_id"])
+    pptx, _ = container.project_deliverables_service.store.get(state["pptx_id"])
+    test_case.assertEqual((pdf.run_id, pptx.run_id), (run_id, run_id))
+    test_case.assertEqual((pdf.source_id, pptx.source_id), (report.id, report.id))
+
+
 def integration_tests_enabled() -> bool:
     if os.environ.get("POSTGRESQL_INTEGRATION_TESTS", "0") != "1":
         return False

@@ -19,6 +19,7 @@ from tests.fixtures.research_brief import CANONICAL_BRIEF_REQUEST as BRIEF
 from tests.helpers.brief_aligned_planner_llm import create_brief_aligned_llm_mock
 from tests.helpers.dated_desk_integration_fixture import dated_desk_overrides
 from tests.integration.postgresql.helpers import (
+    configure_structured_finalization_test_boundary,
     PostgreSQLIntegrationTestCase,
     postgresql_application_config,
 )
@@ -37,6 +38,7 @@ class Dr06IntegrityPostgreSQLTests(PostgreSQLIntegrationTestCase):
             ),
             overrides=dated_desk_overrides(llm_client=mock_llm),
         )
+        configure_structured_finalization_test_boundary(container)
         bootstrap_test_api_key(container)
         self.addCleanup(container.shutdown)
         raw_client, _, context = open_test_client(container)
@@ -87,6 +89,7 @@ class Dr06IntegrityPostgreSQLTests(PostgreSQLIntegrationTestCase):
             ),
             overrides=dated_desk_overrides(llm_client=mock_llm),
         )
+        configure_structured_finalization_test_boundary(container)
         bootstrap_test_api_key(container)
         self.addCleanup(container.shutdown)
         raw_client, _, context = open_test_client(container)

@@ -22,6 +22,8 @@ from tests.fixtures.research_brief import CANONICAL_BRIEF_REQUEST as BRIEF
 from tests.helpers.brief_aligned_planner_llm import create_brief_aligned_llm_mock
 from tests.helpers.dated_desk_integration_fixture import dated_desk_overrides
 from tests.integration.postgresql.helpers import (
+    assert_structured_finalization_complete,
+    configure_structured_finalization_test_boundary,
     PostgreSQLIntegrationTestCase,
     postgresql_application_config,
 )
@@ -44,6 +46,7 @@ class Dr07EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
             ),
             overrides=dated_desk_overrides(llm_client=mock_llm),
         )
+        configure_structured_finalization_test_boundary(container)
         bootstrap_test_api_key(container)
         self.addCleanup(container.shutdown)
         raw_client, _, context = open_test_client(container)
@@ -64,6 +67,7 @@ class Dr07EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
         tasks = {task["definition_id"]: task["status"] for task in terminal["tasks"]}
         self.assertEqual(tasks["task-review-report"], "completed")
         self.assertEqual(terminal["status"], "completed")
+        assert_structured_finalization_complete(self, container, run_id)
         self.assertEqual(terminal["final_review_verdict"], "approve")
         self.assertTrue(terminal["final_artifact_available"])
         self.assertIsNotNone(terminal["final_artifact_id"])
@@ -88,6 +92,7 @@ class Dr07EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
 
         terminal = client.get(f"/workflow-runs/{run_id}").json()
         self.assertEqual(terminal["status"], "completed")
+        assert_structured_finalization_complete(self, container, run_id)
         self.assertEqual(terminal["final_review_verdict"], "approve")
         self.assertTrue(terminal["final_artifact_available"])
 
