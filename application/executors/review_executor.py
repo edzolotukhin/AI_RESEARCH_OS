@@ -27,7 +27,11 @@ class ReviewExecutor(BaseExecutor):
             raise
         context.write_shared("review", summary.to_dict())
         update_replay_stage(context, "review", "completed")
-        if summary.verdict == "approve" and self._deliverable_finalizer is not None:
+        tasks = getattr(context.workflow_run, "tasks", ())
+        has_finalization_task = isinstance(tasks, (list, tuple)) and any(
+            task.executor_id == "finalization" for task in tasks
+        )
+        if summary.verdict == "approve" and self._deliverable_finalizer is not None and not has_finalization_task:
             update_replay_stage(context, "deliverables", "running")
             context.write_shared("desk_deliverable_finalization", {
                 "status": "pending", "report_id": summary.report_id,
@@ -51,10 +55,14 @@ class ReviewExecutor(BaseExecutor):
                 )
                 raise
             context.write_shared("desk_deliverable_finalization", state)
-            final_status = "completed" if state.get("status") == "complete" else state.get("status", "running")
+            final_status = "completed" if state.get("status") in {"complete", "finalization_complete"} else state.get("status", "running")
             update_replay_stage(context, "deliverables", final_status)
+            if final_status != "completed" and context.current_task is not None:
+                context.current_task.pause()
+                context.workflow_run.pause()
         else:
-            update_replay_stage(context, "deliverables", "skipped")
+            if summary.verdict != "approve":
+                update_replay_stage(context, "deliverables", "skipped")
 
         task = context.current_task
         if task is not None:

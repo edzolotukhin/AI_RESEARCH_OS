@@ -55,6 +55,9 @@ class PdfSourceDocument:
     charts: tuple[PresentationChart, ...] = ()
     approval_review_id: str | None = None
     approval_decision: str | None = None
+    source_run_id: str | None = None
+    claim_set_digest: str | None = None
+    coverage_contract_digest: str | None = None
 
 
 @dataclass(frozen=True)

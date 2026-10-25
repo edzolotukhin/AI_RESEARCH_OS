@@ -138,6 +138,21 @@ class ResearchDesignWorkflowMapper:
                 "implementation_status": "implemented",
             },
         )
+        builder.add_task(
+            id="task-finalize-deliverables",
+            name="Finalize approved report deliverables",
+            executor_id="finalization",
+            executor_type=ExecutorType.AGENT,
+            depends_on=[self._TASK_REVIEW],
+            metadata={
+                "stage_id": "stage-desk-research",
+                "stage_name": "Desk Research",
+                "project_id": project.id,
+                "research_design_id": design.id,
+                "purpose": "finalize_deliverables",
+                "implementation_status": "implemented",
+            },
+        )
 
         template = builder.build()
         if self._kernel_profile is not None:

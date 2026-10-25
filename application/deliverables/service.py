@@ -19,6 +19,12 @@ from application.quantitative.workflow import (
 )
 from application.methods.quantitative.pin import REVIEW_PIN
 from application.deliverables.quantitative_sources import approved_quantitative_sources
+from application.deliverables.desk_finalization import (
+    STRUCTURED_REPORT_CONTRACT,
+    DeskFinalizationAuthority,
+    claim_set_digest,
+    coverage_contract_digest,
+)
 from application.report.source_display import source_display
 
 
@@ -44,13 +50,15 @@ class ReportCatalogItem:
             return "pending"
         if self.presentation_job is None:
             return "pending"
-        if self.presentation_job.state == "failed":
-            return "pptx_failed"
-        if self.presentation_job.state == "pending":
-            return "pptx_queued"
-        if self.presentation_job.state == "processing":
-            return "pptx_running"
-        return "complete" if self.pptx is not None else "pptx_failed"
+        if self.presentation_job.state in {"failed", "failed_terminal"}:
+            return "finalization_failed"
+        if self.presentation_job.state in {"review_approved", "pdf_generating", "pdf_complete", "pending", "pptx_pending"}:
+            return self.presentation_job.state
+        if self.presentation_job.state in {"processing", "pptx_processing"}:
+            return "pptx_processing"
+        if self.presentation_job.state == "retry_wait":
+            return "pptx_retry_wait"
+        return "finalization_complete" if self.pptx is not None else "finalization_failed"
 
 
 @dataclass(frozen=True)
@@ -65,7 +73,8 @@ class ReportCatalog:
 class ProjectDeliverablesService:
     def __init__(self, *, projects, workflows, reports, reviews, quantitative_state,
                  qualitative_reports=None,
-                 store, renderer, presentation_jobs=None, pptx_renderer=None) -> None:
+                 store, renderer, presentation_jobs=None, pptx_renderer=None,
+                 report_claims=None) -> None:
         self.projects = projects
         self.workflows = workflows
         self.reports = reports
@@ -76,6 +85,7 @@ class ProjectDeliverablesService:
         self.renderer = renderer
         self.presentation_jobs = presentation_jobs
         self.pptx_renderer = pptx_renderer
+        self.report_claims = report_claims
 
     def _project(self, project_id: str, owner_id: str):
         try:
@@ -125,12 +135,16 @@ class ProjectDeliverablesService:
                 approved_review = self._approved_desk_review(report, reviews)
             except AccessDeniedError:
                 pass
-            source_version = (
-                f"revision-{report.revision_number}-review-{approved_review.id}-"
-                f"{approved_review.verdict.value.lower()}"
-                if approved_review is not None else
-                f"revision-{report.revision_number}-review-{review_digest}"
-            )
+            authority = None
+            if approved_review is not None and report.metadata.get("structured_claim_contract") == STRUCTURED_REPORT_CONTRACT:
+                try:
+                    authority = self._structured_authority(report, approved_review)
+                except AccessDeniedError:
+                    approved_review = None
+                    status = "Статус перевірки не підтверджено"
+            source_version = (authority.source_version if authority is not None else
+                f"revision-{report.revision_number}-review-{approved_review.id}-{approved_review.verdict.value.lower()}"
+                if approved_review is not None else f"revision-{report.revision_number}-review-{review_digest}")
             sections = tuple(PdfSection(item.title, (item.content,), item.citation_ids)
                              for item in report.sections)
             registry = tuple((key, source_display(value))
@@ -149,6 +163,9 @@ class ProjectDeliverablesService:
                 previous_report_id=report.previous_report_id,
                 approval_review_id=approved_review.id if approved_review else None,
                 approval_decision=(approved_review.verdict.value if approved_review else None),
+                source_run_id=(authority.source_run_id if authority else report.workflow_run_id),
+                claim_set_digest=(authority.claim_set_digest if authority else None),
+                coverage_contract_digest=(authority.coverage_contract_digest if authority else None),
             ))
         return sorted(documents, key=lambda item: (item.created_at or "", item.revision_number or 0, item.source_id), reverse=True)
 
@@ -240,7 +257,7 @@ class ProjectDeliverablesService:
                     source_id=document.source_id, source_version=document.source_version,
                     template_version=self.pptx_renderer.template_version,
                     renderer_version=self.pptx_renderer.version)
-                if job is not None and job.state == "completed":
+                if job is not None and job.state in {"completed", "finalization_complete"}:
                     pptx = self.store.find(
                         project_id=project_id, method=document.method,
                         source_id=document.source_id, source_version=document.source_version,
@@ -268,6 +285,47 @@ class ProjectDeliverablesService:
                  or document.approval_decision != ReviewVerdict.APPROVE.value)):
             raise AccessDeniedError("Схвалену ревізію звіту не знайдено")
         return item
+
+    def _structured_authority(self, report, review) -> DeskFinalizationAuthority:
+        if self.report_claims is None or report.metadata.get("structured_claim_contract") != STRUCTURED_REPORT_CONTRACT:
+            raise AccessDeniedError("Structured Report authority unavailable")
+        if review.verdict is not ReviewVerdict.APPROVE or review.metadata.get("structured_claim_contract") != STRUCTURED_REPORT_CONTRACT:
+            raise AccessDeniedError("Exact structured approval unavailable")
+        if int(review.metadata.get("report_revision", 0)) != report.revision_number:
+            raise AccessDeniedError("Approval targets another revision")
+        claims = tuple(self.report_claims.list_for_report(report.id, report.revision_number))
+        if not claims:
+            raise AccessDeniedError("Structured Report has no immutable claims")
+        task_results = self.workflows.get_task_results(report.workflow_run_id)
+        from application.replay.desk_downstream_replay import REPLAY_KEY
+        replay = task_results.get(REPLAY_KEY)
+        source_run = (replay.get("source_workflow_run_id") if isinstance(replay, dict)
+                      else report.workflow_run_id)
+        if not isinstance(source_run, str) or any(
+            (claim.project_id, claim.report_workflow_run_id, claim.source_workflow_run_id,
+             claim.design_id) !=
+            (report.project_id, report.workflow_run_id, source_run, report.research_design_id)
+            for claim in claims
+        ):
+            raise AccessDeniedError("Structured claim lineage mismatch")
+        digest = claim_set_digest(claims)
+        coverage_digest = coverage_contract_digest(report)
+        if review.metadata.get("claim_set_digest") != digest:
+            raise AccessDeniedError("Approved claim digest mismatch")
+        if review.metadata.get("coverage_contract_digest") != coverage_digest:
+            raise AccessDeniedError("Approved coverage contract mismatch")
+        later = [item for item in self.reports.list_reports_for_project(report.project_id)
+                 if item.workflow_run_id == report.workflow_run_id
+                 and item.revision_number > report.revision_number]
+        if later:
+            raise AccessDeniedError("Approved revision was superseded")
+        return DeskFinalizationAuthority(
+            project_id=report.project_id, report_run_id=report.workflow_run_id,
+            source_run_id=source_run, design_id=report.research_design_id,
+            report_id=report.id, report_revision=report.revision_number,
+            review_id=review.id, claim_set_digest=digest,
+            coverage_contract_digest=coverage_digest,
+        )
 
     def generate(self, project_id: str, method: str, source_id: str, *, owner_id: str) -> PdfDeliverable:
         item = self._approved_desk_item(self.source(project_id, method, source_id, owner_id=owner_id))
@@ -322,14 +380,20 @@ class ProjectDeliverablesService:
         item = self._approved_desk_item(self.source(project_id, method, source_id, owner_id=owner_id))
         return self._schedule_presentation_document(item.document)
 
-    def _schedule_presentation_document(self, document: PdfSourceDocument) -> PresentationJob:
+    def _schedule_presentation_document(self, document: PdfSourceDocument,
+                                        authority: DeskFinalizationAuthority | None = None) -> PresentationJob:
         job = self.presentation_jobs.schedule(
             project_id=document.project_id, method=document.method, run_id=document.run_id,
             study_id=document.study_id, source_id=document.source_id,
             source_version=document.source_version, status_snapshot=document.status,
             template_version=self.pptx_renderer.template_version,
-            renderer_version=self.pptx_renderer.version)
-        if job.state == "failed":
+            renderer_version=self.pptx_renderer.version,
+            **({"initial_state": "review_approved", "report_revision": authority.report_revision,
+                "review_id": authority.review_id, "source_run_id": authority.source_run_id,
+                "claim_set_digest": authority.claim_set_digest,
+                "coverage_contract_digest": authority.coverage_contract_digest}
+               if authority is not None else {}))
+        if job.state in {"failed", "retry_wait"}:
             return self.presentation_jobs.retry(job.id) or job
         return job
 
@@ -346,35 +410,61 @@ class ProjectDeliverablesService:
             review = self._approved_desk_review(report, reviews)
             if review.id != review_id:
                 raise AccessDeniedError("not approved")
+            authority = self._structured_authority(report, review)
             project = self.projects.get_project(project_id)
             item = self._approved_desk_item(self.source(
                 project_id, "DESK", report_id, owner_id=project.owner_principal_id))
+            if (item.document.source_version != authority.source_version
+                    or item.document.claim_set_digest != authority.claim_set_digest
+                    or item.document.coverage_contract_digest != authority.coverage_contract_digest
+                    or item.document.source_run_id != authority.source_run_id):
+                raise AccessDeniedError("Structured finalization provenance mismatch")
         except Exception as exc:
             raise DeliverableFinalizationError("approval_gate_rejected", "approval_gate_rejected") from exc
         try:
-            pdf = self._generate_item(item)
+            job = self._schedule_presentation_document(item.document, authority)
         except Exception as exc:
-            raise DeliverableFinalizationError("pdf_failed", "pdf_generation_failed") from exc
+            raise DeliverableFinalizationError(
+                "finalization_failed", "pptx_schedule_failed"
+            ) from exc
         try:
-            job = self._schedule_presentation_document(item.document)
+            if hasattr(self.presentation_jobs, "transition"):
+                self.presentation_jobs.transition(job.id, expected=("review_approved",), state="pdf_generating")
+            pdf = self._generate_item(item)
+            if hasattr(self.presentation_jobs, "transition"):
+                self.presentation_jobs.transition(job.id, expected=("pdf_generating", "review_approved"), state="pdf_complete")
+                job = self.presentation_jobs.transition(job.id, expected=("pdf_complete",), state="pptx_pending") or job
         except Exception as exc:
-            raise DeliverableFinalizationError("pptx_failed", "pptx_schedule_failed") from exc
-        if job.state == "completed":
+            if hasattr(self.presentation_jobs, "transition"):
+                self.presentation_jobs.transition(
+                    job.id,
+                    expected=("review_approved", "pdf_generating"),
+                    state="failed_terminal",
+                    failure_code="pdf_generation_failed",
+                )
+            raise DeliverableFinalizationError(
+                "finalization_failed", "pdf_generation_failed"
+            ) from exc
+        if job.state in {"completed", "finalization_complete"}:
             refreshed = self._approved_desk_item(self.source(
                 project_id, "DESK", report_id, owner_id=project.owner_principal_id))
             if refreshed.pptx is None:
                 raise DeliverableFinalizationError(
                     "pptx_failed", "pptx_provenance_or_checksum_missing")
         return {
-            "status": "complete" if job.state == "completed" else
-                      "pptx_failed" if job.state == "failed" else
-                      "pptx_queued" if job.state == "pending" else "pptx_running",
+            "status": "finalization_complete" if job.state in {"completed", "finalization_complete"} else
+                      "finalization_failed" if job.state in {"failed", "failed_terminal"} else
+                      "pptx_retry_wait" if job.state == "retry_wait" else
+                      "pptx_processing" if job.state in {"processing", "pptx_processing"} else "pptx_pending",
             "report_id": report.id,
             "report_revision": str(report.revision_number),
             "review_id": review.id,
             "review_decision": review.verdict.value,
             "pdf_id": pdf.id,
             "pptx_job_id": job.id,
+            "claim_set_digest": authority.claim_set_digest,
+            "coverage_contract_digest": authority.coverage_contract_digest,
+            "source_run_id": authority.source_run_id,
         }
 
     def process_next_presentation(self, worker_id: str) -> bool:
@@ -385,13 +475,22 @@ class ProjectDeliverablesService:
             return False
         try:
             project = self.projects.get_project(job.project_id)
-            document = self._approved_desk_item(self.source(
+            source_item = self._approved_desk_item(self.source(
                 job.project_id, job.method, job.source_id,
-                owner_id=project.owner_principal_id)).document
+                owner_id=project.owner_principal_id))
+            document = source_item.document
             if (document.run_id, document.study_id, document.source_version,
                 document.status) != (job.run_id, job.study_id, job.source_version,
                                      job.status_snapshot):
                 raise ValueError("source identity changed")
+            if job.report_revision is not None:
+                if (document.revision_number, document.approval_review_id,
+                    document.source_run_id, document.claim_set_digest,
+                    document.coverage_contract_digest) != (
+                    job.report_revision, job.review_id, job.source_run_id,
+                    job.claim_set_digest, job.coverage_contract_digest):
+                    raise ValueError("structured finalization authority changed")
+                self._generate_item(source_item)
             existing = self.store.find(
                 project_id=job.project_id, method=job.method, source_id=job.source_id,
                 source_version=job.source_version, renderer_version=job.renderer_version,
@@ -414,7 +513,59 @@ class ProjectDeliverablesService:
         except Exception:
             # The failure code is deliberately content-free; the user may retry.
             self.presentation_jobs.fail(job.id, worker_id, "generation_failed")
+        refreshed = self.presentation_jobs.find(
+            project_id=job.project_id, method=job.method, source_id=job.source_id,
+            source_version=job.source_version, template_version=job.template_version,
+            renderer_version=job.renderer_version)
+        if refreshed is not None and refreshed.report_revision is not None:
+            self._settle_structured_workflow(refreshed)
         return True
+
+    def _settle_structured_workflow(self, job: PresentationJob) -> None:
+        """Complete/fail the paused Review boundary only at durable finalization terminality."""
+        if (self.workflows is None or not hasattr(self.workflows, "get_workflow_run")
+                or job.state not in {"finalization_complete", "failed_terminal"}):
+            return
+        from domain.value_objects.task_status import TaskStatus
+        from domain.workflow_status import WorkflowStatus
+        run = self.workflows.get_workflow_run(job.run_id)
+        if run.status is not WorkflowStatus.PAUSED:
+            return
+        paused = [task for task in run.tasks if task.status is TaskStatus.PAUSED]
+        if len(paused) != 1 or paused[0].executor_id not in {"finalization", "review"}:
+            return
+        version = self.workflows.get_workflow_run_version(run.id)
+        results = self.workflows.get_task_results(run.id)
+        state = dict(results.get("desk_deliverable_finalization") or {})
+        state.update({
+            "status": job.state,
+            "pptx_job_id": job.id,
+            "pptx_id": job.completed_deliverable_id,
+            "attempts": job.attempts,
+            "failure_code": job.failure_code,
+        })
+        results["desk_deliverable_finalization"] = state
+        from application.replay.desk_downstream_replay import REPLAY_KEY
+        replay = results.get(REPLAY_KEY)
+        if isinstance(replay, dict):
+            replay = dict(replay)
+            stages = dict(replay.get("downstream_stages") or {})
+            stages["deliverables"] = ("completed" if job.state == "finalization_complete" else "failed")
+            replay["downstream_stages"] = stages
+            replay["status"] = ("completed" if job.state == "finalization_complete" else "failed")
+            if job.failure_code:
+                replay["failure_code"] = job.failure_code
+            results[REPLAY_KEY] = replay
+        task = paused[0]
+        task.resume()
+        run.resume()
+        if job.state == "finalization_complete":
+            task.complete()
+            run.complete()
+        else:
+            task.fail()
+            run.fail()
+        self.workflows.save_workflow_run(run, expected_version=version, task_results=results)
 
     def download_presentation(self, project_id: str, method: str, source_id: str,
                               deliverable_id: str, *, owner_id: str) -> tuple[PdfDeliverable, bytes]:
@@ -431,7 +582,8 @@ class ProjectDeliverablesService:
             source_version=record.source_version,
             template_version=record.template_version,
             renderer_version=record.renderer_version)
-        if job is None or job.state != "completed" or job.completed_deliverable_id != deliverable_id:
+        if (job is None or job.state not in {"completed", "finalization_complete"}
+                or job.completed_deliverable_id != deliverable_id):
             raise AccessDeniedError("Презентацію не знайдено")
         if (record.project_id, record.method, record.run_id, record.study_id,
             record.source_id, record.format, record.media_type) != (

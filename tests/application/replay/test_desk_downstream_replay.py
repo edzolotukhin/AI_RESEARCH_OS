@@ -125,7 +125,8 @@ class DeskDownstreamReplayTests(unittest.TestCase):
         self.assertEqual("replay-run", run.id)
         self.assertEqual(1, len(durable.calls))
         _, template, initial, _ = durable.calls[0]
-        self.assertEqual(["report", "review"], [task.executor_id for task in template.task_definitions])
+        self.assertEqual(["report", "review", "finalization"],
+                         [task.executor_id for task in template.task_definitions])
         self.assertNotIn("collect", [task.executor_id for task in template.task_definitions])
         self.assertNotIn("evidence", [task.executor_id for task in template.task_definitions])
         self.assertNotIn("analysis", [task.executor_id for task in template.task_definitions])
@@ -133,7 +134,7 @@ class DeskDownstreamReplayTests(unittest.TestCase):
         self.assertEqual(source.id, lineage["source_workflow_run_id"])
         self.assertEqual("design-1", lineage["research_design_id"])
         self.assertEqual("subject-1", lineage["research_subject_id"])
-        self.assertEqual("downstream_report_review_only", lineage["budget_scope"])
+        self.assertEqual("downstream_report_review_finalization", lineage["budget_scope"])
         self.assertNotEqual(source.id, lineage["replay_attempt_id"])
         self.assertEqual(before, (workflows.results[source.id], evidence.__dict__, finding.__dict__, insight.__dict__))
 

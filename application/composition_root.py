@@ -215,6 +215,7 @@ def create_application_container(
         store=persistence.pdf_store, renderer=ReportLabPdfRenderer(),
         presentation_jobs=persistence.presentation_jobs,
         pptx_renderer=PptxRenderer() if persistence.presentation_jobs is not None else None,
+        report_claims=report_claim_repository,
     )
     research_run_result_query_service = ResearchRunResultQueryService(
         workflow_run_repository=workflow_run_repository,
@@ -885,6 +886,9 @@ def _build_agent_executors(
                 executors[executor_id] = DeterministicResearchReadinessExecutor()
             else:
                 executors[executor_id] = DeterministicStageExecutor(stage_key=stage_key)
+        if deliverable_finalizer is not None:
+            from application.executors.finalization_executor import FinalizationExecutor
+            executors["finalization"] = FinalizationExecutor(deliverable_finalizer)
         return executors
 
     executors["search"] = build_search_executor(
@@ -949,6 +953,9 @@ def _build_agent_executors(
             deliverable_finalizer=deliverable_finalizer,
         )
     )
+    if deliverable_finalizer is not None:
+        from application.executors.finalization_executor import FinalizationExecutor
+        executors["finalization"] = FinalizationExecutor(deliverable_finalizer)
     return executors
 
 

@@ -258,6 +258,7 @@ def _resolver(
         "analysis": analysis_executor,
         "report": PassThroughExecutor(),
         "review": PassThroughExecutor(),
+        "finalization": PassThroughExecutor(),
     }[task.executor_id]
     return resolver
 

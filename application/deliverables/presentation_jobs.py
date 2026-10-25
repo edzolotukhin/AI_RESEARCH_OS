@@ -24,3 +24,8 @@ class PresentationJob:
     updated_at: datetime
     completed_deliverable_id: str | None
     failure_code: str | None
+    report_revision: int | None = None
+    review_id: str | None = None
+    source_run_id: str | None = None
+    claim_set_digest: str | None = None
+    coverage_contract_digest: str | None = None

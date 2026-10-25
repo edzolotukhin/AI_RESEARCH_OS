@@ -174,6 +174,9 @@ class ClaimAwareReviewPipelineTests(unittest.TestCase):
         report = report_repo.get_by_id(summary.report_id)
         self.assertTrue(claim_repo.list_for_report(report.id, report.revision_number))
         self.assertEqual(len(claim_repo.list_for_report(report.id, report.revision_number)), 5)
+        review = review_repo.list_for_project(context.project.id, workflow_run_id="source-run")[0]
+        self.assertEqual(len(review.metadata["claim_set_digest"]), 64)
+        self.assertEqual(len(review.metadata["coverage_contract_digest"]), 64)
 
     def test_one_real_targeted_revision_then_approve_preserves_old_revision(self) -> None:
         service, context, report_repo, claim_repo, review_repo, source_artifacts = self._pipeline(_ReviseOnceEngine())

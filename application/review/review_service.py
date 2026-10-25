@@ -18,6 +18,7 @@ from application.ports.artifact_repository import ArtifactRepository
 from application.ports.evidence_ports import EvidenceRepository
 from application.ports.report_ports import ReportRepository
 from application.ports.report_claim_repository import ReportClaimRepository
+from application.deliverables.desk_finalization import claim_set_digest, coverage_contract_digest
 from application.ports.review_ports import (
     ReviewRepository,
     ReviewIssueCandidate,
@@ -304,7 +305,13 @@ class ReviewService:
                         report_id=report.id,
                         review_attempt=review_attempt,
                     ),
-                    metadata={"report_revision": report.revision_number, "structured_claim_contract": ("desk_report_claim_v1" if structured else "legacy_unstructured")},
+                    metadata={
+                        "report_revision": report.revision_number,
+                        "structured_claim_contract": ("desk_report_claim_v1" if structured else "legacy_unstructured"),
+                        **({"claim_set_digest": claim_set_digest(report_claims),
+                            "coverage_contract_digest": coverage_contract_digest(report)}
+                           if structured else {}),
+                    },
                 ),
                 workflow_run_id=workflow_run_id,
             )

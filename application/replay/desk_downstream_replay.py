@@ -40,7 +40,10 @@ def update_replay_stage(context, stage: str, status: str, *, failure_code: str |
     lineage["status"] = (
         "failed" if status == "failed" else
         "completed" if stage == "deliverables" and status in {"completed", "skipped"} else
-        "finalization_pending" if stage == "deliverables" and status in {"pptx_queued", "pptx_running"} else
+        "finalization_pending" if stage == "deliverables" and status in {
+            "review_approved", "pdf_generating", "pdf_complete", "pptx_queued",
+            "pptx_pending", "pptx_running", "pptx_processing", "pptx_retry_wait",
+        } else
         "running"
     )
     if failure_code:
@@ -113,6 +116,7 @@ class DeskDownstreamReplayService:
             task_definitions=[
                 TaskDefinition("report", "Replay: Write research report", "report"),
                 TaskDefinition("review", "Replay: Review and finalize", "review", depends_on=["report"]),
+                TaskDefinition("finalization", "Replay: Finalize PDF and PPTX", "finalization", depends_on=["review"]),
             ],
             research_brief_snapshot=source_template.research_brief_snapshot,
             research_design_snapshot=design,
@@ -126,7 +130,7 @@ class DeskDownstreamReplayService:
             "research_subject_id": design.research_subject.subject_id,
             "runtime_sha": os.environ.get("APP_SHA"),
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "budget_scope": "downstream_report_review_only",
+            "budget_scope": "downstream_report_review_finalization",
             "allowed_provider_stages": ["report", "review"],
             "status": "pending",
             "downstream_stages": {"report": "pending", "review": "pending", "deliverables": "pending"},

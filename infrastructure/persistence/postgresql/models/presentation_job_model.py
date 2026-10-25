@@ -12,7 +12,10 @@ class PresentationJobModel(Base):
         Index("ix_presentation_jobs_claim", "state", "lease_until", "created_at"),
         UniqueConstraint("project_id", "method", "source_id", "source_version",
                          "template_version", "renderer_version", name="uq_presentation_job_identity"),
-        CheckConstraint("state IN ('pending', 'processing', 'completed', 'failed')",
+        CheckConstraint("state IN ('pending', 'processing', 'completed', 'failed', "
+                        "'review_approved', 'pdf_generating', 'pdf_complete', "
+                        "'pptx_pending', 'pptx_processing', 'retry_wait', "
+                        "'pptx_complete', 'finalization_complete', 'failed_terminal')",
                         name="ck_presentation_job_state"),
         CheckConstraint("attempts >= 0", name="ck_presentation_job_attempts"),
     )
@@ -26,7 +29,7 @@ class PresentationJobModel(Base):
     status_snapshot: Mapped[str] = mapped_column(String(96), nullable=False)
     template_version: Mapped[str] = mapped_column(String(64), nullable=False)
     renderer_version: Mapped[str] = mapped_column(String(64), nullable=False)
-    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
     attempts: Mapped[int] = mapped_column(Integer(), nullable=False, default=0)
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     claimed_by: Mapped[str | None] = mapped_column(String(128))
@@ -34,3 +37,8 @@ class PresentationJobModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     completed_deliverable_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("pdf_deliverables.id"))
     failure_code: Mapped[str | None] = mapped_column(String(64))
+    report_revision: Mapped[int | None] = mapped_column(Integer())
+    review_id: Mapped[str | None] = mapped_column(String(64))
+    source_run_id: Mapped[str | None] = mapped_column(String(64))
+    claim_set_digest: Mapped[str | None] = mapped_column(String(64))
+    coverage_contract_digest: Mapped[str | None] = mapped_column(String(64))

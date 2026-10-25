@@ -8,5 +8,6 @@ DOWNSTREAM_TASK_DEFINITION_IDS = frozenset(
         "task-analyze",
         "task-write-report",
         "task-review-report",
+        "task-finalize-deliverables",
     },
 )

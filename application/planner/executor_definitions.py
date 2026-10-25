@@ -53,6 +53,11 @@ AGENT_EXECUTOR_CAPABILITIES: tuple[ExecutorCapability, ...] = (
         description="Reviews report quality and enforces the quality gate",
     ),
     ExecutorCapability(
+        executor_id="finalization",
+        executor_type=ExecutorType.AGENT,
+        description="Finalizes an exactly approved structured Report into PDF and PPTX",
+    ),
+    ExecutorCapability(
         executor_id="proposal",
         executor_type=ExecutorType.AGENT,
         description="Creates client proposals",
