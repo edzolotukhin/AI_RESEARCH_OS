@@ -135,8 +135,8 @@ class PresentationIntegrationTests(unittest.TestCase):
             source_version=scheduled.source_version,
             template_version=scheduled.template_version,
             renderer_version=scheduled.renderer_version)
-        self.assertEqual(current.state, "failed")
+        self.assertEqual(current.state, "failed_terminal")
         self.assertEqual(current.attempts, 3)
         self.assertEqual(current.failure_code, "lease_exhausted")
         self.assertIsNone(current.completed_deliverable_id)
-        self.assertEqual(jobs.retry(current.id).state, "failed")
+        self.assertEqual(jobs.retry(current.id).state, "failed_terminal")

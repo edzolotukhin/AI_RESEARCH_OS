@@ -27,6 +27,10 @@ class PostgreSQLReportClaimRepository(ReportClaimRepository):
         with self._session_factory.session() as session:
             try:
                 session.add(report_to_model(report, version=1))
+                # ReportClaimModel deliberately has no ORM relationship to
+                # ReportModel.  Establish the FK target before flushing the
+                # immutable claim rows while retaining one atomic transaction.
+                session.flush()
                 session.add_all([report_claim_to_model(claim, report_id=report.id, report_revision=report.revision_number) for claim in claims])
                 record_activity(session, project_id=report.project_id, semantic_key=f"desk-report:{report.id}", event_type="DESK_REPORT_DRAFT_CREATED", source_kind="report", source_id=report.id, run_id=report.workflow_run_id, method="DESK", occurred_at=report.created_at)
                 session.flush()
