@@ -63,7 +63,7 @@ def assert_structured_finalization_complete(test_case, container, run_id: str) -
     test_case.assertEqual(report.workflow_run_id, run_id)
     test_case.assertEqual(approved[0].verdict.value, "approve")
     test_case.assertEqual(approved[0].report_id, report.id)
-    claims = container.report_claim_repository.list_for_report(
+    claims = container.project_deliverables_service.report_claims.list_for_report(
         report.id, report.revision_number
     )
     test_case.assertTrue(claims)

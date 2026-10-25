@@ -8,8 +8,6 @@ import unittest
 from dataclasses import replace
 
 from application.composition_root import create_application_container
-from application.review.exceptions import ReviewError
-
 from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
 from tests.api.helpers import (
     activate_approved_desk_project,
@@ -56,6 +54,47 @@ class Dr07EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
             auth_headers(container._test_api_key_plaintext),
         )
         return client, container
+
+    def _assert_review_failed_closed(self, client, container, project_id, run_id):
+        terminal = client.get(f"/workflow-runs/{run_id}").json()
+        tasks = {task["definition_id"]: task["status"] for task in terminal["tasks"]}
+        self.assertEqual(terminal["status"], "failed")
+        self.assertEqual(tasks["task-review-report"], "failed")
+        self.assertNotEqual(tasks["task-finalize-deliverables"], "completed")
+        self.assertFalse(terminal["final_artifact_available"])
+
+        reviews = client.get(
+            f"/projects/{project_id}/reviews",
+            params={"workflow_run_id": run_id},
+        ).json()["items"]
+        self.assertTrue(reviews)
+        self.assertNotIn("approve", [item["verdict"] for item in reviews])
+
+        project = container.project_service.get_project(project_id)
+        catalog = container.project_deliverables_service.catalog(
+            project_id, owner_id=project.owner_principal_id
+        )
+        run_items = [item for item in catalog.desk if item.document.run_id == run_id]
+        self.assertTrue(run_items)
+        self.assertTrue(all(item.pdf is None and item.pptx is None for item in run_items))
+        jobs = container.project_deliverables_service.presentation_jobs.list_recent()
+        self.assertFalse(any(job.run_id == run_id for job in jobs))
+
+        results = container.workflow_service.get_task_results(run_id)
+        finalization_states = []
+        direct = results.get("desk_deliverable_finalization")
+        if isinstance(direct, dict):
+            finalization_states.append(direct)
+        for value in results.values():
+            if isinstance(value, dict) and isinstance(value.get("shared_state"), dict):
+                nested = value["shared_state"].get("desk_deliverable_finalization")
+                if isinstance(nested, dict):
+                    finalization_states.append(nested)
+        self.assertNotIn(
+            "finalization_complete",
+            [state.get("status") for state in finalization_states],
+        )
+        return terminal, reviews
 
     def test_clean_report_approves_and_completes(self) -> None:
         client, container = self._build_client()
@@ -123,16 +162,12 @@ class Dr07EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
         client, container = self._build_client()
         project_id = client.post("/projects", json={"name": "DR-07 Reject"}).json()["id"]
         run_id = activate_approved_desk_project(container, project_id, BRIEF).id
-        with self.assertRaises(ReviewError):
-            drain_background_runs(container)
+        drain_background_runs(container)
 
-        terminal = client.get(f"/workflow-runs/{run_id}").json()
-        self.assertEqual(terminal["status"], "failed")
-        self.assertFalse(terminal["final_artifact_available"])
-        reviews = client.get(
-            f"/projects/{project_id}/reviews",
-            params={"workflow_run_id": run_id, "verdict": "reject"},
-        ).json()["items"]
+        _, reviews = self._assert_review_failed_closed(
+            client, container, project_id, run_id
+        )
+        reviews = [item for item in reviews if item["verdict"] == "reject"]
         self.assertGreaterEqual(len(reviews), 1)
 
     def test_revise_exhaustion_fails_without_approved_artifact(self) -> None:
@@ -141,18 +176,11 @@ class Dr07EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
         client, container = self._build_client(max_revision_attempts=0)
         project_id = client.post("/projects", json={"name": "DR-07 Exhaust"}).json()["id"]
         run_id = activate_approved_desk_project(container, project_id, BRIEF).id
-        with self.assertRaises(ReviewError):
-            drain_background_runs(container)
+        drain_background_runs(container)
 
-        terminal = client.get(f"/workflow-runs/{run_id}").json()
-        self.assertEqual(terminal["status"], "failed")
-        self.assertFalse(terminal["final_artifact_available"])
-
-        reviews = client.get(
-            f"/projects/{project_id}/reviews",
-            params={"workflow_run_id": run_id},
-        ).json()["items"]
-        self.assertGreaterEqual(len(reviews), 1)
+        _, reviews = self._assert_review_failed_closed(
+            client, container, project_id, run_id
+        )
         verdicts = [item["verdict"] for item in reviews]
         self.assertIn("revise", verdicts)
 
