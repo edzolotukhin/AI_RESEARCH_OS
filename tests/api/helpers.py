@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from unittest.mock import Mock
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+from uuid import NAMESPACE_URL, uuid5
+from unittest.mock import Mock
 
 from fastapi.testclient import TestClient
 
@@ -12,6 +14,7 @@ from application.config import ApplicationConfig, ApplicationOverrides
 from application.container import ApplicationContainer
 from domain.ai.llm_response import LLMResponse
 from domain.research_brief import ResearchBrief
+from application.deliverables.presentation_jobs import PresentationJob
 
 from api.app import create_fastapi_app
 
@@ -78,10 +81,127 @@ def drain_background_runs(
 ) -> int:
     if container.worker_execution_service is None:
         return 0
-    return container.worker_execution_service.drain_runnable_runs(
+    drained = container.worker_execution_service.drain_runnable_runs(
         worker_id,
         max_runs=max_runs,
     )
+    deliverables = container.project_deliverables_service
+    for _ in range(max_runs):
+        if not deliverables.process_next_presentation(
+            f"{worker_id}-presentation"
+        ):
+            break
+    return drained
+
+
+class _DeterministicPresentationJobs:
+    """Provider-free presentation scheduling boundary for API workflow tests."""
+
+    def __init__(self) -> None:
+        self._jobs: dict[tuple[str, ...], PresentationJob] = {}
+
+    @staticmethod
+    def _key(values) -> tuple[str, ...]:
+        return tuple(str(values[name]) for name in (
+            "project_id", "method", "source_id", "source_version",
+            "template_version", "renderer_version",
+        ))
+
+    def find(self, **kwargs):
+        return self._jobs.get(self._key(kwargs))
+
+    def schedule(self, **kwargs):
+        key = self._key(kwargs)
+        job = self._jobs.get(key)
+        if job is None:
+            now = datetime.now(timezone.utc)
+            initial_state = kwargs.pop("initial_state", "pending")
+            job = PresentationJob(
+                id=str(uuid5(NAMESPACE_URL, "|".join(key))),
+                state=initial_state,
+                attempts=0,
+                lease_until=None,
+                claimed_by=None,
+                created_at=now,
+                updated_at=now,
+                completed_deliverable_id=None,
+                failure_code=None,
+                **kwargs,
+            )
+            self._jobs[key] = job
+        return job
+
+    def _replace(self, job, **changes):
+        updated = replace(job, **changes)
+        self._jobs[self._key(vars(updated))] = updated
+        return updated
+
+    def retry(self, job_id):
+        job = self._by_id(job_id)
+        return self._replace(job, state="pptx_pending", failure_code=None)
+
+    def claim_next(self, worker_id):
+        job = next((item for item in self._jobs.values()
+                    if item.state in {"pending", "pptx_pending", "retry_wait"}), None)
+        if job is None:
+            return None
+        return self._replace(
+            job,
+            state="pptx_processing",
+            attempts=job.attempts + 1,
+            claimed_by=worker_id,
+            lease_until=datetime.now(timezone.utc) + timedelta(seconds=30),
+        )
+
+    def complete(self, job_id, worker_id, deliverable_id):
+        job = self._by_id(job_id)
+        self._replace(
+            job,
+            state="finalization_complete",
+            claimed_by=None,
+            lease_until=None,
+            completed_deliverable_id=deliverable_id,
+        )
+        return True
+
+    def fail(self, job_id, worker_id, failure_code):
+        job = self._by_id(job_id)
+        self._replace(
+            job,
+            state="failed_terminal",
+            claimed_by=None,
+            lease_until=None,
+            failure_code=failure_code,
+        )
+        return True
+
+    def transition(self, job_id, *, expected, state, failure_code=None):
+        job = self._by_id(job_id)
+        if job.state in expected:
+            job = self._replace(job, state=state, failure_code=failure_code)
+        return job
+
+    def _by_id(self, job_id):
+        return next(item for item in self._jobs.values() if item.id == job_id)
+
+
+class _DeterministicPptxRenderer:
+    version = "pptx-test-v1"
+    template_version = "desk-test-v1"
+    media_type = (
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    )
+
+    @staticmethod
+    def render(document):
+        return b"PK\x03\x04" + document.source_id.encode("utf-8")
+
+
+def configure_test_presentation_scheduling(container) -> None:
+    """Attach the explicit provider-free scheduling boundary to a test container."""
+    service = container.project_deliverables_service
+    service.presentation_jobs = _DeterministicPresentationJobs()
+    service.pptx_renderer = _DeterministicPptxRenderer()
 
 
 def prepare_approved_desk_project(container, project_id: str, brief_payload: dict):

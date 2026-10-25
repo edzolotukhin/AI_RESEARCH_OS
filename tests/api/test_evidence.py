@@ -13,6 +13,7 @@ from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
 from tests.api.helpers import (
     AuthenticatedTestClient,
     close_test_client,
+    configure_test_presentation_scheduling,
     drain_background_runs,
     open_test_client,
     prepare_approved_desk_project,
@@ -40,6 +41,7 @@ class EvidenceApiTests(unittest.TestCase):
                 ),
                 overrides=dated_desk_overrides(create_brief_aligned_llm_mock()),
             )
+            configure_test_presentation_scheduling(container)
             bootstrap_test_api_key(container)
             raw, _, context = open_test_client(container)
             try:

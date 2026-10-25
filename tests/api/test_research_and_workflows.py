@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from tests.api.helpers import ApiTestCase, drain_background_runs, prepare_approved_desk_project
+from tests.api.helpers import (
+    ApiTestCase,
+    configure_test_presentation_scheduling,
+    drain_background_runs,
+    prepare_approved_desk_project,
+)
 
 from application.exceptions.capability_not_implemented_error import (
     CapabilityNotImplementedError,
@@ -110,6 +115,7 @@ class ResearchEndpointTests(ApiTestCase):
                         evidence_extractor=DatedExtractor(),
                     ),
                 )
+                configure_test_presentation_scheduling(container)
                 raw, _, context = open_test_client(container)
                 try:
                     from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
