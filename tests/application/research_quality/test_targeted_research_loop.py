@@ -744,6 +744,7 @@ class TargetedResearchLoopTests(unittest.TestCase):
             "analysis": analysis_executor,
             "report": PassThroughExecutor(),
             "review": PassThroughExecutor(),
+            "finalization": PassThroughExecutor(),
         }[task.executor_id]
         engine = WorkflowEngine(
             scheduler=TaskScheduler(),
@@ -860,6 +861,7 @@ class TargetedResearchLoopTests(unittest.TestCase):
             "analysis": analysis_executor,
             "report": PassThroughExecutor(),
             "review": PassThroughExecutor(),
+            "finalization": PassThroughExecutor(),
         }[task.executor_id]
         engine = WorkflowEngine(
             scheduler=TaskScheduler(),
@@ -1002,6 +1004,7 @@ class TargetedResearchLoopTests(unittest.TestCase):
             "analysis": analysis_executor,
             "report": PassThroughExecutor(),
             "review": PassThroughExecutor(),
+            "finalization": PassThroughExecutor(),
         }[task.executor_id]
         engine = WorkflowEngine(
             scheduler=TaskScheduler(),

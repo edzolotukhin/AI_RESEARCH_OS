@@ -634,6 +634,7 @@ def run_rqcl_workflow(
         "analysis": analysis_executor,
         "report": PassThroughExecutor(),
         "review": PassThroughExecutor(),
+        "finalization": PassThroughExecutor(),
     }[task.executor_id]
     engine = WorkflowEngine(
         scheduler=TaskScheduler(),
