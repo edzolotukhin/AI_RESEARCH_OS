@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from domain.reviews.quality_dimension import QualityDimension, QualityDimensionName, QualityDimensionStatus
+from domain.reviews.review_issue import ReviewIssue, ReviewIssueSeverity, ReviewIssueType
 from domain.reviews.review_result import ReviewResult
 from domain.reviews.review_verdict import ReviewVerdict
 
@@ -52,6 +53,51 @@ def _sample_review(*, project_id: str, run_id: str, report_id: str, dedup_key: s
     "PostgreSQL integration tests require POSTGRESQL_INTEGRATION_TESTS=1.",
 )
 class PostgreSQLConcurrentReviewRepositoryTests(PostgreSQLIntegrationTestCase):
+    def test_structured_issue_targeting_round_trips_exactly(self) -> None:
+        project, context, _ = seed_review_prerequisites(
+            self.session_factory,
+            run_id="run-review-target-round-trip",
+        )
+        report = build_review_service(
+            self.session_factory
+        )._report_repository.list_for_project(
+            project.id,
+            workflow_run_id=context.workflow_run.id,
+        )[0]
+        repository = PostgreSQLReviewRepository(self.session_factory)
+        issue = ReviewIssue(
+            id=str(uuid4()),
+            issue_type=ReviewIssueType.UNSUPPORTED_CLAIM,
+            severity=ReviewIssueSeverity.MAJOR,
+            message="Bounded structured issue",
+            report_section_id="section-1",
+            finding_refs=("finding-1",),
+            insight_refs=("insight-1",),
+            evidence_refs=("evidence-1",),
+            source_refs=("source-1",),
+            research_question_refs=("rq-1",),
+            claim_refs=("claim-1",),
+            report_revision=report.revision_number,
+            suggested_action="Revise the targeted claim",
+            metadata={"summary_unit_indices": [0]},
+        )
+        review = replace(
+            _sample_review(
+                project_id=project.id,
+                run_id=context.workflow_run.id,
+                report_id=report.id,
+                dedup_key=str(uuid4()),
+            ),
+            verdict=ReviewVerdict.REVISE,
+            issues=(issue,),
+        )
+
+        repository.create(review)
+        stored = repository.get_by_id(review.id)
+
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored.issues, (issue,))
+
     def test_concurrent_create_resolves_single_review_row(self) -> None:
         project, context, _ = seed_review_prerequisites(
             self.session_factory,

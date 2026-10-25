@@ -7,6 +7,7 @@ import unittest
 from dataclasses import replace
 
 from application.composition_root import create_application_container
+from application.review.exceptions import ReviewError
 from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
 from tests.api.helpers import (
     activate_approved_desk_project,
@@ -54,6 +55,7 @@ class Dr07EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
             ),
         )
         configure_structured_finalization_test_boundary(container)
+        container._test_structured_review_engine = review_engine
         bootstrap_test_api_key(container)
         self.addCleanup(container.shutdown)
         raw_client, _, context = open_test_client(container)
@@ -172,10 +174,26 @@ class Dr07EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
             project_id,
             workflow_run_id=run_id,
         )
+        emitted_issue = container._test_structured_review_engine.emitted_candidates[0][0]
+        self.assertEqual(emitted_issue.severity, "major")
+        self.assertEqual(emitted_issue.issue_type, "unsupported_claim")
+        self.assertEqual(emitted_issue.report_revision, 1)
+        self.assertTrue(emitted_issue.report_section_id)
+        self.assertTrue(emitted_issue.claim_refs)
+        self.assertTrue(emitted_issue.research_question_refs)
+        self.assertTrue(emitted_issue.suggested_action)
         self.assertEqual(persisted_reviews[0].report_id, original.id)
-        self.assertTrue(persisted_reviews[0].issues[0].report_section_id)
-        self.assertTrue(persisted_reviews[0].issues[0].claim_refs)
-        self.assertTrue(persisted_reviews[0].issues[0].research_question_refs)
+        persisted_issue = next(
+            issue for issue in persisted_reviews[0].issues if issue.claim_refs
+        )
+        self.assertEqual(persisted_issue.report_section_id, emitted_issue.report_section_id)
+        self.assertEqual(persisted_issue.claim_refs, emitted_issue.claim_refs)
+        self.assertEqual(
+            persisted_issue.research_question_refs,
+            emitted_issue.research_question_refs,
+        )
+        self.assertEqual(persisted_issue.report_revision, emitted_issue.report_revision)
+        self.assertEqual(persisted_issue.suggested_action, emitted_issue.suggested_action)
         self.assertEqual(persisted_reviews[-1].report_id, revised.id)
         self.assertEqual(persisted_reviews[-1].metadata["report_revision"], 2)
 
@@ -202,7 +220,8 @@ class Dr07EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
         client, container = self._build_client(review_scenario="reject")
         project_id = client.post("/projects", json={"name": "DR-07 Reject"}).json()["id"]
         run_id = activate_approved_desk_project(container, project_id, BRIEF).id
-        drain_background_runs(container)
+        with self.assertRaises(ReviewError):
+            drain_background_runs(container)
 
         _, reviews = self._assert_review_failed_closed(
             client, container, project_id, run_id
@@ -217,7 +236,8 @@ class Dr07EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
         )
         project_id = client.post("/projects", json={"name": "DR-07 Exhaust"}).json()["id"]
         run_id = activate_approved_desk_project(container, project_id, BRIEF).id
-        drain_background_runs(container)
+        with self.assertRaises(ReviewError):
+            drain_background_runs(container)
 
         _, reviews = self._assert_review_failed_closed(
             client, container, project_id, run_id

@@ -16,14 +16,17 @@ class StructuredReviewScenarioEngine:
 
     def __init__(self, scenario: str = "approve") -> None:
         self.scenario = scenario
+        self.emitted_candidates: list[tuple[ReviewIssueCandidate, ...]] = []
 
     def review_report(
         self,
         review_input: SemanticReviewInput,
     ) -> tuple[ReviewIssueCandidate, ...]:
         if self.scenario == "approve":
+            self.emitted_candidates.append(())
             return ()
         if self.scenario == "revise_once" and review_input.report.revision_number > 1:
+            self.emitted_candidates.append(())
             return ()
 
         section = next(
@@ -32,7 +35,7 @@ class StructuredReviewScenarioEngine:
             if section.claim_refs and section.research_question_refs
         )
         reject = self.scenario == "reject"
-        return (
+        candidates = (
             ReviewIssueCandidate(
                 issue_type=(
                     ReviewIssueType.BRIEF_MISMATCH.value
@@ -52,6 +55,8 @@ class StructuredReviewScenarioEngine:
                 suggested_action="Revise the targeted structured claim",
             ),
         )
+        self.emitted_candidates.append(candidates)
+        return candidates
 
 
 def build_review_service(session_factory: DatabaseSessionFactory):

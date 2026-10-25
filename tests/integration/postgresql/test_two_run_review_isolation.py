@@ -8,6 +8,7 @@ from uuid import uuid4
 from dataclasses import replace
 
 from application.composition_root import create_application_container
+from application.review.exceptions import ReviewError
 from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
 from tests.api.helpers import (
     prepare_approved_desk_project,
@@ -93,7 +94,8 @@ class TwoRunReviewIsolationPostgreSQLTests(PostgreSQLIntegrationTestCase):
             (subject.subject_id, subject.version, subject.semantic_fingerprint,
              subject.lexical_representations),
         )
-        drain_background_runs(container)
+        with self.assertRaises(ReviewError):
+            drain_background_runs(container)
         terminal_b = client.get(f"/workflow-runs/{run_b}").json()
         self.assertEqual(terminal_b["status"], "failed")
         tasks_b = {task["definition_id"]: task["status"] for task in terminal_b["tasks"]}
