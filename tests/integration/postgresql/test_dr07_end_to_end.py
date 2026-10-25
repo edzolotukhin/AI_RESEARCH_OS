@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import unittest
 
 from dataclasses import replace
@@ -25,11 +24,18 @@ from tests.integration.postgresql.helpers import (
     PostgreSQLIntegrationTestCase,
     postgresql_application_config,
 )
+from tests.integration.postgresql.dr07_fixtures import StructuredReviewScenarioEngine
 
 
 class Dr07EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
-    def _build_client(self, *, max_revision_attempts: int = 1):
+    def _build_client(
+        self,
+        *,
+        max_revision_attempts: int = 1,
+        review_scenario: str = "approve",
+    ):
         mock_llm = create_brief_aligned_llm_mock()
+        review_engine = StructuredReviewScenarioEngine(review_scenario)
         container = create_application_container(
             config=replace(
                 postgresql_application_config(
@@ -42,7 +48,10 @@ class Dr07EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
                 ),
                 review_max_revision_attempts=max_revision_attempts,
             ),
-            overrides=dated_desk_overrides(llm_client=mock_llm),
+            overrides=dated_desk_overrides(
+                llm_client=mock_llm,
+                review_engine=review_engine,
+            ),
         )
         configure_structured_finalization_test_boundary(container)
         bootstrap_test_api_key(container)
@@ -122,9 +131,10 @@ class Dr07EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
         self.assertEqual(artifact.status, "approved")
 
     def test_revise_then_approve_completes(self) -> None:
-        os.environ["DETERMINISTIC_REVIEW_SCENARIO"] = "revise_once"
-        self.addCleanup(os.environ.pop, "DETERMINISTIC_REVIEW_SCENARIO", None)
-        client, container = self._build_client(max_revision_attempts=1)
+        client, container = self._build_client(
+            max_revision_attempts=1,
+            review_scenario="revise_once",
+        )
         project_id = client.post("/projects", json={"name": "DR-07 Revise"}).json()["id"]
         run_id = activate_approved_desk_project(container, project_id, BRIEF).id
         drain_background_runs(container)
@@ -140,14 +150,34 @@ class Dr07EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
             params={"workflow_run_id": run_id},
         ).json()["items"]
         verdicts = [item["verdict"] for item in reviews]
-        self.assertIn("revise", verdicts)
-        self.assertEqual(verdicts[-1], "approve")
+        self.assertEqual(verdicts, ["revise", "approve"])
 
-        reports = client.get(
-            f"/projects/{project_id}/reports",
-            params={"workflow_run_id": run_id},
-        ).json()["items"]
-        self.assertGreaterEqual(len(reports), 2)
+        reports = container.report_query_service.list_reports_for_project(
+            project_id,
+            workflow_run_id=run_id,
+        )
+        self.assertEqual(len(reports), 2)
+        reports_by_revision = sorted(reports, key=lambda item: item.revision_number)
+        original, revised = reports_by_revision
+        self.assertEqual(original.revision_number, 1)
+        self.assertEqual(revised.revision_number, 2)
+        self.assertEqual(revised.previous_report_id, original.id)
+        claim_repository = container.project_deliverables_service.report_claims
+        original_claims = claim_repository.list_for_report(original.id, 1)
+        revised_claims = claim_repository.list_for_report(revised.id, 2)
+        self.assertTrue(original_claims)
+        self.assertTrue(revised_claims)
+
+        persisted_reviews = container.review_query_service.list_reviews_for_project(
+            project_id,
+            workflow_run_id=run_id,
+        )
+        self.assertEqual(persisted_reviews[0].report_id, original.id)
+        self.assertTrue(persisted_reviews[0].issues[0].report_section_id)
+        self.assertTrue(persisted_reviews[0].issues[0].claim_refs)
+        self.assertTrue(persisted_reviews[0].issues[0].research_question_refs)
+        self.assertEqual(persisted_reviews[-1].report_id, revised.id)
+        self.assertEqual(persisted_reviews[-1].metadata["report_revision"], 2)
 
         approved = [
             item
@@ -155,11 +185,21 @@ class Dr07EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
             if item.status == "approved"
         ]
         self.assertEqual(len(approved), 1)
+        project = container.project_service.get_project(project_id)
+        catalog = container.project_deliverables_service.catalog(
+            project_id,
+            owner_id=project.owner_principal_id,
+        )
+        run_items = [item for item in catalog.desk if item.document.run_id == run_id]
+        original_item = next(item for item in run_items if item.document.source_id == original.id)
+        revised_item = next(item for item in run_items if item.document.source_id == revised.id)
+        self.assertIsNone(original_item.pdf)
+        self.assertIsNone(original_item.pptx)
+        self.assertIsNotNone(revised_item.pdf)
+        self.assertIsNotNone(revised_item.pptx)
 
     def test_reject_fails_without_approved_artifact(self) -> None:
-        os.environ["DETERMINISTIC_REVIEW_SCENARIO"] = "reject"
-        self.addCleanup(os.environ.pop, "DETERMINISTIC_REVIEW_SCENARIO", None)
-        client, container = self._build_client()
+        client, container = self._build_client(review_scenario="reject")
         project_id = client.post("/projects", json={"name": "DR-07 Reject"}).json()["id"]
         run_id = activate_approved_desk_project(container, project_id, BRIEF).id
         drain_background_runs(container)
@@ -171,9 +211,10 @@ class Dr07EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
         self.assertGreaterEqual(len(reviews), 1)
 
     def test_revise_exhaustion_fails_without_approved_artifact(self) -> None:
-        os.environ["DETERMINISTIC_REVIEW_SCENARIO"] = "revise_once"
-        self.addCleanup(os.environ.pop, "DETERMINISTIC_REVIEW_SCENARIO", None)
-        client, container = self._build_client(max_revision_attempts=0)
+        client, container = self._build_client(
+            max_revision_attempts=0,
+            review_scenario="revise_once",
+        )
         project_id = client.post("/projects", json={"name": "DR-07 Exhaust"}).json()["id"]
         run_id = activate_approved_desk_project(container, project_id, BRIEF).id
         drain_background_runs(container)

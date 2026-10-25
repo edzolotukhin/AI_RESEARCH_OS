@@ -2,9 +2,56 @@
 
 from __future__ import annotations
 
+from application.ports.review_ports import ReviewIssueCandidate, SemanticReviewInput
+from domain.reviews.review_issue import ReviewIssueSeverity, ReviewIssueType
 from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
 
 from tests.integration.postgresql.dr06_fixtures import seed_report_prerequisites
+
+
+class StructuredReviewScenarioEngine:
+    """Provider-free semantic reviewer with explicit structured issue targets."""
+
+    method_name = "deterministic-structured-scenario"
+
+    def __init__(self, scenario: str = "approve") -> None:
+        self.scenario = scenario
+
+    def review_report(
+        self,
+        review_input: SemanticReviewInput,
+    ) -> tuple[ReviewIssueCandidate, ...]:
+        if self.scenario == "approve":
+            return ()
+        if self.scenario == "revise_once" and review_input.report.revision_number > 1:
+            return ()
+
+        section = next(
+            section
+            for section in review_input.report.sections
+            if section.claim_refs and section.research_question_refs
+        )
+        reject = self.scenario == "reject"
+        return (
+            ReviewIssueCandidate(
+                issue_type=(
+                    ReviewIssueType.BRIEF_MISMATCH.value
+                    if reject
+                    else ReviewIssueType.UNSUPPORTED_CLAIM.value
+                ),
+                severity=ReviewIssueSeverity.MAJOR.value,
+                message=(
+                    "Deterministic structured rejection"
+                    if reject
+                    else "Deterministic structured revision required"
+                ),
+                report_section_id=section.id,
+                research_question_refs=section.research_question_refs,
+                claim_refs=section.claim_refs,
+                report_revision=review_input.report.revision_number,
+                suggested_action="Revise the targeted structured claim",
+            ),
+        )
 
 
 def build_review_service(session_factory: DatabaseSessionFactory):
