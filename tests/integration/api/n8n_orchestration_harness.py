@@ -144,6 +144,21 @@ class N8nOrchestrationHarness:
             raise AssertionError("Expected final_artifact_available=true")
         if not terminal.get("final_artifact_id"):
             raise AssertionError("Expected final_artifact_id")
+        tasks = terminal.get("tasks") or []
+        finalization = [
+            task for task in tasks
+            if task.get("definition_id") == "task-finalize-deliverables"
+        ]
+        if len(finalization) != 1:
+            raise AssertionError("Expected exactly one finalization task")
+        if finalization[0].get("status") != "completed":
+            raise AssertionError(
+                f"Expected completed finalization, got {finalization[0].get('status')}",
+            )
+        if finalization[0].get("depends_on") != ["task-review-report"]:
+            raise AssertionError(
+                f"Unexpected finalization dependencies: {finalization[0].get('depends_on')}",
+            )
 
     def fetch_approved_artifact(self, artifact_id: str) -> dict[str, Any]:
         metadata = self._client.get(

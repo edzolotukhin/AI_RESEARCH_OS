@@ -32,6 +32,8 @@ from tests.integration.n8n.workflow_contract_helpers import (
 )
 from tests.integration.postgresql.helpers import (
     PostgreSQLIntegrationTestCase,
+    assert_structured_finalization_complete,
+    configure_structured_finalization_test_boundary,
     postgresql_application_config,
 )
 
@@ -50,6 +52,7 @@ class N8nProductAcceptanceTests(PostgreSQLIntegrationTestCase):
             ),
             overrides=dated_desk_overrides(llm_client=mock_llm),
         )
+        configure_structured_finalization_test_boundary(container)
         bootstrap_test_api_key(container)
         self.addCleanup(container.shutdown)
         raw_client, _, context = open_test_client(container)
@@ -73,6 +76,7 @@ class N8nProductAcceptanceTests(PostgreSQLIntegrationTestCase):
         self.assertEqual(result.review_verdict, "approve")
         self.assertTrue(result.artifact_content.strip())
         self.assertEqual(result.artifact_media_type, "text/markdown")
+        assert_structured_finalization_complete(self, container, result.run_id)
 
     def test_canonical_brief_shape_is_accepted(self) -> None:
         harness, container, _ = self._build_harness()
@@ -164,6 +168,7 @@ class N8nProductAcceptanceTests(PostgreSQLIntegrationTestCase):
         self.assertTrue(terminal["is_terminal"])
         self.assertEqual(terminal["final_review_verdict"], "approve")
         self.assertTrue(terminal["final_artifact_available"])
+        assert_structured_finalization_complete(self, container, result.run_id)
 
     def test_artifact_checksum_matches_content(self) -> None:
         harness, container, _ = self._build_harness()
@@ -173,6 +178,7 @@ class N8nProductAcceptanceTests(PostgreSQLIntegrationTestCase):
             artifact["checksum"],
             artifact["content"]["content_checksum"],
         )
+        assert_structured_finalization_complete(self, container, result.run_id)
 
     def test_invalid_api_key_returns_401_before_research(self) -> None:
         harness, _, valid_headers = self._build_harness()
@@ -232,6 +238,7 @@ class N8nProductAcceptanceTests(PostgreSQLIntegrationTestCase):
             ),
             overrides=dated_desk_overrides(llm_client=mock_llm),
         )
+        configure_structured_finalization_test_boundary(replay_container)
         self.addCleanup(replay_container.shutdown)
         replay_container.agency.initialize()
         replay_app = create_fastapi_app(container=replay_container)
@@ -255,6 +262,11 @@ class N8nProductAcceptanceTests(PostgreSQLIntegrationTestCase):
             replay_harness.drain_workers(replay_container)
             terminal = replay_harness.poll_until_terminal(run_id)
             replay_harness.assert_approved_finality(terminal)
+            assert_structured_finalization_complete(
+                self,
+                replay_container,
+                run_id,
+            )
 
         runs = replay_container.workflow_service.list_workflow_runs_for_project(
             project_id,
@@ -278,6 +290,7 @@ class N8nProductAcceptanceTests(PostgreSQLIntegrationTestCase):
             ),
             overrides=dated_desk_overrides(llm_client=mock_llm),
         )
+        configure_structured_finalization_test_boundary(worker_b)
         self.addCleanup(worker_b.shutdown)
         worker_b.agency.initialize()
         drain_background_runs(worker_b)
@@ -286,6 +299,7 @@ class N8nProductAcceptanceTests(PostgreSQLIntegrationTestCase):
         harness.assert_approved_finality(terminal)
         artifact = harness.fetch_approved_artifact(terminal["final_artifact_id"])
         self.assertTrue(artifact["content"]["content"].strip())
+        assert_structured_finalization_complete(self, worker_b, run_id)
 
     def test_api_restart_preserves_run_and_finality(self) -> None:
         harness, container, headers = self._build_harness()
