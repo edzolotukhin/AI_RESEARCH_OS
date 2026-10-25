@@ -46,24 +46,28 @@ def assert_structured_finalization_complete(test_case, container, run_id: str) -
     )
     test_case.assertIsInstance(state, dict)
     test_case.assertEqual(state.get("status"), "finalization_complete")
-    test_case.assertTrue(state.get("pdf_id"))
     test_case.assertTrue(state.get("pptx_id"))
     run = container.workflow_service.get_workflow_run(run_id)
     finalization_tasks = [task for task in run.tasks if task.executor_id == "finalization"]
     test_case.assertEqual(len(finalization_tasks), 1)
     test_case.assertEqual(finalization_tasks[0].status.value, "completed")
+    reviews = container.review_query_service._review_repository.list_for_project(
+        run.project_id, workflow_run_id=run_id
+    )
+    approved = [item for item in reviews if item.verdict.value == "approve"]
+    test_case.assertEqual(len(approved), 1)
     report = container.report_query_service._report_repository.get_by_id(
-        state["report_id"]
+        approved[0].report_id
     )
     test_case.assertIsNotNone(report)
     test_case.assertEqual(report.workflow_run_id, run_id)
-    reviews = container.review_query_service._review_repository.list_for_project(
-        report.project_id, workflow_run_id=run_id, report_id=report.id
-    )
-    approved = [item for item in reviews if item.id == state["review_id"]]
-    test_case.assertEqual(len(approved), 1)
     test_case.assertEqual(approved[0].verdict.value, "approve")
     test_case.assertEqual(approved[0].report_id, report.id)
+    claims = container.report_claim_repository.list_for_report(
+        report.id, report.revision_number
+    )
+    test_case.assertTrue(claims)
+    test_case.assertTrue(all(claim.report_workflow_run_id == run_id for claim in claims))
     jobs = [
         job for job in container.project_deliverables_service.presentation_jobs.list_recent()
         if job.run_id == run_id
@@ -71,9 +75,22 @@ def assert_structured_finalization_complete(test_case, container, run_id: str) -
     test_case.assertEqual(len(jobs), 1)
     test_case.assertEqual(jobs[0].state, "finalization_complete")
     test_case.assertEqual(jobs[0].completed_deliverable_id, state["pptx_id"])
-    test_case.assertEqual(jobs[0].source_run_id, state["source_run_id"])
-    pdf, _ = container.project_deliverables_service.store.get(state["pdf_id"])
-    pptx, _ = container.project_deliverables_service.store.get(state["pptx_id"])
+    test_case.assertEqual(jobs[0].report_revision, report.revision_number)
+    test_case.assertEqual(jobs[0].review_id, approved[0].id)
+    project = container.project_service.get_project(run.project_id)
+    item = container.project_deliverables_service.source(
+        run.project_id,
+        "DESK",
+        report.id,
+        owner_id=project.owner_principal_id,
+    )
+    test_case.assertEqual(item.finalization_state, "finalization_complete")
+    test_case.assertIsNotNone(item.pdf)
+    test_case.assertIsNotNone(item.pptx)
+    test_case.assertEqual(jobs[0].source_run_id, item.document.source_run_id)
+    pdf, _ = container.project_deliverables_service.store.get(item.pdf.id)
+    pptx, _ = container.project_deliverables_service.store.get(item.pptx.id)
+    test_case.assertEqual(pptx.id, state["pptx_id"])
     test_case.assertEqual((pdf.run_id, pptx.run_id), (run_id, run_id))
     test_case.assertEqual((pdf.source_id, pptx.source_id), (report.id, report.id))
 
