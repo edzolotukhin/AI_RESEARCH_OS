@@ -83,7 +83,7 @@ Encryption at rest is the host's encrypted block device/filesystem boundary for 
 
 Production services use `unless-stopped`; one-shot migration/bootstrap services use `restart: no`. Fatal configuration errors remain visible rather than being concealed by an application-level retry loop. PostgreSQL health gates API, worker, and one-shot jobs. API and worker still perform real readiness checks; start order alone is not treated as readiness.
 
-Migrations run once, explicitly, before API/worker release. API and worker do not independently run Alembic. The accepted schema remains the single head `023_ux01a_identity_membership`. Application rollback and database downgrade are separate decisions; image rollback never implies a safe schema rollback.
+Migrations run once, explicitly, before API/worker release. API and worker do not independently run Alembic. The accepted schema remains the single head `025_desk_structured_finalization`. Application rollback and database downgrade are separate decisions; image rollback never implies a safe schema rollback.
 
 Docker `json-file` logs are bounded to five 10 MiB files per service. Application, worker, proxy, and PostgreSQL logs remain available through Compose. Research content and secret values must not be added to diagnostic logs. Central aggregation and retention are deferred to OPS-01C.
 

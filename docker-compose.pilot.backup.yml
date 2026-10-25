@@ -9,7 +9,7 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:?set POSTGRES_USER}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB}
       APP_SHA: ${APP_SHA:?set exact accepted APP_SHA}
-      ALEMBIC_HEAD: ${ALEMBIC_HEAD:-023_ux01a_identity_membership}
+      ALEMBIC_HEAD: ${ALEMBIC_HEAD:-025_desk_structured_finalization}
       RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:?set independent encrypted backup destination}
       RESTIC_PASSWORD_FILE: /run/secrets/restic_password
       BACKUP_WORK_ROOT: /work

@@ -100,8 +100,8 @@ class PlannerAgentTests(unittest.TestCase):
             "Brand Health 2026",
         )
         self.assertEqual(
-        len(result.workflow_template.task_definitions),
-        6,
+            len(result.workflow_template.task_definitions),
+            7,
         )
         self.assertIsNotNone(result.workflow_template.research_design_snapshot)
         self.llm_client.generate.assert_called_once()

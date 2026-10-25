@@ -319,8 +319,7 @@ def create_application_container(
         review_repository=review_repository,
         artifact_repository=persistence.artifact_repository,
         stage_llm_clients=stage_llm_clients,
-        deliverable_finalizer=(project_deliverables_service
-                               if persistence.presentation_jobs is not None else None),
+        deliverable_finalizer=project_deliverables_service,
     )
 
     # Always retain support for already-pinned ARK runs, even when activation is
@@ -877,6 +876,7 @@ def _build_agent_executors(
             ("analysis", "analyze"),
             ("report", "write_report"),
             ("review", "review_report"),
+            ("finalization", "finalize_deliverables"),
         ):
             if executor_id == "research_quality":
                 from application.executors.deterministic_research_readiness_executor import (
@@ -886,9 +886,6 @@ def _build_agent_executors(
                 executors[executor_id] = DeterministicResearchReadinessExecutor()
             else:
                 executors[executor_id] = DeterministicStageExecutor(stage_key=stage_key)
-        if deliverable_finalizer is not None:
-            from application.executors.finalization_executor import FinalizationExecutor
-            executors["finalization"] = FinalizationExecutor(deliverable_finalizer)
         return executors
 
     executors["search"] = build_search_executor(
@@ -953,9 +950,8 @@ def _build_agent_executors(
             deliverable_finalizer=deliverable_finalizer,
         )
     )
-    if deliverable_finalizer is not None:
-        from application.executors.finalization_executor import FinalizationExecutor
-        executors["finalization"] = FinalizationExecutor(deliverable_finalizer)
+    from application.executors.finalization_executor import FinalizationExecutor
+    executors["finalization"] = FinalizationExecutor(deliverable_finalizer)
     return executors
 
 
