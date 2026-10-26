@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from uuid import uuid4
 
 from domain.findings.finding import Finding
@@ -16,6 +17,16 @@ class DeterministicReportEngine:
     """Explicit test/smoke report writer consuming persisted analytical records."""
 
     method_name = "deterministic"
+
+    def generate_claim_candidates(self, request: dict) -> dict:
+        return copy.deepcopy(request)
+
+    def repair_claim_candidates(self, request: dict) -> dict:
+        if "claims" in request:
+            return {
+                "claims": [copy.deepcopy(item["authority"]) for item in request["claims"]],
+            }
+        return copy.deepcopy(request["authority"])
 
     def generate_sections(
         self,

@@ -239,7 +239,7 @@ class ClaimFirstGenerationTests(unittest.TestCase):
         with self.assertRaises(ClaimGenerationError) as captured:
             self.generate(candidate_provider=invalid, correction_provider=repeated)
         self.assertEqual(1, len(calls))
-        self.assertEqual("repair_failed", captured.exception.diagnostics["category"])
+        self.assertEqual("repair_validation_failed", captured.exception.diagnostics["category"])
 
     def test_claim_repair_provider_failure_is_bounded(self) -> None:
         def invalid(envelope):
@@ -536,6 +536,28 @@ class ClaimRenderingAndCoverageTests(unittest.TestCase):
                     claims=(claim,), design=self.design, rendered_payload=self.payload(factual),
                     summary_payload={"summary_units": [factual]},
                 )
+
+    def test_decimal_billion_is_not_collapsed_into_integer_billion_authority(self) -> None:
+        base = self.claim.scope.numeric_facts[0]
+        fact = replace(base, value="106", unit="млрд", periods=())
+        claim = replace(self.claim, scope=replace(self.claim.scope, numeric_facts=(fact,)))
+        supported = {
+            "text": "106 млрд",
+            "claim_ids": [claim.claim_id],
+            "classification": "factual",
+        }
+        render_validated_claims(
+            claims=(claim,), design=self.design,
+            rendered_payload=self.payload(supported),
+            summary_payload={"summary_units": [supported]},
+        )
+        unsupported = {**supported, "text": "1,06 млрд"}
+        with self.assertRaises(ClaimRenderingError):
+            render_validated_claims(
+                claims=(claim,), design=self.design,
+                rendered_payload=self.payload(unsupported),
+                summary_payload={"summary_units": [supported]},
+            )
 
     def test_complete_limited_and_mandatory_repair_are_claim_backed(self) -> None:
         rendered = render_validated_claims(claims=(self.claim,), design=self.design)

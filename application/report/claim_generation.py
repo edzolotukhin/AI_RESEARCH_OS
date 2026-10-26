@@ -50,7 +50,17 @@ def generate_validated_claims(
 
     if candidate_provider:
         request = prepared[0][2] if len(prepared) == 1 else {"claims": [item[2] for item in prepared]}
-        generated = candidate_provider(request)
+        try:
+            generated = candidate_provider(request)
+        except Exception as provider_error:
+            raise ClaimGenerationError(
+                "ReportClaim initial provider failed",
+                diagnostics={
+                    "category": "initial_provider_failed",
+                    "failure_stage": "initial_provider",
+                    "attempt_count": 1,
+                },
+            ) from provider_error
         raws = _unpack_provider_claims(generated, prepared)
     else:
         raws = [item[2] for item in prepared]
@@ -64,7 +74,10 @@ def generate_validated_claims(
         except (ClaimAuthorityError, ClaimRenderingError, ValueError) as first_error:
             invalid.append({"index": index, "finding": finding, "authority": authority,
                             "envelope": envelope, "candidate": raw,
-                            "diagnostics": _generation_diagnostics("initial_generation_invalid", first_error)})
+                            "diagnostics": _generation_diagnostics(
+                                "initial_validation_failed", first_error,
+                                envelope=envelope,
+                            )})
             continue
         claims[index] = claim
 
@@ -72,20 +85,28 @@ def generate_validated_claims(
         if correction_provider is None:
             raise ClaimGenerationError(
                 "invalid ReportClaim generation",
-                diagnostics={**invalid[0]["diagnostics"], "invalid_claim_count": len(invalid)},
+                diagnostics={
+                    **invalid[0]["diagnostics"],
+                    "category": "provider_not_configured",
+                    "failure_stage": "repair_provider_configuration",
+                    "invalid_claim_count": len(invalid),
+                    "attempt_count": 0,
+                },
             )
         try:
             corrected = correction_provider(_repair_request_batch(invalid))
             corrected_by_id = _unpack_repair_claims(corrected, invalid)
         except Exception as repair_error:
             raise ClaimGenerationError("ReportClaim correction provider failed", diagnostics={
-                "category": "repair_provider_failed", "attempt_count": 1,
+                "category": "repair_provider_failed", "failure_stage": "repair_provider",
+                "repair_attempted": True, "attempt_count": 1,
             }) from repair_error
         for item in invalid:
             raw = corrected_by_id.get(item["envelope"]["claim_id"])
             if not isinstance(raw, dict):
                 raise ClaimGenerationError("ReportClaim correction was incomplete", diagnostics={
-                    "category": "repair_malformed", "attempt_count": 1,
+                    "category": "repair_output_malformed", "failure_stage": "repair_output",
+                    "repair_attempted": True, "attempt_count": 1,
                 })
             try:
                 _validate_narrowing_only(item["candidate"], raw)
@@ -93,7 +114,13 @@ def generate_validated_claims(
                 validate_claim_proposition(claim)
             except Exception as repair_error:
                 raise ClaimGenerationError("corrected ReportClaim remains invalid", diagnostics={
-                    **_generation_diagnostics("repair_failed", repair_error), "attempt_count": 1,
+                    **_generation_diagnostics(
+                        "repair_validation_failed", repair_error,
+                        envelope=item["envelope"],
+                    ),
+                    "repair_attempted": True,
+                    "repair_exhausted": True,
+                    "attempt_count": 1,
                 }) from repair_error
             claims[item["index"]] = claim
     return tuple(claim for claim in claims if claim is not None)
@@ -171,7 +198,11 @@ def _unpack_provider_claims(generated: dict[str, Any], prepared) -> list[dict[st
         return [generated]
     values = generated.get("claims") if isinstance(generated, dict) else None
     if not isinstance(values, list) or len(values) != len(prepared) or not all(isinstance(item, dict) for item in values):
-        raise ClaimGenerationError("provider returned malformed claim batch", diagnostics={"category": "initial_generation_malformed"})
+        raise ClaimGenerationError("provider returned malformed claim batch", diagnostics={
+            "category": "initial_output_malformed",
+            "failure_stage": "initial_output",
+            "attempt_count": 1,
+        })
     return values
 
 
@@ -195,25 +226,46 @@ def _unpack_repair_claims(corrected: dict[str, Any], invalid: list[dict[str, Any
         return {claim_id: corrected}
     values = corrected.get("claims") if isinstance(corrected, dict) else None
     if not isinstance(values, list) or len(values) != len(invalid) or not all(isinstance(item, dict) for item in values):
-        raise ClaimGenerationError("provider returned malformed repair batch", diagnostics={"category": "repair_malformed", "attempt_count": 1})
+        raise ClaimGenerationError("provider returned malformed repair batch", diagnostics={
+            "category": "repair_output_malformed", "failure_stage": "repair_output",
+            "repair_attempted": True, "attempt_count": 1,
+        })
     result = {}
     for item in values:
         claim_id = item.get("claim_id")
         if not isinstance(claim_id, str) or claim_id in result:
-            raise ClaimGenerationError("provider returned ambiguous repair batch", diagnostics={"category": "repair_malformed", "attempt_count": 1})
+            raise ClaimGenerationError("provider returned ambiguous repair batch", diagnostics={
+                "category": "repair_output_malformed", "failure_stage": "repair_output",
+                "repair_attempted": True, "attempt_count": 1,
+            })
         result[claim_id] = item
     return result
 
 
-def _generation_diagnostics(category: str, error: Exception) -> dict[str, Any]:
+def _generation_diagnostics(
+    category: str,
+    error: Exception,
+    *,
+    envelope: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     diagnostics = getattr(error, "diagnostics", {})
-    result = {"category": category, "attempt_count": 1}
+    result = {
+        "category": category,
+        "failure_stage": "repair_validation" if category.startswith("repair_") else "initial_validation",
+        "attempt_count": 1,
+    }
     if isinstance(diagnostics, dict):
         for key in ("code", "rejected_tokens", "unit_type", "section_id", "research_question_ids",
                     "claim_ids", "finding_ids", "evidence_ids", "allowed_numeric_values",
                     "allowed_period_values", "source_workflow_run_id", "report_workflow_run_id"):
             if key in diagnostics:
                 result[key] = diagnostics[key]
+    if envelope:
+        result.setdefault("claim_ids", [str(envelope.get("claim_id", ""))[:128]])
+        result.setdefault("finding_ids", [str(item)[:128] for item in envelope.get("finding_ids", [])[:16]])
+        result.setdefault("research_question_ids", [str(item)[:128] for item in envelope.get("research_question_ids", [])[:16]])
+        result.setdefault("information_need_ids", [str(item)[:128] for item in envelope.get("information_need_ids", [])[:16]])
+        result.setdefault("evidence_ids", [str(item)[:128] for item in envelope.get("evidence_ids", [])[:32]])
     return result
 
 

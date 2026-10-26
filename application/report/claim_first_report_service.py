@@ -30,8 +30,15 @@ class ClaimFirstReportService(ReportService):
     """New Desk path: authority -> claims -> prose; legacy methods stay readable."""
 
     def __init__(self, *, report_claim_repository: ReportClaimRepository, **kwargs) -> None:
+        report_engine = kwargs.get("report_engine")
         super().__init__(**kwargs)
         self._report_claim_repository = report_claim_repository
+        self._claim_candidate_provider = getattr(
+            report_engine, "generate_claim_candidates", None,
+        )
+        self._claim_correction_provider = getattr(
+            report_engine, "repair_claim_candidates", None,
+        )
 
     def write_for_context(self, context: WorkflowContext) -> ReportSummary:
         context.write_shared("report_generation_diagnostics", {"version": 2, "phase": "claim_generation", "status": "started", "workflow_run_id": context.workflow_run.id})
@@ -64,10 +71,35 @@ class ClaimFirstReportService(ReportService):
         contract = build_report_coverage_contract(design=design, limited=limited, required_rq_ids=required)
         mandatory = {rq: tuple(sorted(item.id for item in findings if rq in item.research_question_refs)) for rq in contract.required_rq_ids}
         try:
-            claims = generate_validated_claims(project_id=project_id, source_workflow_run_id=source_run, report_workflow_run_id=report_run_id, design=design, findings=tuple(findings), insights=tuple(insights), evidence_by_id=evidence_by_id, citation_id_by_source=source_to_citation)
+            if (
+                getattr(self._report_engine, "method_name", "") == "llm"
+                and not callable(self._claim_candidate_provider)
+            ):
+                raise ClaimGenerationError(
+                    "ReportClaim initial provider is not configured",
+                    diagnostics={
+                        "category": "provider_not_configured",
+                        "failure_stage": "initial_provider_configuration",
+                        "attempt_count": 0,
+                    },
+                )
+            claims = generate_validated_claims(
+                project_id=project_id,
+                source_workflow_run_id=source_run,
+                report_workflow_run_id=report_run_id,
+                design=design,
+                findings=tuple(findings),
+                insights=tuple(insights),
+                evidence_by_id=evidence_by_id,
+                citation_id_by_source=source_to_citation,
+                candidate_provider=self._claim_candidate_provider,
+                correction_provider=self._claim_correction_provider,
+            )
             rendered = render_validated_claims(claims=claims, design=design)
         except (ClaimGenerationError, ClaimRenderingError, ValueError) as exc:
             diagnostic = {"version": 2, "phase": "claim_first_validation", "status": "failed", "workflow_run_id": report_run_id, "source_run_id": source_run, "category": type(exc).__name__}
+            if isinstance(exc, ClaimGenerationError) and exc.diagnostics:
+                diagnostic["claim_generation"] = exc.diagnostics
             if isinstance(exc, ClaimRenderingError) and exc.diagnostics:
                 diagnostic["claim_rendering"] = exc.diagnostics
             context.write_shared("report_generation_diagnostics", diagnostic)

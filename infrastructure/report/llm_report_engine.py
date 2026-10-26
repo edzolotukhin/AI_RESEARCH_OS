@@ -66,10 +66,60 @@ class LlmReportEngine:
             reasoning_effort=reasoning_effort,
             max_attempts=structured_output_max_attempts,
         )
+        self._claim_structured_output = ReportStructuredOutputGenerator(
+            llm_client=llm_client,
+            max_output_tokens=max_output_tokens,
+            reasoning_effort=reasoning_effort,
+            max_attempts=1,
+        )
         self._max_sections = max_sections
         self._max_findings_per_section = max_findings_per_section
         self._max_insights_per_section = max_insights_per_section
         self._last_section_batch_stats: ReportSectionEngineBatchStats | None = None
+
+    def generate_claim_candidates(self, request: dict[str, Any]) -> dict[str, Any]:
+        return self._generate_claim_payload(request, repair=False)
+
+    def repair_claim_candidates(self, request: dict[str, Any]) -> dict[str, Any]:
+        return self._generate_claim_payload(request, repair=True)
+
+    def _generate_claim_payload(
+        self,
+        request: dict[str, Any],
+        *,
+        repair: bool,
+    ) -> dict[str, Any]:
+        operation = "repair" if repair else "initial generation"
+        system = (
+            "You generate structured ReportClaims from supplied authoritative envelopes. "
+            "Return JSON only. Preserve every identifier and lineage field exactly. "
+            "Each claim may use only its own authority envelope; never borrow authority "
+            "from another claim. Do not derive, convert, round, broaden, or invent facts. "
+            "Omit unsupported factual wording. "
+            f"This is a bounded {operation} call."
+        )
+        if repair:
+            system += (
+                " Correct only the supplied invalid claims. Preserve supported claims "
+                "outside this request unchanged."
+            )
+        schema = (
+            '{"claims":[{"claim_id":"string", "...":"same ReportClaim fields as authority"}]}'
+            if "claims" in request
+            else '{"claim_id":"string", "...":"same ReportClaim fields as authority"}'
+        )
+        return self._claim_structured_output.generate(
+            Prompt(
+                system=system,
+                user=(
+                    "REQUIRED JSON SHAPE\n"
+                    f"{schema}\n"
+                    "BOUNDED CLAIM REQUEST\n"
+                    f"{json.dumps(request, ensure_ascii=False, sort_keys=True)}"
+                ),
+            ),
+            payload_schema=schema,
+        )
 
     @property
     def last_section_batch_stats(self) -> ReportSectionEngineBatchStats | None:
