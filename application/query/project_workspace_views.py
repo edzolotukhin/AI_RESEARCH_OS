@@ -40,6 +40,7 @@ class MethodWorkspaceView:
     open_action: WorkspaceActionView | None = None
     run_id: str | None = None
     execution_status: str | None = None
+    replay_action: WorkspaceActionView | None = None
 
 
 @dataclass(frozen=True)

@@ -23,6 +23,7 @@ class ProjectWorkspaceFacade:
             research_result_service=container.research_run_result_query_service,
             project_planning_service=container.project_planning_service,
             qualitative_service=container.qualitative_service,
+            downstream_replay_service=container.desk_downstream_replay_service,
         )
 
     @property

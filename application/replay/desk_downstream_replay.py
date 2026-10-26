@@ -96,6 +96,37 @@ class DeskDownstreamReplayService:
         except (AccessDeniedError, EntityNotFoundError, DeskDownstreamReplayError):
             return False
 
+    def reusable_source_run_id(self, *, project_id: str, run_id: str, owner_id: str) -> str | None:
+        """Resolve one displayed Desk attempt to its reusable upstream source.
+
+        Replay lineage is intentionally bounded to the persisted one-hop replay
+        model.  Eligibility remains delegated to ``can_start`` so this helper
+        cannot create a weaker UI-only contract.
+        """
+        if self.can_start(project_id=project_id, source_run_id=run_id, owner_id=owner_id):
+            return run_id
+        try:
+            project = self.projects.get_project(project_id)
+            if project.owner_principal_id != owner_id:
+                return None
+            run = self.workflows.get_workflow_run(run_id)
+            if run.project_id != project_id:
+                return None
+            lineage = self.workflows.get_task_results(run_id).get(REPLAY_KEY)
+            if not isinstance(lineage, dict):
+                return None
+            source_id = lineage.get("source_workflow_run_id")
+            if not isinstance(source_id, str) or source_id == run_id:
+                return None
+            source_lineage = self.workflows.get_task_results(source_id).get(REPLAY_KEY)
+            if isinstance(source_lineage, dict):
+                return None
+            if self.can_start(project_id=project_id, source_run_id=source_id, owner_id=owner_id):
+                return source_id
+        except (AccessDeniedError, EntityNotFoundError, DeskDownstreamReplayError):
+            return None
+        return None
+
     def _start_locked(self, project, source_id):
         source, source_template, design, readiness, task_results = (
             self._validate_source(project, source_id)

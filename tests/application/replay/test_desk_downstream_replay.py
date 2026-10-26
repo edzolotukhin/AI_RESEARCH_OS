@@ -5,7 +5,7 @@ import unittest
 from contextlib import nullcontext
 from types import SimpleNamespace
 
-from application.persistence.exceptions import AccessDeniedError
+from application.persistence.exceptions import AccessDeniedError, EntityNotFoundError
 from api.ui.session import _POST_ACTION_SAFE_PROJECT_RETURN
 from application.replay.desk_downstream_replay import (
     REPLAY_KEY,
@@ -35,7 +35,11 @@ class _Workflows:
             }
         }}
 
-    def get_workflow_run(self, run_id): return next(x for x in self.runs if x.id == run_id)
+    def get_workflow_run(self, run_id):
+        try:
+            return next(x for x in self.runs if x.id == run_id)
+        except StopIteration as exc:
+            raise EntityNotFoundError(run_id) from exc
     def get_template(self, template_id): return self.template
     def get_task_results(self, run_id): return self.results.get(run_id, {})
     def list_workflow_runs_for_project(self, project_id): return list(self.runs)
@@ -185,6 +189,7 @@ class DeskDownstreamReplayTests(unittest.TestCase):
         failed = SimpleNamespace(
             id="failed-replay", project_id=project.id,
             status=WorkflowStatus.FAILED, is_terminal=True,
+            workflow_template_id="replay-template",
         )
         workflows.runs.append(failed)
         workflows.results[failed.id] = {REPLAY_KEY: {"source_workflow_run_id": source.id}}
@@ -208,6 +213,49 @@ class DeskDownstreamReplayTests(unittest.TestCase):
             project_id=project.id, source_run_id=failed.id, owner_id="owner-1"))
         self.assertFalse(service.can_start(
             project_id=project.id, source_run_id=source.id, owner_id="other"))
+        self.assertEqual([], durable.calls)
+
+    def test_reusable_source_resolves_through_failed_replay_lineage(self):
+        service, project, source, workflows, durable, *_ = _fixture()
+        failed = SimpleNamespace(
+            id="failed-replay", project_id=project.id,
+            workflow_template_id="replay-template",
+            status=WorkflowStatus.FAILED, is_terminal=True,
+        )
+        workflows.runs.append(failed)
+        workflows.results[failed.id] = {
+            REPLAY_KEY: {"source_workflow_run_id": source.id},
+        }
+
+        self.assertEqual(source.id, service.reusable_source_run_id(
+            project_id=project.id, run_id=failed.id, owner_id="owner-1",
+        ))
+        self.assertIsNone(service.reusable_source_run_id(
+            project_id=project.id, run_id=failed.id, owner_id="other",
+        ))
+        self.assertEqual([], durable.calls)
+
+    def test_reusable_source_rejects_nested_or_missing_lineage(self):
+        service, project, source, workflows, durable, *_ = _fixture()
+        failed = SimpleNamespace(
+            id="failed-replay", project_id=project.id,
+            status=WorkflowStatus.FAILED, is_terminal=True,
+            workflow_template_id="replay-template",
+        )
+        workflows.runs.append(failed)
+        workflows.results[failed.id] = {REPLAY_KEY: {"source_workflow_run_id": "missing"}}
+        self.assertIsNone(service.reusable_source_run_id(
+            project_id=project.id, run_id=failed.id, owner_id="owner-1",
+        ))
+        workflows.results[failed.id] = {
+            REPLAY_KEY: {"source_workflow_run_id": source.id},
+        }
+        workflows.results[source.id][REPLAY_KEY] = {
+            "source_workflow_run_id": "older-source",
+        }
+        self.assertIsNone(service.reusable_source_run_id(
+            project_id=project.id, run_id=failed.id, owner_id="owner-1",
+        ))
         self.assertEqual([], durable.calls)
 
     def test_non_terminal_source_is_not_eligible(self):

@@ -13,13 +13,15 @@ from application.qualitative.service import QUAL_TEMPLATE
 
 class ProjectWorkspaceQueryService:
     def __init__(self, *, project_service, workflow_service, quantitative_ui_service,
-                 research_result_service, project_planning_service, qualitative_service=None) -> None:
+                 research_result_service, project_planning_service, qualitative_service=None,
+                 downstream_replay_service=None) -> None:
         self.projects = project_service
         self.workflows = workflow_service
         self.quantitative = quantitative_ui_service
         self.research_results = research_result_service
         self.planning = project_planning_service
         self.qualitative = qualitative_service
+        self.downstream_replay = downstream_replay_service
 
     def list(self, *, owner_id: str) -> ProjectListView:
         items = []
@@ -56,7 +58,7 @@ class ProjectWorkspaceQueryService:
         )
         desk_run = ordered_desk_runs[-1] if ordered_desk_runs else None
         selected = self.planning.explicit_or_inferred_methods(project)
-        desk = self._desk(project_id, desk_run, project) if DESK in selected else None
+        desk = self._desk(project_id, desk_run, project, owner_id) if DESK in selected else None
         quant = self._quant(project_id, quant_study, quant_run, project) if QUANTITATIVE in selected else None
         qual_run = next((run for run in runs if run.workflow_template_id == QUAL_TEMPLATE), None)
         qualitative = self._qual(project_id, qual_run, owner_id) if QUALITATIVE in selected else None
@@ -87,7 +89,7 @@ class ProjectWorkspaceQueryService:
         from domain.quantitative.workflow import QuantitativeStudyProjection
         return QuantitativeStudyProjection
 
-    def _desk(self, project_id, run, project):
+    def _desk(self, project_id, run, project, owner_id=None):
         if run is None:
             approved = project.research_design_status == "APPROVED" and self.planning.design_is_current(project)
             return MethodWorkspaceView("Кабінетне дослідження", WorkspaceMethodState.READY if approved else WorkspaceMethodState.NOT_STARTED,
@@ -129,13 +131,23 @@ class ProjectWorkspaceQueryService:
                 "Запустити нове дослідження",
                 f"/ui/projects/{project_id}/methods/DESK/retry",
             )
+        replay_action = None
+        if run is not None and owner_id is not None and self.downstream_replay is not None:
+            source_id = self.downstream_replay.reusable_source_run_id(
+                project_id=project_id, run_id=run.id, owner_id=owner_id,
+            )
+            if source_id is not None:
+                replay_action = WorkspaceActionView(
+                    "Повторити фіналізацію",
+                    f"/ui/projects/{project_id}/methods/DESK/{source_id}/finalization-replay",
+                )
         return MethodWorkspaceView("Кабінетне дослідження", state, label, explanation, progress, output,
                                    primary_action, open_action,
                                    run_id=run.id,
                                    execution_status=(
                                        "TERMINAL"
                                        if run.is_terminal else "RUNNING"
-                                   ))
+                                   ), replay_action=replay_action)
 
     def _quant(self, project_id, study, run, project):
         if study is None:
