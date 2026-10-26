@@ -131,7 +131,10 @@ class AsyncDesignGenerationTests(unittest.TestCase):
         context = self._execution_context(project)
         with self.assertRaises(ConcurrentModificationError):
             executor.run(context)
-        self.assertNotIn("design_generation", context.shared_state)
+        self.assertEqual(
+            context.read_shared("design_generation")["category"],
+            "other_design_generation_failure",
+        )
 
     def test_provider_failure_leaves_no_completed_design(self):
         project = self._project()
@@ -142,10 +145,45 @@ class AsyncDesignGenerationTests(unittest.TestCase):
             planner_agent=SimpleNamespace(run=fail_provider),
             project_service=SimpleNamespace(save_project=saved.append),
         )
+        context = self._execution_context(project)
         with self.assertRaisesRegex(RuntimeError, "provider boundary failed"):
-            executor.run(self._execution_context(project))
+            executor.run(context)
         self.assertIsNone(project.current_research_design)
         self.assertEqual(saved, [])
+        self.assertEqual(context.read_shared("design_generation"), {
+            "version": 1,
+            "status": "failed",
+            "category": "provider_model_execution_failure",
+            "project_id": "project-1",
+            "workflow_run_id": "design-run",
+            "input_fingerprint": ProjectPlanningService.input_fingerprint(
+                project.research_brief, ("DESK",),
+            ),
+        })
+
+    def test_generated_design_validation_failure_is_bounded(self):
+        project = self._project()
+        context = self._execution_context(project)
+        executor = DesignGenerationExecutor(
+            planner_agent=SimpleNamespace(
+                run=lambda context: (_ for _ in ()).throw(
+                    ValueError("private generated design body")
+                )
+            ),
+            project_service=SimpleNamespace(
+                save_project=lambda project: self.fail("save must not run")
+            ),
+        )
+
+        with self.assertRaises(ValueError):
+            executor.run(context)
+
+        diagnostic = context.read_shared("design_generation")
+        self.assertEqual(
+            diagnostic["category"], "generated_design_validation_failure"
+        )
+        self.assertNotIn("private generated design body", str(diagnostic))
+        self.assertIsNone(project.current_research_design)
 
     def test_failed_attempt_is_historical_and_retry_gets_new_run(self):
         project = self._project()

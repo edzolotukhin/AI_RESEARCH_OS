@@ -27,6 +27,9 @@ from domain.value_objects.task_status import TaskStatus
 from runtime.workflow_context import WorkflowContext
 
 from application.execution.heartbeat import LeaseGuard
+from application.executors.design_generation_executor import (
+    DESIGN_GENERATION_DIAGNOSTIC_KEY,
+)
 
 
 class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
@@ -104,6 +107,7 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
                 or has_evidence_failure_diagnostics(context)
                 or bool(context.shared_state.get("research_funnel_v1"))
                 or _has_report_failure_diagnostics(context)
+                or _has_design_generation_failure_diagnostics(context)
             ):
                 if is_quantitative_diagnostic_stage(task.definition_id):
                     diagnostic = build_stage_failure_diagnostic(
@@ -114,7 +118,19 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
                     ledger = context.shared_state.get(SEMANTIC_LEDGER_KEY, ())
                     if isinstance(ledger, (list, tuple)):
                         self._task_results[SEMANTIC_LEDGER_KEY] = list(ledger)
-                if _has_report_failure_diagnostics(context):
+                if _has_design_generation_failure_diagnostics(context):
+                    diagnostic_context = replace(
+                        context,
+                        shared_state={
+                            DESIGN_GENERATION_DIAGNOSTIC_KEY:
+                                context.shared_state[DESIGN_GENERATION_DIAGNOSTIC_KEY]
+                        },
+                    )
+                    self._task_results[task.id] = capture_task_result(
+                        diagnostic_context,
+                        task.id,
+                    )
+                elif _has_report_failure_diagnostics(context):
                     diagnostic_context = replace(
                         context,
                         shared_state={
@@ -191,4 +207,21 @@ def _has_report_failure_diagnostics(context: WorkflowContext) -> bool:
     return any(
         key in context.shared_state
         for key in REPORT_FAILURE_DIAGNOSTIC_KEYS
+    )
+
+
+def _has_design_generation_failure_diagnostics(context: WorkflowContext) -> bool:
+    task = context.current_task
+    diagnostic = context.shared_state.get(DESIGN_GENERATION_DIAGNOSTIC_KEY)
+    return bool(
+        task is not None
+        and task.executor_id == "design_generation"
+        and isinstance(diagnostic, dict)
+        and diagnostic.get("version") == 1
+        and diagnostic.get("status") == "failed"
+        and diagnostic.get("category") in {
+            "provider_model_execution_failure",
+            "generated_design_validation_failure",
+            "other_design_generation_failure",
+        }
     )

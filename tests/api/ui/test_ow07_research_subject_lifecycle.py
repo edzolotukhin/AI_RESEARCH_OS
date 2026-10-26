@@ -10,7 +10,7 @@ from domain.planning.research_design import ResearchDesign
 from domain.planning.research_subject import SubjectResolutionStatus
 from domain.research_brief import ResearchBrief
 from domain.workflow_status import WorkflowStatus
-from tests.api.helpers import ApiTestCase
+from tests.api.helpers import ApiTestCase, drain_background_runs
 
 
 class Ow07ResearchSubjectLifecycleTests(ApiTestCase):
@@ -201,6 +201,7 @@ class Ow07ResearchSubjectLifecycleTests(ApiTestCase):
         )
 
         self.assertEqual(response.status_code, 303)
+        drain_background_runs(self.container)
         reloaded = self.container.project_service.get_project(project.id)
         self.assertNotEqual(reloaded.current_research_design.id, original_design.id)
         self.assertEqual(

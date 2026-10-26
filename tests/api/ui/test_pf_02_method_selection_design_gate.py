@@ -10,7 +10,7 @@ from domain.planning.research_design import ResearchQuestion
 from domain.task import Task
 from domain.workflow_run import WorkflowRun
 from domain.workflow_status import WorkflowStatus
-from tests.api.helpers import ApiTestCase
+from tests.api.helpers import ApiTestCase, drain_background_runs
 
 
 class Pf02MethodSelectionDesignGateTests(ApiTestCase):
@@ -83,12 +83,14 @@ class Pf02MethodSelectionDesignGateTests(ApiTestCase):
             follow_redirects=False,
         )
         self.assertEqual(response.status_code, 303)
+        drain_background_runs(self.container)
         project = self.container.project_service.get_project(project_id)
         self.assertIsNotNone(project.current_research_design)
-        self.assertEqual(
-            self.container.workflow_service.list_workflow_runs_for_project(project_id),
-            [],
+        design_runs = self.container.workflow_service.list_workflow_runs_for_project(
+            project_id
         )
+        self.assertEqual(len(design_runs), 1)
+        self.assertEqual(design_runs[0].status, WorkflowStatus.COMPLETED)
         response = self.client.post(
             f"/ui/projects/{project_id}/design/approve",
             data={"design_id": project.current_research_design.id},
@@ -178,6 +180,7 @@ class Pf02MethodSelectionDesignGateTests(ApiTestCase):
         response = self.client.post(action, follow_redirects=False)
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], f"/ui/projects/{project_id}/design")
+        drain_background_runs(self.container)
         self.assertIsNotNone(
             self.container.project_service.get_project(project_id).current_research_design
         )
@@ -311,7 +314,7 @@ class Pf02MethodSelectionDesignGateTests(ApiTestCase):
             first = service.activate_desk(self.container.project_service.get_project(project_id))
             second = service.activate_desk(self.container.project_service.get_project(project_id))
         self.assertEqual(first.id, second.id)
-        self.assertEqual(len(self.container.workflow_service.list_workflow_runs_for_project(project_id)), 1)
+        self.assertEqual(len(service._desk_runs(project_id)), 1)
         template = self.container.workflow_service.get_template(first.workflow_template_id)
         project = self.container.project_service.get_project(project_id)
         self.assertEqual(template.research_design_snapshot, project.current_research_design)

@@ -170,6 +170,73 @@ class WorkflowRuntimePersisterAuditOrderingTests(unittest.TestCase):
         self.assertNotIn("review_prose", snapshot["shared_state"])
         self.assertNotIn("arbitrary_shared_state", snapshot["shared_state"])
 
+    def test_failed_design_task_persists_only_bounded_design_diagnostic(self) -> None:
+        task = self.workflow_run.tasks[0]
+        task.definition_id = "task-generate-design"
+        task.executor_id = "design_generation"
+        self.context.current_task = task
+        task.ready()
+        task.start()
+        task.fail()
+        self.context.shared_state.update({
+            "design_generation": {
+                "version": 1,
+                "status": "failed",
+                "category": "provider_model_execution_failure",
+                "project_id": "project-1",
+                "workflow_run_id": "run-1",
+                "input_fingerprint": "bounded-fingerprint",
+            },
+            "arbitrary_shared_state": "must not persist",
+        })
+        persisted = {}
+
+        def save(run, expected_version, **kwargs):
+            persisted.update(kwargs["task_results"])
+            return expected_version + 1
+
+        self.workflow_service.save_workflow_run.side_effect = save
+        persister = WorkflowRuntimePersister(
+            workflow_service=self.workflow_service,
+            audit=self.audit,
+            run_id=self.workflow_run.id,
+            initial_version=0,
+        )
+
+        persister.on_task_finished(self.context, error=RuntimeError("private"))
+
+        snapshot = persisted[task.id]
+        self.assertEqual(
+            snapshot["shared_state"]["design_generation"]["category"],
+            "provider_model_execution_failure",
+        )
+        self.assertNotIn("arbitrary_shared_state", snapshot["shared_state"])
+
+    def test_unrelated_failed_task_cannot_persist_arbitrary_shared_state(self) -> None:
+        task = self.workflow_run.tasks[0]
+        self.context.current_task = task
+        task.ready()
+        task.start()
+        task.fail()
+        self.context.shared_state["arbitrary_shared_state"] = "must not persist"
+        persisted = {}
+
+        def save(run, expected_version, **kwargs):
+            persisted.update(kwargs["task_results"])
+            return expected_version + 1
+
+        self.workflow_service.save_workflow_run.side_effect = save
+        persister = WorkflowRuntimePersister(
+            workflow_service=self.workflow_service,
+            audit=self.audit,
+            run_id=self.workflow_run.id,
+            initial_version=0,
+        )
+
+        persister.on_task_finished(self.context, error=RuntimeError("private"))
+
+        self.assertNotIn(task.id, persisted)
+
 
 class WorkflowExecutionAuditResumeTests(unittest.TestCase):
 

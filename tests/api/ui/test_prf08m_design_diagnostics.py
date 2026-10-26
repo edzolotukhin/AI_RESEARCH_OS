@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
 from domain.research_brief import ResearchBrief
-from tests.api.helpers import ApiTestCase
+from tests.api.helpers import ApiTestCase, drain_background_runs
 from tools.acceptance_http import AcceptanceHttpError, MAX_ERROR_BYTES, error_diagnostic, post_form
 
 
@@ -153,26 +153,47 @@ class DesignRequestPathTests(ApiTestCase):
             pass
         with patch.object(self.container._test_llm_client, "generate", side_effect=OfflineBoundaryReached("offline stop")) as generate:
             response = self.client.post(f"/ui/projects/{project_id}/design/generate", content=b"", headers={"Content-Type": "application/x-www-form-urlencoded"}, follow_redirects=False)
-            self.assertEqual(response.status_code, 500)
+            self.assertEqual(response.status_code, 303)
+            with self.assertRaisesRegex(OfflineBoundaryReached, "offline stop"):
+                drain_background_runs(self.container)
             generate.assert_called_once()
-        self.assertEqual(self.container.workflow_service.list_workflow_runs_for_project(project_id), [])
+        run = self.container.workflow_service.list_workflow_runs_for_project(project_id)[0]
+        self.assertEqual(run.status.value, "FAILED")
+        self.assertIsNone(self.container.project_service.get_project(project_id).current_research_design)
+        diagnostic = self.container.workflow_service.get_task_results(run.id)[
+            run.tasks[0].id
+        ]["shared_state"]["design_generation"]
+        self.assertEqual(
+            diagnostic["category"], "provider_model_execution_failure"
+        )
+        self.assertNotIn("offline stop", json.dumps(diagnostic))
 
     def test_valid_request_saves_draft_without_activation(self):
         project_id = self.prepare()
         response = self.client.post(f"/ui/projects/{project_id}/design/generate", content=b"", headers={"Content-Type": "application/x-www-form-urlencoded"}, follow_redirects=False)
         self.assertEqual(response.status_code, 303, response.text)
+        drain_background_runs(self.container)
         self.assertEqual(self.container.project_service.get_project(project_id).research_design_status, "DRAFT")
-        self.assertEqual(self.container.workflow_service.list_workflow_runs_for_project(project_id), [])
+        run = self.container.workflow_service.list_workflow_runs_for_project(project_id)[0]
+        self.assertEqual(run.status.value, "COMPLETED")
 
     def test_representative_product_validation_422_is_retained(self):
         project_id = self.prepare()
         with patch.object(self.container.project_planning_service.planner, "run", side_effect=ValueError("ResearchQuestion without a valid InformationNeed: RQ5")):
             response = self.client.post(f"/ui/projects/{project_id}/design/generate", content=b"", follow_redirects=False)
-        self.assertEqual(response.status_code, 422)
-        record = error_diagnostic(failure(response.text, response.headers["content-type"]), endpoint=f"/ui/projects/{project_id}/design/generate", stage="generate")
-        self.assertEqual(record["validation"]["messages"], ["ResearchQuestion without a valid InformationNeed: RQ5"])
-        self.assertNotIn("Offline request reconstruction", json.dumps(record))
-        self.assertEqual(self.container.workflow_service.list_workflow_runs_for_project(project_id), [])
+            self.assertEqual(response.status_code, 303)
+            with self.assertRaisesRegex(ValueError, "ResearchQuestion without a valid InformationNeed: RQ5"):
+                drain_background_runs(self.container)
+        run = self.container.workflow_service.list_workflow_runs_for_project(project_id)[0]
+        self.assertEqual(run.status.value, "FAILED")
+        self.assertIsNone(self.container.project_service.get_project(project_id).current_research_design)
+        diagnostic = self.container.workflow_service.get_task_results(run.id)[
+            run.tasks[0].id
+        ]["shared_state"]["design_generation"]
+        self.assertEqual(
+            diagnostic["category"], "generated_design_validation_failure"
+        )
+        self.assertNotIn("ResearchQuestion", json.dumps(diagnostic))
 
 
 if __name__ == "__main__":

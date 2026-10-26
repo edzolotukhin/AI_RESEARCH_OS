@@ -12,7 +12,7 @@ from api.ui.principal import resolve_ui_principal
 from domain.quantitative.analysis import StatisticalResult
 from domain.quantitative.review import QuantitativeApprovedRevision
 from domain.quantitative.report import QuantitativeReportCompositionResult
-from tests.api.helpers import ApiTestCase
+from tests.api.helpers import ApiTestCase, drain_background_runs
 from tests.api.ui.test_prf06f_presentation_ui import _Jobs, _Renderer
 
 
@@ -53,6 +53,7 @@ class Qnt06dQuantFullProductWorkflowTests(ApiTestCase):
             f"/ui/projects/{project_id}/design/generate",
             follow_redirects=False,
         ).status_code, 303)
+        drain_background_runs(self.container)
         project = self.container.project_service.get_project(project_id)
         self.assertEqual(self.client.post(
             f"/ui/projects/{project_id}/design/approve",
