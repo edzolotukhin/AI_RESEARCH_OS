@@ -206,6 +206,83 @@ class ClaimFirstGenerationTests(unittest.TestCase):
         self.assertEqual(captured.exception.diagnostics["rejected_tokens"], ["90%"])
         self.assertEqual(captured.exception.diagnostics["unit_type"], "claim_proposition")
 
+    def test_invalid_rendered_claim_gets_exactly_one_bounded_correction(self) -> None:
+        calls = []
+
+        def invalid(envelope):
+            result = copy.deepcopy(envelope)
+            result["assertion"]["proposition"] = "1,06 млрд"
+            return result
+
+        def corrected(request):
+            calls.append(request)
+            return copy.deepcopy(request["authority"])
+
+        claims = self.generate(candidate_provider=invalid, correction_provider=corrected)
+        self.assertEqual(1, len(claims))
+        self.assertEqual(1, len(calls))
+        self.assertEqual("numeric_prose_unrepresented", calls[0]["diagnostics"]["code"])
+        self.assertNotIn("errors", calls[0])
+
+    def test_invalid_rendered_claim_repair_is_fail_closed_and_not_retried(self) -> None:
+        calls = []
+
+        def invalid(envelope):
+            result = copy.deepcopy(envelope)
+            result["assertion"]["proposition"] = "1,06 млрд"
+            return result
+
+        def repeated(request):
+            calls.append(request)
+            return copy.deepcopy(request["candidate"])
+
+        with self.assertRaises(ClaimGenerationError) as captured:
+            self.generate(candidate_provider=invalid, correction_provider=repeated)
+        self.assertEqual(1, len(calls))
+        self.assertEqual("repair_failed", captured.exception.diagnostics["category"])
+
+    def test_claim_repair_provider_failure_is_bounded(self) -> None:
+        def invalid(envelope):
+            result = copy.deepcopy(envelope)
+            result["assertion"]["proposition"] = "1,06 млрд"
+            return result
+
+        def failed(_request):
+            raise RuntimeError("provider unavailable")
+
+        with self.assertRaises(ClaimGenerationError) as captured:
+            self.generate(candidate_provider=invalid, correction_provider=failed)
+        self.assertEqual("repair_provider_failed", captured.exception.diagnostics["category"])
+
+    def test_multiple_invalid_claims_use_one_batch_generation_and_one_repair_call(self) -> None:
+        second = replace(self.fixture.finding, id="finding-2")
+        calls = []
+        repair_calls = []
+
+        def initial(request):
+            calls.append(request)
+            result = copy.deepcopy(request)
+            for claim in result["claims"]:
+                claim["assertion"]["proposition"] = "1,06 млрд"
+            return result
+
+        def repair(request):
+            repair_calls.append(request)
+            return {"claims": [copy.deepcopy(item["authority"]) for item in request["claims"]]}
+
+        claims = generate_validated_claims(
+            project_id="project-1", source_workflow_run_id="source-run",
+            report_workflow_run_id="source-run", design=self.fixture.design,
+            findings=(self.fixture.finding, second), insights=(),
+            evidence_by_id={"ev-1": self.fixture.evidence},
+            citation_id_by_source={"source-1": "S1"},
+            candidate_provider=initial, correction_provider=repair,
+        )
+        self.assertEqual(2, len(claims))
+        self.assertEqual(1, len(calls))
+        self.assertEqual(1, len(repair_calls))
+        self.assertEqual(2, len(repair_calls[0]["claims"]))
+
 
 class ClaimRenderingAndCoverageTests(unittest.TestCase):
     def setUp(self) -> None:

@@ -32,7 +32,7 @@ def generate_validated_claims(
     candidate_provider: ClaimCandidateProvider | None = None,
     correction_provider: ClaimCandidateProvider | None = None,
 ) -> tuple[ReportClaim, ...]:
-    claims: list[ReportClaim] = []
+    prepared: list[tuple[Finding, ClaimAuthority, dict[str, Any]]] = []
     for finding in findings:
         authority = derive_claim_authority(
             project_id=project_id,
@@ -46,27 +46,57 @@ def generate_validated_claims(
             authority=authority, finding=finding, insights=insights,
             citation_id_by_source=citation_id_by_source,
         )
-        raw = candidate_provider(envelope) if candidate_provider else envelope
+        prepared.append((finding, authority, envelope))
+
+    if candidate_provider:
+        request = prepared[0][2] if len(prepared) == 1 else {"claims": [item[2] for item in prepared]}
+        generated = candidate_provider(request)
+        raws = _unpack_provider_claims(generated, prepared)
+    else:
+        raws = [item[2] for item in prepared]
+
+    claims: list[ReportClaim | None] = [None] * len(prepared)
+    invalid: list[dict[str, Any]] = []
+    for index, ((finding, authority, envelope), raw) in enumerate(zip(prepared, raws)):
         try:
             claim = validate_report_claim(ReportClaim.from_dict(raw), authority)
-        except (ClaimAuthorityError, ValueError) as first_error:
-            if correction_provider is None:
-                raise ClaimGenerationError(f"invalid ReportClaim for Finding {finding.id}") from first_error
-            corrected_raw = correction_provider({"candidate": raw, "authority": envelope, "errors": [str(first_error)]})
-            _validate_narrowing_only(raw, corrected_raw)
-            try:
-                claim = validate_report_claim(ReportClaim.from_dict(corrected_raw), authority)
-            except (ClaimAuthorityError, ValueError) as correction_error:
-                raise ClaimGenerationError(f"corrected ReportClaim remains invalid for Finding {finding.id}") from correction_error
-        try:
             validate_claim_proposition(claim)
-        except ClaimRenderingError as error:
+        except (ClaimAuthorityError, ClaimRenderingError, ValueError) as first_error:
+            invalid.append({"index": index, "finding": finding, "authority": authority,
+                            "envelope": envelope, "candidate": raw,
+                            "diagnostics": _generation_diagnostics("initial_generation_invalid", first_error)})
+            continue
+        claims[index] = claim
+
+    if invalid:
+        if correction_provider is None:
             raise ClaimGenerationError(
-                f"ReportClaim proposition exceeds numeric authority for Finding {finding.id}",
-                diagnostics=error.diagnostics,
-            ) from error
-        claims.append(claim)
-    return tuple(claims)
+                "invalid ReportClaim generation",
+                diagnostics={**invalid[0]["diagnostics"], "invalid_claim_count": len(invalid)},
+            )
+        try:
+            corrected = correction_provider(_repair_request_batch(invalid))
+            corrected_by_id = _unpack_repair_claims(corrected, invalid)
+        except Exception as repair_error:
+            raise ClaimGenerationError("ReportClaim correction provider failed", diagnostics={
+                "category": "repair_provider_failed", "attempt_count": 1,
+            }) from repair_error
+        for item in invalid:
+            raw = corrected_by_id.get(item["envelope"]["claim_id"])
+            if not isinstance(raw, dict):
+                raise ClaimGenerationError("ReportClaim correction was incomplete", diagnostics={
+                    "category": "repair_malformed", "attempt_count": 1,
+                })
+            try:
+                _validate_narrowing_only(item["candidate"], raw)
+                claim = validate_report_claim(ReportClaim.from_dict(raw), item["authority"])
+                validate_claim_proposition(claim)
+            except Exception as repair_error:
+                raise ClaimGenerationError("corrected ReportClaim remains invalid", diagnostics={
+                    **_generation_diagnostics("repair_failed", repair_error), "attempt_count": 1,
+                }) from repair_error
+            claims[item["index"]] = claim
+    return tuple(claim for claim in claims if claim is not None)
 
 
 def _candidate_payload(*, authority: ClaimAuthority, finding: Finding,
@@ -122,6 +152,69 @@ def _validate_narrowing_only(original: dict[str, Any], corrected: dict[str, Any]
     after_facts = {_fact_identity(item) for item in after.get("numeric_facts", []) if isinstance(item, dict)}
     if not after_facts <= before_facts:
         raise ClaimGenerationError("claim correction may not add or alter numeric authority")
+
+
+def _repair_request(raw: dict[str, Any], envelope: dict[str, Any], error: Exception) -> dict[str, Any]:
+    diagnostics = getattr(error, "diagnostics", {})
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
+    bounded = {
+        key: diagnostics[key]
+        for key in ("code", "rejected_tokens", "unit_type", "section_id", "research_question_ids")
+        if key in diagnostics
+    }
+    return {"candidate": raw, "authority": envelope, "diagnostics": bounded}
+
+
+def _unpack_provider_claims(generated: dict[str, Any], prepared) -> list[dict[str, Any]]:
+    if len(prepared) == 1:
+        return [generated]
+    values = generated.get("claims") if isinstance(generated, dict) else None
+    if not isinstance(values, list) or len(values) != len(prepared) or not all(isinstance(item, dict) for item in values):
+        raise ClaimGenerationError("provider returned malformed claim batch", diagnostics={"category": "initial_generation_malformed"})
+    return values
+
+
+def _repair_request_batch(invalid: list[dict[str, Any]]) -> dict[str, Any]:
+    requests = []
+    for item in invalid:
+        requests.append({
+            "claim_id": item["envelope"]["claim_id"],
+            "candidate": item["candidate"],
+            "authority": item["envelope"],
+            "diagnostics": item["diagnostics"],
+        })
+    if len(requests) == 1:
+        return {"candidate": requests[0]["candidate"], "authority": requests[0]["authority"], "diagnostics": requests[0]["diagnostics"]}
+    return {"claims": requests}
+
+
+def _unpack_repair_claims(corrected: dict[str, Any], invalid: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    if len(invalid) == 1:
+        claim_id = invalid[0]["envelope"]["claim_id"]
+        return {claim_id: corrected}
+    values = corrected.get("claims") if isinstance(corrected, dict) else None
+    if not isinstance(values, list) or len(values) != len(invalid) or not all(isinstance(item, dict) for item in values):
+        raise ClaimGenerationError("provider returned malformed repair batch", diagnostics={"category": "repair_malformed", "attempt_count": 1})
+    result = {}
+    for item in values:
+        claim_id = item.get("claim_id")
+        if not isinstance(claim_id, str) or claim_id in result:
+            raise ClaimGenerationError("provider returned ambiguous repair batch", diagnostics={"category": "repair_malformed", "attempt_count": 1})
+        result[claim_id] = item
+    return result
+
+
+def _generation_diagnostics(category: str, error: Exception) -> dict[str, Any]:
+    diagnostics = getattr(error, "diagnostics", {})
+    result = {"category": category, "attempt_count": 1}
+    if isinstance(diagnostics, dict):
+        for key in ("code", "rejected_tokens", "unit_type", "section_id", "research_question_ids",
+                    "claim_ids", "finding_ids", "evidence_ids", "allowed_numeric_values",
+                    "allowed_period_values", "source_workflow_run_id", "report_workflow_run_id"):
+            if key in diagnostics:
+                result[key] = diagnostics[key]
+    return result
 
 
 def _fact_identity(item: dict[str, Any]) -> str:
