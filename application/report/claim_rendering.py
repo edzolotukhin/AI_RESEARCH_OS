@@ -13,7 +13,9 @@ _NUMBER = re.compile(r"(?<![\w-])\d+(?:[.,]\d+)?%?(?![\w-])")
 
 
 class ClaimRenderingError(ValueError):
-    pass
+    def __init__(self, message: str, *, diagnostics: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics or {}
 
 
 @dataclass(frozen=True)
@@ -74,7 +76,7 @@ def _validate_section(raw: Any, claims_by_id: dict[str, ReportClaim]) -> ReportS
         raise ClaimRenderingError("invalid rendered section schema")
     claim_ids = _ids(raw["claim_ids"], field="section.claim_ids", required=True)
     selected = _claims(claim_ids, claims_by_id)
-    paragraphs = tuple(_validate_unit(item, claims_by_id, field="paragraph") for item in raw["paragraphs"] if isinstance(item, dict)) if isinstance(raw["paragraphs"], list) else ()
+    paragraphs = tuple(_validate_unit(item, claims_by_id, field="paragraph", section=raw) for item in raw["paragraphs"] if isinstance(item, dict)) if isinstance(raw["paragraphs"], list) else ()
     if not paragraphs or not any(item["classification"] == "factual" for item in paragraphs):
         raise ClaimRenderingError("substantive section requires a factual claim-bound paragraph")
     paragraph_claims = {claim_id for item in paragraphs for claim_id in item["claim_ids"]}
@@ -88,7 +90,7 @@ def _validate_section(raw: Any, claims_by_id: dict[str, ReportClaim]) -> ReportS
     return ReportSection(id=str(raw["section_id"]), title=str(raw["title"]).strip(), content=content, research_question_refs=requested_rqs, finding_refs=tuple(sorted({item for claim in selected for item in claim.finding_ids})), insight_refs=tuple(sorted({item for claim in selected for item in claim.insight_ids})), evidence_refs=tuple(sorted({item for claim in selected for item in claim.evidence_ids})), citation_ids=tuple(sorted({item for claim in selected for item in claim.citation_ids})), claim_refs=claim_ids, metadata={"section_kind": "rq_answer", "structured_claim_contract": "desk_report_claim_v1", "paragraphs": list(paragraphs)})
 
 
-def _validate_unit(raw: Any, claims_by_id: dict[str, ReportClaim], *, field: str) -> dict[str, Any]:
+def _validate_unit(raw: Any, claims_by_id: dict[str, ReportClaim], *, field: str, section: dict[str, Any] | None = None) -> dict[str, Any]:
     if not isinstance(raw, dict) or set(raw) != {"text", "claim_ids", "classification"}:
         raise ClaimRenderingError(f"invalid {field} schema")
     text = str(raw["text"]).strip(); classification = str(raw["classification"])
@@ -104,8 +106,38 @@ def _validate_unit(raw: Any, claims_by_id: dict[str, ReportClaim], *, field: str
         for token in _NUMBER.findall(text):
             normalized = token.rstrip("%").replace(",", ".")
             if token not in allowed and normalized not in allowed:
-                raise ClaimRenderingError(f"numeric prose is not represented by referenced claims: {token}")
+                raise ClaimRenderingError(
+                    f"numeric prose is not represented by referenced claims: {token}",
+                    diagnostics=_numeric_failure_diagnostics(
+                        raw=raw, field=field, section=section, selected=selected, token=token,
+                    ),
+                )
     return {"text": text, "claim_ids": list(claim_ids), "classification": classification}
+
+
+def _numeric_failure_diagnostics(*, raw: dict[str, Any], field: str, section: dict[str, Any] | None,
+                                 selected: tuple[ReportClaim, ...], token: str) -> dict[str, Any]:
+    """Return bounded structural context; never include full generated prose."""
+    text = str(raw.get("text", ""))
+    index = text.find(token)
+    start = max(0, index - 48) if index >= 0 else 0
+    end = min(len(text), (index + len(token) + 48) if index >= 0 else 96)
+    return {
+        "code": "numeric_prose_unrepresented",
+        "unit_type": field,
+        "section_id": str(section.get("section_id"))[:128] if section else None,
+        "section_title": str(section.get("title"))[:160] if section else None,
+        "research_question_ids": [str(item)[:128] for item in (section or {}).get("research_question_ids", [])][:16],
+        "rejected_tokens": [token[:64]],
+        "claim_ids": [claim.claim_id[:128] for claim in selected][:32],
+        "finding_ids": [item for claim in selected for item in claim.finding_ids][:32],
+        "evidence_ids": [item for claim in selected for item in claim.evidence_ids][:32],
+        "allowed_numeric_values": [fact.value[:64] for claim in selected for fact in claim.scope.numeric_facts][:32],
+        "allowed_period_values": [period[:64] for claim in selected for period in claim.scope.periods][:32],
+        "prose_excerpt": text[start:end][:128],
+        "source_workflow_run_ids": sorted({claim.source_workflow_run_id for claim in selected})[:8],
+        "report_workflow_run_ids": sorted({claim.report_workflow_run_id for claim in selected})[:8],
+    }
 
 
 def _claims(ids: tuple[str, ...], claims_by_id: dict[str, ReportClaim]) -> tuple[ReportClaim, ...]:

@@ -125,6 +125,34 @@ class ClaimRenderingAndCoverageTests(unittest.TestCase):
         factual = {"text": "Supported", "claim_ids": [self.claim.claim_id], "classification": "factual"}
         with self.assertRaises(ClaimRenderingError): render_validated_claims(claims=(self.claim,), design=self.design, rendered_payload=self.payload(factual), summary_payload={"summary_units": [{"text": "Unsupported 99%", "claim_ids": [self.claim.claim_id], "classification": "factual"}]})
 
+    def test_numeric_render_failure_exposes_bounded_authority_diagnostics(self) -> None:
+        factual = {"text": "The observed value is 48%.", "claim_ids": [self.claim.claim_id], "classification": "factual"}
+        with self.assertRaises(ClaimRenderingError) as captured:
+            render_validated_claims(
+                claims=(self.claim,), design=self.design,
+                rendered_payload=self.payload(factual), summary_payload={"summary_units": [factual]},
+            )
+        diagnostics = captured.exception.diagnostics
+        self.assertEqual(diagnostics["code"], "numeric_prose_unrepresented")
+        self.assertEqual(diagnostics["unit_type"], "paragraph")
+        self.assertEqual(diagnostics["section_id"], "section-1")
+        self.assertEqual(diagnostics["research_question_ids"], ["rq-1"])
+        self.assertEqual(diagnostics["rejected_tokens"], ["48%"])
+        self.assertEqual(diagnostics["claim_ids"], [self.claim.claim_id])
+        self.assertEqual(diagnostics["finding_ids"], list(self.claim.finding_ids))
+        self.assertEqual(diagnostics["evidence_ids"], list(self.claim.evidence_ids))
+        self.assertEqual(diagnostics["allowed_numeric_values"], ["10"])
+        self.assertEqual(diagnostics["allowed_period_values"], ["2026", "2026 q1"])
+        self.assertEqual(diagnostics["prose_excerpt"], "The observed value is 48%.")
+        self.assertLessEqual(len(diagnostics["prose_excerpt"]), 128)
+        self.assertNotIn("prompt", diagnostics)
+
+    def test_numeric_render_characterization_keeps_current_strict_tokens(self) -> None:
+        for text in ("48", "48.0", "48%", "48,0", "2025", "$48"):
+            factual = {"text": text, "claim_ids": [self.claim.claim_id], "classification": "factual"}
+            with self.subTest(text=text), self.assertRaises(ClaimRenderingError):
+                render_validated_claims(claims=(self.claim,), design=self.design, rendered_payload=self.payload(factual), summary_payload={"summary_units": [{"text": "Supported", "claim_ids": [self.claim.claim_id], "classification": "factual"}]})
+
     def test_complete_limited_and_mandatory_repair_are_claim_backed(self) -> None:
         rendered = render_validated_claims(claims=(self.claim,), design=self.design)
         complete = ReportCoverageContract("complete", ("rq-1",), ())

@@ -67,7 +67,10 @@ class ClaimFirstReportService(ReportService):
             claims = generate_validated_claims(project_id=project_id, source_workflow_run_id=source_run, report_workflow_run_id=report_run_id, design=design, findings=tuple(findings), insights=tuple(insights), evidence_by_id=evidence_by_id, citation_id_by_source=source_to_citation)
             rendered = render_validated_claims(claims=claims, design=design)
         except (ClaimGenerationError, ClaimRenderingError, ValueError) as exc:
-            context.write_shared("report_generation_diagnostics", {"version": 2, "phase": "claim_first_validation", "status": "failed", "workflow_run_id": report_run_id, "source_run_id": source_run, "category": type(exc).__name__})
+            diagnostic = {"version": 2, "phase": "claim_first_validation", "status": "failed", "workflow_run_id": report_run_id, "source_run_id": source_run, "category": type(exc).__name__}
+            if isinstance(exc, ClaimRenderingError) and exc.diagnostics:
+                diagnostic["claim_rendering"] = exc.diagnostics
+            context.write_shared("report_generation_diagnostics", diagnostic)
             raise ReportError(f"Claim-first Report generation failed for run {report_run_id}") from exc
         sections = rendered.sections
         errors = validate_claim_backed_coverage(claims=claims, sections=sections, contract=contract, mandatory_rq_findings=mandatory)
