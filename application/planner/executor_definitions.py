@@ -23,6 +23,11 @@ AGENT_EXECUTOR_CAPABILITIES: tuple[ExecutorCapability, ...] = (
         description="Designs research workflows and planning tasks",
     ),
     ExecutorCapability(
+        executor_id="design_generation",
+        executor_type=ExecutorType.AGENT,
+        description="Generates a project research design in the background",
+    ),
+    ExecutorCapability(
         executor_id="search",
         executor_type=ExecutorType.AGENT,
         description="Collects external research sources",

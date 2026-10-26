@@ -28,6 +28,9 @@ from domain.research_method import (
 )
 from domain.value_objects.project_status import ProjectStatus
 from domain.workflow_run import WorkflowRun
+from domain.task_definition import TaskDefinition
+from domain.value_objects.executor_type import ExecutorType
+from domain.workflow_template import WorkflowTemplate
 from runtime.workflow_context import WorkflowContext
 
 
@@ -40,7 +43,8 @@ class ProjectPlanningService:
 
     def __init__(self, *, project_service, workflow_service, planner_agent,
                  workflow_mapper, agency, quantitative_ui_service,
-                 activation_sessions=None, file_activation_unavailable=False) -> None:
+                 activation_sessions=None, file_activation_unavailable=False,
+                 durable_workflow_service=None) -> None:
         self.projects = project_service
         self.workflows = workflow_service
         self.planner = planner_agent
@@ -49,6 +53,7 @@ class ProjectPlanningService:
         self.quantitative = quantitative_ui_service
         self.activation_sessions = activation_sessions
         self.file_activation_unavailable = file_activation_unavailable
+        self.durable_workflow = durable_workflow_service
 
     def explicit_or_inferred_methods(self, project: Project) -> tuple[str, ...]:
         if project.selected_methods is not None:
@@ -135,6 +140,47 @@ class ProjectPlanningService:
         ):
             raise ProjectPlanningError("Дизайн не можна переформувати після активації методу")
         return self._generate_new_design(project, methods=methods, fingerprint=fingerprint)
+
+    def schedule_design_generation(self, project: Project):
+        """Queue one durable planning task for the current brief fingerprint."""
+        methods = self.explicit_or_inferred_methods(project)
+        if not methods:
+            raise ProjectPlanningError("Оберіть щонайменше один метод дослідження")
+        if project.research_brief is None:
+            raise ProjectPlanningError("Спочатку збережіть дослідницький бриф")
+        fingerprint = self.input_fingerprint(project.research_brief, methods)
+        if (
+            project.current_research_design is not None
+            and project.research_design_input_fingerprint == fingerprint
+            and self.design_is_current(project)
+        ):
+            return None
+        template_id = f"project-design:{project.id}:{fingerprint}"
+        for run in self.workflows.list_workflow_runs_for_project(project.id):
+            if run.workflow_template_id != template_id or run.is_terminal:
+                continue
+            return run
+        template = WorkflowTemplate(
+            id=template_id,
+            name="Project design generation",
+            task_definitions=[TaskDefinition(
+                id="task-generate-project-design",
+                name="Generate project design",
+                executor_id="design_generation",
+                executor_type=ExecutorType.AGENT,
+            )],
+            research_brief_snapshot=project.research_brief,
+        )
+        if self.durable_workflow is None:
+            return self._generate_new_design(project, methods=methods, fingerprint=fingerprint)
+        return self.durable_workflow.submit_research(
+            project, template, initial_task_results={
+                "design_generation": {
+                    "version": 1, "project_id": project.id,
+                    "input_fingerprint": fingerprint, "status": "queued",
+                }
+            },
+        ).workflow_run
 
     def regenerate_design_after_terminal_run(
         self, project: Project, *, expected_design_id: str,

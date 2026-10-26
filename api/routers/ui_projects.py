@@ -1,7 +1,7 @@
 from pathlib import Path
 from uuid import uuid4
 from fastapi import APIRouter, Form, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from api.ui.presentation import parse_brief_form
 from api.ui.pdf_csrf import token as pdf_csrf_token, valid as valid_pdf_csrf
@@ -171,7 +171,7 @@ def project_design(request: Request, project_id: str):
         facade = _facade(request)
         project = facade.project_for_design(project_id)
         view = facade.get_workspace(project_id)
-        return templates.TemplateResponse(request, "projects/design.html", {"request": request, "project": project, "view": view, "error": None})
+        return templates.TemplateResponse(request, "projects/design.html", {"request": request, "project": project, "view": view, "design_generation": facade.design_generation_status(project_id), "error": None})
     except (AccessDeniedError, EntityNotFoundError):
         return templates.TemplateResponse(request, "projects/error.html", {"request": request, "message": "Проєкт не знайдено"}, status_code=404)
 
@@ -185,6 +185,13 @@ def project_design_generate(request: Request, project_id: str):
     except ValueError as exc:
         facade = _facade(request); project = facade.project_for_design(project_id)
         return templates.TemplateResponse(request, "projects/design.html", {"request": request, "project": project, "view": facade.get_workspace(project_id), "error": str(exc)}, status_code=422)
+
+@router.get("/{project_id}/design/status.json", include_in_schema=False)
+def project_design_status(request: Request, project_id: str):
+    try:
+        return JSONResponse(_facade(request).design_generation_status(project_id) or {"status": "not_started"})
+    except (AccessDeniedError, EntityNotFoundError):
+        return JSONResponse({"error": "not_found"}, status_code=404)
 
 @router.post("/{project_id}/design/regenerate", include_in_schema=False)
 def project_design_regenerate(

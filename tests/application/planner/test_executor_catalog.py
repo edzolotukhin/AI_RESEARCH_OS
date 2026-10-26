@@ -16,6 +16,7 @@ class ExecutorCatalogTests(unittest.TestCase):
             catalog.executor_ids,
             (
                 "planner",
+                "design_generation",
                 "search",
                 "evidence",
                 "research_quality",

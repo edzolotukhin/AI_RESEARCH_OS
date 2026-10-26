@@ -88,6 +88,7 @@ from application.services.execution_log_service import ExecutionLogService
 from application.services.knowledge_service import KnowledgeService
 from application.services.project_service import ProjectService
 from application.services.project_planning_service import ProjectPlanningService
+from application.executors.design_generation_executor import DesignGenerationExecutor
 from application.services.durable_workflow_service import DurableWorkflowService
 from application.services.workflow_service import WorkflowService
 from application.services.research_submission_service import ResearchSubmissionService
@@ -320,6 +321,10 @@ def create_application_container(
         artifact_repository=persistence.artifact_repository,
         stage_llm_clients=stage_llm_clients,
         deliverable_finalizer=project_deliverables_service,
+    )
+    agent_executors["design_generation"] = DesignGenerationExecutor(
+        planner_agent=planner_agent,
+        project_service=project_service,
     )
 
     # Always retain support for already-pinned ARK runs, even when activation is
@@ -740,6 +745,7 @@ def create_application_container(
         workflow_mapper=workflow_template_mapper,
         agency=agency,
         quantitative_ui_service=quantitative_ui_service,
+        durable_workflow_service=durable_workflow_service,
         activation_sessions=persistence.activation_sessions,
         file_activation_unavailable=config.persistence_backend.lower() == "file",
     )
