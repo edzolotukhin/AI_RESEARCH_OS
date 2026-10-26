@@ -73,6 +73,40 @@ class AsyncDesignGenerationTests(unittest.TestCase):
         )
         self.assertIsNone(service.schedule_design_generation(project))
 
+    def test_unresolved_design_schedules_new_attempt_with_same_fingerprint(self):
+        project = self._project()
+        service = self._service(_Durable())
+        project.current_research_design = SimpleNamespace(
+            id="unresolved-design",
+            research_subject=SimpleNamespace(
+                resolution_status=SimpleNamespace(value="unresolved")
+            ),
+        )
+        project.research_design_input_fingerprint = service.input_fingerprint(
+            project.research_brief, ("DESK",),
+        )
+
+        result = service.schedule_design_generation(project)
+
+        self.assertEqual(result.id, "queued-design")
+        self.assertEqual(len(service.durable_workflow.calls), 1)
+
+    def test_design_generation_workflow_is_not_a_desk_activation(self):
+        project = self._project()
+        fingerprint = ProjectPlanningService.input_fingerprint(
+            project.research_brief, ("DESK",),
+        )
+        design_run = WorkflowRun(
+            id="design-run",
+            project_id=project.id,
+            workflow_template_id=f"project-design:{project.id}:{fingerprint}",
+        )
+        service = self._service(None, [design_run])
+
+        self.assertEqual(service._desk_runs(project.id), [])
+        self.assertIsNone(service._desk_run(project.id))
+        self.assertFalse(service._has_any_activation(project.id))
+
     def _execution_context(self, project):
         fingerprint = ProjectPlanningService.input_fingerprint(
             project.research_brief, ("DESK",),

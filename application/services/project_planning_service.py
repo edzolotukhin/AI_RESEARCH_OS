@@ -61,6 +61,8 @@ class ProjectPlanningService:
         found: list[str] = []
         quant_template = build_quantitative_workflow_template().id
         for run in self.workflows.list_workflow_runs_for_project(project.id):
+            if self._is_design_generation_run(run):
+                continue
             quantitative = bool(
                 self.quantitative
                 and self.quantitative.state.list_for_run(
@@ -121,18 +123,10 @@ class ProjectPlanningService:
         if project.research_brief is None:
             raise ProjectPlanningError("Спочатку збережіть дослідницький бриф")
         fingerprint = self.input_fingerprint(project.research_brief, methods)
-        current_subject = (
-            project.current_research_design.research_subject
-            if project.current_research_design is not None
-            else None
-        )
         if (
             project.current_research_design is not None
             and project.research_design_input_fingerprint == fingerprint
-            and (
-                current_subject is None
-                or current_subject.resolution_status.value != "unresolved"
-            )
+            and self._design_is_resolved(project.current_research_design)
         ):
             return project.current_research_design
         if self._has_any_activation(project.id) and all(
@@ -153,6 +147,7 @@ class ProjectPlanningService:
             project.current_research_design is not None
             and project.research_design_input_fingerprint == fingerprint
             and self.design_is_current(project)
+            and self._design_is_resolved(project.current_research_design)
         ):
             return None
         template_id = f"project-design:{project.id}:{fingerprint}"
@@ -458,7 +453,10 @@ class ProjectPlanningService:
             project.status = ProjectStatus.LEAD
 
     def _has_any_activation(self, project_id: str) -> bool:
-        return bool(self.workflows.list_workflow_runs_for_project(project_id))
+        return any(
+            not self._is_design_generation_run(run)
+            for run in self.workflows.list_workflow_runs_for_project(project_id)
+        )
 
     def _is_activated(self, project_id: str, method: str) -> bool:
         project = self.projects.get_project(project_id)
@@ -479,6 +477,8 @@ class ProjectPlanningService:
         quant_template = build_quantitative_workflow_template().id
         result = []
         for run in self.workflows.list_workflow_runs_for_project(project_id):
+            if self._is_design_generation_run(run):
+                continue
             if run.workflow_template_id in {
                 quant_template,
                 CMF_QUANTITATIVE_WORKFLOW_ID,
@@ -491,6 +491,19 @@ class ProjectPlanningService:
                 continue
             result.append(run)
         return self._order_desk_attempts(result, project_id)
+
+    @staticmethod
+    def _is_design_generation_run(run) -> bool:
+        return run.workflow_template_id.startswith("project-design:")
+
+    @staticmethod
+    def _design_is_resolved(design) -> bool:
+        subject = getattr(design, "research_subject", None)
+        resolution_status = getattr(subject, "resolution_status", None)
+        return (
+            subject is None
+            or getattr(resolution_status, "value", resolution_status) != "unresolved"
+        )
 
     @classmethod
     def _order_desk_attempts(cls, runs, project_id: str):

@@ -158,7 +158,7 @@ class DesignRequestPathTests(ApiTestCase):
                 drain_background_runs(self.container)
             generate.assert_called_once()
         run = self.container.workflow_service.list_workflow_runs_for_project(project_id)[0]
-        self.assertEqual(run.status.value, "FAILED")
+        self.assertEqual(run.status.value, "failed")
         self.assertIsNone(self.container.project_service.get_project(project_id).current_research_design)
         diagnostic = self.container.workflow_service.get_task_results(run.id)[
             run.tasks[0].id
@@ -175,7 +175,7 @@ class DesignRequestPathTests(ApiTestCase):
         drain_background_runs(self.container)
         self.assertEqual(self.container.project_service.get_project(project_id).research_design_status, "DRAFT")
         run = self.container.workflow_service.list_workflow_runs_for_project(project_id)[0]
-        self.assertEqual(run.status.value, "COMPLETED")
+        self.assertEqual(run.status.value, "completed")
 
     def test_representative_product_validation_422_is_retained(self):
         project_id = self.prepare()
@@ -185,7 +185,7 @@ class DesignRequestPathTests(ApiTestCase):
             with self.assertRaisesRegex(ValueError, "ResearchQuestion without a valid InformationNeed: RQ5"):
                 drain_background_runs(self.container)
         run = self.container.workflow_service.list_workflow_runs_for_project(project_id)[0]
-        self.assertEqual(run.status.value, "FAILED")
+        self.assertEqual(run.status.value, "failed")
         self.assertIsNone(self.container.project_service.get_project(project_id).current_research_design)
         diagnostic = self.container.workflow_service.get_task_results(run.id)[
             run.tasks[0].id
