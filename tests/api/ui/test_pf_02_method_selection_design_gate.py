@@ -86,11 +86,22 @@ class Pf02MethodSelectionDesignGateTests(ApiTestCase):
         drain_background_runs(self.container)
         project = self.container.project_service.get_project(project_id)
         self.assertIsNotNone(project.current_research_design)
-        design_runs = self.container.workflow_service.list_workflow_runs_for_project(
-            project_id
+        methods = self.container.project_planning_service.explicit_or_inferred_methods(
+            project
         )
-        self.assertEqual(len(design_runs), 1)
-        self.assertEqual(design_runs[0].status, WorkflowStatus.COMPLETED)
+        fingerprint = self.container.project_planning_service.input_fingerprint(
+            project.research_brief, methods
+        )
+        current_template_id = f"project-design:{project_id}:{fingerprint}"
+        current_design_runs = [
+            run
+            for run in self.container.workflow_service.list_workflow_runs_for_project(
+                project_id
+            )
+            if run.workflow_template_id == current_template_id
+        ]
+        self.assertEqual(len(current_design_runs), 1)
+        self.assertEqual(current_design_runs[0].status, WorkflowStatus.COMPLETED)
         response = self.client.post(
             f"/ui/projects/{project_id}/design/approve",
             data={"design_id": project.current_research_design.id},
@@ -253,6 +264,18 @@ class Pf02MethodSelectionDesignGateTests(ApiTestCase):
         changed = self.container.project_service.get_project(project_id)
         self.assertIsNone(changed.current_research_design)
         self.approve(project_id)
+        design_runs = [
+            run
+            for run in self.container.workflow_service.list_workflow_runs_for_project(
+                project_id
+            )
+            if run.workflow_template_id.startswith("project-design:")
+        ]
+        self.assertEqual(len(design_runs), 2)
+        self.assertEqual(len({run.workflow_template_id for run in design_runs}), 2)
+        self.assertTrue(all(
+            run.status == WorkflowStatus.COMPLETED for run in design_runs
+        ))
         self.client.post(f"/ui/projects/{project_id}/methods/DESK/activate")
         changed_brief = ResearchBrief(
             title="Змінений", business_question="Інше питання?", objectives=("Інша ціль",)
