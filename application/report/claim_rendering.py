@@ -9,7 +9,10 @@ from domain.planning.research_design import ResearchDesign
 from domain.reports.report_claim import ReportClaim
 from domain.reports.report_section import ReportSection
 
-_NUMBER = re.compile(r"(?<![\w-])\d+(?:[.,]\d+)?%?(?![\w-])")
+_GROUPING_SPACE = " \u00a0\u202f"
+_NUMBER = re.compile(
+    rf"(?<![\w-])(?:\d{{1,3}}[{_GROUPING_SPACE}]\d{{3}}(?:[{_GROUPING_SPACE}]\d{{3}})*|\d+)(?:[.,]\d+)?%?(?![\w-])"
+)
 
 
 class ClaimRenderingError(ValueError):
@@ -104,15 +107,20 @@ def _validate_unit(raw: Any, claims_by_id: dict[str, ReportClaim], *, field: str
         allowed = {fact.value for claim in selected for fact in claim.scope.numeric_facts}
         allowed.update(period for claim in selected for period in claim.scope.periods)
         for token in _NUMBER.findall(text):
-            normalized = token.rstrip("%").replace(",", ".")
+            normalized = _normalize_numeric_token(token)
             if token not in allowed and normalized not in allowed:
                 raise ClaimRenderingError(
                     f"numeric prose is not represented by referenced claims: {token}",
                     diagnostics=_numeric_failure_diagnostics(
-                        raw=raw, field=field, section=section, selected=selected, token=token,
+                        raw=raw, field=field, section=section, selected=selected,
+                        token=normalized if any(char in token for char in _GROUPING_SPACE) else token,
                     ),
                 )
     return {"text": text, "claim_ids": list(claim_ids), "classification": classification}
+
+
+def _normalize_numeric_token(token: str) -> str:
+    return token.rstrip("%").replace(" ", "").replace("\u00a0", "").replace("\u202f", "").replace(",", ".")
 
 
 def _numeric_failure_diagnostics(*, raw: dict[str, Any], field: str, section: dict[str, Any] | None,

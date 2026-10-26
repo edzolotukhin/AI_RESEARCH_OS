@@ -153,6 +153,30 @@ class ClaimRenderingAndCoverageTests(unittest.TestCase):
             with self.subTest(text=text), self.assertRaises(ClaimRenderingError):
                 render_validated_claims(claims=(self.claim,), design=self.design, rendered_payload=self.payload(factual), summary_payload={"summary_units": [{"text": "Supported", "claim_ids": [self.claim.claim_id], "classification": "factual"}]})
 
+    def test_space_grouped_numeric_authority_accepts_all_supported_spaces(self) -> None:
+        fact = replace(self.claim.scope.numeric_facts[0], value="48705", unit="грн")
+        claim = replace(self.claim, scope=replace(self.claim.scope, numeric_facts=(fact,)))
+        for grouping in (" ", "\u00a0", "\u202f"):
+            text = f"м. Київ має найвищий рівень (48{grouping}705 грн)"
+            factual = {"text": text, "claim_ids": [claim.claim_id], "classification": "factual"}
+            with self.subTest(grouping=repr(grouping)):
+                result = render_validated_claims(claims=(claim,), design=self.design, rendered_payload=self.payload(factual), summary_payload={"summary_units": [{"text": "Supported", "claim_ids": [claim.claim_id], "classification": "factual"}]})
+                self.assertEqual(result.sections[0].claim_refs, (claim.claim_id,))
+
+    def test_space_grouped_numeric_mismatch_remains_rejected_and_diagnostic_is_coherent(self) -> None:
+        fact = replace(self.claim.scope.numeric_facts[0], value="48705", unit="грн")
+        claim = replace(self.claim, scope=replace(self.claim.scope, numeric_facts=(fact,)))
+        factual = {"text": "м. Київ має найвищий рівень (48\u00a0706 грн)", "claim_ids": [claim.claim_id], "classification": "factual"}
+        with self.assertRaises(ClaimRenderingError) as captured:
+            render_validated_claims(claims=(claim,), design=self.design, rendered_payload=self.payload(factual), summary_payload={"summary_units": [{"text": "Supported", "claim_ids": [claim.claim_id], "classification": "factual"}]})
+        self.assertEqual(captured.exception.diagnostics["rejected_tokens"], ["48706"])
+
+    def test_space_grouped_numeric_without_authority_remains_rejected(self) -> None:
+        claim = replace(self.claim, scope=replace(self.claim.scope, numeric_facts=()))
+        factual = {"text": "48\u202f705 грн", "claim_ids": [claim.claim_id], "classification": "factual"}
+        with self.assertRaises(ClaimRenderingError):
+            render_validated_claims(claims=(claim,), design=self.design, rendered_payload=self.payload(factual), summary_payload={"summary_units": [{"text": "Supported", "claim_ids": [claim.claim_id], "classification": "factual"}]})
+
     def test_complete_limited_and_mandatory_repair_are_claim_backed(self) -> None:
         rendered = render_validated_claims(claims=(self.claim,), design=self.design)
         complete = ReportCoverageContract("complete", ("rq-1",), ())
