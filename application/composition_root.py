@@ -325,6 +325,7 @@ def create_application_container(
     agent_executors["design_generation"] = DesignGenerationExecutor(
         planner_agent=planner_agent,
         project_service=project_service,
+        workflow_service=workflow_service,
     )
 
     # Always retain support for already-pinned ARK runs, even when activation is

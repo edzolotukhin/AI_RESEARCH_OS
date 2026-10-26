@@ -9,15 +9,21 @@ from domain.research_brief import ResearchBrief
 from domain.workflow_run import WorkflowRun
 from domain.workflow_status import WorkflowStatus
 from domain.workflow_template import WorkflowTemplate
+from domain.task_definition import TaskDefinition
 from runtime.workflow_context import WorkflowContext
+from application.workflow_kind import WorkflowKind, classify_workflow_template
 
 
 class _WorkflowService:
-    def __init__(self, runs=()):
+    def __init__(self, runs=(), templates=()):
         self.runs = list(runs)
+        self.templates = {item.id: item for item in templates}
 
     def list_workflow_runs_for_project(self, project_id):
         return list(self.runs)
+
+    def get_template(self, template_id):
+        return self.templates[template_id]
 
 
 class _Durable:
@@ -113,12 +119,24 @@ class AsyncDesignGenerationTests(unittest.TestCase):
         )
         return WorkflowContext(
             project=project,
-            workflow_run=WorkflowRun(id="design-run", project_id=project.id),
+            workflow_run=WorkflowRun(
+                id="design-run", project_id=project.id,
+                workflow_template_id=f"project-design:{project.id}:{fingerprint}",
+            ),
             workflow_template=WorkflowTemplate(
                 id=f"project-design:{project.id}:{fingerprint}",
                 name="Project design generation",
             ),
         )
+
+    def _executor(self, project, *, planner, projects, other_runs=()):
+        context = self._execution_context(project)
+        workflows = _WorkflowService([*other_runs, context.workflow_run])
+        return DesignGenerationExecutor(
+            planner_agent=planner,
+            project_service=projects,
+            workflow_service=workflows,
+        ), context
 
     def test_duplicate_worker_delivery_after_success_is_noop(self):
         project = self._project()
@@ -129,9 +147,10 @@ class AsyncDesignGenerationTests(unittest.TestCase):
         project.research_design_input_fingerprint = fingerprint
         planner = SimpleNamespace(run=lambda context: self.fail("planner must not run"))
         projects = SimpleNamespace(save_project=lambda project: self.fail("save must not run"))
-        context = DesignGenerationExecutor(
-            planner_agent=planner, project_service=projects,
-        ).run(self._execution_context(project))
+        executor, context = self._executor(
+            project, planner=planner, projects=projects,
+        )
+        context = executor.run(context)
         self.assertEqual(context.read_shared("design_generation")["design_id"], "design-1")
 
     def test_unresolved_design_same_fingerprint_is_explicitly_regenerated(self):
@@ -156,12 +175,13 @@ class AsyncDesignGenerationTests(unittest.TestCase):
             )
             return context
 
-        executor = DesignGenerationExecutor(
-            planner_agent=SimpleNamespace(run=generate_replacement),
-            project_service=SimpleNamespace(save_project=saves.append),
+        executor, context = self._executor(
+            project,
+            planner=SimpleNamespace(run=generate_replacement),
+            projects=SimpleNamespace(save_project=saves.append),
         )
 
-        context = executor.run(self._execution_context(project))
+        context = executor.run(context)
 
         self.assertIs(project.current_research_design, replacement)
         self.assertEqual(project.research_brief, original_brief)
@@ -175,13 +195,13 @@ class AsyncDesignGenerationTests(unittest.TestCase):
         project = self._project()
         design = SimpleNamespace(id="generated-design")
         saves = []
-        executor = DesignGenerationExecutor(
-            planner_agent=SimpleNamespace(run=lambda context: SimpleNamespace(
+        executor, context = self._executor(
+            project,
+            planner=SimpleNamespace(run=lambda context: SimpleNamespace(
                 workflow_template=SimpleNamespace(research_design_snapshot=design),
             )),
-            project_service=SimpleNamespace(save_project=saves.append),
+            projects=SimpleNamespace(save_project=saves.append),
         )
-        context = self._execution_context(project)
         executor.run(context)
         self.assertIs(project.current_research_design, design)
         self.assertEqual(saves, [project])
@@ -195,11 +215,10 @@ class AsyncDesignGenerationTests(unittest.TestCase):
         ))
         def reject_stale_save(project):
             raise ConcurrentModificationError("brief changed concurrently")
-        executor = DesignGenerationExecutor(
-            planner_agent=planner,
-            project_service=SimpleNamespace(save_project=reject_stale_save),
+        executor, context = self._executor(
+            project, planner=planner,
+            projects=SimpleNamespace(save_project=reject_stale_save),
         )
-        context = self._execution_context(project)
         with self.assertRaises(ConcurrentModificationError):
             executor.run(context)
         self.assertEqual(
@@ -212,11 +231,11 @@ class AsyncDesignGenerationTests(unittest.TestCase):
         def fail_provider(context):
             raise RuntimeError("provider boundary failed")
         saved = []
-        executor = DesignGenerationExecutor(
-            planner_agent=SimpleNamespace(run=fail_provider),
-            project_service=SimpleNamespace(save_project=saved.append),
+        executor, context = self._executor(
+            project,
+            planner=SimpleNamespace(run=fail_provider),
+            projects=SimpleNamespace(save_project=saved.append),
         )
-        context = self._execution_context(project)
         with self.assertRaisesRegex(RuntimeError, "provider boundary failed"):
             executor.run(context)
         self.assertIsNone(project.current_research_design)
@@ -234,14 +253,14 @@ class AsyncDesignGenerationTests(unittest.TestCase):
 
     def test_generated_design_validation_failure_is_bounded(self):
         project = self._project()
-        context = self._execution_context(project)
-        executor = DesignGenerationExecutor(
-            planner_agent=SimpleNamespace(
+        executor, context = self._executor(
+            project,
+            planner=SimpleNamespace(
                 run=lambda context: (_ for _ in ()).throw(
                     ValueError("private generated design body")
                 )
             ),
-            project_service=SimpleNamespace(
+            projects=SimpleNamespace(
                 save_project=lambda project: self.fail("save must not run")
             ),
         )
@@ -282,6 +301,135 @@ class AsyncDesignGenerationTests(unittest.TestCase):
         self._service(durable, [old]).schedule_design_generation(project)
         new_template = durable.calls[0][1]
         self.assertNotEqual(new_template.id, old.workflow_template_id)
+
+    def test_changed_method_uses_new_generation_identity(self):
+        project = self._project()
+        old_fingerprint = ProjectPlanningService.input_fingerprint(
+            project.research_brief, ("DESK",),
+        )
+        old = SimpleNamespace(
+            id="old", workflow_template_id=f"project-design:{project.id}:{old_fingerprint}",
+            is_terminal=False, status=WorkflowStatus.RUNNING, tasks=[],
+        )
+        project.selected_methods = ("DESK", "QUANTITATIVE")
+        durable = _Durable()
+
+        self._service(durable, [old]).schedule_design_generation(project)
+
+        self.assertNotEqual(durable.calls[0][1].id, old.workflow_template_id)
+
+    def test_newer_same_fingerprint_attempt_blocks_late_old_completion(self):
+        project = self._project()
+        fingerprint = ProjectPlanningService.input_fingerprint(
+            project.research_brief, ("DESK",),
+        )
+        old_context = self._execution_context(project)
+        old_context.workflow_run.id = "attempt-a"
+        old_context.workflow_run.tasks = [SimpleNamespace(created_at="2026-01-01T00:00:00Z")]
+        newer = WorkflowRun(
+            id="attempt-b", project_id=project.id,
+            workflow_template_id=f"project-design:{project.id}:{fingerprint}",
+        )
+        newer.tasks = [SimpleNamespace(created_at="2026-01-02T00:00:00Z")]
+        workflows = _WorkflowService([old_context.workflow_run])
+        def finish_after_newer_attempt_started(context):
+            workflows.runs.append(newer)
+            return SimpleNamespace(
+                workflow_template=SimpleNamespace(
+                    research_design_snapshot=SimpleNamespace(id="stale-design")
+                )
+            )
+        executor = DesignGenerationExecutor(
+            planner_agent=SimpleNamespace(run=finish_after_newer_attempt_started),
+            project_service=SimpleNamespace(save_project=lambda project: self.fail("must not save")),
+            workflow_service=workflows,
+        )
+
+        with self.assertRaises(ConcurrentModificationError):
+            executor.run(old_context)
+
+        self.assertIsNone(project.current_research_design)
+
+    def test_resolver_selects_latest_same_fingerprint_attempt_and_preserves_history(self):
+        project = self._project()
+        fingerprint = ProjectPlanningService.input_fingerprint(project.research_brief, ("DESK",))
+        first = WorkflowRun(id="attempt-a", project_id=project.id,
+                            workflow_template_id=f"project-design:{project.id}:{fingerprint}")
+        first.tasks = [SimpleNamespace(created_at="2026-01-01T00:00:00Z")]
+        first.ready(); first.start(); first.fail()
+        second = WorkflowRun(id="attempt-b", project_id=project.id,
+                             workflow_template_id=f"project-design:{project.id}:{fingerprint}")
+        second.tasks = [SimpleNamespace(created_at="2026-01-02T00:00:00Z")]
+        resolution = self._service(None, [second, first]).resolve_design_generation(project)
+        self.assertEqual(resolution.current_attempt.id, "attempt-b")
+        self.assertEqual([item.id for item in resolution.historical_attempts], ["attempt-a"])
+        self.assertEqual(resolution.state, "active")
+
+    def test_workflow_kind_classifier_does_not_infer_unknown_as_desk(self):
+        unknown = WorkflowTemplate(id="unrelated", name="Other")
+        desk = WorkflowTemplate(
+            id="desk-snapshot", name="Desk",
+            task_definitions=[TaskDefinition(str(index), value, value) for index, value in enumerate(
+                ("search", "evidence", "research_quality", "analysis", "report", "review", "finalization")
+            )],
+            research_design_snapshot=SimpleNamespace(id="design"),
+        )
+        self.assertEqual(classify_workflow_template(unknown), WorkflowKind.UNKNOWN)
+        self.assertEqual(classify_workflow_template(desk), WorkflowKind.DESK)
+
+    def test_project_design_and_desk_history_never_cross_selectors(self):
+        project = self._project()
+        fingerprint = ProjectPlanningService.input_fingerprint(project.research_brief, ("DESK",))
+        design_run = WorkflowRun(id="design-attempt", project_id=project.id,
+                                 workflow_template_id=f"project-design:{project.id}:{fingerprint}")
+        desk_run = WorkflowRun(id="desk-attempt", project_id=project.id,
+                               workflow_template_id="desk-template")
+        desk_template = WorkflowTemplate(
+            id="desk-template", name="Desk",
+            task_definitions=[TaskDefinition(str(index), value, value) for index, value in enumerate(
+                ("search", "evidence", "research_quality", "analysis", "report", "review", "finalization")
+            )],
+            research_design_snapshot=SimpleNamespace(id="approved-design"),
+        )
+        service = ProjectPlanningService(
+            project_service=SimpleNamespace(),
+            workflow_service=_WorkflowService([design_run, desk_run], [desk_template]),
+            planner_agent=SimpleNamespace(), workflow_mapper=SimpleNamespace(),
+            agency=SimpleNamespace(), quantitative_ui_service=None,
+        )
+
+        self.assertEqual([item.id for item in service._desk_runs(project.id)], ["desk-attempt"])
+        self.assertEqual(service.resolve_design_generation(project).current_attempt.id, "design-attempt")
+
+    def test_desk_activation_freezes_exact_current_approved_design(self):
+        project = self._project()
+        approved = SimpleNamespace(id="approved-current")
+        historical = SimpleNamespace(id="historical")
+        project.current_research_design = approved
+        captured = []
+        mapper = SimpleNamespace(from_research_design=lambda design, value: (
+            captured.append(design)
+            or WorkflowTemplate(
+                id="desk-template", name="Desk",
+                research_design_snapshot=design,
+            )
+        ))
+        agency = SimpleNamespace(start_research_from_template=lambda value, template, run_id: (
+            SimpleNamespace(workflow_run=SimpleNamespace(
+                id=run_id, template=template, unrelated_historical=historical,
+            ))
+        ))
+        service = ProjectPlanningService(
+            project_service=SimpleNamespace(), workflow_service=_WorkflowService(),
+            planner_agent=SimpleNamespace(), workflow_mapper=mapper, agency=agency,
+            quantitative_ui_service=None,
+        )
+        service._require_activation = lambda value, method: None
+
+        run = service._activate_desk_locked(project)
+
+        self.assertEqual(captured, [approved])
+        self.assertIs(run.template.research_design_snapshot, approved)
 
 
 if __name__ == "__main__":

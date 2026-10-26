@@ -2,15 +2,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from contextlib import nullcontext
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import heapq
 import hashlib
 import json
 from uuid import NAMESPACE_URL, uuid5
 
-from application.quantitative.workflow import build_quantitative_workflow_template, CMF_QUANTITATIVE_WORKFLOW_ID
 from application.persistence.exceptions import EntityNotFoundError
-from application.qualitative.service import QUAL_TEMPLATE
 from application.planner.project_planning_profile import (
     PROJECT_PLANNING_PROFILE_VERSION,
     PROJECT_PLANNING_PROFILE_KEY,
@@ -28,10 +26,25 @@ from domain.research_method import (
 )
 from domain.value_objects.project_status import ProjectStatus
 from domain.workflow_run import WorkflowRun
+from domain.workflow_status import WorkflowStatus
 from domain.task_definition import TaskDefinition
 from domain.value_objects.executor_type import ExecutorType
 from domain.workflow_template import WorkflowTemplate
 from runtime.workflow_context import WorkflowContext
+from application.workflow_kind import (
+    WorkflowKind,
+    classify_workflow_template,
+    classify_workflow_template_id,
+)
+
+
+@dataclass(frozen=True)
+class DesignGenerationResolution:
+    input_fingerprint: str
+    state: str
+    current_attempt: WorkflowRun | None
+    current_design: object | None
+    historical_attempts: tuple[WorkflowRun, ...]
 
 
 class ProjectPlanningError(ValueError):
@@ -59,9 +72,9 @@ class ProjectPlanningService:
         if project.selected_methods is not None:
             return canonicalize_research_methods(project.selected_methods, allow_empty=True)
         found: list[str] = []
-        quant_template = build_quantitative_workflow_template().id
         for run in self.workflows.list_workflow_runs_for_project(project.id):
-            if self._is_design_generation_run(run):
+            kind = self._workflow_kind(run)
+            if kind == WorkflowKind.PROJECT_DESIGN:
                 continue
             quantitative = bool(
                 self.quantitative
@@ -73,7 +86,7 @@ class ProjectPlanningService:
             )
             if quantitative and QUANTITATIVE not in found:
                 found.append(QUANTITATIVE)
-            elif not quantitative and run.workflow_template_id not in {quant_template, CMF_QUANTITATIVE_WORKFLOW_ID} and DESK not in found:
+            elif not quantitative and kind == WorkflowKind.DESK and DESK not in found:
                 found.append(DESK)
         return canonicalize_research_methods(found, allow_empty=True)
 
@@ -150,11 +163,10 @@ class ProjectPlanningService:
             and self._design_is_resolved(project.current_research_design)
         ):
             return None
+        resolution = self.resolve_design_generation(project)
+        if resolution.state == "active" and resolution.current_attempt is not None:
+            return resolution.current_attempt
         template_id = f"project-design:{project.id}:{fingerprint}"
-        for run in self.workflows.list_workflow_runs_for_project(project.id):
-            if run.workflow_template_id != template_id or run.is_terminal:
-                continue
-            return run
         template = WorkflowTemplate(
             id=template_id,
             name="Project design generation",
@@ -176,6 +188,51 @@ class ProjectPlanningService:
                 }
             },
         ).workflow_run
+
+    def resolve_design_generation(self, project: Project) -> DesignGenerationResolution:
+        """Resolve the one current-input generation attempt and its durable history."""
+        methods = self.explicit_or_inferred_methods(project)
+        fingerprint = self.input_fingerprint(project.research_brief, methods)
+        return self.resolve_design_generation_attempts(
+            project=project,
+            workflows=self.workflows,
+            input_fingerprint=fingerprint,
+        )
+
+    @classmethod
+    def resolve_design_generation_attempts(
+        cls, *, project: Project, workflows, input_fingerprint: str,
+    ) -> DesignGenerationResolution:
+        """Canonical attempt resolver shared by scheduling and worker ownership checks."""
+        attempts = [
+            run for run in workflows.list_workflow_runs_for_project(project.id)
+            if classify_workflow_template_id(str(run.workflow_template_id))
+            == WorkflowKind.PROJECT_DESIGN
+        ]
+        attempts.sort(key=cls._design_attempt_order_key)
+        matching = [
+            run for run in attempts
+            if cls._design_attempt_fingerprint(run) == input_fingerprint
+        ]
+        current = matching[-1] if matching else None
+        historical = tuple(run for run in attempts if run is not current)
+        if current is None:
+            state = "no_attempt"
+        elif not current.is_terminal:
+            state = "active"
+        elif current.status == WorkflowStatus.COMPLETED:
+            state = "completed"
+        elif current.status == WorkflowStatus.FAILED:
+            state = "failed"
+        else:
+            state = "terminal"
+        return DesignGenerationResolution(
+            input_fingerprint=input_fingerprint,
+            state=state,
+            current_attempt=current,
+            current_design=project.current_research_design,
+            historical_attempts=historical,
+        )
 
     def regenerate_design_after_terminal_run(
         self, project: Project, *, expected_design_id: str,
@@ -454,7 +511,9 @@ class ProjectPlanningService:
 
     def _has_any_activation(self, project_id: str) -> bool:
         return any(
-            not self._is_design_generation_run(run)
+            self._workflow_kind(run) in {
+                WorkflowKind.DESK, WorkflowKind.QUANTITATIVE, WorkflowKind.QUALITATIVE,
+            }
             for run in self.workflows.list_workflow_runs_for_project(project_id)
         )
 
@@ -474,27 +533,30 @@ class ProjectPlanningService:
         return runs[-1] if runs else None
 
     def _desk_runs(self, project_id: str):
-        quant_template = build_quantitative_workflow_template().id
         result = []
         for run in self.workflows.list_workflow_runs_for_project(project_id):
-            if self._is_design_generation_run(run):
-                continue
-            if run.workflow_template_id in {
-                quant_template,
-                CMF_QUANTITATIVE_WORKFLOW_ID,
-                QUAL_TEMPLATE,
-            }:
-                continue
-            if self.quantitative and self.quantitative.state.list_for_run(
-                run.id, project_id=project_id, expected_type=self._study_type()
-            ):
-                continue
-            result.append(run)
+            if self._workflow_kind(run) == WorkflowKind.DESK:
+                result.append(run)
         return self._order_desk_attempts(result, project_id)
 
+    def _workflow_kind(self, run) -> WorkflowKind:
+        identity_kind = classify_workflow_template_id(str(run.workflow_template_id))
+        if identity_kind != WorkflowKind.UNKNOWN:
+            return identity_kind
+        try:
+            template = self.workflows.get_template(run.workflow_template_id)
+        except (EntityNotFoundError, AttributeError):
+            return WorkflowKind.UNKNOWN
+        return classify_workflow_template(template)
+
     @staticmethod
-    def _is_design_generation_run(run) -> bool:
-        return run.workflow_template_id.startswith("project-design:")
+    def _design_attempt_fingerprint(run) -> str:
+        template_id = str(run.workflow_template_id)
+        return template_id.rsplit(":", 1)[-1] if template_id.startswith("project-design:") else ""
+
+    @classmethod
+    def _design_attempt_order_key(cls, run):
+        return (cls._desk_attempt_created_at(run), run.id)
 
     @staticmethod
     def _design_is_resolved(design) -> bool:
@@ -554,7 +616,11 @@ class ProjectPlanningService:
     @staticmethod
     def _desk_attempt_created_at(run):
         created_at = min(
-            (task.created_at for task in run.tasks if task.created_at),
+            (
+                task.created_at
+                for task in getattr(run, "tasks", ())
+                if getattr(task, "created_at", "")
+            ),
             default="",
         )
         return created_at

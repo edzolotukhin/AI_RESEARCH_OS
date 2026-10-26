@@ -131,29 +131,19 @@ class ProjectWorkspaceFacade:
 
     def design_generation_status(self, project_id: str):
         project = self.authorization.require_project(self.principal, project_id)
-        methods = self.container.project_planning_service.explicit_or_inferred_methods(project)
         if project.research_brief is None:
             return None
-        fingerprint = self.container.project_planning_service.input_fingerprint(
-            project.research_brief, methods,
-        )
-        template_id = f"project-design:{project.id}:{fingerprint}"
-        runs = [r for r in self.container.workflow_service.list_workflow_runs_for_project(project.id)
-                if r.workflow_template_id == template_id]
-        if not runs:
+        resolution = self.container.project_planning_service.resolve_design_generation(project)
+        attempt = resolution.current_attempt
+        if attempt is None:
             return None
-        active = next((run for run in runs if not run.is_terminal), None)
-        if active is not None:
-            return {"run_id": active.id, "status": active.status.value}
         if (
             project.current_research_design is not None
-            and project.research_design_input_fingerprint == fingerprint
+            and project.research_design_input_fingerprint == resolution.input_fingerprint
+            and resolution.state == "completed"
         ):
-            return {"run_id": runs[-1].id, "status": "completed"}
-        failed = next(
-            (run for run in runs if run.status.value == "failed"), runs[-1],
-        )
-        return {"run_id": failed.id, "status": failed.status.value}
+            return {"run_id": attempt.id, "status": "completed"}
+        return {"run_id": attempt.id, "status": attempt.status.value}
 
     def regenerate_design(self, project_id: str, expected_design_id: str):
         project, _ = self._project_owner(project_id, mutate=True)

@@ -24,9 +24,10 @@ def _failure_category(error: BaseException) -> str:
 class DesignGenerationExecutor(BaseExecutor):
     """Runs project-level planning inside the durable worker boundary."""
 
-    def __init__(self, *, planner_agent, project_service) -> None:
+    def __init__(self, *, planner_agent, project_service, workflow_service) -> None:
         self._planner = planner_agent
         self._projects = project_service
+        self._workflows = workflow_service
 
     def run(self, context):
         project = context.project
@@ -47,6 +48,18 @@ class DesignGenerationExecutor(BaseExecutor):
             )
             if current_fingerprint != expected_fingerprint:
                 raise ValueError("Бриф змінився; сформуйте актуальний дизайн")
+            resolution = ProjectPlanningService.resolve_design_generation_attempts(
+                project=project,
+                workflows=self._workflows,
+                input_fingerprint=current_fingerprint,
+            )
+            if (
+                resolution.current_attempt is None
+                or resolution.current_attempt.id != context.workflow_run.id
+            ):
+                raise ConcurrentModificationError(
+                    "Design generation attempt is no longer current"
+                )
             if (
                 project.current_research_design is not None
                 and project.research_design_input_fingerprint == expected_fingerprint
@@ -70,6 +83,30 @@ class DesignGenerationExecutor(BaseExecutor):
             template = planned.workflow_template
             if template is None or template.research_design_snapshot is None:
                 raise ValueError("Планувальник не сформував дизайн дослідження")
+            latest_project = (
+                self._projects.get_project(project.id)
+                if hasattr(self._projects, "get_project") else project
+            )
+            latest_methods = canonicalize_research_methods(
+                latest_project.selected_methods or ("DESK",)
+            )
+            latest_fingerprint = ProjectPlanningService.input_fingerprint(
+                latest_project.research_brief, latest_methods,
+            )
+            latest_resolution = ProjectPlanningService.resolve_design_generation_attempts(
+                project=latest_project,
+                workflows=self._workflows,
+                input_fingerprint=latest_fingerprint,
+            )
+            if (
+                latest_fingerprint != expected_fingerprint
+                or latest_resolution.current_attempt is None
+                or latest_resolution.current_attempt.id != context.workflow_run.id
+            ):
+                raise ConcurrentModificationError(
+                    "Design generation attempt lost project ownership"
+                )
+            project = latest_project
             fingerprint = current_fingerprint
             project.current_research_design = template.research_design_snapshot
             project.research_design_status = "DRAFT"
