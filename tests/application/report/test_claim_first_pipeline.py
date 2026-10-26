@@ -10,6 +10,11 @@ from application.ports.report_claim_repository import ReportClaimConflictError
 from application.report.claim_generation import ClaimGenerationError, generate_validated_claims
 from application.report.claim_rendering import ClaimRenderingError, render_validated_claims, repair_missing_claim_sections
 from application.report.coverage_contract import ReportCoverageContract
+from application.research_scope.authoritative_scope import (
+    SCOPE_KEY,
+    scope_for_finding,
+    scope_from_evidence,
+)
 from domain.reports.report_claim import ReportClaim
 from domain.reports.report import Report
 from domain.findings.insight import Insight
@@ -95,6 +100,59 @@ class ClaimFirstGenerationTests(unittest.TestCase):
         self.assertEqual(len(self.generate(candidate_provider=invalid, correction_provider=corrected)), 1)
         with self.assertRaises(ClaimGenerationError): self.generate(candidate_provider=invalid, correction_provider=lambda request: request["candidate"])
 
+    def test_legacy_decimal_comma_percentage_is_reconciled_from_grounded_evidence(self) -> None:
+        legacy_scope = copy.deepcopy(self.fixture.evidence.metadata[SCOPE_KEY])
+        legacy_scope["numeric_facts"] = [{
+            **legacy_scope["numeric_facts"][0],
+            "value": "78",
+            "unit": "%",
+        }]
+        evidence = replace(
+            self.fixture.evidence,
+            statement="Частка становила 7,8% у 2026 році.",
+            source_excerpt="У 2026 році показник дорівнював 7,8%.",
+            metadata={**self.fixture.evidence.metadata, SCOPE_KEY: legacy_scope},
+        )
+        finding = replace(
+            self.fixture.finding,
+            metadata={**self.fixture.finding.metadata, SCOPE_KEY: legacy_scope},
+        )
+
+        evidence_scope = scope_from_evidence(evidence)
+        finding_scope = scope_for_finding(finding, {evidence.id: evidence})
+        self.assertEqual(evidence_scope["numeric_facts"][0]["value"], "7.8")
+        self.assertEqual(finding_scope["numeric_facts"][0]["value"], "7.8")
+
+        claims = generate_validated_claims(
+            project_id="project-1",
+            source_workflow_run_id="source-run",
+            report_workflow_run_id="source-run",
+            design=self.fixture.design,
+            findings=(finding,),
+            insights=(),
+            evidence_by_id={evidence.id: evidence},
+            citation_id_by_source={"source-1": "S1"},
+        )
+        self.assertEqual(claims[0].scope.numeric_facts[0].value, "7.8")
+        factual = {
+            "text": "У 2026 році частка становила 7,8%.",
+            "claim_ids": [claims[0].claim_id],
+            "classification": "factual",
+        }
+        rendered = render_validated_claims(
+            claims=claims,
+            design=self.fixture.design,
+            rendered_payload={"sections": [{
+                "section_id": "section-production-regression",
+                "title": "Частка",
+                "research_question_ids": ["rq-1"],
+                "claim_ids": [claims[0].claim_id],
+                "paragraphs": [factual],
+            }]},
+            summary_payload={"summary_units": [factual]},
+        )
+        self.assertEqual(rendered.sections[0].claim_refs, (claims[0].claim_id,))
+
 
 class ClaimRenderingAndCoverageTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -176,6 +234,46 @@ class ClaimRenderingAndCoverageTests(unittest.TestCase):
         factual = {"text": "48\u202f705 грн", "claim_ids": [claim.claim_id], "classification": "factual"}
         with self.assertRaises(ClaimRenderingError):
             render_validated_claims(claims=(claim,), design=self.design, rendered_payload=self.payload(factual), summary_payload={"summary_units": [{"text": "Supported", "claim_ids": [claim.claim_id], "classification": "factual"}]})
+
+    def test_decimal_percentage_locale_forms_match_only_exact_percent_authority(self) -> None:
+        def claim_with(value: str, unit: str):
+            fact = replace(self.claim.scope.numeric_facts[0], value=value, unit=unit)
+            return replace(self.claim, scope=replace(self.claim.scope, numeric_facts=(fact,)))
+
+        def render(claim: ReportClaim, text: str) -> None:
+            factual = {"text": text, "claim_ids": [claim.claim_id], "classification": "factual"}
+            render_validated_claims(
+                claims=(claim,), design=self.design,
+                rendered_payload=self.payload(factual),
+                summary_payload={"summary_units": [{"text": "Supported", "claim_ids": [claim.claim_id], "classification": "factual"}]},
+            )
+
+        for authority, prose in (("7.8", "7,8%"), ("7.8", "7.8%"), ("78", "78%")):
+            with self.subTest(authority=authority, prose=prose):
+                render(claim_with(authority, "%"), prose)
+
+        rejected = (
+            (claim_with("78", "%"), "7,8%"),
+            (claim_with("7.8", "%"), "78%"),
+            (claim_with("7.8", "count"), "7,8%"),
+            (claim_with("7.8", "%"), "7,9%"),
+            (claim_with("7.8", "%"), "7.8"),
+        )
+        for claim, prose in rejected:
+            with self.subTest(authority=(claim.scope.numeric_facts[0].value, claim.scope.numeric_facts[0].unit), prose=prose), self.assertRaises(ClaimRenderingError):
+                render(claim, prose)
+
+    def test_valid_non_percent_integer_and_decimal_authority_remains_supported(self) -> None:
+        for value, prose in (("48705", "48705"), ("7.8", "7,8"), ("7.8", "7.8")):
+            fact = replace(self.claim.scope.numeric_facts[0], value=value, unit="грн")
+            claim = replace(self.claim, scope=replace(self.claim.scope, numeric_facts=(fact,)))
+            factual = {"text": prose, "claim_ids": [claim.claim_id], "classification": "factual"}
+            with self.subTest(value=value, prose=prose):
+                render_validated_claims(
+                    claims=(claim,), design=self.design,
+                    rendered_payload=self.payload(factual),
+                    summary_payload={"summary_units": [{"text": "Supported", "claim_ids": [claim.claim_id], "classification": "factual"}]},
+                )
 
     def test_complete_limited_and_mandatory_repair_are_claim_backed(self) -> None:
         rendered = render_validated_claims(claims=(self.claim,), design=self.design)

@@ -8,6 +8,10 @@ from uuid import NAMESPACE_URL, uuid5
 from domain.planning.research_design import ResearchDesign
 from domain.reports.report_claim import ReportClaim
 from domain.reports.report_section import ReportSection
+from application.research_scope.numeric_normalization import (
+    normalize_numeric_value,
+    numeric_authority_matches,
+)
 
 _GROUPING_SPACE = " \u00a0\u202f"
 _NUMBER = re.compile(
@@ -104,11 +108,20 @@ def _validate_unit(raw: Any, claims_by_id: dict[str, ReportClaim], *, field: str
     if classification == "non_factual" and claim_ids:
         raise ClaimRenderingError("non_factual units must not assert claim authority")
     if classification == "factual":
-        allowed = {fact.value for claim in selected for fact in claim.scope.numeric_facts}
-        allowed.update(period for claim in selected for period in claim.scope.periods)
+        facts = tuple(fact for claim in selected for fact in claim.scope.numeric_facts)
+        allowed_periods = {period for claim in selected for period in claim.scope.periods}
         for token in _NUMBER.findall(text):
             normalized = _normalize_numeric_token(token)
-            if token not in allowed and normalized not in allowed:
+            if token in allowed_periods or normalized in allowed_periods:
+                continue
+            if not any(
+                numeric_authority_matches(
+                    token=token,
+                    authority_value=fact.value,
+                    authority_unit=fact.unit,
+                )
+                for fact in facts
+            ):
                 raise ClaimRenderingError(
                     f"numeric prose is not represented by referenced claims: {token}",
                     diagnostics=_numeric_failure_diagnostics(
@@ -120,7 +133,7 @@ def _validate_unit(raw: Any, claims_by_id: dict[str, ReportClaim], *, field: str
 
 
 def _normalize_numeric_token(token: str) -> str:
-    return token.rstrip("%").replace(" ", "").replace("\u00a0", "").replace("\u202f", "").replace(",", ".")
+    return normalize_numeric_value(token)
 
 
 def _numeric_failure_diagnostics(*, raw: dict[str, Any], field: str, section: dict[str, Any] | None,

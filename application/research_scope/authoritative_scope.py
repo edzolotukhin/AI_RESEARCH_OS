@@ -12,6 +12,10 @@ from collections.abc import Iterable
 from typing import Any
 
 from application.evidence.semantic_assignment import semantic_assignment
+from application.research_scope.numeric_normalization import (
+    normalize_numeric_unit,
+    normalize_numeric_value,
+)
 from domain.evidence.evidence import Evidence
 
 SCOPE_KEY = "authoritative_scope"
@@ -55,8 +59,8 @@ def numeric_facts(value: str) -> tuple[dict[str, Any], ...]:
         raw_unit = match.group("unit") or ""
         if not prefix and not scale and not raw_unit:
             continue
-        number = re.sub(r"[\s,]", "", match.group("value")).replace(",", ".")
-        unit = f"{prefix}{scale}{raw_unit}".casefold().replace(" ", "_")
+        number = normalize_numeric_value(match.group("value"))
+        unit = normalize_numeric_unit(f"{prefix}{scale}{raw_unit}")
         window = value[max(0, match.start() - 80):match.end() + 80]
         periods = temporal_anchors(window)
         identity = (number, unit, periods)
@@ -100,7 +104,7 @@ def _geography_anchors(raw: dict[str, Any]) -> tuple[dict[str, str], ...]:
 def scope_from_evidence(evidence: Evidence) -> dict[str, Any]:
     existing = evidence.metadata.get(SCOPE_KEY)
     if isinstance(existing, dict) and existing.get("version") == SCOPE_VERSION:
-        return sanitize_scope(existing)
+        return _reconcile_persisted_numeric_scope(existing, (evidence,))
 
     return build_evidence_scope(
         metadata=evidence.metadata,
@@ -168,14 +172,15 @@ def combine_evidence_scopes(evidence: Iterable[Evidence]) -> dict[str, Any]:
 
 def scope_for_finding(finding: Any, evidence_by_id: dict[str, Evidence]) -> dict[str, Any]:
     """Resolve one Finding's scope from persisted metadata or cited Evidence only."""
-    existing = getattr(finding, "metadata", {}).get(SCOPE_KEY)
-    if isinstance(existing, dict) and existing.get("version") == SCOPE_VERSION:
-        return sanitize_scope(existing)
-    return combine_evidence_scopes(
+    evidence = tuple(
         evidence_by_id[ref]
         for ref in getattr(finding, "evidence_refs", ())
         if ref in evidence_by_id
     )
+    existing = getattr(finding, "metadata", {}).get(SCOPE_KEY)
+    if isinstance(existing, dict) and existing.get("version") == SCOPE_VERSION:
+        return _reconcile_persisted_numeric_scope(existing, evidence)
+    return combine_evidence_scopes(evidence)
 
 
 def sanitize_scope(raw: dict[str, Any]) -> dict[str, Any]:
@@ -187,8 +192,8 @@ def sanitize_scope(raw: dict[str, Any]) -> dict[str, Any]:
         for item in raw_facts[:MAX_NUMERIC_FACTS]:
             if not isinstance(item, dict):
                 continue
-            number = normalize_token(item.get("value", ""))
-            unit = normalize_token(item.get("unit", ""))
+            number = normalize_numeric_value(item.get("value", ""))
+            unit = normalize_numeric_unit(item.get("unit", ""))
             if not number or not unit:
                 continue
             facts.append({
@@ -209,3 +214,49 @@ def sanitize_scope(raw: dict[str, Any]) -> dict[str, Any]:
         "numeric_facts": facts,
         "source": normalize_token(raw.get("source", "")),
     }
+
+
+def _reconcile_persisted_numeric_scope(
+    raw: dict[str, Any], evidence: Iterable[Evidence],
+) -> dict[str, Any]:
+    """Repair only proven legacy decimal-collapse values from grounded Evidence.
+
+    A persisted value is replaced only when the grounded statement/excerpt has
+    no exact value for that unit and has exactly one decimal value whose
+    punctuation-free form equals the persisted value. Ambiguous authority is
+    retained unchanged and therefore remains fail-closed.
+    """
+    sanitized = sanitize_scope(raw)
+    grounded = tuple(
+        fact
+        for item in evidence
+        for fact in numeric_facts(f"{item.statement} {item.source_excerpt}")
+    )
+    rebuilt: list[dict[str, Any]] = []
+    for fact in sanitized["numeric_facts"]:
+        value = normalize_numeric_value(fact["value"])
+        unit = normalize_numeric_unit(fact["unit"])
+        candidates = [
+            item for item in grounded
+            if normalize_numeric_unit(item.get("unit", "")) == unit
+        ]
+        exact = [item for item in candidates if normalize_numeric_value(item.get("value", "")) == value]
+        collapsed = [
+            item for item in candidates
+            if "." in normalize_numeric_value(item.get("value", ""))
+            and normalize_numeric_value(item.get("value", "")).replace(".", "") == value
+        ]
+        replacement = collapsed[0] if not exact and len({normalize_numeric_value(item["value"]) for item in collapsed}) == 1 else None
+        rebuilt.append({
+            **fact,
+            "value": normalize_numeric_value(replacement["value"]) if replacement else value,
+            "unit": unit,
+            "periods": fact["periods"] or (list(replacement.get("periods", ())) if replacement else []),
+        })
+    sanitized["numeric_facts"] = list({
+        (
+            item["value"], item["unit"], tuple(item["periods"]), tuple(item["geography"]),
+            tuple(item["metrics"]), tuple(item["population_dimensions"]),
+        ): item for item in rebuilt
+    }.values())[:MAX_NUMERIC_FACTS]
+    return sanitized
