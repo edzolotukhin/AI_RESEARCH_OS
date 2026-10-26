@@ -50,6 +50,7 @@ class DesignGenerationExecutor(BaseExecutor):
             if (
                 project.current_research_design is not None
                 and project.research_design_input_fingerprint == expected_fingerprint
+                and _design_is_resolved(project.current_research_design)
             ):
                 context.write_shared(DESIGN_GENERATION_DIAGNOSTIC_KEY, {
                     **diagnostic,
@@ -91,3 +92,12 @@ class DesignGenerationExecutor(BaseExecutor):
             "design_id": template.research_design_snapshot.id,
         })
         return planned
+
+
+def _design_is_resolved(design) -> bool:
+    subject = getattr(design, "research_subject", None)
+    resolution_status = getattr(subject, "resolution_status", None)
+    return (
+        subject is None
+        or getattr(resolution_status, "value", resolution_status) != "unresolved"
+    )

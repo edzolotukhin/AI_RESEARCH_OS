@@ -52,6 +52,9 @@ def build_test_container(
         overrides=ApplicationOverrides(llm_client=mock_llm),
     )
     container._test_llm_client = mock_llm  # test helper only
+    # UI tests execute queued workflows directly through the worker service,
+    # so load the same canonical executor registry as the normal Agency path.
+    container.agency.initialize()
     if container.authentication_service is not None:
         bootstrap_test_api_key(container)
     return container

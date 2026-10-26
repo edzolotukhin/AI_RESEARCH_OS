@@ -100,6 +100,43 @@ class AsyncDesignGenerationTests(unittest.TestCase):
         ).run(self._execution_context(project))
         self.assertEqual(context.read_shared("design_generation")["design_id"], "design-1")
 
+    def test_unresolved_design_same_fingerprint_is_explicitly_regenerated(self):
+        project = self._project()
+        original_brief = project.research_brief
+        fingerprint = ProjectPlanningService.input_fingerprint(
+            original_brief, ("DESK",),
+        )
+        project.current_research_design = SimpleNamespace(
+            id="unresolved-design",
+            research_subject=SimpleNamespace(
+                resolution_status=SimpleNamespace(value="unresolved")
+            ),
+        )
+        project.research_design_input_fingerprint = fingerprint
+        replacement = SimpleNamespace(id="replacement-design")
+        saves = []
+
+        def generate_replacement(context):
+            context.workflow_template = SimpleNamespace(
+                research_design_snapshot=replacement
+            )
+            return context
+
+        executor = DesignGenerationExecutor(
+            planner_agent=SimpleNamespace(run=generate_replacement),
+            project_service=SimpleNamespace(save_project=saves.append),
+        )
+
+        context = executor.run(self._execution_context(project))
+
+        self.assertIs(project.current_research_design, replacement)
+        self.assertEqual(project.research_brief, original_brief)
+        self.assertEqual(saves, [project])
+        self.assertEqual(
+            context.read_shared("design_generation")["design_id"],
+            "replacement-design",
+        )
+
     def test_worker_success_persists_one_current_design(self):
         project = self._project()
         design = SimpleNamespace(id="generated-design")
