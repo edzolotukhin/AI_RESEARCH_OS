@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
@@ -9,13 +8,9 @@ from domain.planning.research_design import ResearchDesign
 from domain.reports.report_claim import ReportClaim
 from domain.reports.report_section import ReportSection
 from application.research_scope.numeric_normalization import (
-    normalize_numeric_value,
-    numeric_authority_matches,
-)
-
-_GROUPING_SPACE = " \u00a0\u202f"
-_NUMBER = re.compile(
-    rf"(?<![\w-])(?:\d{{1,3}}[{_GROUPING_SPACE}]\d{{3}}(?:[{_GROUPING_SPACE}]\d{{3}})*|\d+)(?:[.,]\d+)?%?(?![\w-])"
+    RenderedFact,
+    rendered_fact_matches_numeric_fact,
+    rendered_facts,
 )
 
 
@@ -30,6 +25,13 @@ class RenderedReport:
     sections: tuple[ReportSection, ...]
     summary_units: tuple[dict[str, Any], ...]
     executive_summary: str
+
+
+def validate_claim_proposition(claim: ReportClaim) -> None:
+    _validate_unit(
+        {"text": claim.proposition, "claim_ids": [claim.claim_id], "classification": "factual"},
+        {claim.claim_id: claim}, field="claim_proposition",
+    )
 
 
 def render_validated_claims(*, claims: tuple[ReportClaim, ...], design: ResearchDesign,
@@ -108,48 +110,61 @@ def _validate_unit(raw: Any, claims_by_id: dict[str, ReportClaim], *, field: str
     if classification == "non_factual" and claim_ids:
         raise ClaimRenderingError("non_factual units must not assert claim authority")
     if classification == "factual":
-        facts = tuple(fact for claim in selected for fact in claim.scope.numeric_facts)
-        allowed_periods = {period for claim in selected for period in claim.scope.periods}
-        for token in _NUMBER.findall(text):
-            normalized = _normalize_numeric_token(token)
-            if token in allowed_periods or normalized in allowed_periods:
-                continue
+        for rendered in rendered_facts(text):
             if not any(
-                numeric_authority_matches(
-                    token=token,
-                    authority_value=fact.value,
-                    authority_unit=fact.unit,
-                )
-                for fact in facts
+                rendered_fact_matches_numeric_fact(rendered, fact)[0]
+                and _direction_compatible(rendered, claim.direction)
+                for claim in selected
+                for fact in claim.scope.numeric_facts
             ):
                 raise ClaimRenderingError(
-                    f"numeric prose is not represented by referenced claims: {token}",
+                    f"numeric prose is not represented by referenced claims: {rendered.raw}",
                     diagnostics=_numeric_failure_diagnostics(
                         raw=raw, field=field, section=section, selected=selected,
-                        token=normalized if any(char in token for char in _GROUPING_SPACE) else token,
+                        rendered=rendered,
                     ),
                 )
     return {"text": text, "claim_ids": list(claim_ids), "classification": classification}
 
 
-def _normalize_numeric_token(token: str) -> str:
-    return normalize_numeric_value(token)
+def _direction_compatible(rendered: RenderedFact, claim_direction: str) -> bool:
+    if rendered.direction is None or claim_direction == "not_applicable":
+        return True
+    return rendered.direction == claim_direction
 
 
 def _numeric_failure_diagnostics(*, raw: dict[str, Any], field: str, section: dict[str, Any] | None,
-                                 selected: tuple[ReportClaim, ...], token: str) -> dict[str, Any]:
+                                 selected: tuple[ReportClaim, ...], rendered: RenderedFact) -> dict[str, Any]:
     """Return bounded structural context; never include full generated prose."""
     text = str(raw.get("text", ""))
-    index = text.find(token)
+    index = text.find(rendered.raw)
     start = max(0, index - 48) if index >= 0 else 0
-    end = min(len(text), (index + len(token) + 48) if index >= 0 else 96)
+    end = min(len(text), (index + len(rendered.raw) + 48) if index >= 0 else 96)
+    rejected = []
+    for claim in selected:
+        for fact in claim.scope.numeric_facts:
+            _, dimensions = rendered_fact_matches_numeric_fact(rendered, fact)
+            rejected.append({
+                "claim_id": claim.claim_id[:128],
+                "value": fact.value[:64], "unit": fact.unit[:32], "scale": fact.scale[:32],
+                "periods": [item[:64] for item in fact.periods][:8],
+                "mismatched_dimensions": list(dimensions)[:8],
+            })
     return {
         "code": "numeric_prose_unrepresented",
         "unit_type": field,
         "section_id": str(section.get("section_id"))[:128] if section else None,
         "section_title": str(section.get("title"))[:160] if section else None,
         "research_question_ids": [str(item)[:128] for item in (section or {}).get("research_question_ids", [])][:16],
-        "rejected_tokens": [token[:64]],
+        "rejected_tokens": [(
+            f"{rendered.value}%" if rendered.value is not None and rendered.unit == "%"
+            else rendered.value or rendered.raw
+        )[:64]],
+        "rendered_fact": {
+            "value": rendered.value, "unit": rendered.unit, "scale": rendered.scale,
+            "periods": list(rendered.periods)[:8], "direction": rendered.direction,
+        },
+        "rejected_numeric_facts": rejected[:16],
         "claim_ids": [claim.claim_id[:128] for claim in selected][:32],
         "finding_ids": [item for claim in selected for item in claim.finding_ids][:32],
         "evidence_ids": [item for claim in selected for item in claim.evidence_ids][:32],

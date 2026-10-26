@@ -230,7 +230,7 @@ def _reconcile_persisted_numeric_scope(
     grounded = tuple(
         fact
         for item in evidence
-        for fact in numeric_facts(f"{item.statement} {item.source_excerpt}")
+        for fact in _grounded_numeric_candidates(f"{item.statement} {item.source_excerpt}")
     )
     rebuilt: list[dict[str, Any]] = []
     for fact in sanitized["numeric_facts"]:
@@ -243,8 +243,7 @@ def _reconcile_persisted_numeric_scope(
         exact = [item for item in candidates if normalize_numeric_value(item.get("value", "")) == value]
         collapsed = [
             item for item in candidates
-            if "." in normalize_numeric_value(item.get("value", ""))
-            and normalize_numeric_value(item.get("value", "")).replace(".", "") == value
+            if _grounded_decimal_collapses_to(item.get("raw_value", ""), value)
         ]
         replacement = collapsed[0] if not exact and len({normalize_numeric_value(item["value"]) for item in collapsed}) == 1 else None
         rebuilt.append({
@@ -260,3 +259,26 @@ def _reconcile_persisted_numeric_scope(
         ): item for item in rebuilt
     }.values())[:MAX_NUMERIC_FACTS]
     return sanitized
+
+
+def _grounded_decimal_collapses_to(grounded_value: Any, persisted_value: str) -> bool:
+    raw = str(grounded_value).strip().rstrip("%").strip()
+    if "," not in raw and "." not in raw:
+        return False
+    digits = re.sub(r"[\s\u00a0\u202f,.]", "", raw)
+    return bool(digits) and digits == persisted_value
+
+
+def _grounded_numeric_candidates(value: str) -> tuple[dict[str, Any], ...]:
+    candidates: list[dict[str, Any]] = []
+    for match in _NUMBER.finditer(value):
+        prefix, scale, raw_unit = match.group("prefix") or "", match.group("scale") or "", match.group("unit") or ""
+        if not prefix and not scale and not raw_unit:
+            continue
+        candidates.append({
+            "raw_value": match.group("value"),
+            "value": normalize_numeric_value(match.group("value")),
+            "unit": normalize_numeric_unit(f"{prefix}{scale}{raw_unit}"),
+            "periods": list(temporal_anchors(value[max(0, match.start() - 80):match.end() + 80])),
+        })
+    return tuple(candidates[:MAX_NUMERIC_FACTS])

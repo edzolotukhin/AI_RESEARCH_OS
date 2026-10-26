@@ -153,6 +153,59 @@ class ClaimFirstGenerationTests(unittest.TestCase):
         )
         self.assertEqual(rendered.sections[0].claim_refs, (claims[0].claim_id,))
 
+    def test_legacy_trailing_zero_percentage_is_reconciled_from_grounded_evidence(self) -> None:
+        legacy_scope = copy.deepcopy(self.fixture.evidence.metadata[SCOPE_KEY])
+        legacy_scope["numeric_facts"] = [{
+            **legacy_scope["numeric_facts"][0], "value": "1020", "unit": "%",
+        }]
+        evidence = replace(
+            self.fixture.evidence,
+            statement="Індекс становив 102,0% у 2026 році.",
+            source_excerpt="У 2026 році індекс дорівнював 102,0%.",
+            metadata={**self.fixture.evidence.metadata, SCOPE_KEY: legacy_scope},
+        )
+        scope = scope_from_evidence(evidence)
+        self.assertEqual(scope["numeric_facts"][0]["value"], "102")
+
+    def test_ambiguous_legacy_decimal_collapse_remains_fail_closed(self) -> None:
+        legacy_scope = copy.deepcopy(self.fixture.evidence.metadata[SCOPE_KEY])
+        legacy_scope["numeric_facts"] = [{
+            **legacy_scope["numeric_facts"][0], "value": "1020", "unit": "%",
+        }]
+        evidence = replace(
+            self.fixture.evidence,
+            statement="Варіанти становили 102,0% і 10,20%.",
+            source_excerpt="Підтверджено 102,0% та 10,20%.",
+            metadata={**self.fixture.evidence.metadata, SCOPE_KEY: legacy_scope},
+        )
+        self.assertEqual(scope_from_evidence(evidence)["numeric_facts"][0]["value"], "1020")
+
+    def test_unsupported_proposition_fails_during_claim_generation(self) -> None:
+        scope = copy.deepcopy(self.fixture.evidence.metadata[SCOPE_KEY])
+        scope["numeric_facts"] = [
+            {**scope["numeric_facts"][0], "value": "10", "unit": "%", "periods": []},
+            {**scope["numeric_facts"][0], "value": "20.1", "unit": "%", "periods": []},
+        ]
+        evidence = replace(
+            self.fixture.evidence,
+            statement="Частки становили 10% та 20,1%.",
+            source_excerpt="Підтверджені значення: 10% та 20,1%.",
+            metadata={**self.fixture.evidence.metadata, SCOPE_KEY: scope},
+        )
+        finding = replace(
+            self.fixture.finding, statement="Решта становила 90%.",
+            metadata={**self.fixture.finding.metadata, SCOPE_KEY: scope},
+        )
+        with self.assertRaises(ClaimGenerationError) as captured:
+            generate_validated_claims(
+                project_id="project-1", source_workflow_run_id="source-run",
+                report_workflow_run_id="source-run", design=self.fixture.design,
+                findings=(finding,), insights=(), evidence_by_id={evidence.id: evidence},
+                citation_id_by_source={"source-1": "S1"},
+            )
+        self.assertEqual(captured.exception.diagnostics["rejected_tokens"], ["90%"])
+        self.assertEqual(captured.exception.diagnostics["unit_type"], "claim_proposition")
+
 
 class ClaimRenderingAndCoverageTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -273,6 +326,138 @@ class ClaimRenderingAndCoverageTests(unittest.TestCase):
                     claims=(claim,), design=self.design,
                     rendered_payload=self.payload(factual),
                     summary_payload={"summary_units": [{"text": "Supported", "claim_ids": [claim.claim_id], "classification": "factual"}]},
+                )
+
+    def test_fact_bound_period_cannot_be_borrowed_from_another_numeric_fact(self) -> None:
+        base = self.claim.scope.numeric_facts[0]
+        value_fact = replace(base, value="8.7", unit="%", periods=("2026",))
+        other_fact = replace(base, value="7.8", unit="%", periods=("2025", "2026"))
+        claim = replace(self.claim, scope=replace(
+            self.claim.scope, periods=("2026",), numeric_facts=(value_fact, other_fact),
+        ))
+        good = {"text": "+8,7% у 2026 році", "claim_ids": [claim.claim_id], "classification": "factual"}
+        render_validated_claims(
+            claims=(claim,), design=self.design, rendered_payload=self.payload(good),
+            summary_payload={"summary_units": [good]},
+        )
+        bad = {"text": "+8,7% проти 2025 року", "claim_ids": [claim.claim_id], "classification": "factual"}
+        with self.assertRaises(ClaimRenderingError) as captured:
+            render_validated_claims(
+                claims=(claim,), design=self.design, rendered_payload=self.payload(bad),
+                summary_payload={"summary_units": [good]},
+            )
+        self.assertIn("period", captured.exception.diagnostics["rejected_numeric_facts"][0]["mismatched_dimensions"])
+
+    def test_multiple_values_bind_to_their_nearest_periods(self) -> None:
+        base = self.claim.scope.numeric_facts[0]
+        first = replace(base, value="21", unit="%", periods=("2022",))
+        second = replace(base, value="6", unit="%", periods=("2025",))
+        claim = replace(self.claim, scope=replace(self.claim.scope, numeric_facts=(first, second)))
+        factual = {
+            "text": "У 2022 році спад становив 21%, а у 2025 році — 6%.",
+            "claim_ids": [claim.claim_id], "classification": "factual",
+        }
+        render_validated_claims(
+            claims=(claim,), design=self.design, rendered_payload=self.payload(factual),
+            summary_payload={"summary_units": [factual]},
+        )
+
+    def test_fact_specific_period_authorizes_production_comparison_year(self) -> None:
+        fact = replace(
+            self.claim.scope.numeric_facts[0], value="8.7", unit="%",
+            periods=("2025", "2026"),
+        )
+        claim = replace(self.claim, scope=replace(
+            self.claim.scope, periods=("2026",), numeric_facts=(fact,),
+        ))
+        factual = {
+            "text": "+8,7% р/р за січень–квітень проти 2025 року.",
+            "claim_ids": [claim.claim_id], "classification": "factual",
+        }
+        rendered = render_validated_claims(
+            claims=(claim,), design=self.design, rendered_payload=self.payload(factual),
+            summary_payload={"summary_units": [factual]},
+        )
+        self.assertEqual(rendered.sections[0].claim_refs, (claim.claim_id,))
+        unsupported = {
+            **factual, "text": "+8,7% р/р проти 2024 року.",
+        }
+        with self.assertRaises(ClaimRenderingError):
+            render_validated_claims(
+                claims=(claim,), design=self.design,
+                rendered_payload=self.payload(unsupported),
+                summary_payload={"summary_units": [factual]},
+            )
+
+    def test_explicit_direction_is_enforced_when_claim_authority_has_direction(self) -> None:
+        fact = replace(self.claim.scope.numeric_facts[0], value="21", unit="%", periods=())
+        claim = replace(
+            self.claim, direction="decrease",
+            scope=replace(self.claim.scope, numeric_facts=(fact,)),
+        )
+        supported = {"text": "-21%", "claim_ids": [claim.claim_id], "classification": "factual"}
+        render_validated_claims(
+            claims=(claim,), design=self.design, rendered_payload=self.payload(supported),
+            summary_payload={"summary_units": [supported]},
+        )
+        unsupported = {**supported, "text": "+21%"}
+        with self.assertRaises(ClaimRenderingError):
+            render_validated_claims(
+                claims=(claim,), design=self.design,
+                rendered_payload=self.payload(unsupported),
+                summary_payload={"summary_units": [supported]},
+            )
+
+    def test_explicit_unit_and_scale_are_isolated(self) -> None:
+        fact = replace(
+            self.claim.scope.numeric_facts[0], value="10", unit="грн",
+            scale="million", periods=(),
+        )
+        claim = replace(self.claim, scope=replace(self.claim.scope, numeric_facts=(fact,)))
+
+        def assert_render(text: str) -> None:
+            factual = {"text": text, "claim_ids": [claim.claim_id], "classification": "factual"}
+            render_validated_claims(
+                claims=(claim,), design=self.design, rendered_payload=self.payload(factual),
+                summary_payload={"summary_units": [factual]},
+            )
+
+        assert_render("10 million грн")
+        for text in ("10 million usd", "10 млрд грн"):
+            with self.subTest(text=text), self.assertRaises(ClaimRenderingError):
+                assert_render(text)
+
+    def test_unreferenced_claim_cannot_lend_numeric_authority(self) -> None:
+        authorized_fact = replace(self.claim.scope.numeric_facts[0], value="90", unit="%", periods=())
+        authorized = replace(
+            self.claim, claim_id="claim-authorized",
+            scope=replace(self.claim.scope, numeric_facts=(authorized_fact,)),
+        )
+        referenced = replace(self.claim, claim_id="claim-referenced")
+        factual = {"text": "90%", "claim_ids": [referenced.claim_id], "classification": "factual"}
+        with self.assertRaises(ClaimRenderingError):
+            render_validated_claims(
+                claims=(referenced, authorized), design=self.design,
+                rendered_payload=self.payload(factual, claim_ids=[referenced.claim_id]),
+                summary_payload={"summary_units": [factual]},
+            )
+
+    def test_real_representation_matrix_remains_fact_bound(self) -> None:
+        base = self.claim.scope.numeric_facts[0]
+        cases = (
+            (replace(base, value="7.8", unit="%", periods=("2025", "2026")), "7,8% у 2025 році"),
+            (replace(base, value="22.6", unit="%", periods=("2023",)), "22.6% у 2023 році"),
+            (replace(base, value="10", unit="%", periods=("2025",)), "10% у 2025 році"),
+            (replace(base, value="1.06", unit="млрд", periods=("2021",)), "1,06 млрд у 2021 році"),
+            (replace(base, value="3.1", unit="млрд", periods=("2020",)), "3.1 млрд у 2020 році"),
+        )
+        for fact, text in cases:
+            claim = replace(self.claim, scope=replace(self.claim.scope, numeric_facts=(fact,)))
+            factual = {"text": text, "claim_ids": [claim.claim_id], "classification": "factual"}
+            with self.subTest(text=text):
+                render_validated_claims(
+                    claims=(claim,), design=self.design, rendered_payload=self.payload(factual),
+                    summary_payload={"summary_units": [factual]},
                 )
 
     def test_complete_limited_and_mandatory_repair_are_claim_backed(self) -> None:

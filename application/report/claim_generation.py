@@ -7,6 +7,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from application.report.claim_authority import ClaimAuthority, ClaimAuthorityError, derive_claim_authority
 from application.report.claim_validation import validate_report_claim
+from application.report.claim_rendering import ClaimRenderingError, validate_claim_proposition
 from domain.evidence.evidence import Evidence
 from domain.findings.finding import Finding
 from domain.findings.finding_type import FindingType
@@ -18,7 +19,9 @@ ClaimCandidateProvider = Callable[[dict[str, Any]], dict[str, Any]]
 
 
 class ClaimGenerationError(ValueError):
-    pass
+    def __init__(self, message: str, *, diagnostics: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics or {}
 
 
 def generate_validated_claims(
@@ -55,6 +58,13 @@ def generate_validated_claims(
                 claim = validate_report_claim(ReportClaim.from_dict(corrected_raw), authority)
             except (ClaimAuthorityError, ValueError) as correction_error:
                 raise ClaimGenerationError(f"corrected ReportClaim remains invalid for Finding {finding.id}") from correction_error
+        try:
+            validate_claim_proposition(claim)
+        except ClaimRenderingError as error:
+            raise ClaimGenerationError(
+                f"ReportClaim proposition exceeds numeric authority for Finding {finding.id}",
+                diagnostics=error.diagnostics,
+            ) from error
         claims.append(claim)
     return tuple(claims)
 
