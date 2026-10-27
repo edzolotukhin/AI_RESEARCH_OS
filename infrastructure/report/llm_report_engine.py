@@ -91,8 +91,12 @@ class LlmReportEngine:
     ) -> dict[str, Any]:
         operation = "repair" if repair else "initial generation"
         system = (
-            "You generate structured ReportClaims from supplied authoritative envelopes. "
-            "Return JSON only. Preserve every identifier and lineage field exactly. "
+            "You generate transient semantic ReportClaim deltas from supplied authoritative envelopes. "
+            "Return JSON only. Use assertion.segments for proposition semantics. Text segments "
+            "must contain no digits or numeric literals. Select factual numbers only with "
+            "fact_ref values from numeric_catalog; never write values, units, scales, or bound "
+            "periods yourself. Use period_ref only for an independently supported contextual "
+            "period from numeric_catalog.periods. Preserve every identifier exactly. "
             "Each claim may use only its own authority envelope; never borrow authority "
             "from another claim. Do not derive, convert, round, broaden, or invent facts. "
             "Omit unsupported factual wording. "
@@ -103,16 +107,16 @@ class LlmReportEngine:
                 " Correct only the supplied invalid claims. Preserve supported claims "
                 "outside this request unchanged. Return only a repair delta: claim_id "
                 "for claim matching, one complete assertion object, and only the "
-                "provenance/support/scope selections you intend to replace. Omitted or "
+                "provenance/support/non-numeric scope selections you intend to replace. Omitted or "
                 "null selectable fields preserve canonical authority. Never return or "
                 "modify validation metadata, digests, version, or immutable lineage."
             )
-        repair_item = '{"claim_id":"string","assertion":{"kind":"string","proposition":"string","certainty":"string","direction":"string"},"research_question_ids":["string"],"information_need_ids":["string"],"finding_ids":["string"],"insight_ids":["string"],"evidence_ids":["string"],"support":{"evidence_ids":["string"],"source_ids":["string"],"citation_ids":["string"]},"scope":{"geography":{"country":["string"],"subnational":["string"]},"periods":["string"],"metrics":["string"],"population_dimensions":["string"],"numeric_facts":["complete authoritative NumericFact objects"]}}'
+        repair_item = '{"claim_id":"string","assertion":{"kind":"string","certainty":"string","direction":"string","segments":[{"type":"text","text":"numeric-free text"},{"type":"fact_ref","fact_ref":"catalog ref"},{"type":"period_ref","period_ref":"catalog ref"}]},"research_question_ids":["string"],"information_need_ids":["string"],"finding_ids":["string"],"insight_ids":["string"],"evidence_ids":["string"],"support":{"evidence_ids":["string"],"source_ids":["string"],"citation_ids":["string"]},"scope":{"geography":{"country":["string"],"subnational":["string"]},"periods":["string"],"metrics":["string"],"population_dimensions":["string"]}}'
         schema = (
             ('{"claims":[' + repair_item + ']}') if repair and "claims" in request
             else repair_item if repair
-            else '{"claims":[{"claim_id":"string", "...":"same ReportClaim fields as authority"}]}' if "claims" in request
-            else '{"claim_id":"string", "...":"same ReportClaim fields as authority"}'
+            else ('{"claims":[' + repair_item + ']}') if "claims" in request
+            else repair_item
         )
         return self._claim_structured_output.generate(
             Prompt(

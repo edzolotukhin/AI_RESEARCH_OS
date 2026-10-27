@@ -10,6 +10,7 @@ from application.report.claim_authority import ClaimAuthority, ClaimAuthorityErr
 from application.report.claim_validation import validate_report_claim
 from application.report.claim_rendering import ClaimRenderingError, validate_claim_proposition
 from application.report.claim_repair_contract import MISSING, RepairDelta, structural_error
+from application.report.claim_numeric_composition import FactCatalog, build_fact_catalog, compose_assertion
 from domain.evidence.evidence import Evidence
 from domain.findings.finding import Finding
 from domain.findings.finding_type import FindingType
@@ -34,7 +35,7 @@ def generate_validated_claims(
     candidate_provider: ClaimCandidateProvider | None = None,
     correction_provider: ClaimCandidateProvider | None = None,
 ) -> tuple[ReportClaim, ...]:
-    prepared: list[tuple[Finding, ClaimAuthority, dict[str, Any]]] = []
+    prepared: list[tuple[Finding, ClaimAuthority, dict[str, Any], FactCatalog]] = []
     for finding in findings:
         authority = derive_claim_authority(
             project_id=project_id,
@@ -48,10 +49,16 @@ def generate_validated_claims(
             authority=authority, finding=finding, insights=insights,
             citation_id_by_source=citation_id_by_source,
         )
-        prepared.append((finding, authority, envelope))
+        catalog = build_fact_catalog(
+            claim_id=envelope["claim_id"], facts=authority.scope.numeric_facts,
+            periods=authority.scope.periods,
+        )
+        prepared.append((finding, authority, envelope, catalog))
 
     if candidate_provider:
-        request = prepared[0][2] if len(prepared) == 1 else {"claims": [item[2] for item in prepared]}
+        request = _provider_request(prepared[0][2], prepared[0][3]) if len(prepared) == 1 else {
+            "claims": [_provider_request(item[2], item[3]) for item in prepared]
+        }
         try:
             generated = candidate_provider(request)
         except Exception as provider_error:
@@ -69,13 +76,15 @@ def generate_validated_claims(
 
     claims: list[ReportClaim | None] = [None] * len(prepared)
     invalid: list[dict[str, Any]] = []
-    for index, ((finding, authority, envelope), raw) in enumerate(zip(prepared, raws)):
+    for index, ((finding, authority, envelope, catalog), raw) in enumerate(zip(prepared, raws)):
         try:
-            raw = _restore_immutable_lineage(envelope, raw)
+            if candidate_provider is not None:
+                raw = _compose_repair_candidate(envelope, RepairDelta.from_dict(raw), catalog=catalog)
+                _validate_narrowing_only(envelope, raw)
             claim = validate_report_claim(ReportClaim.from_dict(raw), authority)
             validate_claim_proposition(claim)
         except (ClaimAuthorityError, ClaimRenderingError, ValueError) as first_error:
-            invalid.append({"index": index, "finding": finding, "authority": authority,
+            invalid.append({"index": index, "finding": finding, "authority": authority, "catalog": catalog,
                             "envelope": envelope, "candidate": raw,
                             "diagnostics": _generation_diagnostics(
                                 "initial_validation_failed", first_error,
@@ -112,7 +121,9 @@ def generate_validated_claims(
                     "repair_attempted": True, "attempt_count": 1,
                 })
             try:
-                raw = _compose_repair_candidate(item["envelope"], RepairDelta.from_dict(raw))
+                raw = _compose_repair_candidate(
+                    item["envelope"], RepairDelta.from_dict(raw), catalog=item["catalog"],
+                )
                 _validate_narrowing_only(item["envelope"], raw)
                 claim = validate_report_claim(ReportClaim.from_dict(raw), item["authority"])
                 validate_claim_proposition(claim)
@@ -163,7 +174,9 @@ _SELECTABLE_PROVENANCE_FIELDS = (
 _SELECTABLE_SUPPORT_FIELDS = ("evidence_ids", "source_ids", "citation_ids")
 
 
-def _compose_repair_candidate(canonical: dict[str, Any], delta: RepairDelta) -> dict[str, Any]:
+def _compose_repair_candidate(
+    canonical: dict[str, Any], delta: RepairDelta, *, catalog: FactCatalog,
+) -> dict[str, Any]:
     result = copy.deepcopy(canonical)
     for field in _IMMUTABLE_LINEAGE_FIELDS:
         supplied = delta.get(field)
@@ -190,11 +203,29 @@ def _compose_repair_candidate(canonical: dict[str, Any], delta: RepairDelta) -> 
             field=field, required=field != "insight_ids",
         )
 
-    result["assertion"] = _compose_assertion(canonical["assertion"], delta.get("assertion"))
+    result["assertion"], selected_facts = compose_assertion(delta.get("assertion"), catalog=catalog)
     result["support"] = _compose_support(canonical, delta.get("support"), result)
-    result["scope"] = _compose_repair_scope(
-        canonical.get("scope"), None if delta.get("scope") is MISSING else delta.get("scope"),
-    )
+    raw_scope = {} if delta.get("scope") in (MISSING, None) else copy.deepcopy(delta.get("scope"))
+    if not isinstance(raw_scope, dict):
+        raise _scope_shape_error(shape="whole_scope_malformed", dimension="scope", candidate=type(raw_scope).__name__, allowed="object")
+    if "numeric_facts" in raw_scope or "numeric_fact_refs" in raw_scope:
+        candidate_facts = raw_scope.get("numeric_facts", raw_scope.get("numeric_fact_refs"))
+        raise ClaimGenerationError(
+            "claim correction may not directly edit numeric authority",
+            diagnostics={
+                "validator_category": "repair_numeric_authority_change",
+                "repair_stage": "numeric_composition",
+                "container": "scope",
+                "field": "scope.numeric_facts",
+                "failure_reason": "numeric_authority_change",
+                "scope_shape": "system_value_conflict",
+                "scope_dimension": "numeric_authority",
+                "rejected_numeric_facts": [item for item in candidate_facts or [] if isinstance(item, dict)][:16],
+                "allowed_numeric_facts": [fact.to_dict() for fact in catalog.facts.values()][:32],
+            },
+        )
+    raw_scope["numeric_facts"] = [fact.to_dict() for fact in selected_facts]
+    result["scope"] = _compose_repair_scope(canonical.get("scope"), raw_scope)
     result["validation"] = _compose_validation(canonical["validation"], delta.get("validation"))
     return result
 
@@ -224,30 +255,6 @@ def _selection(*, value: Any, allowed: list[Any], container: str, field: str, re
             candidate=value, allowed=allowed,
         )
     return list(dict.fromkeys(value))
-
-
-def _compose_assertion(canonical: dict[str, Any], value: Any) -> dict[str, Any]:
-    if value is MISSING or value is None:
-        raise structural_error(
-            container="assertion", field="assertion", ownership_class="PROVIDER_SEMANTIC",
-            shape="container_omitted" if value is MISSING else "container_null",
-            failure_reason="required_semantic_content_missing", candidate=None, allowed="complete assertion",
-        )
-    expected = {"kind", "proposition", "certainty", "direction"}
-    if set(value) != expected:
-        raise structural_error(
-            container="assertion", field="assertion", ownership_class="PROVIDER_SEMANTIC",
-            shape="container_malformed", failure_reason="required_semantic_content_missing",
-            candidate=sorted(value), allowed=sorted(expected),
-        )
-    if any(value[field] is None or not str(value[field]).strip() for field in expected):
-        raise structural_error(
-            container="assertion", field="assertion", ownership_class="PROVIDER_SEMANTIC",
-            shape="field_empty", failure_reason="required_semantic_content_missing",
-            candidate=sorted(field for field in expected if value[field] is None or not str(value[field]).strip()),
-            allowed=sorted(expected),
-        )
-    return copy.deepcopy(value)
 
 
 def _compose_support(canonical: dict[str, Any], value: Any, result: dict[str, Any]) -> dict[str, Any]:
@@ -551,11 +558,21 @@ def _repair_request_batch(invalid: list[dict[str, Any]]) -> dict[str, Any]:
             "claim_id": item["envelope"]["claim_id"],
             "candidate": item["candidate"],
             "authority": item["envelope"],
+            "numeric_catalog": item["catalog"].provider_payload(),
             "diagnostics": item["diagnostics"],
         })
     if len(requests) == 1:
-        return {"candidate": requests[0]["candidate"], "authority": requests[0]["authority"], "diagnostics": requests[0]["diagnostics"]}
+        return {
+            "candidate": requests[0]["candidate"],
+            "authority": requests[0]["authority"],
+            "numeric_catalog": requests[0]["numeric_catalog"],
+            "diagnostics": requests[0]["diagnostics"],
+        }
     return {"claims": requests}
+
+
+def _provider_request(envelope: dict[str, Any], catalog: FactCatalog) -> dict[str, Any]:
+    return {"claim_id": envelope["claim_id"], "authority": envelope, "numeric_catalog": catalog.provider_payload()}
 
 
 def _unpack_repair_claims(corrected: dict[str, Any], invalid: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:

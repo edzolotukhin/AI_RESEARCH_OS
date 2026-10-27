@@ -38,6 +38,7 @@ from infrastructure.persistence.memory.in_memory_artifact_repository import InMe
 from infrastructure.report.deterministic_report_engine import DeterministicReportEngine
 from application.evidence.grounding import verify_grounding
 import tests.application.report.test_report_claim_contract as claim_fixtures
+from tests.application.report.hybrid_claim_helpers import LegacyClaimProviderAdapter, semantic_delta
 
 
 class ClaimFirstGenerationTests(unittest.TestCase):
@@ -45,6 +46,13 @@ class ClaimFirstGenerationTests(unittest.TestCase):
         self.fixture = claim_fixtures.ReportClaimContractTests(); self.fixture.setUp()
 
     def generate(self, **kwargs):
+        initial = kwargs.pop("candidate_provider", None)
+        repair = kwargs.pop("correction_provider", None)
+        if initial is not None:
+            adapter = LegacyClaimProviderAdapter()
+            kwargs["candidate_provider"] = adapter.initial(initial)
+            if repair is not None:
+                kwargs["correction_provider"] = adapter.repair(repair)
         return generate_validated_claims(project_id="project-1", source_workflow_run_id="source-run", report_workflow_run_id=kwargs.pop("report_workflow_run_id", "source-run"), design=self.fixture.design, findings=(self.fixture.finding,), insights=(), evidence_by_id={"ev-1": self.fixture.evidence}, citation_id_by_source={"source-1": "S1"}, **kwargs)
 
     def test_actual_generation_path_accepts_supported_authority(self) -> None:
@@ -77,7 +85,6 @@ class ClaimFirstGenerationTests(unittest.TestCase):
 
     def test_missing_scope_foreign_lineage_and_third_run_fail_closed(self) -> None:
         for mutate in (
-            lambda p: p.pop("scope"),
             lambda p: p.update(source_workflow_run_id="third-run"),
             lambda p: p["finding_ids"].append("foreign-finding"),
             lambda p: p["evidence_ids"].append("foreign-evidence"),
@@ -130,6 +137,7 @@ class ClaimFirstGenerationTests(unittest.TestCase):
 
         def changed_scope(request):
             result = copy.deepcopy(request["candidate"])
+            result["assertion"] = copy.deepcopy(request["authority"]["assertion"])
             result["scope"]["numeric_facts"][0]["value"] = "1064"
             return result
 
@@ -228,7 +236,7 @@ class ClaimFirstGenerationTests(unittest.TestCase):
             with self.subTest(shape=shape):
                 self.assertEqual(len(self.generate(candidate_provider=invalid, correction_provider=corrected)), 1)
 
-        for dimension in ("periods", "metrics", "population_dimensions", "numeric_facts"):
+        for dimension in ("periods", "metrics", "population_dimensions"):
             def corrected(request, dimension=dimension):
                 result = copy.deepcopy(request["candidate"])
                 result["scope"][dimension] = None
@@ -241,7 +249,7 @@ class ClaimFirstGenerationTests(unittest.TestCase):
         for malformed, expected_shape, expected_dimension in (
             ("scope", "whole_scope_malformed", "scope"),
             ({"geography": "invalid"}, "nested_dimension_malformed", "geography"),
-            ({"numeric_facts": ["invalid"]}, "nested_dimension_malformed", "numeric_facts[0]"),
+            ({"numeric_facts": ["invalid"]}, "system_value_conflict", "scope.numeric_facts"),
         ):
             def invalid(envelope):
                 result = copy.deepcopy(envelope)
@@ -254,9 +262,11 @@ class ClaimFirstGenerationTests(unittest.TestCase):
             with self.subTest(malformed=malformed), self.assertRaises(ClaimGenerationError) as captured:
                 self.generate(candidate_provider=invalid, correction_provider=corrected)
             diagnostics = captured.exception.diagnostics
-            self.assertEqual(diagnostics["validator_category"], "repair_scope_schema")
+            numeric_authority = expected_dimension == "scope.numeric_facts"
+            expected_category = "repair_numeric_authority_change" if numeric_authority else "repair_scope_schema"
+            self.assertEqual(diagnostics["validator_category"], expected_category)
             self.assertEqual(diagnostics["scope_shape"], expected_shape)
-            self.assertEqual(diagnostics["scope_dimension"], expected_dimension)
+            self.assertEqual(diagnostics["scope_dimension"], "numeric_authority" if numeric_authority else expected_dimension)
 
     def test_repair_structured_scope_explicit_empty_is_not_restored(self) -> None:
         def invalid(envelope):
@@ -430,7 +440,7 @@ class ClaimFirstGenerationTests(unittest.TestCase):
         claims = self.generate(candidate_provider=invalid, correction_provider=corrected)
         self.assertEqual(1, len(claims))
         self.assertEqual(1, len(calls))
-        self.assertEqual("numeric_prose_unrepresented", calls[0]["diagnostics"]["code"])
+        self.assertEqual("numeric_leakage", calls[0]["diagnostics"]["validator_category"])
         self.assertNotIn("errors", calls[0])
 
     def test_invalid_rendered_claim_repair_is_fail_closed_and_not_retried(self) -> None:
@@ -470,14 +480,20 @@ class ClaimFirstGenerationTests(unittest.TestCase):
 
         def initial(request):
             calls.append(request)
-            result = copy.deepcopy(request)
-            for claim in result["claims"]:
-                claim["assertion"]["proposition"] = "1,06 млрд"
-            return result
+            return {"claims": [
+                {
+                    **semantic_delta(item),
+                    "assertion": {
+                        **semantic_delta(item)["assertion"],
+                        "segments": [{"type": "text", "text": "1,06 млрд"}],
+                    },
+                }
+                for item in request["claims"]
+            ]}
 
         def repair(request):
             repair_calls.append(request)
-            return {"claims": [copy.deepcopy(item["authority"]) for item in request["claims"]]}
+            return {"claims": [semantic_delta(item) for item in request["claims"]]}
 
         claims = generate_validated_claims(
             project_id="project-1", source_workflow_run_id="source-run",

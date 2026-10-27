@@ -29,6 +29,7 @@ from infrastructure.report.deterministic_report_engine import DeterministicRepor
 from runtime.workflow_context import WorkflowContext
 from tests.fixtures.research_brief import sample_research_brief
 import tests.application.report.test_report_claim_contract as claim_fixtures
+from tests.application.report.hybrid_claim_helpers import semantic_delta
 
 
 class _MissingClaimProviderEngine(DeterministicReportEngine):
@@ -50,18 +51,20 @@ class _ScriptedLLMClient:
         if "bounded repair call" in prompt.system:
             self.repair_calls.append(copy.deepcopy(request))
             if "claims" in request:
-                key = "authority" if self.repair_mode == "authority" else "candidate"
-                result = {"claims": [copy.deepcopy(item[key]) for item in request["claims"]]}
+                result = {"claims": [
+                    semantic_delta(item) if self.repair_mode == "authority" else copy.deepcopy(item["candidate"])
+                    for item in request["claims"]
+                ]}
             else:
-                key = "authority" if self.repair_mode == "authority" else "candidate"
-                result = copy.deepcopy(request[key])
+                result = semantic_delta(request) if self.repair_mode == "authority" else copy.deepcopy(request["candidate"])
         else:
             self.initial_calls.append(copy.deepcopy(request))
-            result = copy.deepcopy(request)
-            candidates = result["claims"] if "claims" in result else [result]
+            items = request["claims"] if "claims" in request else [request]
+            candidates = [semantic_delta(item) for item in items]
             if self.initial_mode == "invalid":
                 for claim in candidates:
-                    claim["assertion"]["proposition"] = "1,06 млрд"
+                    claim["assertion"]["segments"] = [{"type": "text", "text": "1,06 млрд"}]
+            result = {"claims": candidates} if "claims" in request else candidates[0]
         return LLMResponse(content=json.dumps(result, ensure_ascii=False))
 
 
@@ -172,7 +175,7 @@ class ProductionClaimProviderCompositionTests(unittest.TestCase):
         service, context, report_repo, claim_repo = self._build(llm_client=client)
         summary = service.write_for_context(context)
         self.assertEqual((1, 1), (len(client.initial_calls), len(client.repair_calls)))
-        self.assertEqual("1,06 млрд", client.repair_calls[0]["candidate"]["assertion"]["proposition"])
+        self.assertEqual("1,06 млрд", client.repair_calls[0]["candidate"]["assertion"]["segments"][0]["text"])
         claims = claim_repo.list_for_report(summary.report_id, 1)
         self.assertEqual(1, len(claims))
         self.assertNotEqual("1,06 млрд", claims[0].proposition)
@@ -188,7 +191,7 @@ class ProductionClaimProviderCompositionTests(unittest.TestCase):
         diagnostic = context.read_shared("report_generation_diagnostics")["claim_generation"]
         self.assertEqual("repair_validation_failed", diagnostic["category"])
         self.assertTrue(diagnostic["repair_exhausted"])
-        self.assertIn("rejected_tokens", diagnostic)
+        self.assertEqual("numeric_leakage", diagnostic["validator_category"])
         self.assertNotIn("prompt", diagnostic)
         self.assertNotIn("response", diagnostic)
 
@@ -200,9 +203,10 @@ class ProductionClaimProviderCompositionTests(unittest.TestCase):
         batch = client.repair_calls[0]["claims"]
         self.assertEqual(2, len(batch))
         self.assertNotEqual(batch[0]["claim_id"], batch[1]["claim_id"])
-        for item in batch:
+        for index, item in enumerate(batch):
             self.assertEqual(item["claim_id"], item["authority"]["claim_id"])
-            self.assertEqual(item["candidate"]["finding_ids"], item["authority"]["finding_ids"])
+            self.assertEqual(item["numeric_catalog"], client.initial_calls[0]["claims"][index]["numeric_catalog"])
+        self.assertNotEqual(batch[0]["numeric_catalog"], batch[1]["numeric_catalog"])
         self.assertEqual(2, len(claim_repo.list_for_report(summary.report_id, 1)))
 
 

@@ -19,14 +19,36 @@ class DeterministicReportEngine:
     method_name = "deterministic"
 
     def generate_claim_candidates(self, request: dict) -> dict:
-        return copy.deepcopy(request)
+        if "claims" in request:
+            return {"claims": [self._claim_delta(item) for item in request["claims"]]}
+        return self._claim_delta(request)
 
     def repair_claim_candidates(self, request: dict) -> dict:
         if "claims" in request:
             return {
-                "claims": [copy.deepcopy(item["authority"]) for item in request["claims"]],
+                "claims": [self._claim_delta(item) for item in request["claims"]],
             }
-        return copy.deepcopy(request["authority"])
+        return self._claim_delta(request)
+
+    @staticmethod
+    def _claim_delta(request: dict) -> dict:
+        authority = request["authority"]
+        segments = [{"type": "text", "text": "Підтверджено: "}]
+        for index, item in enumerate(request["numeric_catalog"]["numeric_facts"]):
+            if index:
+                segments.append({"type": "text", "text": "; "})
+            segments.append({"type": "fact_ref", "fact_ref": item["fact_ref"]})
+        if len(segments) == 1:
+            segments[0]["text"] = "Підтверджено."
+        return {
+            "claim_id": authority["claim_id"],
+            "assertion": {
+                "kind": authority["assertion"]["kind"],
+                "certainty": authority["assertion"]["certainty"],
+                "direction": authority["assertion"]["direction"],
+                "segments": segments,
+            },
+        }
 
     def generate_sections(
         self,

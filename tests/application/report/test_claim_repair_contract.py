@@ -7,6 +7,7 @@ from dataclasses import replace
 from application.report.claim_generation import ClaimGenerationError, generate_validated_claims
 from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
 import tests.application.report.test_report_claim_contract as claim_fixtures
+from tests.application.report.hybrid_claim_helpers import LegacyClaimProviderAdapter
 
 
 class ClaimRepairContractTests(unittest.TestCase):
@@ -20,13 +21,14 @@ class ClaimRepairContractTests(unittest.TestCase):
             result["scope"]["geography"]["country"].append("poland")
             return result
 
+        adapter = LegacyClaimProviderAdapter()
         return generate_validated_claims(
             project_id="project-1", source_workflow_run_id="source-run",
             report_workflow_run_id="replay-run", design=self.fixture.design,
             findings=(self.fixture.finding,), insights=(),
             evidence_by_id={"ev-1": self.fixture.evidence},
             citation_id_by_source={"source-1": "S1"},
-            candidate_provider=invalid, correction_provider=repair,
+            candidate_provider=adapter.initial(invalid), correction_provider=adapter.repair(repair),
         )
 
     @staticmethod
@@ -148,12 +150,13 @@ class ClaimRepairContractTests(unittest.TestCase):
                 result = copy.deepcopy(envelope)
                 result["scope"]["geography"]["country"].append("poland")
                 return result
+            adapter = LegacyClaimProviderAdapter()
             return generate_validated_claims(
                 project_id="project-1", source_workflow_run_id="source-run",
                 report_workflow_run_id="replay-run", design=design,
                 findings=(finding,), insights=(), evidence_by_id={item.id: item for item in evidence},
                 citation_id_by_source={item.source_id: f"S{index}" for index, item in enumerate(evidence)},
-                candidate_provider=invalid, correction_provider=repair,
+                candidate_provider=adapter.initial(invalid), correction_provider=adapter.repair(repair),
             )
 
         for support in ("omitted", None):
