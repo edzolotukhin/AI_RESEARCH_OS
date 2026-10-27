@@ -255,9 +255,11 @@ def _generation_diagnostics(
         "attempt_count": 1,
     }
     if isinstance(diagnostics, dict):
-        for key in ("code", "rejected_tokens", "unit_type", "section_id", "research_question_ids",
+        for key in ("code", "validator_category", "scope_dimension", "candidate_scope", "allowed_scope",
+                    "rejected_tokens", "unit_type", "section_id", "research_question_ids",
                     "claim_ids", "finding_ids", "evidence_ids", "allowed_numeric_values",
-                    "allowed_period_values", "source_workflow_run_id", "report_workflow_run_id"):
+                    "allowed_period_values", "rejected_numeric_facts", "allowed_numeric_facts",
+                    "source_workflow_run_id", "report_workflow_run_id"):
             if key in diagnostics:
                 result[key] = diagnostics[key]
     if envelope:

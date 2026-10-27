@@ -11,7 +11,9 @@ from domain.reports.report_claim import ClaimScope
 
 
 class ClaimAuthorityError(ValueError):
-    pass
+    def __init__(self, message: str, *, diagnostics: dict[str, object] | None = None) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics or {}
 
 
 @dataclass(frozen=True)

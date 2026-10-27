@@ -100,6 +100,25 @@ class ClaimFirstGenerationTests(unittest.TestCase):
         self.assertEqual(len(self.generate(candidate_provider=invalid, correction_provider=corrected)), 1)
         with self.assertRaises(ClaimGenerationError): self.generate(candidate_provider=invalid, correction_provider=lambda request: request["candidate"])
 
+    def test_repair_validation_persists_bounded_numeric_authority_reason(self) -> None:
+        def invalid(envelope):
+            result = copy.deepcopy(envelope)
+            result["scope"]["numeric_facts"][0]["value"] = "1064"
+            return result
+
+        with self.assertRaises(ClaimGenerationError) as captured:
+            self.generate(
+                candidate_provider=invalid,
+                correction_provider=lambda request: request["candidate"],
+            )
+        diagnostics = captured.exception.diagnostics
+        self.assertEqual(diagnostics["validator_category"], "unsupported_numeric_authority")
+        self.assertEqual(diagnostics["rejected_numeric_facts"][0]["value"], "1064")
+        self.assertEqual(diagnostics["allowed_numeric_facts"][0]["value"], "10")
+        self.assertEqual(diagnostics["attempt_count"], 1)
+        self.assertTrue(diagnostics["repair_attempted"])
+        self.assertTrue(diagnostics["repair_exhausted"])
+
     def test_legacy_decimal_comma_percentage_is_reconciled_from_grounded_evidence(self) -> None:
         legacy_scope = copy.deepcopy(self.fixture.evidence.metadata[SCOPE_KEY])
         legacy_scope["numeric_facts"] = [{

@@ -6,7 +6,15 @@ from application.report.claim_authority import ClaimAuthority, ClaimAuthorityErr
 
 def _subset(actual: tuple[str, ...], allowed: tuple[str, ...], label: str) -> None:
     if not set(actual) <= set(allowed):
-        raise ClaimAuthorityError(f"unsupported {label}")
+        raise ClaimAuthorityError(
+            f"unsupported {label}",
+            diagnostics={
+                "validator_category": "unsupported_scope",
+                "scope_dimension": label,
+                "candidate_scope": list(actual)[:16],
+                "allowed_scope": list(allowed)[:16],
+            },
+        )
 
 
 def _numeric_supported(candidate: NumericFact, authority: tuple[NumericFact, ...]) -> bool:
@@ -37,5 +45,16 @@ def validate_report_claim(claim: ReportClaim, authority: ClaimAuthority) -> Repo
     _subset(claim.scope.metrics, authority.scope.metrics, "metric")
     _subset(claim.scope.population_dimensions, authority.scope.population_dimensions, "population dimension")
     if any(not _numeric_supported(item, authority.scope.numeric_facts) for item in claim.scope.numeric_facts):
-        raise ClaimAuthorityError("unsupported numeric value/unit/scale or binding")
+        rejected = next(
+            (item for item in claim.scope.numeric_facts if not _numeric_supported(item, authority.scope.numeric_facts)),
+            None,
+        )
+        raise ClaimAuthorityError(
+            "unsupported numeric value/unit/scale or binding",
+            diagnostics={
+                "validator_category": "unsupported_numeric_authority",
+                "rejected_numeric_facts": [rejected.to_dict()] if rejected else [],
+                "allowed_numeric_facts": [item.to_dict() for item in authority.scope.numeric_facts][:32],
+            },
+        )
     return claim
