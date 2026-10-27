@@ -69,6 +69,7 @@ def generate_validated_claims(
     invalid: list[dict[str, Any]] = []
     for index, ((finding, authority, envelope), raw) in enumerate(zip(prepared, raws)):
         try:
+            raw = _restore_immutable_lineage(envelope, raw)
             claim = validate_report_claim(ReportClaim.from_dict(raw), authority)
             validate_claim_proposition(claim)
         except (ClaimAuthorityError, ClaimRenderingError, ValueError) as first_error:
@@ -109,7 +110,9 @@ def generate_validated_claims(
                     "repair_attempted": True, "attempt_count": 1,
                 })
             try:
-                _validate_narrowing_only(item["candidate"], raw)
+                raw = _restore_immutable_lineage(item["envelope"], raw)
+                original = _restore_immutable_lineage(item["envelope"], item["candidate"])
+                _validate_narrowing_only(original, raw)
                 claim = validate_report_claim(ReportClaim.from_dict(raw), item["authority"])
                 validate_claim_proposition(claim)
             except Exception as repair_error:
@@ -124,6 +127,32 @@ def generate_validated_claims(
                 }) from repair_error
             claims[item["index"]] = claim
     return tuple(claim for claim in claims if claim is not None)
+
+
+_IMMUTABLE_LINEAGE_FIELDS = (
+    "claim_id", "project_id", "source_workflow_run_id", "report_workflow_run_id", "design_id",
+)
+
+
+def _restore_immutable_lineage(canonical: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(candidate, dict):
+        return candidate
+    result = dict(candidate)
+    for field in _IMMUTABLE_LINEAGE_FIELDS:
+        expected = canonical.get(field)
+        supplied = candidate.get(field)
+        if supplied not in (None, "") and supplied != expected:
+            raise ClaimGenerationError(
+                "claim output conflicts with system-owned lineage",
+                diagnostics={
+                    "validator_category": "immutable_lineage_conflict",
+                    "scope_dimension": "lineage",
+                    "candidate_scope": {field: supplied},
+                    "allowed_scope": {field: expected},
+                },
+            )
+        result[field] = expected
+    return result
 
 
 def _candidate_payload(*, authority: ClaimAuthority, finding: Finding,

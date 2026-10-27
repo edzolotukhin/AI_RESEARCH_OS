@@ -141,6 +141,42 @@ class ClaimFirstGenerationTests(unittest.TestCase):
         self.assertEqual(diagnostics["rejected_numeric_facts"][0]["value"], "1064")
         self.assertEqual(diagnostics["allowed_numeric_facts"][0]["value"], "10")
 
+    def test_repair_omitted_or_null_immutable_lineage_is_restored(self) -> None:
+        def invalid(envelope):
+            result = copy.deepcopy(envelope)
+            result["scope"]["geography"]["country"].append("poland")
+            return result
+
+        def corrected(request, *, null=False):
+            result = copy.deepcopy(request["candidate"])
+            result["scope"]["geography"]["country"].remove("poland")
+            result["project_id"] = None if null else result.pop("project_id")
+            return result
+
+        for null in (False, True):
+            with self.subTest(null=null):
+                claims = self.generate(
+                    candidate_provider=invalid,
+                    correction_provider=lambda request, null=null: corrected(request, null=null),
+                )
+                self.assertEqual(self.fixture.finding.project_id, claims[0].project_id)
+
+    def test_repair_explicit_immutable_lineage_conflict_fails_closed(self) -> None:
+        def invalid(envelope):
+            result = copy.deepcopy(envelope)
+            result["scope"]["geography"]["country"].append("poland")
+            return result
+
+        def conflicting(request):
+            result = copy.deepcopy(request["candidate"])
+            result["project_id"] = "foreign-project"
+            return result
+
+        with self.assertRaises(ClaimGenerationError) as captured:
+            self.generate(candidate_provider=invalid, correction_provider=conflicting)
+        self.assertEqual(captured.exception.diagnostics["validator_category"], "immutable_lineage_conflict")
+        self.assertEqual(captured.exception.diagnostics["candidate_scope"], {"project_id": "foreign-project"})
+
     def test_legacy_decimal_comma_percentage_is_reconciled_from_grounded_evidence(self) -> None:
         legacy_scope = copy.deepcopy(self.fixture.evidence.metadata[SCOPE_KEY])
         legacy_scope["numeric_facts"] = [{
