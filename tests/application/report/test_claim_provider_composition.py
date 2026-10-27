@@ -188,6 +188,9 @@ class ProductionClaimProviderCompositionTests(unittest.TestCase):
         diagnostic = context.read_shared("report_generation_diagnostics")["claim_generation"]
         self.assertEqual("repair_validation_failed", diagnostic["category"])
         self.assertTrue(diagnostic["repair_exhausted"])
+        self.assertIn("rejected_tokens", diagnostic)
+        self.assertNotIn("prompt", diagnostic)
+        self.assertNotIn("response", diagnostic)
 
     def test_multiple_invalid_claims_share_one_batch_repair_without_authority_borrowing(self) -> None:
         client = _ScriptedLLMClient(initial_mode="invalid")

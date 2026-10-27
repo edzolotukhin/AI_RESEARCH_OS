@@ -98,7 +98,10 @@ class ClaimFirstGenerationTests(unittest.TestCase):
         def corrected(request):
             result = copy.deepcopy(request["candidate"]); result["scope"]["geography"]["country"].remove("poland"); return result
         self.assertEqual(len(self.generate(candidate_provider=invalid, correction_provider=corrected)), 1)
-        with self.assertRaises(ClaimGenerationError): self.generate(candidate_provider=invalid, correction_provider=lambda request: request["candidate"])
+        with self.assertRaises(ClaimGenerationError) as captured:
+            self.generate(candidate_provider=invalid, correction_provider=lambda request: request["candidate"])
+        self.assertEqual(captured.exception.diagnostics["validator_category"], "unsupported_scope")
+        self.assertEqual(captured.exception.diagnostics["scope_dimension"], "country geography")
 
     def test_repair_validation_persists_bounded_numeric_authority_reason(self) -> None:
         def invalid(envelope):
@@ -118,6 +121,25 @@ class ClaimFirstGenerationTests(unittest.TestCase):
         self.assertEqual(diagnostics["attempt_count"], 1)
         self.assertTrue(diagnostics["repair_attempted"])
         self.assertTrue(diagnostics["repair_exhausted"])
+
+    def test_repair_narrowing_failure_carries_bounded_authority_diagnostics(self) -> None:
+        def invalid(envelope):
+            result = copy.deepcopy(envelope)
+            result["assertion"]["proposition"] = "1,06 млрд"
+            return result
+
+        def changed_scope(request):
+            result = copy.deepcopy(request["candidate"])
+            result["scope"]["numeric_facts"][0]["value"] = "1064"
+            return result
+
+        with self.assertRaises(ClaimGenerationError) as captured:
+            self.generate(candidate_provider=invalid, correction_provider=changed_scope)
+        diagnostics = captured.exception.diagnostics
+        self.assertEqual(diagnostics["validator_category"], "repair_numeric_authority_change")
+        self.assertEqual(diagnostics["scope_dimension"], "numeric_authority")
+        self.assertEqual(diagnostics["rejected_numeric_facts"][0]["value"], "1064")
+        self.assertEqual(diagnostics["allowed_numeric_facts"][0]["value"], "10")
 
     def test_legacy_decimal_comma_percentage_is_reconciled_from_grounded_evidence(self) -> None:
         legacy_scope = copy.deepcopy(self.fixture.evidence.metadata[SCOPE_KEY])

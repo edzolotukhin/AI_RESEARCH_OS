@@ -165,20 +165,55 @@ def _validate_narrowing_only(original: dict[str, Any], corrected: dict[str, Any]
     graph_fields = ("project_id", "source_workflow_run_id", "report_workflow_run_id", "design_id", "research_question_ids", "information_need_ids", "finding_ids", "insight_ids", "evidence_ids")
     for field in graph_fields:
         if corrected.get(field) != original.get(field):
-            raise ClaimGenerationError("claim correction may not change lineage or support graph")
+            raise ClaimGenerationError(
+                "claim correction may not change lineage or support graph",
+                diagnostics={
+                    "validator_category": "repair_lineage_narrowing_violation",
+                    "scope_dimension": "lineage",
+                    "candidate_scope": {field: corrected.get(field)},
+                    "allowed_scope": {field: original.get(field)},
+                },
+            )
     before, after = original.get("scope"), corrected.get("scope")
     if not isinstance(before, dict) or not isinstance(after, dict):
-        raise ClaimGenerationError("claim correction requires structured scope")
+        raise ClaimGenerationError(
+            "claim correction requires structured scope",
+            diagnostics={"validator_category": "repair_scope_schema"},
+        )
     for field in ("periods", "metrics", "population_dimensions"):
         if not set(after.get(field, [])) <= set(before.get(field, [])):
-            raise ClaimGenerationError("claim correction may only narrow scope")
+            raise ClaimGenerationError(
+                "claim correction may only narrow scope",
+                diagnostics={
+                    "validator_category": "repair_scope_broadening",
+                    "scope_dimension": field,
+                    "candidate_scope": list(after.get(field, []))[:16],
+                    "allowed_scope": list(before.get(field, []))[:16],
+                },
+            )
     for field in ("country", "subnational"):
         if not set((after.get("geography") or {}).get(field, [])) <= set((before.get("geography") or {}).get(field, [])):
-            raise ClaimGenerationError("claim correction may only narrow geography")
+            raise ClaimGenerationError(
+                "claim correction may only narrow geography",
+                diagnostics={
+                    "validator_category": "repair_scope_broadening",
+                    "scope_dimension": "geography",
+                    "candidate_scope": list((after.get("geography") or {}).get(field, []))[:16],
+                    "allowed_scope": list((before.get("geography") or {}).get(field, []))[:16],
+                },
+            )
     before_facts = {_fact_identity(item) for item in before.get("numeric_facts", []) if isinstance(item, dict)}
     after_facts = {_fact_identity(item) for item in after.get("numeric_facts", []) if isinstance(item, dict)}
     if not after_facts <= before_facts:
-        raise ClaimGenerationError("claim correction may not add or alter numeric authority")
+        raise ClaimGenerationError(
+            "claim correction may not add or alter numeric authority",
+            diagnostics={
+                "validator_category": "repair_numeric_authority_change",
+                "scope_dimension": "numeric_authority",
+                "rejected_numeric_facts": [item for item in after.get("numeric_facts", []) if isinstance(item, dict)][:16],
+                "allowed_numeric_facts": [item for item in before.get("numeric_facts", []) if isinstance(item, dict)][:32],
+            },
+        )
 
 
 def _repair_request(raw: dict[str, Any], envelope: dict[str, Any], error: Exception) -> dict[str, Any]:
