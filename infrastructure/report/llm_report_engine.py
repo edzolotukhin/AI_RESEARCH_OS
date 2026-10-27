@@ -101,11 +101,17 @@ class LlmReportEngine:
         if repair:
             system += (
                 " Correct only the supplied invalid claims. Preserve supported claims "
-                "outside this request unchanged."
+                "outside this request unchanged. Return only a repair delta: claim_id "
+                "for claim matching, one complete assertion object, and only the "
+                "provenance/support/scope selections you intend to replace. Omitted or "
+                "null selectable fields preserve canonical authority. Never return or "
+                "modify validation metadata, digests, version, or immutable lineage."
             )
+        repair_item = '{"claim_id":"string","assertion":{"kind":"string","proposition":"string","certainty":"string","direction":"string"},"research_question_ids":["string"],"information_need_ids":["string"],"finding_ids":["string"],"insight_ids":["string"],"evidence_ids":["string"],"support":{"evidence_ids":["string"],"source_ids":["string"],"citation_ids":["string"]},"scope":{"geography":{"country":["string"],"subnational":["string"]},"periods":["string"],"metrics":["string"],"population_dimensions":["string"],"numeric_facts":["complete authoritative NumericFact objects"]}}'
         schema = (
-            '{"claims":[{"claim_id":"string", "...":"same ReportClaim fields as authority"}]}'
-            if "claims" in request
+            ('{"claims":[' + repair_item + ']}') if repair and "claims" in request
+            else repair_item if repair
+            else '{"claims":[{"claim_id":"string", "...":"same ReportClaim fields as authority"}]}' if "claims" in request
             else '{"claim_id":"string", "...":"same ReportClaim fields as authority"}'
         )
         return self._claim_structured_output.generate(

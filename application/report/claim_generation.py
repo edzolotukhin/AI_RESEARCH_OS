@@ -9,6 +9,7 @@ from uuid import NAMESPACE_URL, uuid5
 from application.report.claim_authority import ClaimAuthority, ClaimAuthorityError, derive_claim_authority
 from application.report.claim_validation import validate_report_claim
 from application.report.claim_rendering import ClaimRenderingError, validate_claim_proposition
+from application.report.claim_repair_contract import MISSING, RepairDelta, structural_error
 from domain.evidence.evidence import Evidence
 from domain.findings.finding import Finding
 from domain.findings.finding_type import FindingType
@@ -111,7 +112,7 @@ def generate_validated_claims(
                     "repair_attempted": True, "attempt_count": 1,
                 })
             try:
-                raw = _compose_repair_candidate(item["envelope"], raw)
+                raw = _compose_repair_candidate(item["envelope"], RepairDelta.from_dict(raw))
                 _validate_narrowing_only(item["envelope"], raw)
                 claim = validate_report_claim(ReportClaim.from_dict(raw), item["authority"])
                 validate_claim_proposition(claim)
@@ -162,21 +163,159 @@ _SELECTABLE_PROVENANCE_FIELDS = (
 _SELECTABLE_SUPPORT_FIELDS = ("evidence_ids", "source_ids", "citation_ids")
 
 
-def _compose_repair_candidate(canonical: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
-    result = _restore_immutable_lineage(canonical, candidate)
+def _compose_repair_candidate(canonical: dict[str, Any], delta: RepairDelta) -> dict[str, Any]:
+    result = copy.deepcopy(canonical)
+    for field in _IMMUTABLE_LINEAGE_FIELDS:
+        supplied = delta.get(field)
+        expected = canonical[field]
+        if supplied is not MISSING and supplied not in (None, "") and supplied != expected:
+            raise structural_error(
+                container="claim", field=field, ownership_class="SYSTEM_IMMUTABLE",
+                shape="system_value_conflict", failure_reason="system_value_conflict",
+                candidate=supplied, allowed=expected,
+            )
+        result[field] = expected
+    supplied_version = delta.get("version")
+    if supplied_version is not MISSING and supplied_version not in (None, "") and supplied_version != canonical["version"]:
+        raise structural_error(
+            container="claim", field="version", ownership_class="SYSTEM_DERIVED",
+            shape="system_value_conflict", failure_reason="system_value_conflict",
+            candidate=supplied_version, allowed=canonical["version"],
+        )
+    result["version"] = canonical["version"]
+
     for field in _SELECTABLE_PROVENANCE_FIELDS:
-        if result.get(field) in (None, ""):
-            result[field] = list(canonical.get(field, []))
-    if not isinstance(result.get("support"), dict):
-        return result
-    support = dict(result["support"])
-    canonical_support = dict(canonical.get("support") or {})
-    for field in _SELECTABLE_SUPPORT_FIELDS:
-        if support.get(field) in (None, ""):
-            support[field] = list(canonical_support.get(field, []))
-    result["support"] = support
-    result["scope"] = _compose_repair_scope(canonical.get("scope"), result.get("scope"))
+        result[field] = _selection(
+            value=delta.get(field), allowed=canonical[field], container="claim",
+            field=field, required=field != "insight_ids",
+        )
+
+    result["assertion"] = _compose_assertion(canonical["assertion"], delta.get("assertion"))
+    result["support"] = _compose_support(canonical, delta.get("support"), result)
+    result["scope"] = _compose_repair_scope(
+        canonical.get("scope"), None if delta.get("scope") is MISSING else delta.get("scope"),
+    )
+    result["validation"] = _compose_validation(canonical["validation"], delta.get("validation"))
     return result
+
+
+def _selection(*, value: Any, allowed: list[Any], container: str, field: str, required: bool) -> list[Any]:
+    if value is MISSING or value is None:
+        return copy.deepcopy(allowed)
+    if not isinstance(value, list):
+        raise structural_error(
+            container=container, field=field,
+            ownership_class="PROVIDER_SELECTABLE_WITHIN_ENVELOPE",
+            shape="field_malformed", failure_reason="field_malformed",
+            candidate=value, allowed=allowed,
+        )
+    if required and not value:
+        raise structural_error(
+            container=container, field=field,
+            ownership_class="PROVIDER_SELECTABLE_WITHIN_ENVELOPE",
+            shape="field_empty", failure_reason="field_empty",
+            candidate=value, allowed=allowed,
+        )
+    if not set(value) <= set(allowed):
+        raise structural_error(
+            container=container, field=field,
+            ownership_class="PROVIDER_SELECTABLE_WITHIN_ENVELOPE",
+            shape="explicit_broadening", failure_reason="foreign_reference",
+            candidate=value, allowed=allowed,
+        )
+    return list(dict.fromkeys(value))
+
+
+def _compose_assertion(canonical: dict[str, Any], value: Any) -> dict[str, Any]:
+    if value is MISSING or value is None:
+        raise structural_error(
+            container="assertion", field="assertion", ownership_class="PROVIDER_SEMANTIC",
+            shape="container_omitted" if value is MISSING else "container_null",
+            failure_reason="required_semantic_content_missing", candidate=None, allowed="complete assertion",
+        )
+    expected = {"kind", "proposition", "certainty", "direction"}
+    if set(value) != expected:
+        raise structural_error(
+            container="assertion", field="assertion", ownership_class="PROVIDER_SEMANTIC",
+            shape="container_malformed", failure_reason="required_semantic_content_missing",
+            candidate=sorted(value), allowed=sorted(expected),
+        )
+    if any(value[field] is None or not str(value[field]).strip() for field in expected):
+        raise structural_error(
+            container="assertion", field="assertion", ownership_class="PROVIDER_SEMANTIC",
+            shape="field_empty", failure_reason="required_semantic_content_missing",
+            candidate=sorted(field for field in expected if value[field] is None or not str(value[field]).strip()),
+            allowed=sorted(expected),
+        )
+    return copy.deepcopy(value)
+
+
+def _compose_support(canonical: dict[str, Any], value: Any, result: dict[str, Any]) -> dict[str, Any]:
+    canonical_support = canonical["support"]
+    if value is MISSING or value is None:
+        value = {}
+    if not isinstance(value, dict):
+        raise structural_error(
+            container="support", field="support", ownership_class="SYSTEM_STRUCTURAL",
+            shape="container_malformed", failure_reason="container_malformed",
+            candidate=value, allowed="object",
+        )
+    supplied_evidence = value.get("evidence_ids", MISSING)
+    evidence = list(result["evidence_ids"]) if supplied_evidence is MISSING or supplied_evidence is None else _selection(
+        value=supplied_evidence, allowed=canonical_support["evidence_ids"],
+        container="support", field="support.evidence_ids", required=True,
+    )
+    if set(evidence) != set(result["evidence_ids"]):
+        raise structural_error(
+            container="support", field="support.evidence_ids",
+            ownership_class="PROVIDER_SELECTABLE_WITHIN_ENVELOPE",
+            shape="digest_selection_mismatch", failure_reason="digest_selection_mismatch",
+            candidate=evidence, allowed=result["evidence_ids"],
+        )
+    source_ids = _selection(
+        value=value.get("source_ids", MISSING), allowed=canonical_support["source_ids"],
+        container="support", field="support.source_ids", required=True,
+    )
+    citation_ids = _selection(
+        value=value.get("citation_ids", MISSING), allowed=canonical_support["citation_ids"],
+        container="support", field="support.citation_ids", required=False,
+    )
+    finding_digests = {key: canonical_support["finding_content_digests"][key] for key in result["finding_ids"]}
+    evidence_digests = {key: canonical_support["evidence_content_digests"][key] for key in result["evidence_ids"]}
+    for field, expected in (
+        ("finding_content_digests", finding_digests),
+        ("evidence_content_digests", evidence_digests),
+    ):
+        supplied = value.get(field, MISSING)
+        if supplied is not MISSING and supplied is not None and supplied != expected:
+            raise structural_error(
+                container="support", field=f"support.{field}", ownership_class="SYSTEM_DERIVED",
+                shape="system_value_conflict", failure_reason="digest_selection_mismatch",
+                candidate=supplied, allowed=expected,
+            )
+    return {
+        "evidence_ids": evidence, "source_ids": source_ids, "citation_ids": citation_ids,
+        "finding_content_digests": finding_digests,
+        "evidence_content_digests": evidence_digests,
+    }
+
+
+def _compose_validation(canonical: dict[str, Any], value: Any) -> dict[str, Any]:
+    if value is not MISSING and value is not None:
+        if not isinstance(value, dict):
+            raise structural_error(
+                container="validation", field="validation", ownership_class="SYSTEM_DERIVED",
+                shape="container_malformed", failure_reason="container_malformed",
+                candidate=value, allowed="canonical validation",
+            )
+        conflicts = {key: supplied for key, supplied in value.items() if key not in canonical or supplied != canonical[key]}
+        if conflicts:
+            raise structural_error(
+                container="validation", field="validation", ownership_class="SYSTEM_DERIVED",
+                shape="system_value_conflict", failure_reason="system_value_conflict",
+                candidate=sorted(conflicts), allowed=sorted(canonical),
+            )
+    return copy.deepcopy(canonical)
 
 
 _SCOPE_DIMENSIONS = ("periods", "metrics", "population_dimensions", "numeric_facts")
@@ -203,6 +342,13 @@ def _compose_repair_scope(canonical: Any, candidate: Any) -> dict[str, Any]:
         return copy.deepcopy(canonical)
     if not isinstance(candidate, dict):
         raise _scope_shape_error(shape="whole_scope_malformed", dimension="scope", candidate=type(candidate).__name__, allowed="object")
+    allowed_scope_fields = {*_SCOPE_DIMENSIONS, "geography"}
+    unknown_scope_fields = set(candidate) - allowed_scope_fields
+    if unknown_scope_fields:
+        raise _scope_shape_error(
+            shape="nested_dimension_malformed", dimension="scope",
+            candidate=sorted(unknown_scope_fields), allowed=sorted(allowed_scope_fields),
+        )
     result = copy.deepcopy(candidate)
     for field in _SCOPE_DIMENSIONS:
         if field not in result or result[field] is None:
@@ -211,6 +357,8 @@ def _compose_repair_scope(canonical: Any, candidate: Any) -> dict[str, Any]:
             raise _scope_shape_error(shape="nested_dimension_malformed", dimension=field, candidate=type(result[field]).__name__, allowed="array")
         elif field != "numeric_facts" and not isinstance(result[field], list):
             raise _scope_shape_error(shape="nested_dimension_malformed", dimension=field, candidate=type(result[field]).__name__, allowed="array")
+        elif field != "numeric_facts" and any(not isinstance(item, str) or not item.strip() for item in result[field]):
+            raise _scope_shape_error(shape="nested_dimension_malformed", dimension=field, candidate=result[field], allowed="non-empty string array")
     geography = result.get("geography")
     canonical_geography = canonical.get("geography")
     if geography is None:
@@ -219,15 +367,42 @@ def _compose_repair_scope(canonical: Any, candidate: Any) -> dict[str, Any]:
         raise _scope_shape_error(shape="nested_dimension_malformed", dimension="geography", candidate=type(geography).__name__, allowed="object")
     else:
         geography = copy.deepcopy(geography)
+        unknown_geography_fields = set(geography) - set(_GEOGRAPHY_DIMENSIONS)
+        if unknown_geography_fields:
+            raise _scope_shape_error(
+                shape="nested_dimension_malformed", dimension="geography",
+                candidate=sorted(unknown_geography_fields), allowed=list(_GEOGRAPHY_DIMENSIONS),
+            )
         for field in _GEOGRAPHY_DIMENSIONS:
             if field not in geography or geography[field] is None:
                 geography[field] = copy.deepcopy((canonical_geography or {}).get(field))
             elif not isinstance(geography[field], list):
                 raise _scope_shape_error(shape="nested_dimension_malformed", dimension=f"geography.{field}", candidate=type(geography[field]).__name__, allowed="array")
+            elif any(not isinstance(item, str) or not item.strip() for item in geography[field]):
+                raise _scope_shape_error(shape="nested_dimension_malformed", dimension=f"geography.{field}", candidate=geography[field], allowed="non-empty string array")
         result["geography"] = geography
     for index, fact in enumerate(result.get("numeric_facts", [])):
         if not isinstance(fact, dict):
             raise _scope_shape_error(shape="nested_dimension_malformed", dimension=f"numeric_facts[{index}]", candidate=type(fact).__name__, allowed="object")
+        allowed_fact_fields = {"value", "unit", "scale", "geography", "periods", "metrics", "population_dimensions"}
+        if set(fact) != allowed_fact_fields:
+            raise _scope_shape_error(
+                shape="nested_dimension_malformed", dimension=f"numeric_facts[{index}]",
+                candidate=sorted(fact), allowed=sorted(allowed_fact_fields),
+            )
+        for field in ("value", "unit", "scale"):
+            if not isinstance(fact[field], str) or not fact[field].strip():
+                raise _scope_shape_error(
+                    shape="nested_dimension_malformed", dimension=f"numeric_facts[{index}].{field}",
+                    candidate=fact[field], allowed="non-empty string",
+                )
+        for field in ("geography", "periods", "metrics", "population_dimensions"):
+            value = fact[field]
+            if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
+                raise _scope_shape_error(
+                    shape="nested_dimension_malformed", dimension=f"numeric_facts[{index}].{field}",
+                    candidate=value, allowed="non-empty string array",
+                )
     return result
 
 
@@ -418,7 +593,10 @@ def _generation_diagnostics(
         "attempt_count": 1,
     }
     if isinstance(diagnostics, dict):
-        for key in ("code", "validator_category", "scope_shape", "scope_dimension", "candidate_scope", "allowed_scope",
+        for key in ("code", "validator_category", "repair_stage", "container", "field",
+                    "ownership_class", "shape", "failure_reason", "candidate_shape",
+                    "candidate_bounded_value", "allowed_shape", "allowed_bounded_value",
+                    "scope_shape", "scope_dimension", "candidate_scope", "allowed_scope",
                     "rejected_tokens", "unit_type", "section_id", "research_question_ids",
                     "claim_ids", "finding_ids", "evidence_ids", "allowed_numeric_values",
                     "allowed_period_values", "rejected_numeric_facts", "allowed_numeric_facts",
