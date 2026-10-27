@@ -214,6 +214,63 @@ class ClaimFirstGenerationTests(unittest.TestCase):
             return result
         self.assertEqual(len(self.generate(candidate_provider=invalid, correction_provider=corrected)), 1)
 
+    def test_repair_structured_scope_whole_and_nested_omissions_restore_canonical(self) -> None:
+        def invalid(envelope):
+            result = copy.deepcopy(envelope)
+            result["scope"]["geography"]["country"].append("poland")
+            return result
+
+        for shape in ("missing", "null"):
+            def corrected(request, shape=shape):
+                result = copy.deepcopy(request["candidate"])
+                result.pop("scope", None) if shape == "missing" else result.update(scope=None)
+                return result
+            with self.subTest(shape=shape):
+                self.assertEqual(len(self.generate(candidate_provider=invalid, correction_provider=corrected)), 1)
+
+        for dimension in ("periods", "metrics", "population_dimensions", "numeric_facts"):
+            def corrected(request, dimension=dimension):
+                result = copy.deepcopy(request["candidate"])
+                result["scope"][dimension] = None
+                result["scope"]["geography"]["country"].remove("poland")
+                return result
+            with self.subTest(dimension=dimension):
+                self.assertEqual(len(self.generate(candidate_provider=invalid, correction_provider=corrected)), 1)
+
+    def test_repair_structured_scope_malformed_shapes_fail_with_bounded_diagnostics(self) -> None:
+        for malformed, expected_shape, expected_dimension in (
+            ("scope", "whole_scope_malformed", "scope"),
+            ({"geography": "invalid"}, "nested_dimension_malformed", "geography"),
+            ({"numeric_facts": ["invalid"]}, "nested_dimension_malformed", "numeric_facts[0]"),
+        ):
+            def invalid(envelope):
+                result = copy.deepcopy(envelope)
+                result["scope"]["geography"]["country"].append("poland")
+                return result
+            def corrected(request, malformed=malformed):
+                result = copy.deepcopy(request["candidate"])
+                result["scope"] = malformed
+                return result
+            with self.subTest(malformed=malformed), self.assertRaises(ClaimGenerationError) as captured:
+                self.generate(candidate_provider=invalid, correction_provider=corrected)
+            diagnostics = captured.exception.diagnostics
+            self.assertEqual(diagnostics["validator_category"], "repair_scope_schema")
+            self.assertEqual(diagnostics["scope_shape"], expected_shape)
+            self.assertEqual(diagnostics["scope_dimension"], expected_dimension)
+
+    def test_repair_structured_scope_explicit_empty_is_not_restored(self) -> None:
+        def invalid(envelope):
+            result = copy.deepcopy(envelope)
+            result["scope"]["geography"]["country"].append("poland")
+            return result
+        def corrected(request):
+            result = copy.deepcopy(request["candidate"])
+            result["scope"]["periods"] = []
+            result["scope"]["geography"]["country"].remove("poland")
+            return result
+        claim = self.generate(candidate_provider=invalid, correction_provider=corrected)[0]
+        self.assertEqual(claim.scope.periods, ())
+
     def test_repair_provenance_broadening_and_foreign_reference_fail_closed(self) -> None:
         for field in ("research_question_ids", "information_need_ids", "finding_ids", "evidence_ids"):
             def invalid(envelope):

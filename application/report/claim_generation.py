@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -174,6 +175,59 @@ def _compose_repair_candidate(canonical: dict[str, Any], candidate: dict[str, An
         if support.get(field) in (None, ""):
             support[field] = list(canonical_support.get(field, []))
     result["support"] = support
+    result["scope"] = _compose_repair_scope(canonical.get("scope"), result.get("scope"))
+    return result
+
+
+_SCOPE_DIMENSIONS = ("periods", "metrics", "population_dimensions", "numeric_facts")
+_GEOGRAPHY_DIMENSIONS = ("country", "subnational")
+
+
+def _scope_shape_error(*, shape: str, dimension: str, candidate: Any, allowed: Any) -> ClaimGenerationError:
+    return ClaimGenerationError(
+        "claim correction requires a valid structured scope",
+        diagnostics={
+            "validator_category": "repair_scope_schema",
+            "scope_shape": shape,
+            "scope_dimension": dimension,
+            "candidate_scope": candidate if isinstance(candidate, (str, int, float, bool)) else None,
+            "allowed_scope": allowed if isinstance(allowed, (str, int, float, bool)) else None,
+        },
+    )
+
+
+def _compose_repair_scope(canonical: Any, candidate: Any) -> dict[str, Any]:
+    if not isinstance(canonical, dict):
+        raise _scope_shape_error(shape="canonical_scope_malformed", dimension="scope", candidate=None, allowed=None)
+    if candidate is None:
+        return copy.deepcopy(canonical)
+    if not isinstance(candidate, dict):
+        raise _scope_shape_error(shape="whole_scope_malformed", dimension="scope", candidate=type(candidate).__name__, allowed="object")
+    result = copy.deepcopy(candidate)
+    for field in _SCOPE_DIMENSIONS:
+        if field not in result or result[field] is None:
+            result[field] = copy.deepcopy(canonical.get(field))
+        elif field == "numeric_facts" and not isinstance(result[field], list):
+            raise _scope_shape_error(shape="nested_dimension_malformed", dimension=field, candidate=type(result[field]).__name__, allowed="array")
+        elif field != "numeric_facts" and not isinstance(result[field], list):
+            raise _scope_shape_error(shape="nested_dimension_malformed", dimension=field, candidate=type(result[field]).__name__, allowed="array")
+    geography = result.get("geography")
+    canonical_geography = canonical.get("geography")
+    if geography is None:
+        result["geography"] = copy.deepcopy(canonical_geography)
+    elif not isinstance(geography, dict):
+        raise _scope_shape_error(shape="nested_dimension_malformed", dimension="geography", candidate=type(geography).__name__, allowed="object")
+    else:
+        geography = copy.deepcopy(geography)
+        for field in _GEOGRAPHY_DIMENSIONS:
+            if field not in geography or geography[field] is None:
+                geography[field] = copy.deepcopy((canonical_geography or {}).get(field))
+            elif not isinstance(geography[field], list):
+                raise _scope_shape_error(shape="nested_dimension_malformed", dimension=f"geography.{field}", candidate=type(geography[field]).__name__, allowed="array")
+        result["geography"] = geography
+    for index, fact in enumerate(result.get("numeric_facts", [])):
+        if not isinstance(fact, dict):
+            raise _scope_shape_error(shape="nested_dimension_malformed", dimension=f"numeric_facts[{index}]", candidate=type(fact).__name__, allowed="object")
     return result
 
 
@@ -364,7 +418,7 @@ def _generation_diagnostics(
         "attempt_count": 1,
     }
     if isinstance(diagnostics, dict):
-        for key in ("code", "validator_category", "scope_dimension", "candidate_scope", "allowed_scope",
+        for key in ("code", "validator_category", "scope_shape", "scope_dimension", "candidate_scope", "allowed_scope",
                     "rejected_tokens", "unit_type", "section_id", "research_question_ids",
                     "claim_ids", "finding_ids", "evidence_ids", "allowed_numeric_values",
                     "allowed_period_values", "rejected_numeric_facts", "allowed_numeric_facts",
