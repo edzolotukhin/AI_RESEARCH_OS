@@ -110,9 +110,8 @@ def generate_validated_claims(
                     "repair_attempted": True, "attempt_count": 1,
                 })
             try:
-                raw = _restore_immutable_lineage(item["envelope"], raw)
-                original = _restore_immutable_lineage(item["envelope"], item["candidate"])
-                _validate_narrowing_only(original, raw)
+                raw = _compose_repair_candidate(item["envelope"], raw)
+                _validate_narrowing_only(item["envelope"], raw)
                 claim = validate_report_claim(ReportClaim.from_dict(raw), item["authority"])
                 validate_claim_proposition(claim)
             except Exception as repair_error:
@@ -155,6 +154,29 @@ def _restore_immutable_lineage(canonical: dict[str, Any], candidate: dict[str, A
     return result
 
 
+_SELECTABLE_PROVENANCE_FIELDS = (
+    "research_question_ids", "information_need_ids", "finding_ids", "insight_ids",
+    "evidence_ids",
+)
+_SELECTABLE_SUPPORT_FIELDS = ("evidence_ids", "source_ids", "citation_ids")
+
+
+def _compose_repair_candidate(canonical: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+    result = _restore_immutable_lineage(canonical, candidate)
+    for field in _SELECTABLE_PROVENANCE_FIELDS:
+        if result.get(field) in (None, ""):
+            result[field] = list(canonical.get(field, []))
+    if not isinstance(result.get("support"), dict):
+        return result
+    support = dict(result["support"])
+    canonical_support = dict(canonical.get("support") or {})
+    for field in _SELECTABLE_SUPPORT_FIELDS:
+        if support.get(field) in (None, ""):
+            support[field] = list(canonical_support.get(field, []))
+    result["support"] = support
+    return result
+
+
 def _candidate_payload(*, authority: ClaimAuthority, finding: Finding,
                        insights: tuple[Insight, ...],
                        citation_id_by_source: dict[str, str]) -> dict[str, Any]:
@@ -191,8 +213,7 @@ def _candidate_payload(*, authority: ClaimAuthority, finding: Finding,
 
 
 def _validate_narrowing_only(original: dict[str, Any], corrected: dict[str, Any]) -> None:
-    graph_fields = ("project_id", "source_workflow_run_id", "report_workflow_run_id", "design_id", "research_question_ids", "information_need_ids", "finding_ids", "insight_ids", "evidence_ids")
-    for field in graph_fields:
+    for field in _IMMUTABLE_LINEAGE_FIELDS:
         if corrected.get(field) != original.get(field):
             raise ClaimGenerationError(
                 "claim correction may not change lineage or support graph",
@@ -201,6 +222,30 @@ def _validate_narrowing_only(original: dict[str, Any], corrected: dict[str, Any]
                     "scope_dimension": "lineage",
                     "candidate_scope": {field: corrected.get(field)},
                     "allowed_scope": {field: original.get(field)},
+                },
+            )
+    for field in _SELECTABLE_PROVENANCE_FIELDS:
+        if not set(corrected.get(field, [])) <= set(original.get(field, [])):
+            raise ClaimGenerationError(
+                "claim correction may not broaden provenance",
+                diagnostics={
+                    "validator_category": "repair_provenance_broadening",
+                    "scope_dimension": field,
+                    "candidate_scope": list(corrected.get(field, []))[:32],
+                    "allowed_scope": list(original.get(field, []))[:32],
+                },
+            )
+    original_support = dict(original.get("support") or {})
+    corrected_support = dict(corrected.get("support") or {})
+    for field in _SELECTABLE_SUPPORT_FIELDS:
+        if not set(corrected_support.get(field, [])) <= set(original_support.get(field, [])):
+            raise ClaimGenerationError(
+                "claim correction may not broaden support provenance",
+                diagnostics={
+                    "validator_category": "repair_provenance_broadening",
+                    "scope_dimension": f"support.{field}",
+                    "candidate_scope": list(corrected_support.get(field, []))[:32],
+                    "allowed_scope": list(original_support.get(field, []))[:32],
                 },
             )
     before, after = original.get("scope"), corrected.get("scope")

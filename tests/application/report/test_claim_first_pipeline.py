@@ -100,8 +100,8 @@ class ClaimFirstGenerationTests(unittest.TestCase):
         self.assertEqual(len(self.generate(candidate_provider=invalid, correction_provider=corrected)), 1)
         with self.assertRaises(ClaimGenerationError) as captured:
             self.generate(candidate_provider=invalid, correction_provider=lambda request: request["candidate"])
-        self.assertEqual(captured.exception.diagnostics["validator_category"], "unsupported_scope")
-        self.assertEqual(captured.exception.diagnostics["scope_dimension"], "country geography")
+        self.assertEqual(captured.exception.diagnostics["validator_category"], "repair_scope_broadening")
+        self.assertEqual(captured.exception.diagnostics["scope_dimension"], "geography")
 
     def test_repair_validation_persists_bounded_numeric_authority_reason(self) -> None:
         def invalid(envelope):
@@ -115,7 +115,7 @@ class ClaimFirstGenerationTests(unittest.TestCase):
                 correction_provider=lambda request: request["candidate"],
             )
         diagnostics = captured.exception.diagnostics
-        self.assertEqual(diagnostics["validator_category"], "unsupported_numeric_authority")
+        self.assertEqual(diagnostics["validator_category"], "repair_numeric_authority_change")
         self.assertEqual(diagnostics["rejected_numeric_facts"][0]["value"], "1064")
         self.assertEqual(diagnostics["allowed_numeric_facts"][0]["value"], "10")
         self.assertEqual(diagnostics["attempt_count"], 1)
@@ -176,6 +176,81 @@ class ClaimFirstGenerationTests(unittest.TestCase):
             self.generate(candidate_provider=invalid, correction_provider=conflicting)
         self.assertEqual(captured.exception.diagnostics["validator_category"], "immutable_lineage_conflict")
         self.assertEqual(captured.exception.diagnostics["candidate_scope"], {"project_id": "foreign-project"})
+
+    def test_repair_omitted_selectable_provenance_is_restored_from_canonical_envelope(self) -> None:
+        fields = ("research_question_ids", "information_need_ids", "finding_ids", "evidence_ids")
+        for field in fields:
+            def invalid(envelope):
+                result = copy.deepcopy(envelope)
+                result["scope"]["geography"]["country"].append("poland")
+                return result
+            def corrected(request, field=field):
+                result = copy.deepcopy(request["candidate"])
+                result[field] = None
+                result["scope"]["geography"]["country"].remove("poland")
+                return result
+            with self.subTest(field=field):
+                self.assertEqual(len(self.generate(candidate_provider=invalid, correction_provider=corrected)), 1)
+
+        for field in ("evidence_ids", "source_ids", "citation_ids"):
+            def corrected_support(request, field=field):
+                result = copy.deepcopy(request["candidate"])
+                result["support"][field] = None
+                result["scope"]["geography"]["country"].remove("poland")
+                return result
+            with self.subTest(support_field=field):
+                self.assertEqual(len(self.generate(candidate_provider=invalid, correction_provider=corrected_support)), 1)
+
+    def test_repair_explicit_narrowing_is_accepted_without_cross_claim_borrowing(self) -> None:
+        def invalid(envelope):
+            result = copy.deepcopy(envelope)
+            result["scope"]["geography"]["country"].append("poland")
+            return result
+        def corrected(request):
+            result = copy.deepcopy(request["candidate"])
+            result["scope"]["geography"]["country"].remove("poland")
+            result["insight_ids"] = []
+            result["support"]["citation_ids"] = []
+            return result
+        self.assertEqual(len(self.generate(candidate_provider=invalid, correction_provider=corrected)), 1)
+
+    def test_repair_provenance_broadening_and_foreign_reference_fail_closed(self) -> None:
+        for field in ("research_question_ids", "information_need_ids", "finding_ids", "evidence_ids"):
+            def invalid(envelope):
+                result = copy.deepcopy(envelope)
+                result["scope"]["geography"]["country"].append("poland")
+                return result
+            def corrected(request, field=field):
+                result = copy.deepcopy(request["candidate"])
+                result[field].append("foreign-id")
+                result["scope"]["geography"]["country"].remove("poland")
+                return result
+            with self.subTest(field=field), self.assertRaises(ClaimGenerationError) as captured:
+                self.generate(candidate_provider=invalid, correction_provider=corrected)
+            self.assertEqual(captured.exception.diagnostics["validator_category"], "repair_provenance_broadening")
+            self.assertEqual(captured.exception.diagnostics["scope_dimension"], field)
+
+    def test_repair_required_empty_provenance_fails_but_optional_empty_is_preserved(self) -> None:
+        def invalid(envelope):
+            result = copy.deepcopy(envelope)
+            result["scope"]["geography"]["country"].append("poland")
+            return result
+        for field in ("research_question_ids", "information_need_ids", "finding_ids", "evidence_ids"):
+            def corrected(request, field=field):
+                result = copy.deepcopy(request["candidate"])
+                result[field] = []
+                result["scope"]["geography"]["country"].remove("poland")
+                return result
+            with self.subTest(field=field), self.assertRaises(ClaimGenerationError):
+                self.generate(candidate_provider=invalid, correction_provider=corrected)
+
+        def optional_empty(request):
+            result = copy.deepcopy(request["candidate"])
+            result["insight_ids"] = []
+            result["support"]["citation_ids"] = []
+            result["scope"]["geography"]["country"].remove("poland")
+            return result
+        self.assertEqual(len(self.generate(candidate_provider=invalid, correction_provider=optional_empty)), 1)
 
     def test_legacy_decimal_comma_percentage_is_reconciled_from_grounded_evidence(self) -> None:
         legacy_scope = copy.deepcopy(self.fixture.evidence.metadata[SCOPE_KEY])
