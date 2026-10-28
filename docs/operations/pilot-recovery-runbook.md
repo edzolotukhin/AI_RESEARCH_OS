@@ -4,7 +4,7 @@
 
 Install/use the repository recovery image through `docker-compose.pilot.backup.yml`. Keep the restic credential outside Git, outside the backup repository, and retain a recovery copy away from the pilot host.
 
-Set exact `APP_SHA`, `ALEMBIC_HEAD=025_desk_structured_finalization`, remote `RESTIC_REPOSITORY`, and `RESTIC_PASSWORD_FILE_HOST`. Then run:
+Set exact `APP_SHA`, `ALEMBIC_HEAD=026_approved_delivery_provenance`, remote `RESTIC_REPOSITORY`, and `RESTIC_PASSWORD_FILE_HOST`. Then run:
 
 ```text
 docker compose --env-file .env.pilot -f docker-compose.pilot.yml -f docker-compose.pilot.backup.yml --profile operations run --rm recovery create

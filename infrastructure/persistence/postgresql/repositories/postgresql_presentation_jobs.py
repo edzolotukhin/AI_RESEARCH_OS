@@ -10,6 +10,10 @@ from sqlalchemy.dialects.postgresql import insert
 
 from application.deliverables.desk_finalization import MAX_PPTX_ATTEMPTS
 from application.deliverables.presentation_jobs import PresentationJob
+from application.deliverables.approved_delivery_provenance import (
+    ApprovedDeliveryProvenance,
+    validate_storage_binding,
+)
 from infrastructure.persistence.postgresql.models.presentation_job_model import PresentationJobModel
 from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
 
@@ -50,7 +54,24 @@ class PostgreSQLPresentationJobs:
                  initial_state: str = "pending", report_revision: int | None = None,
                  review_id: str | None = None, source_run_id: str | None = None,
                  claim_set_digest: str | None = None,
-                 coverage_contract_digest: str | None = None) -> PresentationJob:
+                 coverage_contract_digest: str | None = None,
+                 approved_delivery_provenance: ApprovedDeliveryProvenance | None = None) -> PresentationJob:
+        validate_storage_binding(
+            approved_delivery_provenance,
+            report_id=source_id,
+            report_workflow_run_id=run_id,
+            revision_number=report_revision,
+            review_id=review_id,
+            source_workflow_run_id=source_run_id,
+            claim_set_digest=claim_set_digest,
+            coverage_contract_digest=coverage_contract_digest,
+        )
+        if approved_delivery_provenance is not None:
+            report_revision = approved_delivery_provenance.revision_number
+            review_id = approved_delivery_provenance.review_id
+            source_run_id = approved_delivery_provenance.source_workflow_run_id
+            claim_set_digest = approved_delivery_provenance.claim_set_digest
+            coverage_contract_digest = approved_delivery_provenance.coverage_contract_digest
         now = datetime.now(timezone.utc)
         values = dict(id=str(uuid4()), project_id=project_id, method=method, run_id=run_id,
                       study_id=study_id, source_id=source_id, source_version=source_version,
@@ -60,7 +81,11 @@ class PostgreSQLPresentationJobs:
                       completed_deliverable_id=None, failure_code=None,
                       report_revision=report_revision, review_id=review_id,
                       source_run_id=source_run_id, claim_set_digest=claim_set_digest,
-                      coverage_contract_digest=coverage_contract_digest)
+                      coverage_contract_digest=coverage_contract_digest,
+                      authority_digest=(approved_delivery_provenance.authority_digest
+                                        if approved_delivery_provenance else None),
+                      presentation_digest=(approved_delivery_provenance.presentation_digest
+                                           if approved_delivery_provenance else None))
         with self._sessions.session() as session:
             session.execute(insert(PresentationJobModel).values(**values).on_conflict_do_nothing(
                 constraint="uq_presentation_job_identity"))

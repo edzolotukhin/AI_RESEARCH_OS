@@ -45,4 +45,4 @@ All upload filenames are bounded metadata, never paths. Quant keeps 20 MiB, 10,0
 
 Project hard deletion is intentionally not added: immutable research provenance and cross-store protected files need a separately designed, auditable destructive workflow. Until then, removal means access revocation/retention expiry under operator procedure, with a verified recent backup before any future destructive maintenance.
 
-The accepted schema is the single head `025_desk_structured_finalization`.
+The accepted schema is the single head `026_approved_delivery_provenance`.

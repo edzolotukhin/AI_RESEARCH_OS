@@ -42,3 +42,5 @@ class PresentationJobModel(Base):
     source_run_id: Mapped[str | None] = mapped_column(String(64))
     claim_set_digest: Mapped[str | None] = mapped_column(String(64))
     coverage_contract_digest: Mapped[str | None] = mapped_column(String(64))
+    authority_digest: Mapped[str | None] = mapped_column(String(64))
+    presentation_digest: Mapped[str | None] = mapped_column(String(64))

@@ -6,6 +6,10 @@ import hashlib
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from application.deliverables.contracts import PdfDeliverable
+from application.deliverables.approved_delivery_provenance import (
+    provenance_from_storage,
+    validate_storage_binding,
+)
 from infrastructure.persistence.postgresql.models.pdf_deliverable_model import PdfDeliverableModel
 from infrastructure.persistence.postgresql.project_activity import record_activity
 from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
@@ -17,7 +21,20 @@ class PostgreSQLPdfStore:
 
     @staticmethod
     def _record(model: PdfDeliverableModel) -> PdfDeliverable:
-        return PdfDeliverable(**{name: getattr(model, name) for name in PdfDeliverable.__dataclass_fields__})
+        values = {name: getattr(model, name) for name in PdfDeliverable.__dataclass_fields__
+                  if name != "approved_delivery_provenance"}
+        values["approved_delivery_provenance"] = provenance_from_storage(
+            report_id=model.source_id,
+            revision_number=model.approved_revision_number,
+            authority_digest=model.approved_authority_digest,
+            presentation_digest=model.approved_presentation_digest,
+            review_id=model.approved_review_id,
+            source_workflow_run_id=model.approved_source_workflow_run_id,
+            report_workflow_run_id=model.run_id,
+            claim_set_digest=model.approved_claim_set_digest,
+            coverage_contract_digest=model.approved_coverage_contract_digest,
+        )
+        return PdfDeliverable(**values)
 
     def get(self, deliverable_id: str) -> tuple[PdfDeliverable, bytes] | None:
         with self._sessions.session() as session:
@@ -47,7 +64,21 @@ class PostgreSQLPdfStore:
                     for fmt, media, magic, limit in expected)
         if not valid or len(data) != record.byte_size or hashlib.sha256(data).hexdigest() != record.checksum:
             raise ValueError("invalid completed deliverable content")
-        values = {name: getattr(record, name) for name in PdfDeliverable.__dataclass_fields__}
+        validate_storage_binding(record.approved_delivery_provenance,
+                                 report_id=record.source_id,
+                                 report_workflow_run_id=record.run_id)
+        values = {name: getattr(record, name) for name in PdfDeliverable.__dataclass_fields__
+                  if name != "approved_delivery_provenance"}
+        provenance = record.approved_delivery_provenance
+        values.update(
+            approved_revision_number=provenance.revision_number if provenance else None,
+            approved_authority_digest=provenance.authority_digest if provenance else None,
+            approved_presentation_digest=provenance.presentation_digest if provenance else None,
+            approved_review_id=provenance.review_id if provenance else None,
+            approved_source_workflow_run_id=(provenance.source_workflow_run_id if provenance else None),
+            approved_claim_set_digest=provenance.claim_set_digest if provenance else None,
+            approved_coverage_contract_digest=(provenance.coverage_contract_digest if provenance else None),
+        )
         values["content"] = data
         with self._sessions.session() as session:
             inserted = session.execute(insert(PdfDeliverableModel).values(**values).on_conflict_do_nothing(

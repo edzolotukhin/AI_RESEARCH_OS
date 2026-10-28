@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from application.deliverables.approved_delivery_provenance import (
+    ApprovedDeliveryProvenance,
+    validate_storage_binding,
+)
+
 
 @dataclass(frozen=True)
 class PdfSection:
@@ -80,6 +85,14 @@ class PdfDeliverable:
     state: str = "completed"
     format: str = "PDF"
     template_version: str = "pdf-v1"
+    approved_delivery_provenance: ApprovedDeliveryProvenance | None = None
+
+    def __post_init__(self) -> None:
+        validate_storage_binding(
+            self.approved_delivery_provenance,
+            report_id=self.source_id,
+            report_workflow_run_id=self.run_id,
+        )
 
 
 RENDERER_VERSION = "prf07c-reportlab-2"

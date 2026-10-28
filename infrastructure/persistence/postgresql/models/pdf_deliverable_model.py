@@ -16,6 +16,7 @@ class PdfDeliverableModel(Base):
         CheckConstraint("byte_size > 0 AND ((format = 'PDF' AND byte_size <= 5000000) OR (format = 'PPTX' AND byte_size <= 10000000))", name="ck_pdf_deliverable_size"),
         CheckConstraint("method IN ('DESK', 'QUANTITATIVE')", name="ck_pdf_deliverable_method"),
         CheckConstraint("state = 'completed' AND ((format = 'PDF' AND media_type = 'application/pdf') OR (format = 'PPTX' AND media_type = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'))", name="ck_pdf_deliverable_state"),
+        CheckConstraint("approved_revision_number IS NULL OR approved_revision_number > 0", name="ck_pdf_deliverables_approved_revision_positive"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     project_id: Mapped[str] = mapped_column(String(64), ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False)
@@ -36,3 +37,10 @@ class PdfDeliverableModel(Base):
     content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     format: Mapped[str] = mapped_column(String(8), nullable=False, default="PDF")
     template_version: Mapped[str] = mapped_column(String(64), nullable=False, default="pdf-v1")
+    approved_revision_number: Mapped[int | None] = mapped_column(Integer())
+    approved_authority_digest: Mapped[str | None] = mapped_column(String(64))
+    approved_presentation_digest: Mapped[str | None] = mapped_column(String(64))
+    approved_review_id: Mapped[str | None] = mapped_column(String(64))
+    approved_source_workflow_run_id: Mapped[str | None] = mapped_column(String(64))
+    approved_claim_set_digest: Mapped[str | None] = mapped_column(String(64))
+    approved_coverage_contract_digest: Mapped[str | None] = mapped_column(String(64))

@@ -52,7 +52,58 @@ class PostgreSQLMigrationSmokeTests(unittest.TestCase):
         previous_url = os.environ.get("DATABASE_URL")
         os.environ["DATABASE_URL"] = self.database_url
         try:
+            command.upgrade(alembic_cfg, "025_desk_structured_finalization")
+            with self.engine.begin() as connection:
+                connection.execute(text(
+                    "INSERT INTO projects "
+                    "(id,name,status,created_at,updated_at,version) "
+                    "VALUES ('legacy-project','Legacy','ACTIVE','','',1)"
+                ))
+                connection.execute(text(
+                    "INSERT INTO artifacts "
+                    "(id,project_id,run_id,artifact_type,title,content,status,version,"
+                    "media_type,filename,content_checksum,deduplication_key,report_id) "
+                    "VALUES ('legacy-artifact','legacy-project','legacy-run','legacy',"
+                    "'Legacy','legacy','Draft',1,'text/plain','legacy.txt','',"
+                    "'legacy-key','legacy-report')"
+                ))
+                connection.execute(text(
+                    "INSERT INTO pdf_deliverables "
+                    "(id,project_id,method,run_id,study_id,source_id,source_version,"
+                    "status_snapshot,renderer_version,created_at,storage_key,checksum,"
+                    "byte_size,filename,media_type,state,content,format,template_version) "
+                    "VALUES ('00000000-0000-0000-0000-000000000001','legacy-project',"
+                    "'DESK','legacy-run',NULL,'legacy-report','legacy-v1','Draft',"
+                    "'legacy-renderer',CURRENT_TIMESTAMP,'legacy-storage',:checksum,"
+                    "5,'legacy.pdf','application/pdf','completed',:content,'PDF','pdf-v1')"
+                ), {"checksum": "0" * 64, "content": b"%PDF-"})
+                connection.execute(text(
+                    "INSERT INTO presentation_jobs "
+                    "(id,project_id,method,run_id,study_id,source_id,source_version,"
+                    "status_snapshot,template_version,renderer_version,state,attempts,"
+                    "lease_until,claimed_by,created_at,updated_at,completed_deliverable_id,"
+                    "failure_code,report_revision,review_id,source_run_id,claim_set_digest,"
+                    "coverage_contract_digest) VALUES "
+                    "('00000000-0000-0000-0000-000000000002','legacy-project','DESK',"
+                    "'legacy-run',NULL,'legacy-report','legacy-v1','Draft','legacy-template',"
+                    "'legacy-renderer','pending',0,NULL,NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,"
+                    "NULL,NULL,NULL,NULL,NULL,NULL,NULL)"
+                ))
             command.upgrade(alembic_cfg, "head")
+            with self.engine.connect() as connection:
+                self.assertEqual(connection.execute(text(
+                    "SELECT COUNT(*) FROM artifacts WHERE id='legacy-artifact'"
+                )).scalar_one(), 1)
+                self.assertEqual(connection.execute(text(
+                    "SELECT COUNT(*) FROM pdf_deliverables "
+                    "WHERE id='00000000-0000-0000-0000-000000000001' "
+                    "AND approved_revision_number IS NULL"
+                )).scalar_one(), 1)
+                self.assertEqual(connection.execute(text(
+                    "SELECT COUNT(*) FROM presentation_jobs "
+                    "WHERE id='00000000-0000-0000-0000-000000000002' "
+                    "AND authority_digest IS NULL AND presentation_digest IS NULL"
+                )).scalar_one(), 1)
             command.downgrade(alembic_cfg, "base")
             command.upgrade(alembic_cfg, "head")
         finally:
@@ -79,6 +130,23 @@ class PostgreSQLMigrationSmokeTests(unittest.TestCase):
                 "WHERE table_name = 'pdf_deliverables'"
             )).scalars())
         self.assertTrue({"format", "template_version"}.issubset(columns))
+        self.assertTrue({
+            "approved_revision_number",
+            "approved_authority_digest",
+            "approved_presentation_digest",
+            "approved_review_id",
+            "approved_source_workflow_run_id",
+            "approved_claim_set_digest",
+            "approved_coverage_contract_digest",
+        }.issubset(columns))
+        with self.engine.connect() as connection:
+            presentation_columns = set(connection.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'presentation_jobs'"
+            )).scalars())
+        self.assertTrue({"authority_digest", "presentation_digest"}.issubset(
+            presentation_columns
+        ))
         with self.engine.connect() as connection:
             trigger_exists = connection.execute(text(
                 "SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = "

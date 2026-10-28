@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from infrastructure.persistence.postgresql.database import Base
@@ -13,6 +13,10 @@ class ArtifactModel(Base):
             "run_id",
             "deduplication_key",
             name="uq_artifacts_run_deduplication_key",
+        ),
+        CheckConstraint(
+            "approved_revision_number IS NULL OR approved_revision_number > 0",
+            name="ck_artifacts_approved_revision_positive",
         ),
     )
 
@@ -34,3 +38,10 @@ class ArtifactModel(Base):
     content_checksum: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     deduplication_key: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     report_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    approved_revision_number: Mapped[int | None] = mapped_column(Integer())
+    approved_authority_digest: Mapped[str | None] = mapped_column(String(64))
+    approved_presentation_digest: Mapped[str | None] = mapped_column(String(64))
+    approved_review_id: Mapped[str | None] = mapped_column(String(64))
+    approved_source_workflow_run_id: Mapped[str | None] = mapped_column(String(64))
+    approved_claim_set_digest: Mapped[str | None] = mapped_column(String(64))
+    approved_coverage_contract_digest: Mapped[str | None] = mapped_column(String(64))
