@@ -10,6 +10,7 @@ from application.ports.report_claim_repository import ReportClaimRepository
 from application.ports.review_ports import ReviewRepository, SemanticReviewEngine
 from application.ports.source_ports import SourceRepository
 from application.report.report_factory import build_report_service
+from application.report.editorial_composer import EditorialComposer
 from application.review.review_service import ReviewService
 from infrastructure.review.deterministic_review_engine import DeterministicReviewEngine
 from infrastructure.review.llm_review_engine import LlmReviewEngine
@@ -57,6 +58,8 @@ def build_review_executor(
     review_repository: ReviewRepository,
     llm_client,
     deliverable_finalizer=None,
+    report_contract_version: str = "desk_report_claim_v1",
+    editorial_composer: EditorialComposer | None = None,
 ) -> ReviewExecutor:
     report_service = build_report_service(
         config=config,
@@ -69,6 +72,8 @@ def build_review_executor(
         report_claim_repository=report_claim_repository,
         artifact_repository=artifact_repository,
         llm_client=llm_client,
+        report_contract_version=report_contract_version,
+        editorial_composer=editorial_composer,
     )
     review_service = ReviewService(
         semantic_review_engine=build_semantic_review_engine(

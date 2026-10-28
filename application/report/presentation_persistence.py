@@ -42,7 +42,7 @@ def report_claims_authority_digest(claims: tuple[ReportClaim, ...]) -> str:
     if not claims:
         raise PresentationPersistenceError("validated ReportClaims are required")
     payload = [_claim_authority_payload(claim) for claim in claims]
-    payload.sort(key=lambda item: item["claim_id"])
+    payload.sort(key=canonical_digest)
     return canonical_digest({"contract_version": EDITORIAL_CONTRACT_VERSION, "claims": payload})
 
 
@@ -181,7 +181,6 @@ def _claim_authority_payload(claim: ReportClaim) -> dict[str, Any]:
         ),
     }
     return {
-        "claim_id": claim.claim_id,
         "project_id": claim.project_id,
         "source_workflow_run_id": claim.source_workflow_run_id,
         "report_workflow_run_id": claim.report_workflow_run_id,

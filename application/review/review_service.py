@@ -26,6 +26,8 @@ from application.ports.review_ports import (
     SemanticReviewInput,
 )
 from application.report.exceptions import ReportError
+from application.report.editorial_contract import EDITORIAL_CONTRACT_VERSION
+from application.report.presentation_persistence import PresentationPersistenceError
 from application.report.coverage_contract import (
     CoverageContractError,
     required_research_question_texts,
@@ -56,6 +58,12 @@ from application.review.structural_review import (
     run_structural_review,
 )
 from application.review.claim_review import review_structured_claim_contract
+from application.review.presentation_review import (
+    MAX_FULL_REPORT_LIFECYCLE_CALLS,
+    PresentationReviewError,
+    build_presentation_review_input,
+    deterministic_presentation_issues,
+)
 from infrastructure.review.deterministic_review_engine import (
     build_section_inputs,
     candidates_to_issues,
@@ -172,7 +180,9 @@ class ReviewService:
                 )
                 raise ReviewError("Invalid Report RQ coverage contract") from exc
 
-            artifact = self._artifact_for_report(workflow_run_id, report.id)
+            editorial = report.metadata.get("report_contract_version") == EDITORIAL_CONTRACT_VERSION
+
+            artifact = None if editorial else self._artifact_for_report(workflow_run_id, report.id)
             findings = self._finding_repository.list_for_project(
                 project_id,
                 workflow_run_id=artifact_run_id,
@@ -215,6 +225,133 @@ class ReviewService:
             report_claims = tuple(
                 self._report_claim_repository.list_for_report(report.id, report.revision_number)
             ) if structured and self._report_claim_repository is not None else ()
+            if editorial:
+                authority_issues = review_structured_claim_contract(
+                    report=report, claims=report_claims, design=design,
+                    findings=findings, insights=insights, evidence_items=evidence_items,
+                    source_workflow_run_id=artifact_run_id,
+                    coverage_contract=coverage_contract,
+                )
+                if authority_issues:
+                    self._set_review_diagnostics(
+                        context, phase="presentation_authority", status="failed",
+                        category="deterministic_precheck_rejection",
+                        rejection_codes=tuple(
+                            str(item.metadata.get("code", "authority_invalid"))
+                            for item in authority_issues[:16]
+                        ),
+                    )
+                    raise ReviewError("Editorial Report factual authority is invalid")
+                try:
+                    presentation_input = build_presentation_review_input(
+                        report=report, claims=report_claims,
+                        coverage_contract=coverage_contract,
+                    )
+                except (PresentationPersistenceError, PresentationReviewError, ValueError) as exc:
+                    self._set_review_diagnostics(
+                        context, phase="presentation_precheck", status="failed",
+                        category="deterministic_precheck_rejection",
+                        rejection_codes=(str(exc)[:128],),
+                    )
+                    raise ReviewError("Invalid persisted editorial presentation") from exc
+
+                deterministic_candidates = deterministic_presentation_issues(presentation_input)
+                semantic_candidates = ()
+                semantic_calls = 0
+                if not deterministic_candidates:
+                    semantic_candidates = self._run_presentation_semantic_review(
+                        context=context, review_input=presentation_input,
+                    )
+                    semantic_calls = self._presentation_semantic_call_count()
+                revision_calls = int(
+                    report.metadata.get("editorial", {}).get("diagnostics", {}).get(
+                        "provider_call_count", 0,
+                    )
+                ) if report.revision_number > 1 else 0
+                initial_editorial_calls = int(
+                    report.metadata.get("editorial_lifecycle", {}).get(
+                        "initial_editorial_calls",
+                        report.metadata.get("editorial", {}).get("diagnostics", {}).get(
+                            "provider_call_count", 0,
+                        ) if report.revision_number == 1 else 2,
+                    )
+                )
+                prior_review_calls = int(report.metadata.get("editorial_lifecycle", {}).get("semantic_review_calls", 0))
+                lifecycle_calls = 2 + initial_editorial_calls + prior_review_calls + revision_calls + semantic_calls
+                if lifecycle_calls > MAX_FULL_REPORT_LIFECYCLE_CALLS:
+                    raise ReviewError("Editorial lifecycle provider-call budget exhausted")
+                all_issues = deduplicate_and_cluster_review_issues(
+                    candidates_to_issues(tuple(deterministic_candidates) + tuple(semantic_candidates)),
+                )
+                dimensions = compute_quality_dimensions(all_issues)
+                verdict = compute_verdict(all_issues)
+                review_metadata = {
+                    "report_revision": report.revision_number,
+                    "structured_claim_contract": "desk_report_claim_v1",
+                    "report_contract_version": EDITORIAL_CONTRACT_VERSION,
+                    "reviewed_report_id": report.id,
+                    "reviewed_revision_number": report.revision_number,
+                    "authority_digest": presentation_input.authority_digest,
+                    "presentation_digest": presentation_input.presentation_digest,
+                    "claim_set_digest": claim_set_digest(report_claims),
+                    "coverage_contract_digest": coverage_contract_digest(report),
+                    "semantic_provider_call_count": semantic_calls,
+                    "deterministic_issue_codes": sorted({
+                        str(item.metadata.get("code", "")) for item in deterministic_candidates
+                        if item.metadata.get("code")
+                    })[:32],
+                    "deterministic_review_summary": {
+                        "issue_count": len(deterministic_candidates),
+                        "passed": not deterministic_candidates,
+                    },
+                    "semantic_issue_ids": [
+                        item.id for item in all_issues
+                        if not item.metadata.get("deterministic")
+                    ][:64],
+                    "issue_targets": [
+                        {
+                            "target_type": str(item.metadata.get("target_type", ""))[:32],
+                            "target_ref": str(item.metadata.get("target_ref", ""))[:128],
+                        }
+                        for item in (*deterministic_candidates, *semantic_candidates)
+                    ][:64],
+                    "revision_requested": verdict == ReviewVerdict.REVISE,
+                    "revision_calls": revision_calls,
+                    "lifecycle_provider_call_count": lifecycle_calls,
+                    "final_verdict": verdict.value,
+                }
+                if verdict == ReviewVerdict.APPROVE:
+                    review_metadata.update({
+                        "approved_report_id": report.id,
+                        "approved_revision_number": report.revision_number,
+                        "approved_authority_digest": presentation_input.authority_digest,
+                        "approved_presentation_digest": presentation_input.presentation_digest,
+                    })
+                review_id = self._persist_editorial_review(
+                    project_id=project_id, workflow_run_id=workflow_run_id,
+                    design_id=design.id, report=report, review_attempt=review_attempt,
+                    verdict=verdict, dimensions=dimensions, issues=all_issues,
+                    metadata=review_metadata,
+                )
+                if verdict == ReviewVerdict.APPROVE:
+                    self._set_review_diagnostics(context, phase="review", status="completed")
+                    return ReviewSummary(
+                        review_id=review_id, verdict=verdict.value, report_id=report.id,
+                        artifact_id=None, review_attempt=review_attempt,
+                        revision_count=revision_count, issue_count=len(all_issues),
+                    )
+                if verdict == ReviewVerdict.REJECT or revision_count >= 1:
+                    self._set_review_diagnostics(
+                        context, phase="review", status="failed",
+                        category="semantic_review_rejection",
+                    )
+                    raise ReviewError("Editorial Report did not receive exact approval")
+                stored_review = self._review_repository.get_by_id(review_id)
+                if stored_review is None:
+                    raise ReviewError("Editorial Review record missing after persist")
+                self._report_service.revise_for_context(context, review_result=stored_review)
+                revision_count += 1
+                continue
             claim_issues = review_structured_claim_contract(
                 report=report, claims=report_claims, design=design,
                 findings=findings, insights=insights, evidence_items=evidence_items,
@@ -409,6 +546,49 @@ class ReviewService:
             raise ReviewError(
                 format_review_parse_failure_message(diagnostics),
             ) from exc
+
+    def _run_presentation_semantic_review(self, *, context, review_input):
+        reviewer = getattr(self._semantic_review_engine, "review_presentation", None)
+        if not callable(reviewer):
+            raise ReviewError("Semantic Review engine does not support desk_editorial_v1")
+        try:
+            return reviewer(review_input)
+        except BudgetExhaustedError as exc:
+            self._set_review_diagnostics(context, phase="semantic_review", status="failed", category="budget_exhausted")
+            raise ReviewError(str(exc)) from exc
+        except (ReviewConfigurationError, PresentationReviewError) as exc:
+            self._set_review_diagnostics(context, phase="semantic_review", status="failed", category="semantic_parse_failure")
+            raise ReviewError("Editorial semantic Review failed") from exc
+
+    def _presentation_semantic_call_count(self) -> int:
+        value = int(getattr(self._semantic_review_engine, "llm_call_count", 0))
+        if value < 0 or value > 2:
+            raise ReviewError("Editorial semantic Review call bound exceeded")
+        return value
+
+    def _persist_editorial_review(
+        self, *, project_id, workflow_run_id, design_id, report, review_attempt,
+        verdict, dimensions, issues, metadata,
+    ) -> str:
+        return self._persist_review(
+            ReviewResult(
+                id=str(uuid4()), project_id=project_id,
+                workflow_run_id=workflow_run_id, research_design_id=design_id,
+                report_id=report.id, artifact_id=None,
+                previous_report_id=report.previous_report_id,
+                review_attempt=review_attempt, verdict=verdict,
+                quality_dimensions=dimensions, issues=issues,
+                summary=self._build_summary(verdict, issues),
+                review_method=self._semantic_review_engine.method_name,
+                created_at=datetime.now(timezone.utc).isoformat(),
+                deduplication_key=compute_review_deduplication_key(
+                    workflow_run_id=workflow_run_id, report_id=report.id,
+                    review_attempt=review_attempt,
+                ),
+                metadata=metadata,
+            ),
+            workflow_run_id=workflow_run_id,
+        )
 
     @staticmethod
     def _target_structured_semantic_issues(candidates, *, report: Report, report_claims):

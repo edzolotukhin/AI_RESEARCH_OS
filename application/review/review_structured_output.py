@@ -95,6 +95,7 @@ class ReviewStructuredOutputGenerator:
         prompt: Prompt,
         *,
         payload_schema: str = REVIEW_ISSUES_PAYLOAD_SCHEMA,
+        candidate_validator=review_payload_contract,
     ) -> dict[str, Any]:
         current_prompt = prompt
         last_error: StructuredOutputError | None = None
@@ -110,7 +111,7 @@ class ReviewStructuredOutputGenerator:
             try:
                 payload = self._parser.parse(
                     response.content,
-                    candidate_validator=review_payload_contract,
+                    candidate_validator=candidate_validator,
                     llm_truncated=response.was_truncated,
                     finish_reason=response.finish_reason,
                     output_tokens=response.output_tokens,

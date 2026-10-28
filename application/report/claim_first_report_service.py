@@ -18,10 +18,14 @@ from application.report.deduplication import DR06_RESEARCH_REPORT_TYPE, compute_
 from application.report.exceptions import ReportError
 from application.report.markdown_renderer import render_report_markdown, safe_report_filename
 from application.report.editorial_composer import EditorialComposer, EditorialCompositionError
-from application.report.editorial_contract import EDITORIAL_CONTRACT_VERSION, build_authorized_editorial_catalog
+from application.report.editorial_contract import (
+    EDITORIAL_CONTRACT_VERSION, CoverageLimitation, CoverageStatus,
+    ImpactLabel, MissingDimension, build_authorized_editorial_catalog,
+)
 from application.report.presentation_persistence import (
     attach_editorial_envelope,
     presentation_report_digest,
+    presentation_report_to_dict,
     read_presentation_report,
     report_claims_authority_digest,
 )
@@ -145,6 +149,7 @@ class ClaimFirstReportService(ReportService):
             try:
                 catalog = build_authorized_editorial_catalog(
                     claims, citation_registry=registry.to_dict(),
+                    limitations=_coverage_limitations(contract),
                 )
                 composition = self._editorial_composer.compose(
                     report_id=report_id_candidate,
@@ -160,6 +165,12 @@ class ClaimFirstReportService(ReportService):
                     "authority_digest": authority_digest,
                     "presentation_digest": presentation_report_digest(presentation),
                 })
+                metadata["editorial_lifecycle"] = {
+                    "claim_generation_calls_reserved": 2,
+                    "initial_editorial_calls": int(composition.diagnostics.get("provider_call_count", 0)),
+                    "semantic_review_calls": 0,
+                    "revision_calls": 0,
+                }
                 metadata = attach_editorial_envelope(
                     metadata, presentation=presentation, claims=claims,
                     diagnostics=editorial_diagnostics,
@@ -230,6 +241,10 @@ class ClaimFirstReportService(ReportService):
 
     def revise_for_context(self, context: WorkflowContext, *, review_result: ReviewResult) -> ReportSummary:
         current = self._latest_report(context.project.id, context.workflow_run.id)
+        if current is not None and current.metadata.get("report_contract_version") == EDITORIAL_CONTRACT_VERSION:
+            return self._revise_editorial_for_context(
+                context, current=current, review_result=review_result,
+            )
         if current is None or current.metadata.get("structured_claim_contract") != "desk_report_claim_v1":
             return super().revise_for_context(context, review_result=review_result)
         if review_result.report_id != current.id or review_result.review_attempt != 1:
@@ -329,3 +344,241 @@ class ClaimFirstReportService(ReportService):
         updated = replace(existing_artifact, title=revised.title, content=markdown, filename=safe_report_filename(revised.title), content_checksum=compute_content_checksum(markdown), report_id=revised.id)
         self._artifact_repository.save(updated, expected_version=existing_artifact.version)
         return ReportSummary(report_id=revised.id, artifact_id=existing_artifact.id, section_count=len(revised.sections), sections_rejected=0, batch_failures=0)
+
+    def _revise_editorial_for_context(
+        self, context: WorkflowContext, *, current: Report, review_result: ReviewResult,
+    ) -> ReportSummary:
+        if self._editorial_composer is None:
+            raise ReportError("Editorial revision requires EditorialComposer")
+        if review_result.report_id != current.id or review_result.review_attempt != 1:
+            raise ReportError("Editorial revision must target exact first reviewed revision")
+        if not review_result.issues:
+            raise ReportError("Editorial revision requires bounded Review issues")
+
+        old_claims = tuple(self._report_claim_repository.list_for_report(current.id, current.revision_number))
+        if not old_claims:
+            raise ReportError("Editorial revision has no persisted ReportClaims")
+        previous = read_presentation_report(current, claims=old_claims)
+        if previous is None:
+            raise ReportError("Editorial revision has no persisted PresentationReport")
+        old_authority_digest = report_claims_authority_digest(old_claims)
+        report_id = str(uuid4())
+        next_revision = current.revision_number + 1
+        claim_map = {
+            claim.claim_id: str(uuid5(NAMESPACE_URL, f"{report_id}:{next_revision}:{claim.claim_id}"))
+            for claim in old_claims
+        }
+        new_claims = tuple(
+            ReportClaim.from_dict({**claim.to_dict(), "claim_id": claim_map[claim.claim_id]})
+            for claim in old_claims
+        )
+        if report_claims_authority_digest(new_claims) != old_authority_digest:
+            raise ReportError("Editorial revision changed immutable factual authority")
+
+        design = self._resolve_design(context)
+        from application.replay.desk_downstream_replay import source_run_id
+        source_run = source_run_id(context)
+        findings = self._finding_repository.list_for_project(context.project.id, workflow_run_id=source_run)
+        evidence = self._evidence_repository.list_for_project(context.project.id, workflow_run_id=source_run)
+        finding_by_id = {item.id: item for item in findings}
+        evidence_by_id = {item.id: item for item in evidence}
+        for claim in new_claims:
+            authority = derive_claim_authority(
+                project_id=context.project.id, source_workflow_run_id=source_run,
+                report_workflow_run_id=context.workflow_run.id, design=design,
+                findings=tuple(finding_by_id[item] for item in claim.finding_ids),
+                evidence_by_id=evidence_by_id,
+            )
+            validate_report_claim(claim, authority)
+
+        allowed_target_types = {
+            "REPORT", "EXECUTIVE_SUMMARY", "SECTION", "PARAGRAPH",
+            "EDITORIAL_UNIT", "REPORT_CLAIM", "COVERAGE_LIMITATION",
+        }
+        issue_payload = []
+        target_payload = []
+        exact_targets = {
+            ("REPORT", current.id),
+            ("EXECUTIVE_SUMMARY", "executive_summary"),
+            *(("SECTION", item.section_id) for item in previous.sections),
+            *(("PARAGRAPH", item.paragraph_id) for item in (
+                previous.executive_summary.paragraphs
+                + tuple(p for section in previous.sections for p in section.paragraphs)
+            )),
+            *(("EDITORIAL_UNIT", unit_id) for unit_id in (
+                previous.executive_summary.unit_ids
+                + tuple(unit for section in previous.sections for unit in section.unit_ids)
+            )),
+            *(("REPORT_CLAIM", item.claim_id) for item in old_claims),
+            *(("COVERAGE_LIMITATION", item.limitation_id) for item in previous.limitations),
+        }
+        for issue in review_result.issues:
+            target_type = str(issue.metadata.get("target_type", ""))
+            target_ref = str(issue.metadata.get("target_ref", ""))
+            if target_type not in allowed_target_types or not target_ref:
+                raise ReportError("Editorial revision issue has invalid target")
+            if (target_type, target_ref) not in exact_targets:
+                raise ReportError("Editorial revision issue targets foreign presentation state")
+            if target_type == "REPORT_CLAIM":
+                if target_ref not in claim_map:
+                    raise ReportError("Editorial revision targets foreign ReportClaim")
+                target_ref = claim_map[target_ref]
+            issue_payload.append({
+                "target_type": target_type,
+                "target_ref": target_ref,
+                "issue_type": str(issue.metadata.get("semantic_issue_type", issue.issue_type.value)),
+                "revision_instruction": issue.suggested_action,
+            })
+            target_payload.append({"target_type": target_type, "target_ref": target_ref})
+
+        registry = CitationRegistry()
+        sources = [
+            item for item in self._source_repository.list_for_project(context.project.id)
+            if source_run in item.workflow_run_refs
+        ]
+        sources_by_id = {item.id: item for item in sources}
+        for item in evidence:
+            registry.register_evidence(item, sources_by_id=sources_by_id)
+        try:
+            old_catalog = build_authorized_editorial_catalog(
+                old_claims, citation_registry=registry.to_dict(),
+            )
+            new_base_catalog = build_authorized_editorial_catalog(
+                new_claims, citation_registry=registry.to_dict(),
+            )
+            period_map: dict[str, str] = {}
+            for old_ref, old_period in old_catalog.periods.items():
+                old_fact = old_catalog.facts[old_period.fact_ref]
+                mapped_claim = claim_map[old_period.claim_ref]
+                matches = [
+                    ref for ref, item in new_base_catalog.periods.items()
+                    if item.claim_ref == mapped_claim
+                    and item.period == old_period.period
+                    and new_base_catalog.facts[item.fact_ref].numeric_fact == old_fact.numeric_fact
+                ]
+                if len(matches) != 1:
+                    raise ReportError("Editorial limitation period authority cannot be remapped")
+                period_map[old_ref] = matches[0]
+            revised_limitations = tuple(
+                replace(
+                    item,
+                    supported_claim_refs=tuple(claim_map[ref] for ref in item.supported_claim_refs),
+                    supported_period_refs=tuple(period_map[ref] for ref in item.supported_period_refs),
+                )
+                for item in previous.limitations
+            )
+            catalog = build_authorized_editorial_catalog(
+                new_claims, citation_registry=registry.to_dict(),
+                limitations=revised_limitations,
+            )
+            composition = self._editorial_composer.compose(
+                report_id=report_id, revision_number=next_revision,
+                source_report_id=current.id, authority_digest=old_authority_digest,
+                catalog=catalog,
+                revision_context={
+                    "previous_presentation": presentation_report_to_dict(previous),
+                    "issues": issue_payload,
+                    "allowed_targets": target_payload,
+                },
+            )
+            presentation = replace(composition.report, title=current.title)
+        except (EditorialCompositionError, ValueError) as exc:
+            raise ReportError("Editorial revision composition failed") from exc
+        if presentation.authority_digest != old_authority_digest:
+            raise ReportError("Editorial revision presentation changed authority digest")
+
+        claim_id_map = claim_map
+        revised_sections = tuple(
+            replace(section, claim_refs=tuple(claim_id_map.get(item, item) for item in section.claim_refs))
+            for section in current.sections
+        )
+        metadata = dict(current.metadata)
+        metadata["summary_units"] = [
+            {
+                **item,
+                "claim_ids": [claim_map.get(value, value) for value in item.get("claim_ids", [])],
+            }
+            for item in metadata.get("summary_units", [])
+            if isinstance(item, dict)
+        ]
+        initial_calls = int(
+            current.metadata.get("editorial_lifecycle", {}).get(
+                "initial_editorial_calls",
+                current.metadata.get("editorial", {}).get("diagnostics", {}).get("provider_call_count", 0),
+            )
+        )
+        first_review_calls = int(review_result.metadata.get("semantic_provider_call_count", 0))
+        revision_calls = int(composition.diagnostics.get("provider_call_count", 0))
+        if revision_calls > 2:
+            raise ReportError("Editorial revision provider-call bound exceeded")
+        editorial_diagnostics = dict(composition.diagnostics)
+        editorial_diagnostics.update({
+            "contract_version": EDITORIAL_CONTRACT_VERSION,
+            "authority_digest": old_authority_digest,
+            "presentation_digest": presentation_report_digest(presentation),
+        })
+        metadata.update({
+            "revision_of": current.id,
+            "triggering_review_id": review_result.id,
+            "editorial_lifecycle": {
+                "initial_editorial_calls": initial_calls,
+                "semantic_review_calls": first_review_calls,
+                "revision_calls": revision_calls,
+            },
+        })
+        metadata = attach_editorial_envelope(
+            metadata, presentation=presentation, claims=new_claims,
+            diagnostics=editorial_diagnostics,
+        )
+        dedup = compute_report_deduplication_key(
+            workflow_run_id=context.workflow_run.id,
+            report_type=DR06_RESEARCH_REPORT_TYPE,
+            generation_method=current.generation_method,
+            revision_number=next_revision,
+        )
+        revised = replace(
+            current, id=report_id, sections=revised_sections, metadata=metadata,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            revision_number=next_revision, previous_report_id=current.id,
+            approval_status="draft", deduplication_key=dedup, version=0,
+        )
+        contract = resolve_report_coverage_contract(report=revised, design=design)
+        mandatory = {
+            rq: tuple(sorted(item.id for item in findings if rq in item.research_question_refs))
+            for rq in contract.required_rq_ids
+        }
+        errors = validate_claim_backed_coverage(
+            claims=new_claims, sections=revised.sections, contract=contract,
+            mandatory_rq_findings=mandatory,
+        )
+        if errors:
+            raise ReportError(f"Editorial revision coverage failed: {list(errors)}")
+        try:
+            self._report_claim_repository.create_with_report(revised, new_claims)
+        except ReportClaimConflictError as exc:
+            raise ReportError("Atomic editorial revision persistence failed") from exc
+        persisted = self._report_repository.get_by_id(revised.id)
+        if persisted is None:
+            raise ReportError("Editorial revision persistence did not return Report")
+        stored_claims = tuple(self._report_claim_repository.list_for_report(revised.id, next_revision))
+        read_presentation_report(persisted, claims=stored_claims)
+        return ReportSummary(
+            report_id=revised.id, artifact_id="", section_count=len(revised.sections),
+            sections_rejected=0, batch_failures=0,
+        )
+
+
+def _coverage_limitations(contract) -> tuple[CoverageLimitation, ...]:
+    if contract.mode != "limited":
+        return ()
+    return tuple(
+        CoverageLimitation(
+            limitation_id=f"coverage:{rq_id}", topic_ref=rq_id,
+            supported_claim_refs=(), supported_period_refs=(),
+            missing_dimensions=(MissingDimension.OTHER_BOUNDED,),
+            missing_periods=(), coverage_status=CoverageStatus.UNSUPPORTED,
+            impact_label=ImpactLabel.REQUIRES_CAUTION,
+            evidence_requirement_labels=(),
+        )
+        for rq_id in contract.excluded_rq_ids
+    )

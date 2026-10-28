@@ -23,6 +23,19 @@ class DeterministicReviewEngine:
 
     method_name = "deterministic"
 
+    def __init__(self) -> None:
+        self._llm_call_count = 0
+
+    @property
+    def llm_call_count(self) -> int:
+        return self._llm_call_count
+
+    def review_presentation(self, review_input):
+        """Provider-free whole-presentation boundary used by tests and smoke runs."""
+        self._llm_call_count = 0
+        del review_input
+        return ()
+
     def review_report(
         self,
         review_input: SemanticReviewInput,

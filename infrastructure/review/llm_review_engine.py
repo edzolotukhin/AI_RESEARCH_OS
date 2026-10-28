@@ -26,6 +26,12 @@ from infrastructure.review.deterministic_review_engine import (
     build_rq_batch_inputs,
 )
 from infrastructure.llm.llm_client import LLMClient
+from application.review.presentation_review import (
+    MAX_SEMANTIC_REVIEW_CALLS_PER_PASS,
+    PresentationReviewError,
+    PresentationReviewInput,
+    resolve_semantic_presentation_issues,
+)
 
 DEFAULT_MAX_SUPPORT_CHARS_PER_BATCH = 6000
 
@@ -69,6 +75,7 @@ class LlmReviewEngine:
         max_chars_per_batch: int = 12000,
         max_support_chars_per_batch: int = DEFAULT_MAX_SUPPORT_CHARS_PER_BATCH,
     ) -> None:
+        self._llm_client = llm_client
         self._structured_output = ReviewStructuredOutputGenerator(
             llm_client=llm_client,
             max_output_tokens=max_output_tokens,
@@ -86,6 +93,12 @@ class LlmReviewEngine:
         self._section_stats: list[ReviewSectionEngineStats] = []
         self._llm_call_count: int = 0
         self._last_batch_plan: ReviewBatchPlan | None = None
+        self._presentation_output = ReviewStructuredOutputGenerator(
+            llm_client=llm_client,
+            max_output_tokens=max_output_tokens,
+            reasoning_effort=reasoning_effort,
+            max_attempts=MAX_SEMANTIC_REVIEW_CALLS_PER_PASS,
+        )
 
     @property
     def last_section_stats(self) -> ReviewSectionEngineStats | None:
@@ -176,6 +189,53 @@ class LlmReviewEngine:
             candidates.extend(mapped)
         return tuple(candidates)
 
+    def review_presentation(
+        self,
+        review_input: PresentationReviewInput,
+    ) -> tuple[ReviewIssueCandidate, ...]:
+        """One whole-presentation request with one structured-output repair maximum."""
+        self._llm_call_count = 0
+        self._last_batch_plan = None
+        prompt = Prompt(
+            system=(
+                "Review only reader-facing presentation quality: readability, clarity, "
+                "organization, synthesis, repetition, executive-summary usefulness, "
+                "section coherence, limitation wording, and communication of authorized "
+                "interpretations. Do not reassess factual authority, citations, lineage, "
+                "numeric facts, sources, or revision identity. Select only supplied target "
+                "pairs. Return JSON only with issues containing exactly target_type, "
+                "target_ref, issue_type, severity, message, revision_instruction."
+            ),
+            user=review_input.provider_payload(),
+        )
+        schema = (
+            '{"issues":[{"target_type":"PARAGRAPH","target_ref":"id",'
+            '"issue_type":"clarity","severity":"minor","message":"text",'
+            '"revision_instruction":"text"}]}'
+        )
+        try:
+            payload = self._presentation_output.generate(
+                prompt, payload_schema=schema,
+                candidate_validator=lambda value: _valid_presentation_review_payload(
+                    value, review_input=review_input,
+                ),
+            )
+            telemetry = self._presentation_output.last_telemetry
+            self._llm_call_count = telemetry.attempts if telemetry else 1
+            return resolve_semantic_presentation_issues(payload, review_input=review_input)
+        except (StructuredOutputError, PresentationReviewError) as exc:
+            telemetry = self._presentation_output.last_telemetry
+            self._llm_call_count = telemetry.attempts if telemetry else 1
+            raise ReviewConfigurationError(
+                "Editorial semantic review failed structured output validation",
+            ) from exc
+        except BudgetExhaustedError:
+            self._llm_call_count = max(1, self._llm_call_count)
+            raise
+        except Exception as exc:
+            telemetry = self._presentation_output.last_telemetry
+            self._llm_call_count = telemetry.attempts if telemetry else 1
+            raise ReviewConfigurationError("Editorial semantic review provider failed") from exc
     def max_input_chars_per_request(
         self,
         review_input: SemanticReviewInput,
@@ -462,6 +522,14 @@ class LlmReviewEngine:
             rejection_counts=rejection_counts,
         )
         return mapped, stats
+
+
+def _valid_presentation_review_payload(value, *, review_input) -> bool:
+    try:
+        resolve_semantic_presentation_issues(value, review_input=review_input)
+        return True
+    except PresentationReviewError:
+        return False
 
     def _map_issues(
         self,

@@ -172,9 +172,12 @@ class EditorialComposer:
     def compose(
         self, *, report_id: str, revision_number: int, source_report_id: str,
         authority_digest: str, catalog: AuthorizedEditorialCatalog,
+        revision_context: Mapping[str, Any] | None = None,
     ) -> EditorialCompositionResult:
         options = build_editorial_options(catalog)
         base_request = build_provider_request(catalog=catalog, options=options, authority_digest=authority_digest)
+        if revision_context is not None:
+            base_request["revision"] = _bounded_revision_context(revision_context)
         diagnostics: dict[str, Any] = {
             "stage": "editorial_composition", "contract_version": EDITORIAL_CONTRACT_VERSION,
             "provider_call_count": 0, "attempts": [],
@@ -291,6 +294,36 @@ def build_provider_request(*, catalog: AuthorizedEditorialCatalog, options: Edit
             "fields": ["contract_version", "report_title", "executive_summary", "sections"],
             "frame_segment_types": [item.value for item in FrameSegmentType],
         },
+    }
+
+
+def _bounded_revision_context(value: Mapping[str, Any]) -> dict[str, Any]:
+    allowed = {"previous_presentation", "issues", "allowed_targets"}
+    if set(value) != allowed:
+        raise EditorialCompositionError("revision_context_schema")
+    previous = value["previous_presentation"]
+    issues = value["issues"]
+    targets = value["allowed_targets"]
+    if not isinstance(previous, Mapping) or not isinstance(issues, list) or not isinstance(targets, list):
+        raise EditorialCompositionError("revision_context_schema")
+    if len(issues) > 32 or len(targets) > 128:
+        raise EditorialCompositionError("revision_context_bounds")
+    bounded_issues = []
+    for item in issues:
+        if not isinstance(item, Mapping) or set(item) != {"target_type", "target_ref", "issue_type", "revision_instruction"}:
+            raise EditorialCompositionError("revision_context_schema")
+        bounded_issues.append({key: str(item[key])[:500] for key in item})
+    bounded_targets = []
+    for item in targets:
+        if not isinstance(item, Mapping) or set(item) != {"target_type", "target_ref"}:
+            raise EditorialCompositionError("revision_context_schema")
+        bounded_targets.append({key: str(item[key])[:128] for key in item})
+    return {
+        "previous_presentation": dict(previous),
+        "issues": bounded_issues,
+        "allowed_targets": bounded_targets,
+        "mutable": ["wording", "paragraph_order", "section_order", "interpretation_selection", "citation_placement", "limitation_presentation"],
+        "prohibited": ["factual_authority", "numeric_facts", "scope", "lineage", "support"],
     }
 
 
