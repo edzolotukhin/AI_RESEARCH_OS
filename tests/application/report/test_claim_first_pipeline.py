@@ -473,6 +473,21 @@ class ClaimFirstGenerationTests(unittest.TestCase):
             self.generate(candidate_provider=invalid, correction_provider=failed)
         self.assertEqual("repair_provider_failed", captured.exception.diagnostics["category"])
 
+    def test_initial_and_repair_h2_diagnostics_survive_repair_validation_failure(self) -> None:
+        def invalid(envelope):
+            result = copy.deepcopy(envelope)
+            result["assertion"]["proposition"] = "8%"
+            return result
+
+        with self.assertRaises(ClaimGenerationError) as captured:
+            self.generate(candidate_provider=invalid, correction_provider=lambda request: request["candidate"])
+        diagnostics = captured.exception.diagnostics
+        self.assertIn("initial_h2", diagnostics)
+        self.assertIn("repair_h2", diagnostics)
+        self.assertEqual("failed", diagnostics["initial_h2"]["numeric_leakage_result"])
+        self.assertEqual("failed", diagnostics["repair_h2"]["numeric_leakage_result"])
+        self.assertNotIn("8%", diagnostics["repair_h2"].get("resolved_numeric_facts", []))
+
     def test_multiple_invalid_claims_use_one_batch_generation_and_one_repair_call(self) -> None:
         second = replace(self.fixture.finding, id="finding-2")
         calls = []

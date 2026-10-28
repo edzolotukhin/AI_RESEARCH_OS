@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+import re
 from typing import Any
 
 from application.report.claim_contract import canonical_digest
@@ -80,7 +81,9 @@ def compose_assertion(
     assertion: Any,
     *,
     catalog: FactCatalog,
+    trace: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], tuple[NumericFact, ...]]:
+    _trace(trace, h2_path="claim_numeric_composition", composition_stage="segment_parse")
     if not isinstance(assertion, dict):
         raise _error("semantic_segment_schema", field="assertion", value=assertion)
     expected = {"kind", "certainty", "direction", "segments"}
@@ -89,6 +92,7 @@ def compose_assertion(
     if any(not isinstance(assertion.get(field), str) or not assertion[field].strip() for field in ("kind", "certainty", "direction")):
         raise _error("semantic_segment_schema", field="assertion", value=assertion)
     segments = assertion["segments"]
+    _trace(trace, segment_types=[item.get("type") for item in segments if isinstance(item, dict)])
     if not segments:
         raise _error("semantic_segment_schema", field="assertion.segments", value=segments)
     rendered: list[str] = []
@@ -101,12 +105,14 @@ def compose_assertion(
             if set(segment) != {"type", "text"} or not isinstance(segment.get("text"), str) or not segment["text"]:
                 raise _error("semantic_segment_schema", field=f"assertion.segments[{index}]", value=segment)
             if any(character.isdigit() for character in segment["text"]):
+                _trace(trace, numeric_leakage_result="failed", composition_stage="numeric_leakage")
                 raise _error("numeric_leakage", field=f"assertion.segments[{index}].text", value=segment["text"])
             rendered.append(segment["text"])
         elif kind == "fact_ref":
             if set(segment) != {"type", "fact_ref"} or not isinstance(segment.get("fact_ref"), str):
                 raise _error("semantic_segment_schema", field=f"assertion.segments[{index}]", value=segment)
             ref = segment["fact_ref"]
+            _trace(trace, fact_refs=[ref])
             if ref not in catalog.facts:
                 own_prefix = f"nf_{catalog.claim_key}_"
                 if not ref.startswith("nf_"):
@@ -119,24 +125,63 @@ def compose_assertion(
             if ref in selected_refs:
                 raise _error("duplicate_fact_ref", field=f"assertion.segments[{index}].fact_ref", value=ref)
             selected_refs.append(ref)
-            rendered.append(render_numeric_fact(catalog.facts[ref]))
+            expression = render_numeric_fact(catalog.facts[ref])
+            rendered.append(expression)
+            _trace(trace, rendered_fact_expressions=[expression], resolved_fact_refs=[ref], resolved_numeric_facts=[catalog.facts[ref].to_dict()])
         else:
             if set(segment) != {"type", "period_ref"} or not isinstance(segment.get("period_ref"), str):
                 raise _error("semantic_segment_schema", field=f"assertion.segments[{index}]", value=segment)
             ref = segment["period_ref"]
+            _trace(trace, period_refs=[ref])
             if ref not in catalog.periods:
                 raise _error("period_ref_invalid", field=f"assertion.segments[{index}].period_ref", value=ref)
             rendered.append(render_period(catalog.periods[ref]))
+            _trace(trace, period_refs=[ref])
     proposition = "".join(rendered).strip()
     if not proposition:
         raise _error("semantic_segment_schema", field="assertion.segments", value=segments)
     facts = tuple(catalog.facts[ref] for ref in selected_refs)
+    _trace(
+        trace,
+        fact_refs=selected_refs,
+        composed_proposition_digest=canonical_digest({"proposition": proposition}),
+        composed_numeric_tokens=_numeric_tokens(proposition),
+        numeric_leakage_result="passed",
+        composition_stage="deterministic_rendering_complete",
+    )
     return {
         "kind": assertion["kind"],
         "proposition": proposition,
         "certainty": assertion["certainty"],
         "direction": assertion["direction"],
     }, facts
+
+
+def _trace(trace: dict[str, Any] | None, **values: Any) -> None:
+    if trace is None:
+        return
+    trace.setdefault("h2_contract_version", "desk_h2_transient_segments_v1")
+    trace.setdefault("h2_path", "claim_numeric_composition")
+    trace.setdefault("legacy_proposition_present", False)
+    trace.setdefault("legacy_proposition_used", False)
+    trace.setdefault("fact_refs", [])
+    trace.setdefault("period_refs", [])
+    trace.setdefault("resolved_fact_refs", [])
+    trace.setdefault("resolved_numeric_facts", [])
+    trace.setdefault("rendered_fact_expressions", [])
+    for key, value in values.items():
+        if key in {"fact_refs", "period_refs", "resolved_fact_refs", "resolved_numeric_facts", "rendered_fact_expressions", "composed_numeric_tokens", "segment_types"}:
+            existing = trace.setdefault(key, [])
+            for item in value or []:
+                if item not in existing and len(existing) < 16:
+                    existing.append(item)
+        else:
+            trace[key] = value
+
+
+def _numeric_tokens(proposition: str) -> list[str]:
+    tokens = re.findall(r"(?<!\w)[+-]?(?:\d+[\d\u00a0\u202f ]*)(?:[,.]\d+)?\s*%?", proposition)
+    return list(dict.fromkeys(token.strip() for token in tokens if token.strip()))[:16]
 
 
 def render_numeric_fact(fact: NumericFact) -> str:

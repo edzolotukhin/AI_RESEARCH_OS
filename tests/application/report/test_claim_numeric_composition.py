@@ -125,6 +125,30 @@ class ClaimNumericCompositionTests(unittest.TestCase):
         self.assertEqual((second,), selected)
         self.assertIn("10% (період: 2026; географія: україна)", composed["proposition"])
 
+    def test_h2_success_trace_is_bounded_and_structured(self):
+        catalog = self.catalog(fact("7.8", "%", periods=("2026",), geography=()))
+        ref = next(iter(catalog.facts))
+        trace = {}
+        composed, _ = compose_assertion(self.assertion(
+            {"type": "text", "text": "Частка становила "},
+            {"type": "fact_ref", "fact_ref": ref},
+        ), catalog=catalog, trace=trace)
+        self.assertEqual("desk_h2_transient_segments_v1", trace["h2_contract_version"])
+        self.assertEqual(["text", "fact_ref"], trace["segment_types"])
+        self.assertEqual([ref], trace["resolved_fact_refs"])
+        self.assertEqual(["7,8% (період: 2026)"], trace["rendered_fact_expressions"])
+        self.assertEqual(["7,8%", "2026"], trace["composed_numeric_tokens"])
+        self.assertIn("proposition", composed)
+
+    def test_h2_leakage_trace_records_failure_without_prose(self):
+        trace = {}
+        with self.assertRaises(NumericCompositionError):
+            compose_assertion(self.assertion(
+                {"type": "text", "text": "Частка 8%"},
+            ), catalog=self.catalog(), trace=trace)
+        self.assertEqual("failed", trace["numeric_leakage_result"])
+        self.assertNotIn("Частка", trace)
+
 
 if __name__ == "__main__":
     unittest.main()

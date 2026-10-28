@@ -77,9 +77,10 @@ def generate_validated_claims(
     claims: list[ReportClaim | None] = [None] * len(prepared)
     invalid: list[dict[str, Any]] = []
     for index, ((finding, authority, envelope, catalog), raw) in enumerate(zip(prepared, raws)):
+        initial_h2: dict[str, Any] = {"catalog_built": True}
         try:
             if candidate_provider is not None:
-                raw = _compose_repair_candidate(envelope, RepairDelta.from_dict(raw), catalog=catalog)
+                raw = _compose_repair_candidate(envelope, RepairDelta.from_dict(raw), catalog=catalog, h2_trace=initial_h2)
                 _validate_narrowing_only(envelope, raw)
             claim = validate_report_claim(ReportClaim.from_dict(raw), authority)
             validate_claim_proposition(claim)
@@ -88,7 +89,7 @@ def generate_validated_claims(
                             "envelope": envelope, "candidate": raw,
                             "diagnostics": _generation_diagnostics(
                                 "initial_validation_failed", first_error,
-                                envelope=envelope,
+                                envelope=envelope, h2=initial_h2,
                             )})
             continue
         claims[index] = claim
@@ -120,9 +121,10 @@ def generate_validated_claims(
                     "category": "repair_output_malformed", "failure_stage": "repair_output",
                     "repair_attempted": True, "attempt_count": 1,
                 })
+            repair_h2: dict[str, Any] = {}
             try:
                 raw = _compose_repair_candidate(
-                    item["envelope"], RepairDelta.from_dict(raw), catalog=item["catalog"],
+                    item["envelope"], RepairDelta.from_dict(raw), catalog=item["catalog"], h2_trace=repair_h2,
                 )
                 _validate_narrowing_only(item["envelope"], raw)
                 claim = validate_report_claim(ReportClaim.from_dict(raw), item["authority"])
@@ -131,7 +133,7 @@ def generate_validated_claims(
                 raise ClaimGenerationError("corrected ReportClaim remains invalid", diagnostics={
                     **_generation_diagnostics(
                         "repair_validation_failed", repair_error,
-                        envelope=item["envelope"],
+                        envelope=item["envelope"], h2_initial=item["diagnostics"].get("initial_h2"), h2_repair=repair_h2,
                     ),
                     "repair_attempted": True,
                     "repair_exhausted": True,
@@ -176,6 +178,7 @@ _SELECTABLE_SUPPORT_FIELDS = ("evidence_ids", "source_ids", "citation_ids")
 
 def _compose_repair_candidate(
     canonical: dict[str, Any], delta: RepairDelta, *, catalog: FactCatalog,
+    h2_trace: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     result = copy.deepcopy(canonical)
     for field in _IMMUTABLE_LINEAGE_FIELDS:
@@ -203,7 +206,11 @@ def _compose_repair_candidate(
             field=field, required=field != "insight_ids",
         )
 
-    result["assertion"], selected_facts = compose_assertion(delta.get("assertion"), catalog=catalog)
+    delta_assertion = delta.get("assertion")
+    if isinstance(delta_assertion, dict) and "proposition" in delta_assertion:
+        if h2_trace is not None:
+            h2_trace["legacy_proposition_present"] = True
+    result["assertion"], selected_facts = compose_assertion(delta.get("assertion"), catalog=catalog, trace=h2_trace)
     result["support"] = _compose_support(canonical, delta.get("support"), result)
     raw_scope = {} if delta.get("scope") in (MISSING, None) else copy.deepcopy(delta.get("scope"))
     if not isinstance(raw_scope, dict):
@@ -602,6 +609,9 @@ def _generation_diagnostics(
     error: Exception,
     *,
     envelope: dict[str, Any] | None = None,
+    h2: dict[str, Any] | None = None,
+    h2_initial: dict[str, Any] | None = None,
+    h2_repair: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     diagnostics = getattr(error, "diagnostics", {})
     result = {
@@ -626,6 +636,32 @@ def _generation_diagnostics(
         result.setdefault("research_question_ids", [str(item)[:128] for item in envelope.get("research_question_ids", [])[:16]])
         result.setdefault("information_need_ids", [str(item)[:128] for item in envelope.get("information_need_ids", [])[:16]])
         result.setdefault("evidence_ids", [str(item)[:128] for item in envelope.get("evidence_ids", [])[:32]])
+    if h2 is not None:
+        result["initial_h2"] = _bounded_h2(h2)
+    if h2_initial is not None:
+        result["initial_h2"] = _bounded_h2(h2_initial)
+    if h2_repair is not None:
+        result["repair_h2"] = _bounded_h2(h2_repair)
+    return result
+
+
+def _bounded_h2(trace: dict[str, Any]) -> dict[str, Any]:
+    allowed = {
+        "h2_contract_version", "h2_path", "composition_stage", "segment_types",
+        "fact_refs", "period_refs", "resolved_fact_refs", "resolved_numeric_facts",
+        "rendered_fact_expressions", "composed_proposition_digest",
+        "composed_numeric_tokens", "numeric_leakage_result",
+        "legacy_proposition_present", "legacy_proposition_used", "catalog_built",
+    }
+    result = {key: trace[key] for key in allowed if key in trace}
+    for key in ("fact_refs", "period_refs", "resolved_fact_refs", "segment_types", "composed_numeric_tokens", "rendered_fact_expressions"):
+        if key in result:
+            result[key] = [str(item)[:128] for item in result[key][:16]]
+    if "resolved_numeric_facts" in result:
+        result["resolved_numeric_facts"] = [
+            {field: item.get(field) for field in ("value", "unit", "scale", "periods", "geography", "metrics", "population_dimensions")}
+            for item in result["resolved_numeric_facts"][:16] if isinstance(item, dict)
+        ]
     return result
 
 
