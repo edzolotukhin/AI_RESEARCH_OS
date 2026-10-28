@@ -118,6 +118,13 @@ class EvidenceRequirementLabel(str, Enum):
     BENCHMARK_EVIDENCE = "benchmark_evidence"
 
 
+class PresentationQualifier(str, Enum):
+    EXACT = "exact"
+    APPROXIMATE = "approximate"
+    GREATER_THAN = "greater_than"
+    LESS_THAN = "less_than"
+
+
 _UUID = re.compile(r"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b")
 _INTERNAL_PREFIX = re.compile(r"(?i)(?<![\w-])(?:rq\d*|in\d*|finding|evidence|claim|source|citation)[_-][\w-]+")
 _URL = re.compile(r"(?i)\b(?:https?://|www\.)\S+")
@@ -227,6 +234,7 @@ class PresentationFact:
     claim_ref: str
     numeric_fact: NumericFact
     period_refs: tuple[str, ...]
+    qualifier: PresentationQualifier = PresentationQualifier.EXACT
 
 
 @dataclass(frozen=True)
@@ -283,11 +291,29 @@ class PresentationSection:
     section_id: str
     title: str
     unit_ids: tuple[str, ...]
+    paragraphs: tuple[PresentationParagraph, ...] = ()
 
 
 @dataclass(frozen=True)
 class PresentationExecutiveSummary:
     unit_ids: tuple[str, ...]
+    paragraphs: tuple[PresentationParagraph, ...] = ()
+
+
+@dataclass(frozen=True)
+class PresentationParagraph:
+    paragraph_id: str
+    text: str
+    unit_ids: tuple[str, ...]
+    claim_refs: tuple[str, ...]
+    fact_refs: tuple[str, ...]
+    period_refs: tuple[str, ...]
+    citation_refs: tuple[str, ...]
+    limitation_refs: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not self.paragraph_id or not self.text.strip() or not self.unit_ids:
+            raise EditorialContractError(EditorialDiagnosticCode.INVALID_PRESENTATION_REPORT)
 
 
 @dataclass(frozen=True)
@@ -350,6 +376,7 @@ class AuthorizedEditorialCatalog:
 def build_authorized_editorial_catalog(
     claims: tuple[ReportClaim, ...], *, citation_registry: Mapping[str, Mapping[str, Any]],
     limitations: tuple[CoverageLimitation, ...] = (),
+    fact_qualifiers: Mapping[str, PresentationQualifier] | None = None,
 ) -> AuthorizedEditorialCatalog:
     claim_map: dict[str, AuthorizedClaim] = {}
     facts: dict[str, PresentationFact] = {}
@@ -371,7 +398,8 @@ def build_authorized_editorial_catalog(
                 periods[period_ref] = PresentationPeriod(period_ref, claim.claim_id, fact_ref, period)
                 owned_period_refs.append(period_ref)
                 period_refs.append(period_ref)
-            facts[fact_ref] = PresentationFact(fact_ref, claim.claim_id, fact, tuple(owned_period_refs))
+            qualifier = (fact_qualifiers or {}).get(fact_ref, PresentationQualifier.EXACT)
+            facts[fact_ref] = PresentationFact(fact_ref, claim.claim_id, fact, tuple(owned_period_refs), qualifier)
             fact_refs.append(fact_ref)
         citation_refs: list[str] = []
         for citation_id in sorted(claim.citation_ids):
