@@ -14,6 +14,7 @@ from application.report.content_batching import (
 from application.report.report_service import ReportService
 from application.report.claim_first_report_service import ClaimFirstReportService
 from application.ports.report_claim_repository import ReportClaimRepository
+from application.report.editorial_composer import EditorialComposer
 from infrastructure.report.deterministic_report_engine import DeterministicReportEngine
 from infrastructure.report.llm_report_engine import LlmReportEngine
 
@@ -59,9 +60,13 @@ def build_report_service(
     report_claim_repository: ReportClaimRepository,
     artifact_repository: ArtifactRepository,
     llm_client,
+    report_contract_version: str = "desk_report_claim_v1",
+    editorial_composer: EditorialComposer | None = None,
 ) -> ReportService:
     return ClaimFirstReportService(
         report_claim_repository=report_claim_repository,
+        report_contract_version=report_contract_version,
+        editorial_composer=editorial_composer,
         report_engine=build_report_engine(config, overrides, llm_client=llm_client),
         finding_repository=finding_repository,
         insight_repository=insight_repository,
@@ -88,6 +93,8 @@ def build_report_executor(
     report_claim_repository: ReportClaimRepository,
     artifact_repository: ArtifactRepository,
     llm_client,
+    report_contract_version: str = "desk_report_claim_v1",
+    editorial_composer: EditorialComposer | None = None,
 ) -> ReportExecutor:
     return ReportExecutor(
         report_service=build_report_service(
@@ -101,5 +108,7 @@ def build_report_executor(
             report_claim_repository=report_claim_repository,
             artifact_repository=artifact_repository,
             llm_client=llm_client,
+            report_contract_version=report_contract_version,
+            editorial_composer=editorial_composer,
         ),
     )

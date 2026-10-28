@@ -17,6 +17,14 @@ from application.report.coverage_contract import CONTRACT_KEY, build_report_cove
 from application.report.deduplication import DR06_RESEARCH_REPORT_TYPE, compute_artifact_deduplication_key, compute_content_checksum, compute_report_deduplication_key
 from application.report.exceptions import ReportError
 from application.report.markdown_renderer import render_report_markdown, safe_report_filename
+from application.report.editorial_composer import EditorialComposer, EditorialCompositionError
+from application.report.editorial_contract import EDITORIAL_CONTRACT_VERSION, build_authorized_editorial_catalog
+from application.report.presentation_persistence import (
+    attach_editorial_envelope,
+    presentation_report_digest,
+    read_presentation_report,
+    report_claims_authority_digest,
+)
 from application.report.report_service import ReportService, ReportSummary
 from application.research_quality.analysis_coverage import coverage_snapshot_from_payload
 from application.research_quality.research_readiness_service import SHARED_STATE_KEY
@@ -29,10 +37,21 @@ from runtime.workflow_context import WorkflowContext
 class ClaimFirstReportService(ReportService):
     """New Desk path: authority -> claims -> prose; legacy methods stay readable."""
 
-    def __init__(self, *, report_claim_repository: ReportClaimRepository, **kwargs) -> None:
+    def __init__(
+        self, *, report_claim_repository: ReportClaimRepository,
+        report_contract_version: str = "desk_report_claim_v1",
+        editorial_composer: EditorialComposer | None = None,
+        **kwargs,
+    ) -> None:
         report_engine = kwargs.get("report_engine")
         super().__init__(**kwargs)
+        if report_contract_version not in {"desk_report_claim_v1", EDITORIAL_CONTRACT_VERSION}:
+            raise ValueError("unsupported Report contract version")
+        if report_contract_version == EDITORIAL_CONTRACT_VERSION and editorial_composer is None:
+            raise ValueError("desk_editorial_v1 requires an EditorialComposer")
         self._report_claim_repository = report_claim_repository
+        self._report_contract_version = report_contract_version
+        self._editorial_composer = editorial_composer
         self._claim_candidate_provider = getattr(
             report_engine, "generate_claim_candidates", None,
         )
@@ -119,11 +138,61 @@ class ClaimFirstReportService(ReportService):
         dedup = compute_report_deduplication_key(workflow_run_id=report_run_id, report_type=DR06_RESEARCH_REPORT_TYPE, generation_method=method, revision_number=revision)
         metadata = {CONTRACT_KEY: contract.to_metadata(), "report_scope": contract.mode, "structured_claim_contract": "desk_report_claim_v1", "summary_units": list(rendered.summary_units)}
         if coverage is not None: metadata.update(coverage.to_dict())
-        report = Report(id=str(uuid4()), project_id=project_id, workflow_run_id=report_run_id, research_design_id=design.id, title=brief.title or "Desk Research Report", language=brief.language or design.language or "en", sections=sections, executive_summary=rendered.executive_summary, limitations=limitations, created_at=datetime.now(timezone.utc).isoformat(), generation_method=method, finding_refs=tuple(sorted({ref for claim in claims for ref in claim.finding_ids})), insight_refs=tuple(sorted({ref for claim in claims for ref in claim.insight_ids})), evidence_refs=tuple(sorted({ref for claim in claims for ref in claim.evidence_ids})), citation_registry=registry.to_dict(), deduplication_key=dedup, revision_number=revision, approval_status="draft", metadata=metadata)
+        report_id_candidate = str(uuid4())
+        system_title = brief.title or "Desk Research Report"
+        if self._report_contract_version == EDITORIAL_CONTRACT_VERSION:
+            authority_digest = report_claims_authority_digest(claims)
+            try:
+                catalog = build_authorized_editorial_catalog(
+                    claims, citation_registry=registry.to_dict(),
+                )
+                composition = self._editorial_composer.compose(
+                    report_id=report_id_candidate,
+                    revision_number=revision,
+                    source_report_id=report_id_candidate,
+                    authority_digest=authority_digest,
+                    catalog=catalog,
+                )
+                presentation = replace(composition.report, title=system_title)
+                editorial_diagnostics = dict(composition.diagnostics)
+                editorial_diagnostics.update({
+                    "contract_version": EDITORIAL_CONTRACT_VERSION,
+                    "authority_digest": authority_digest,
+                    "presentation_digest": presentation_report_digest(presentation),
+                })
+                metadata = attach_editorial_envelope(
+                    metadata, presentation=presentation, claims=claims,
+                    diagnostics=editorial_diagnostics,
+                )
+            except (EditorialCompositionError, ValueError) as exc:
+                diagnostics = dict(getattr(exc, "diagnostics", {}) or {})
+                context.write_shared("report_generation_diagnostics", {
+                    "version": 2,
+                    "phase": "editorial_composition",
+                    "status": "failed",
+                    "workflow_run_id": report_run_id,
+                    "source_run_id": source_run,
+                    "category": type(exc).__name__,
+                    "editorial": diagnostics,
+                })
+                raise ReportError(
+                    f"Editorial Report composition failed for run {report_run_id}"
+                ) from exc
+        report = Report(id=report_id_candidate, project_id=project_id, workflow_run_id=report_run_id, research_design_id=design.id, title=system_title, language=brief.language or design.language or "en", sections=sections, executive_summary=rendered.executive_summary, limitations=limitations, created_at=datetime.now(timezone.utc).isoformat(), generation_method=method, finding_refs=tuple(sorted({ref for claim in claims for ref in claim.finding_ids})), insight_refs=tuple(sorted({ref for claim in claims for ref in claim.insight_ids})), evidence_refs=tuple(sorted({ref for claim in claims for ref in claim.evidence_ids})), citation_registry=registry.to_dict(), deduplication_key=dedup, revision_number=revision, approval_status="draft", metadata=metadata)
         existing = self._report_repository.get_by_deduplication_key(report_run_id, dedup)
         if existing is None:
             try: self._report_claim_repository.create_with_report(report, claims)
-            except ReportClaimConflictError as exc: raise ReportError("Atomic structured Report persistence failed") from exc
+            except ReportClaimConflictError as exc:
+                context.write_shared("report_generation_diagnostics", {
+                    "version": 2,
+                    "phase": "atomic_persistence",
+                    "status": "failed",
+                    "workflow_run_id": report_run_id,
+                    "source_run_id": source_run,
+                    "category": "atomic_structured_report_persistence_failed",
+                    "report_contract_version": self._report_contract_version,
+                })
+                raise ReportError("Atomic structured Report persistence failed") from exc
             report_id = report.id
         else:
             stored_claims = self._report_claim_repository.list_for_report(existing.id, existing.revision_number)
@@ -131,6 +200,28 @@ class ClaimFirstReportService(ReportService):
             report_id = existing.id
         persisted = self._report_repository.get_by_id(report_id)
         if persisted is None: raise ReportError(f"Failed to load persisted report {report_id}")
+        if self._report_contract_version == EDITORIAL_CONTRACT_VERSION:
+            stored_claims = tuple(
+                self._report_claim_repository.list_for_report(
+                    persisted.id, persisted.revision_number,
+                )
+            )
+            read_presentation_report(persisted, claims=stored_claims)
+            context.write_shared("report_generation_diagnostics", {
+                "version": 2,
+                "phase": "persisted",
+                "status": "completed",
+                "workflow_run_id": report_run_id,
+                "source_run_id": source_run,
+                "report_id": report_id,
+                "claim_count": len(claims),
+                "report_contract_version": EDITORIAL_CONTRACT_VERSION,
+                "editorial": dict(persisted.metadata["editorial"]["diagnostics"]),
+            })
+            return ReportSummary(
+                report_id=report_id, artifact_id="", section_count=len(sections),
+                sections_rejected=0, batch_failures=0,
+            )
         markdown = render_report_markdown(persisted); checksum = compute_content_checksum(markdown)
         artifact_dedup = compute_artifact_deduplication_key(workflow_run_id=report_run_id, artifact_type=DR06_RESEARCH_REPORT_TYPE)
         artifact_id = self._persist_artifact(artifact=ArtifactRecord(id=str(uuid4()), project_id=project_id, artifact_type="research_report", title=persisted.title, content=markdown, run_id=report_run_id, status="draft", media_type="text/markdown", filename=safe_report_filename(persisted.title), content_checksum=checksum, deduplication_key=artifact_dedup, report_id=report_id), workflow_run_id=report_run_id, deduplication_key=artifact_dedup)
