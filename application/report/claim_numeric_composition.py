@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-import re
 from typing import Any
 
 from application.report.claim_contract import canonical_digest
+from application.research_scope.numeric_normalization import extract_numeric_tokens
 from domain.reports.report_claim import NumericFact
 
 
@@ -180,8 +180,7 @@ def _trace(trace: dict[str, Any] | None, **values: Any) -> None:
 
 
 def _numeric_tokens(proposition: str) -> list[str]:
-    tokens = re.findall(r"(?<!\w)[+-]?(?:\d+[\d\u00a0\u202f ]*)(?:[,.]\d+)?\s*%?", proposition)
-    return list(dict.fromkeys(token.strip() for token in tokens if token.strip()))[:16]
+    return list(extract_numeric_tokens(proposition))[:16]
 
 
 def render_numeric_fact(fact: NumericFact) -> str:

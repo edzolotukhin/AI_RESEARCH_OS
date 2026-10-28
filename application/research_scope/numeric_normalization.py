@@ -11,11 +11,11 @@ PERCENT_UNITS = frozenset({"%", "percent", "percentage", "відсоток", "в
 _YEAR = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
 _CLAUSE_BOUNDARY = re.compile(r"(?<!\d)[,;](?!\d)|[.!?](?=\s|$)")
 _RENDERED_NUMBER = re.compile(
-    rf"(?<![\w-])(?P<sign>[+-])?\s*(?P<prefix>[$€])?\s*"
+    rf"(?<![\w\d,.-])(?P<sign>[+-])?\s*(?P<prefix>[$€])?\s*"
     rf"(?P<value>(?:\d{{1,3}}[{GROUPING_SPACES}]\d{{3}}(?:[{GROUPING_SPACES}]\d{{3}})*|\d+)(?:[.,]\d+)?)\s*"
     r"(?P<scale>m|million|млн|млрд)?\s*"
     r"(?P<unit>%|percentage points?|відсот(?:ок|ки|ків)?|грн|uah|usd|руб|per\s+hour|на\s+годину)?"
-    r"(?![\w-])",
+    r"(?![\w-]|[.,]\d)",
     re.IGNORECASE,
 )
 
@@ -76,6 +76,14 @@ def rendered_facts(text: str) -> tuple[RenderedFact, ...]:
         for year in years if year not in bound_years
     )
     return tuple(facts)
+
+
+def extract_numeric_tokens(text: str) -> tuple[str, ...]:
+    """Return complete lexical numeric units using the validator's parser."""
+    matches = tuple(_RENDERED_NUMBER.finditer(text))
+    tokens = [match.group(0).strip() for match in matches]
+    tokens.extend(match.group(0) for match in _YEAR.finditer(text))
+    return tuple(dict.fromkeys(token for token in tokens if token))
 
 
 def _clause_span(text: str, start: int, end: int) -> tuple[int, int]:

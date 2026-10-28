@@ -9,6 +9,7 @@ from application.report.claim_numeric_composition import (
     render_numeric_fact,
 )
 from application.report.claim_rendering import validate_claim_proposition
+from application.research_scope.numeric_normalization import extract_numeric_tokens
 from domain.reports.report_claim import NumericFact
 from dataclasses import replace
 import tests.application.report.test_report_claim_contract as fixtures
@@ -148,6 +149,56 @@ class ClaimNumericCompositionTests(unittest.TestCase):
             ), catalog=self.catalog(), trace=trace)
         self.assertEqual("failed", trace["numeric_leakage_result"])
         self.assertNotIn("Частка", trace)
+
+    def test_numeric_token_extraction_preserves_complete_decimal_literals(self):
+        text = "7,8% у 2026 проти 8,7% у 2025"
+        self.assertEqual(("7,8%", "2026", "8,7%", "2025"), extract_numeric_tokens(text))
+        self.assertNotIn("8%", extract_numeric_tokens(text))
+        self.assertNotIn("7%", extract_numeric_tokens(text))
+
+    def test_numeric_token_extraction_matrix(self):
+        cases = (
+            ("(7,8%)", ("7,8%",)),
+            ("+7,8%", ("+7,8%",)),
+            ("-7,8%", ("-7,8%",)),
+            ("7,8 %.", ("7,8 %",)),
+            ("7,8%;", ("7,8%",)),
+            ("7,8%/рік", ("7,8%",)),
+            ("зросло на 7,8% у 2026 році", ("7,8%", "2026")),
+            ("8,7% у 2025–2026 роках", ("8,7%", "2025", "2026")),
+            ("18,76%; 102,0%", ("18,76%", "102,0%")),
+            ("1,06 млрд грн", ("1,06 млрд грн",)),
+            ("1.06 млрд грн", ("1.06 млрд грн",)),
+            ("1,06 млрд у 2021 та 7 млрд у 2025", ("1,06 млрд", "2021", "7 млрд", "2025")),
+            ("48 705 грн", ("48 705 грн",)),
+            ("48\u00a0705 грн", ("48\u00a0705 грн",)),
+            ("48\u202f705 грн", ("48\u202f705 грн",)),
+        )
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(expected, extract_numeric_tokens(text))
+
+    def test_production_h2_proposition_uses_validator_tokens(self):
+        first = fact("7.8", "%", periods=("2026",), geography=("україна",))
+        second = fact("8.7", "%", periods=("2025", "2026"), geography=("україна",))
+        catalog = self.catalog(first, second, periods=("2026",))
+        refs = list(catalog.facts)
+        period_ref = next(iter(catalog.periods))
+        trace = {}
+        assertion, selected = compose_assertion(self.assertion(
+            {"type": "fact_ref", "fact_ref": refs[0]},
+            {"type": "text", "text": " проти "},
+            {"type": "fact_ref", "fact_ref": refs[1]},
+            {"type": "text", "text": "; "},
+            {"type": "period_ref", "period_ref": period_ref},
+        ), catalog=catalog, trace=trace)
+        self.assertEqual(["7,8%", "2026", "8,7%", "2025"], trace["composed_numeric_tokens"])
+        fixture = fixtures.ReportClaimContractTests(); fixture.setUp()
+        claim = replace(
+            fixture.claim(), proposition=assertion["proposition"],
+            scope=replace(fixture.claim().scope, periods=("2026",), numeric_facts=selected),
+        )
+        validate_claim_proposition(claim)
 
 
 if __name__ == "__main__":
