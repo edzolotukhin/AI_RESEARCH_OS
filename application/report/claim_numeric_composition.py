@@ -5,7 +5,11 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from application.report.claim_contract import canonical_digest
-from application.research_scope.numeric_normalization import extract_numeric_tokens
+from application.research_scope.numeric_normalization import (
+    extract_numeric_tokens,
+    rendered_fact_matches_numeric_fact,
+    rendered_facts,
+)
 from domain.reports.report_claim import NumericFact
 
 
@@ -96,6 +100,7 @@ def compose_assertion(
     if not segments:
         raise _error("semantic_segment_schema", field="assertion.segments", value=segments)
     rendered: list[str] = []
+    expected_numeric_tokens: list[str] = []
     previous_was_typed = False
     selected_refs: list[str] = []
     for index, segment in enumerate(segments):
@@ -128,7 +133,9 @@ def compose_assertion(
                 raise _error("duplicate_fact_ref", field=f"assertion.segments[{index}].fact_ref", value=ref)
             selected_refs.append(ref)
             expression = render_numeric_fact(catalog.facts[ref])
+            _validate_rendered_fact(expression, catalog.facts[ref], index=index)
             _append_typed_segment(rendered, expression, previous_was_typed)
+            expected_numeric_tokens.extend(extract_numeric_tokens(expression))
             previous_was_typed = True
             _trace(trace, rendered_fact_expressions=[expression], resolved_fact_refs=[ref], resolved_numeric_facts=[catalog.facts[ref].to_dict()])
         else:
@@ -138,18 +145,29 @@ def compose_assertion(
             _trace(trace, period_refs=[ref])
             if ref not in catalog.periods:
                 raise _error("period_ref_invalid", field=f"assertion.segments[{index}].period_ref", value=ref)
-            _append_typed_segment(rendered, render_period(catalog.periods[ref]), previous_was_typed)
+            period_expression = render_period(catalog.periods[ref])
+            _append_typed_segment(rendered, period_expression, previous_was_typed)
+            expected_numeric_tokens.extend(extract_numeric_tokens(period_expression))
             previous_was_typed = True
-            _trace(trace, period_refs=[ref])
+            _trace(trace, period_refs=[ref], resolved_period_values=[catalog.periods[ref]])
     proposition = "".join(rendered).strip()
     if not proposition:
         raise _error("semantic_segment_schema", field="assertion.segments", value=segments)
+    composed_tokens = tuple(extract_numeric_tokens(proposition))
+    expected_tokens = tuple(dict.fromkeys(expected_numeric_tokens))
+    if composed_tokens != expected_tokens:
+        _trace(trace, numeric_leakage_result="failed", composition_stage="typed_numeric_validation")
+        raise _error(
+            "deterministic_rendering_invariant",
+            field="assertion.segments",
+            value={"expected": expected_tokens, "actual": composed_tokens},
+        )
     facts = tuple(catalog.facts[ref] for ref in selected_refs)
     _trace(
         trace,
         fact_refs=selected_refs,
         composed_proposition_digest=canonical_digest({"proposition": proposition}),
-        composed_numeric_tokens=_numeric_tokens(proposition),
+        composed_numeric_tokens=list(composed_tokens),
         numeric_leakage_result="passed",
         composition_stage="deterministic_rendering_complete",
     )
@@ -173,8 +191,9 @@ def _trace(trace: dict[str, Any] | None, **values: Any) -> None:
     trace.setdefault("resolved_fact_refs", [])
     trace.setdefault("resolved_numeric_facts", [])
     trace.setdefault("rendered_fact_expressions", [])
+    trace.setdefault("resolved_period_values", [])
     for key, value in values.items():
-        if key in {"fact_refs", "period_refs", "resolved_fact_refs", "resolved_numeric_facts", "rendered_fact_expressions", "composed_numeric_tokens", "segment_types"}:
+        if key in {"fact_refs", "period_refs", "resolved_fact_refs", "resolved_numeric_facts", "rendered_fact_expressions", "resolved_period_values", "composed_numeric_tokens", "segment_types"}:
             existing = trace.setdefault(key, [])
             for item in value or []:
                 if item not in existing and len(existing) < 16:
@@ -192,6 +211,16 @@ def _append_typed_segment(rendered: list[str], expression: str, previous_was_typ
     if previous_was_typed:
         rendered.append(" ")
     rendered.append(expression)
+
+
+def _validate_rendered_fact(expression: str, fact: NumericFact, *, index: int) -> None:
+    parsed = tuple(item for item in rendered_facts(expression) if item.value is not None)
+    if len(parsed) != 1 or not rendered_fact_matches_numeric_fact(parsed[0], fact)[0]:
+        raise _error(
+            "deterministic_rendering_invariant",
+            field=f"assertion.segments[{index}].fact_ref",
+            value=fact.to_dict(),
+        )
 
 
 def render_numeric_fact(fact: NumericFact) -> str:

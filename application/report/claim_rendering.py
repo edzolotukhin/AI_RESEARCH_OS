@@ -9,6 +9,7 @@ from domain.reports.report_claim import ReportClaim
 from domain.reports.report_section import ReportSection
 from application.research_scope.numeric_normalization import (
     RenderedFact,
+    extract_numeric_tokens,
     rendered_fact_matches_numeric_fact,
     rendered_facts,
 )
@@ -27,11 +28,27 @@ class RenderedReport:
     executive_summary: str
 
 
-def validate_claim_proposition(claim: ReportClaim) -> None:
+def validate_claim_proposition(claim: ReportClaim, *, h2_trace: dict[str, Any] | None = None) -> None:
+    if h2_trace is not None:
+        _validate_typed_h2_proposition(claim, h2_trace)
+        return
     _validate_unit(
         {"text": claim.proposition, "claim_ids": [claim.claim_id], "classification": "factual"},
         {claim.claim_id: claim}, field="claim_proposition",
     )
+
+
+def _validate_typed_h2_proposition(claim: ReportClaim, trace: dict[str, Any]) -> None:
+    """Validate the flattened text against the exact transient typed composition."""
+    if trace.get("h2_contract_version") != "desk_h2_transient_segments_v1":
+        raise ClaimRenderingError("invalid typed H2 validation context")
+    if tuple(extract_numeric_tokens(claim.proposition)) != tuple(trace.get("composed_numeric_tokens") or ()):
+        raise ClaimRenderingError("typed H2 proposition tokens conflict with composition trace")
+    if trace.get("resolved_numeric_facts") != [fact.to_dict() for fact in claim.scope.numeric_facts]:
+        raise ClaimRenderingError("typed H2 numeric authority conflicts with claim scope")
+    periods = trace.get("resolved_period_values") or []
+    if not isinstance(periods, list) or not set(periods) <= set(claim.scope.periods):
+        raise ClaimRenderingError("typed H2 period authority conflicts with claim scope")
 
 
 def render_validated_claims(*, claims: tuple[ReportClaim, ...], design: ResearchDesign,

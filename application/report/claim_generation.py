@@ -83,7 +83,7 @@ def generate_validated_claims(
                 raw = _compose_repair_candidate(envelope, RepairDelta.from_dict(raw), catalog=catalog, h2_trace=initial_h2)
                 _validate_narrowing_only(envelope, raw)
             claim = validate_report_claim(ReportClaim.from_dict(raw), authority)
-            validate_claim_proposition(claim)
+            validate_claim_proposition(claim, h2_trace=initial_h2 if candidate_provider is not None else None)
         except (ClaimAuthorityError, ClaimRenderingError, ValueError) as first_error:
             invalid.append({"index": index, "finding": finding, "authority": authority, "catalog": catalog,
                             "envelope": envelope, "candidate": raw,
@@ -128,7 +128,7 @@ def generate_validated_claims(
                 )
                 _validate_narrowing_only(item["envelope"], raw)
                 claim = validate_report_claim(ReportClaim.from_dict(raw), item["authority"])
-                validate_claim_proposition(claim)
+                validate_claim_proposition(claim, h2_trace=repair_h2)
             except Exception as repair_error:
                 raise ClaimGenerationError("corrected ReportClaim remains invalid", diagnostics={
                     **_generation_diagnostics(
@@ -648,7 +648,7 @@ def _generation_diagnostics(
 def _bounded_h2(trace: dict[str, Any]) -> dict[str, Any]:
     allowed = {
         "h2_contract_version", "h2_path", "composition_stage", "segment_types",
-        "fact_refs", "period_refs", "resolved_fact_refs", "resolved_numeric_facts",
+        "fact_refs", "period_refs", "resolved_fact_refs", "resolved_numeric_facts", "resolved_period_values",
         "rendered_fact_expressions", "composed_proposition_digest",
         "composed_numeric_tokens", "numeric_leakage_result",
         "legacy_proposition_present", "legacy_proposition_used", "catalog_built",

@@ -8,7 +8,7 @@ from application.report.claim_numeric_composition import (
     compose_assertion,
     render_numeric_fact,
 )
-from application.report.claim_rendering import validate_claim_proposition
+from application.report.claim_rendering import ClaimRenderingError, validate_claim_proposition
 from application.research_scope.numeric_normalization import extract_numeric_tokens
 from domain.reports.report_claim import NumericFact
 from dataclasses import replace
@@ -125,6 +125,67 @@ class ClaimNumericCompositionTests(unittest.TestCase):
             {"type": "fact_ref", "fact_ref": fact_ref},
         ), catalog=catalog)
         self.assertIn("2025 — 23%", composed["proposition"])
+
+    def test_fact_local_period_authority_survives_flattening(self):
+        first = fact("36", "%", periods=("2025",), geography=("україна",))
+        second = fact("23", "%", periods=(), geography=("україна",))
+        catalog = self.catalog(first, second, periods=("2025",))
+        fact_refs = list(catalog.facts)
+        period_ref = next(iter(catalog.periods))
+        trace = {}
+        assertion, selected = compose_assertion(self.assertion(
+            {"type": "fact_ref", "fact_ref": fact_refs[0]},
+            {"type": "fact_ref", "fact_ref": fact_refs[1]},
+            {"type": "period_ref", "period_ref": period_ref},
+        ), catalog=catalog, trace=trace)
+        fixture = fixtures.ReportClaimContractTests(); fixture.setUp()
+        claim = replace(
+            fixture.claim(), proposition=assertion["proposition"],
+            scope=replace(fixture.claim().scope, periods=("2025",), numeric_facts=selected),
+        )
+        validate_claim_proposition(claim, h2_trace=trace)
+        self.assertEqual(("36%", "2025", "23%"), tuple(trace["composed_numeric_tokens"]))
+
+    def test_mixed_period_typed_matrix_has_no_cross_fact_leakage(self):
+        cases = (
+            (("2025",), ("2025",), ()),
+            (("2025",), ("2026",), ()),
+            (("2025",), (), ("2025",)),
+            ((), ("2025",), ("2025",)),
+            ((), (), ()),
+            (("2025",), ("2026",), ("2025", "2026")),
+        )
+        for first_periods, second_periods, contextual_periods in cases:
+            with self.subTest(first=first_periods, second=second_periods, contextual=contextual_periods):
+                first = fact("36", "%", periods=first_periods, geography=())
+                second = fact("23", "%", periods=second_periods, geography=())
+                claim_periods = tuple(dict.fromkeys((*first_periods, *second_periods, *contextual_periods)))
+                catalog = self.catalog(first, second, periods=contextual_periods)
+                segments = [{"type": "fact_ref", "fact_ref": ref} for ref in catalog.facts]
+                segments.extend({"type": "period_ref", "period_ref": ref} for ref in catalog.periods)
+                trace = {}
+                assertion, selected = compose_assertion(self.assertion(*segments), catalog=catalog, trace=trace)
+                fixture = fixtures.ReportClaimContractTests(); fixture.setUp()
+                claim = replace(
+                    fixture.claim(), proposition=assertion["proposition"],
+                    scope=replace(fixture.claim().scope, periods=claim_periods, numeric_facts=selected),
+                )
+                validate_claim_proposition(claim, h2_trace=trace)
+
+    def test_typed_trace_cannot_authorize_mutated_proposition(self):
+        selected = fact("23", "%", periods=(), geography=())
+        catalog = self.catalog(selected)
+        trace = {}
+        assertion, facts = compose_assertion(self.assertion(
+            {"type": "fact_ref", "fact_ref": next(iter(catalog.facts))},
+        ), catalog=catalog, trace=trace)
+        fixture = fixtures.ReportClaimContractTests(); fixture.setUp()
+        claim = replace(
+            fixture.claim(), proposition=assertion["proposition"].replace("23%", "24%"),
+            scope=replace(fixture.claim().scope, periods=(), numeric_facts=facts),
+        )
+        with self.assertRaises(ClaimRenderingError):
+            validate_claim_proposition(claim, h2_trace=trace)
 
     def test_all_numeric_text_leakage_fails(self):
         for text in ("1.06", "1,06", "7,8%", "2021", "48 705", "48\u00a0705", "10 млн", "-3.7%"):
