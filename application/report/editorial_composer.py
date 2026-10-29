@@ -71,12 +71,19 @@ class LlmEditorialProposalProvider:
             user=json.dumps(dict(request), ensure_ascii=False, sort_keys=True),
         ))
         result = JsonValidator().validate(response.content or "")
+        common = {
+            "response_type": type(response).__name__,
+            "content_present": bool(response.content),
+            "content_length": len(response.content or ""),
+            "finish_reason": response.finish_reason,
+            "incomplete_reason": response.incomplete_reason,
+        }
         if not result.is_valid:
             raise EditorialCompositionError(
                 "malformed_editorial_provider_payload",
                 diagnostics={
+                    **common,
                     "parse_failure_category": "invalid_json",
-                    "error": str(result.error or "")[:160],
                     "error_position": result.error_position,
                 },
             )
@@ -85,8 +92,9 @@ class LlmEditorialProposalProvider:
             raise EditorialCompositionError(
                 "malformed_editorial_provider_payload",
                 diagnostics={
+                    **common,
                     "parse_failure_category": "non_object_root",
-                    "root_type": type(payload).__name__,
+                    "decoded_root_type": type(payload).__name__,
                 },
             )
         return payload
@@ -244,10 +252,12 @@ class EditorialComposer:
                 return EditorialCompositionResult(result.report, result.plan, diagnostics)
             except Exception as exc:
                 last_error = exc
-                diagnostics["attempts"].append({
+                attempt_diagnostics = {
                     "attempt": attempt, "status": "invalid",
                     "validation_codes": [_error_code(exc)],
-                })
+                }
+                attempt_diagnostics.update(_safe_provider_diagnostics(exc))
+                diagnostics["attempts"].append(attempt_diagnostics)
                 if attempt == "repair":
                     break
         diagnostics["stage"] = "editorial_composition_failed"
@@ -848,6 +858,28 @@ def _error_code(error: Exception) -> str:
     if isinstance(error, EditorialContractError):
         return error.code.value
     return "provider_failure"
+
+
+_SAFE_PROVIDER_DIAGNOSTIC_KEYS = {
+    "parse_failure_category", "response_type", "content_present", "content_length",
+    "finish_reason", "incomplete_reason", "decoded_root_type", "error_position",
+}
+
+
+def _safe_provider_diagnostics(error: Exception) -> dict[str, Any]:
+    diagnostics = getattr(error, "diagnostics", None)
+    if not isinstance(diagnostics, Mapping):
+        return {}
+    result: dict[str, Any] = {}
+    for key in _SAFE_PROVIDER_DIAGNOSTIC_KEYS:
+        value = diagnostics.get(key)
+        if key in {"content_present"} and isinstance(value, bool):
+            result[key] = value
+        elif key in {"content_length", "error_position"} and isinstance(value, int):
+            result[key] = value
+        elif key in {"parse_failure_category", "response_type", "finish_reason", "incomplete_reason", "decoded_root_type"} and (value is None or isinstance(value, str)):
+            result[key] = value
+    return result
 
 
 def _bounded_error(error: Exception | None) -> dict[str, Any]:

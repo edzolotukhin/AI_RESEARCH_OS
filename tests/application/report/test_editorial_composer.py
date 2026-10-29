@@ -581,12 +581,33 @@ class LlmEditorialProposalProviderBoundaryTests(EditorialComposerTests):
         with self.assertRaises(EditorialCompositionError) as raised:
             LlmEditorialProposalProvider(client).generate({})
         self.assertEqual("invalid_json", raised.exception.diagnostics["parse_failure_category"])
+        self.assertTrue(raised.exception.diagnostics["content_present"])
+        self.assertEqual(20, raised.exception.diagnostics["content_length"])
+        self.assertNotIn("contract_version", raised.exception.diagnostics)
 
     def test_non_object_json_fails_closed(self):
         client = self.Client(self.response("[]"))
         with self.assertRaises(EditorialCompositionError) as raised:
             LlmEditorialProposalProvider(client).generate({})
         self.assertEqual("non_object_root", raised.exception.diagnostics["parse_failure_category"])
+        self.assertEqual("list", raised.exception.diagnostics["decoded_root_type"])
+
+    def test_empty_content_has_bounded_metadata(self):
+        client = self.Client(self.response(""))
+        with self.assertRaises(EditorialCompositionError) as raised:
+            LlmEditorialProposalProvider(client).generate({})
+        self.assertFalse(raised.exception.diagnostics["content_present"])
+        self.assertEqual(0, raised.exception.diagnostics["content_length"])
+
+    def test_incomplete_response_metadata_is_preserved(self):
+        client = self.Client(self.response('{"broken":', finish_reason="length"))
+        response = client.responses[0]
+        response = LLMResponse(content=response.content, finish_reason="length", output_tokens=10, max_output_tokens=10, incomplete_reason="max_output_tokens")
+        client.responses[0] = response
+        with self.assertRaises(EditorialCompositionError) as raised:
+            LlmEditorialProposalProvider(client).generate({})
+        self.assertEqual("length", raised.exception.diagnostics["finish_reason"])
+        self.assertEqual("max_output_tokens", raised.exception.diagnostics["incomplete_reason"])
 
     def test_empty_and_truncated_json_fail_closed(self):
         for content in ("", '{"contract_version":"desk_editorial_v1"'):
@@ -612,12 +633,16 @@ class LlmEditorialProposalProviderBoundaryTests(EditorialComposerTests):
 
     def test_initial_and_repair_invalid_are_bounded_to_two_calls(self):
         client = self.Client(self.response("bad"), self.response("still bad"))
-        with self.assertRaises(EditorialCompositionError):
+        with self.assertRaises(EditorialCompositionError) as raised:
             EditorialComposer(LlmEditorialProposalProvider(client)).compose(
                 report_id="report-1", revision_number=1, source_report_id="report-1",
                 authority_digest="authority-digest", catalog=self.catalog,
             )
         self.assertEqual(2, client.calls)
+        attempts = raised.exception.diagnostics["attempts"]
+        self.assertEqual("invalid_json", attempts[0]["parse_failure_category"])
+        self.assertEqual("invalid_json", attempts[1]["parse_failure_category"])
+        self.assertTrue(all("raw" not in repr(item).casefold() for item in attempts))
 
     def test_valid_initial_uses_one_call(self):
         client = self.Client(self.response(json.dumps(self.valid, ensure_ascii=False)))
