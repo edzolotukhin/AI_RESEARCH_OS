@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import re
 import subprocess
 import sys
@@ -18,6 +17,8 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
+
+from application.structured_output.json_validator import JsonValidator
 
 
 PROJECT_NAME = "app"
@@ -36,6 +37,13 @@ CRITICAL_SOURCE_FILES = (
 
 class DeploymentGuardError(RuntimeError):
     pass
+
+
+def decode_json_document(text: str, *, context: str) -> Any:
+    result = JsonValidator().validate(text)
+    if not result.is_valid:
+        raise DeploymentGuardError(f"{context} is malformed JSON")
+    return result.data
 
 
 def compose_command(*args: str) -> tuple[str, ...]:
@@ -219,10 +227,10 @@ class PilotDeployment:
         status = self.runner.run(("git", "status", "--porcelain", "--untracked-files=no"))
         validate_clean_head(supplied_sha=self.release_sha, head=head, status=status)
         rendered = self.runner.run(compose_command("config", "--format", "json"))
-        try:
-            self.config = json.loads(rendered)
-        except json.JSONDecodeError as exc:
-            raise DeploymentGuardError("pilot Compose config did not render as JSON") from exc
+        decoded = decode_json_document(rendered, context="pilot Compose config")
+        if not isinstance(decoded, dict):
+            raise DeploymentGuardError("pilot Compose config JSON root is not an object")
+        self.config = decoded
         validate_compose_topology(self.config)
         self.runner.run(("docker", "volume", "inspect", POSTGRES_VOLUME))
 
@@ -268,7 +276,7 @@ class PilotDeployment:
             identifier = self._container_id(service)
             ids[service] = identifier
             payload = self.runner.run(("docker", "inspect", identifier))
-            values = json.loads(payload)
+            values = decode_json_document(payload, context=f"docker inspect for {service}")
             if not isinstance(values, list) or len(values) != 1:
                 raise DeploymentGuardError(f"unexpected inspect payload for {service}")
             inspections[service] = values[0]

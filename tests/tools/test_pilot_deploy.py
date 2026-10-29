@@ -18,6 +18,7 @@ from tools.pilot_deploy import (
     assert_pinned_compose_command,
     assert_single_migration_head,
     compose_command,
+    decode_json_document,
     deployment_commands,
     validate_clean_head,
     validate_compose_topology,
@@ -53,6 +54,13 @@ def inspection(service):
 
 
 class PilotDeployGuardTests(unittest.TestCase):
+    def test_deployment_json_uses_fail_closed_central_decoder(self):
+        self.assertEqual({"name": "app"}, decode_json_document(
+            '{"name": "app"}', context="compose",
+        ))
+        with self.assertRaisesRegex(DeploymentGuardError, "malformed JSON"):
+            decode_json_document("{invalid", context="compose")
+
     def test_every_mutation_is_pilot_pinned_and_never_bare_compose(self):
         for command in deployment_commands():
             assert_pinned_compose_command(command)
