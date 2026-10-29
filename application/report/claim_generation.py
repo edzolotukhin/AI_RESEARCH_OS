@@ -652,6 +652,9 @@ def _bounded_h2(trace: dict[str, Any]) -> dict[str, Any]:
         "rendered_fact_expressions", "composed_proposition_digest",
         "composed_numeric_tokens", "numeric_leakage_result",
         "legacy_proposition_present", "legacy_proposition_used", "catalog_built",
+        "actual_numeric_tokens", "actual_numeric_tokens_truncated",
+        "expected_numeric_tokens", "expected_numeric_tokens_truncated",
+        "segment_diagnostics", "segment_diagnostics_truncated", "segment_types_truncated",
     }
     result = {key: trace[key] for key in allowed if key in trace}
     for key in ("fact_refs", "period_refs", "resolved_fact_refs", "segment_types", "composed_numeric_tokens", "rendered_fact_expressions"):
@@ -662,6 +665,8 @@ def _bounded_h2(trace: dict[str, Any]) -> dict[str, Any]:
             {field: item.get(field) for field in ("value", "unit", "scale", "periods", "geography", "metrics", "population_dimensions")}
             for item in result["resolved_numeric_facts"][:16] if isinstance(item, dict)
         ]
+    if "segment_diagnostics" in result:
+        result["segment_diagnostics"] = result["segment_diagnostics"][:32]
     return result
 
 

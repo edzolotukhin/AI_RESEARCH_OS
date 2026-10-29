@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from application.report.claim_numeric_composition import (
     NumericCompositionError,
@@ -9,6 +10,7 @@ from application.report.claim_numeric_composition import (
     render_numeric_fact,
 )
 from application.report.claim_rendering import ClaimRenderingError, validate_claim_proposition
+from application.report.claim_generation import _generation_diagnostics
 from application.research_scope.numeric_normalization import extract_numeric_tokens
 from domain.reports.report_claim import NumericFact
 from dataclasses import replace
@@ -186,6 +188,67 @@ class ClaimNumericCompositionTests(unittest.TestCase):
         )
         with self.assertRaises(ClaimRenderingError):
             validate_claim_proposition(claim, h2_trace=trace)
+
+    def test_invariant_failure_records_exact_bounded_tokens_and_private_segments(self):
+        selected = fact("23", "%", periods=(), geography=())
+        catalog = self.catalog(selected)
+        fact_ref = next(iter(catalog.facts))
+        trace = {}
+        original = extract_numeric_tokens
+
+        def mismatching_tokens(value):
+            if value.startswith("Рівень становив"):
+                return ("24%",)
+            return original(value)
+
+        with patch("application.report.claim_numeric_composition.extract_numeric_tokens", side_effect=mismatching_tokens):
+            with self.assertRaises(NumericCompositionError):
+                compose_assertion(self.assertion(
+                    {"type": "text", "text": "Рівень становив "},
+                    {"type": "fact_ref", "fact_ref": fact_ref},
+                ), catalog=catalog, trace=trace)
+
+        self.assertEqual(["24%"], trace["actual_numeric_tokens"])
+        self.assertEqual(["23%"], trace["expected_numeric_tokens"])
+        self.assertFalse(trace["actual_numeric_tokens_truncated"])
+        self.assertFalse(trace["expected_numeric_tokens_truncated"])
+        self.assertEqual(["text", "fact_ref"], [item["type"] for item in trace["segment_diagnostics"]])
+        text_diagnostic = trace["segment_diagnostics"][0]
+        self.assertNotIn("text", text_diagnostic)
+        self.assertNotIn("Рівень", str(text_diagnostic))
+        self.assertEqual(fact_ref, trace["segment_diagnostics"][1]["ref"])
+        self.assertEqual(["23%"], trace["segment_diagnostics"][1]["rendered_numeric_tokens"])
+
+    def test_segment_diagnostics_preserve_repetitions_order_and_explicit_truncation(self):
+        trace = {}
+        compose_assertion(self.assertion(*(
+            {"type": "text", "text": "x"} for _ in range(33)
+        )), catalog=self.catalog(), trace=trace)
+        self.assertEqual(32, len(trace["segment_diagnostics"]))
+        self.assertTrue(trace["segment_diagnostics_truncated"])
+        self.assertEqual(["text"] * 32, trace["segment_types"])
+        self.assertTrue(trace["segment_types_truncated"])
+        self.assertEqual(list(range(32)), [item["index"] for item in trace["segment_diagnostics"]])
+
+    def test_initial_and_repair_invariant_diagnostics_remain_independent(self):
+        initial = {
+            "h2_contract_version": "desk_h2_transient_segments_v1",
+            "actual_numeric_tokens": ["24%"], "expected_numeric_tokens": ["23%"],
+            "segment_diagnostics": [{"index": 0, "type": "fact_ref", "ref": "initial"}],
+        }
+        repair = {
+            "h2_contract_version": "desk_h2_transient_segments_v1",
+            "actual_numeric_tokens": ["26%"], "expected_numeric_tokens": ["25%"],
+            "segment_diagnostics": [{"index": 0, "type": "fact_ref", "ref": "repair"}],
+        }
+        diagnostics = _generation_diagnostics(
+            "repair_validation_failed", NumericCompositionError("failed", diagnostics={}),
+            h2_initial=initial, h2_repair=repair,
+        )
+        self.assertEqual(["24%"], diagnostics["initial_h2"]["actual_numeric_tokens"])
+        self.assertEqual(["26%"], diagnostics["repair_h2"]["actual_numeric_tokens"])
+        self.assertEqual("initial", diagnostics["initial_h2"]["segment_diagnostics"][0]["ref"])
+        self.assertEqual("repair", diagnostics["repair_h2"]["segment_diagnostics"][0]["ref"])
 
     def test_all_numeric_text_leakage_fails(self):
         for text in ("1.06", "1,06", "7,8%", "2021", "48 705", "48\u00a0705", "10 млн", "-3.7%"):

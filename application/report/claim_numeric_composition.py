@@ -96,7 +96,10 @@ def compose_assertion(
     if any(not isinstance(assertion.get(field), str) or not assertion[field].strip() for field in ("kind", "certainty", "direction")):
         raise _error("semantic_segment_schema", field="assertion", value=assertion)
     segments = assertion["segments"]
-    _trace(trace, segment_types=[item.get("type") for item in segments if isinstance(item, dict)])
+    if trace is not None:
+        segment_types = [str(item.get("type", ""))[:32] for item in segments if isinstance(item, dict)]
+        trace["segment_types"] = segment_types[:32]
+        trace["segment_types_truncated"] = len(segment_types) > 32
     if not segments:
         raise _error("semantic_segment_schema", field="assertion.segments", value=segments)
     rendered: list[str] = []
@@ -110,6 +113,7 @@ def compose_assertion(
         if kind == "text":
             if set(segment) != {"type", "text"} or not isinstance(segment.get("text"), str) or not segment["text"]:
                 raise _error("semantic_segment_schema", field=f"assertion.segments[{index}]", value=segment)
+            _record_segment(trace, index=index, kind=kind, text=segment["text"])
             if any(character.isdigit() for character in segment["text"]):
                 _trace(trace, numeric_leakage_result="failed", composition_stage="numeric_leakage")
                 raise _error("numeric_leakage", field=f"assertion.segments[{index}].text", value=segment["text"])
@@ -134,6 +138,7 @@ def compose_assertion(
             selected_refs.append(ref)
             expression = render_numeric_fact(catalog.facts[ref])
             _validate_rendered_fact(expression, catalog.facts[ref], index=index)
+            _record_segment(trace, index=index, kind=kind, ref=ref, expression=expression)
             _append_typed_segment(rendered, expression, previous_was_typed)
             expected_numeric_tokens.extend(extract_numeric_tokens(expression))
             previous_was_typed = True
@@ -146,6 +151,10 @@ def compose_assertion(
             if ref not in catalog.periods:
                 raise _error("period_ref_invalid", field=f"assertion.segments[{index}].period_ref", value=ref)
             period_expression = render_period(catalog.periods[ref])
+            _record_segment(
+                trace, index=index, kind=kind, ref=ref,
+                expression=period_expression, resolved_period=catalog.periods[ref],
+            )
             _append_typed_segment(rendered, period_expression, previous_was_typed)
             expected_numeric_tokens.extend(extract_numeric_tokens(period_expression))
             previous_was_typed = True
@@ -155,6 +164,7 @@ def compose_assertion(
         raise _error("semantic_segment_schema", field="assertion.segments", value=segments)
     composed_tokens = tuple(extract_numeric_tokens(proposition))
     expected_tokens = tuple(dict.fromkeys(expected_numeric_tokens))
+    _record_invariant_tokens(trace, actual=composed_tokens, expected=expected_tokens)
     if composed_tokens != expected_tokens:
         _trace(trace, numeric_leakage_result="failed", composition_stage="typed_numeric_validation")
         raise _error(
@@ -200,6 +210,52 @@ def _trace(trace: dict[str, Any] | None, **values: Any) -> None:
                     existing.append(item)
         else:
             trace[key] = value
+
+
+def _record_invariant_tokens(
+    trace: dict[str, Any] | None, *, actual: tuple[str, ...], expected: tuple[str, ...],
+) -> None:
+    if trace is None:
+        return
+    trace["actual_numeric_tokens"] = [str(item)[:64] for item in actual[:32]]
+    trace["actual_numeric_tokens_truncated"] = len(actual) > 32
+    trace["expected_numeric_tokens"] = [str(item)[:64] for item in expected[:32]]
+    trace["expected_numeric_tokens_truncated"] = len(expected) > 32
+
+
+def _record_segment(
+    trace: dict[str, Any] | None, *, index: int, kind: str,
+    text: str | None = None, ref: str | None = None,
+    expression: str | None = None, resolved_period: str | None = None,
+) -> None:
+    if trace is None:
+        return
+    diagnostics = trace.setdefault("segment_diagnostics", [])
+    if len(diagnostics) >= 32:
+        trace["segment_diagnostics_truncated"] = True
+        return
+    item: dict[str, Any] = {"index": index, "type": kind[:32]}
+    if kind == "text":
+        value = text or ""
+        item.update({
+            "content_present": bool(value),
+            "content_length": len(value),
+            "content_digest": canonical_digest({"text": value}),
+        })
+    else:
+        tokens = tuple(extract_numeric_tokens(expression or ""))
+        item.update({
+            "ref": (ref or "")[:128],
+            "rendered_expression": (expression or "")[:160],
+            "rendered_expression_truncated": len(expression or "") > 160,
+            "rendered_numeric_tokens": [str(token)[:64] for token in tokens[:16]],
+            "rendered_numeric_tokens_truncated": len(tokens) > 16,
+        })
+        if resolved_period is not None:
+            item["resolved_period_value"] = resolved_period[:64]
+            item["resolved_period_value_truncated"] = len(resolved_period) > 64
+    diagnostics.append(item)
+    trace.setdefault("segment_diagnostics_truncated", False)
 
 
 def _numeric_tokens(proposition: str) -> list[str]:
