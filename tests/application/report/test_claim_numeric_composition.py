@@ -357,8 +357,9 @@ class ClaimNumericCompositionTests(unittest.TestCase):
         period_ref = next(iter(catalog.periods))
         trace = {}
         assertion, selected = compose_assertion(self.assertion(
+            {"type": "text", "text": "Частка"},
             {"type": "fact_ref", "fact_ref": refs[0]},
-            {"type": "text", "text": " проти "},
+            {"type": "text", "text": "проти"},
             {"type": "fact_ref", "fact_ref": refs[1]},
             {"type": "text", "text": "; "},
             {"type": "period_ref", "period_ref": period_ref},
@@ -370,6 +371,39 @@ class ClaimNumericCompositionTests(unittest.TestCase):
             scope=replace(fixture.claim().scope, periods=("2026",), numeric_facts=selected),
         )
         validate_claim_proposition(claim)
+
+    def test_h2_tokens_are_boundary_invariant_for_typed_fact_refs(self):
+        first = fact("7.8", "%", periods=("2026",), geography=("україна",))
+        second = fact("8.7", "%", periods=("2025", "2026"), geography=("україна",))
+        catalog = self.catalog(first, second, periods=("2026",))
+        refs = list(catalog.facts)
+        period_ref = next(iter(catalog.periods))
+        for left, middle, right in (
+            ("Частка", "проти", "; "),
+            ("Частка (", "—", ") "),
+            ("Частка\n", "у порівнянні з", "\n"),
+            ("Частка\u00a0", "у порівнянні з\u00a0", "; "),
+        ):
+            with self.subTest(left=left, middle=middle, right=right):
+                trace = {}
+                assertion, selected = compose_assertion(self.assertion(
+                    {"type": "text", "text": left},
+                    {"type": "fact_ref", "fact_ref": refs[0]},
+                    {"type": "text", "text": middle},
+                    {"type": "fact_ref", "fact_ref": refs[1]},
+                    {"type": "text", "text": right},
+                    {"type": "period_ref", "period_ref": period_ref},
+                ), catalog=catalog, trace=trace)
+                self.assertEqual(
+                    ["7,8%", "2026", "8,7%", "2025"],
+                    trace["composed_numeric_tokens"],
+                )
+                fixture = fixtures.ReportClaimContractTests(); fixture.setUp()
+                claim = replace(
+                    fixture.claim(), proposition=assertion["proposition"],
+                    scope=replace(fixture.claim().scope, periods=("2026",), numeric_facts=selected),
+                )
+                validate_claim_proposition(claim, h2_trace=trace)
 
 
 if __name__ == "__main__":

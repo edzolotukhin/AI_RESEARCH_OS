@@ -186,6 +186,38 @@ class H2QualificationMatrixTests(unittest.TestCase):
                 compose_assertion(_assertion(*segments), catalog=catalog)
             self.assertEqual(category, captured.exception.diagnostics["validator_category"])
 
+    def test_typed_fact_refs_survive_harmless_text_boundaries(self):
+        facts = self.corpus.facts[:2]
+        catalog = build_fact_catalog(
+            claim_id="boundary-runtime",
+            facts=tuple(facts),
+            periods=("2026",),
+        )
+        refs = list(catalog.facts)
+        period_ref = next(iter(catalog.periods))
+        boundaries = (
+            ("Частка", "проти", "; "),
+            ("Частка (", "—", ") "),
+            ("Частка\n", "у порівнянні з", "\n"),
+            ("Частка\u00a0", "у порівнянні з\u00a0", "; "),
+        )
+        for left, middle, right in boundaries:
+            with self.subTest(left=left, middle=middle, right=right):
+                trace = {}
+                composed, _ = compose_assertion(_assertion(
+                    _text(left),
+                    {"type": "fact_ref", "fact_ref": refs[0]},
+                    _text(middle),
+                    {"type": "fact_ref", "fact_ref": refs[1]},
+                    _text(right),
+                    {"type": "period_ref", "period_ref": period_ref},
+                ), catalog=catalog, trace=trace)
+                self.assertEqual(
+                    trace["composed_numeric_tokens"],
+                    trace["expected_numeric_tokens"],
+                )
+                self.assertIn("%", composed["proposition"])
+
 
 class _Projects:
     def __init__(self, project): self.project = project

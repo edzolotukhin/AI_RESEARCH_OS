@@ -263,8 +263,8 @@ def _numeric_tokens(proposition: str) -> list[str]:
 
 
 def _append_typed_segment(rendered: list[str], expression: str, previous_was_typed: bool) -> None:
-    """Keep adjacent system-owned typed segments lexically distinct."""
-    if previous_was_typed:
+    """Keep typed segments lexically distinct from adjacent rendered text."""
+    if previous_was_typed or (rendered and rendered[-1] and rendered[-1][-1].isalnum() and expression and expression[0].isalnum()):
         rendered.append(" ")
     rendered.append(expression)
 
