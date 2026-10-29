@@ -6,6 +6,10 @@ from enum import Enum
 import itertools
 import re
 from typing import Any, Mapping, Protocol
+import json
+
+from domain.ai.prompt import Prompt
+from application.structured_output.json_validator import JsonValidator
 
 from application.report.claim_contract import canonical_digest
 from application.report.editorial_contract import (
@@ -49,6 +53,27 @@ class EditorialCompositionError(ValueError):
 
 class EditorialProposalProvider(Protocol):
     def generate(self, request: Mapping[str, Any]) -> Mapping[str, Any]: ...
+
+
+class LlmEditorialProposalProvider:
+    """Production adapter; the deterministic composer remains the authority boundary."""
+
+    def __init__(self, client) -> None:
+        self._client = client
+
+    def generate(self, request: Mapping[str, Any]) -> Mapping[str, Any]:
+        response = self._client.generate(Prompt(
+            system=(
+                "Create a Ukrainian desk-research editorial plan using only the supplied "
+                "opaque options and references. Return one JSON object only. Never invent "
+                "facts, identifiers, citations, periods, or limitations."
+            ),
+            user=json.dumps(dict(request), ensure_ascii=False, sort_keys=True),
+        ))
+        value = JsonValidator().validate(response.content or "")
+        if not isinstance(value, Mapping):
+            raise EditorialCompositionError("malformed_editorial_provider_payload")
+        return value
 
 
 class FrameSegmentType(str, Enum):

@@ -106,6 +106,7 @@ class ApplicationConfig:
     source_min_information_need_coverage_ratio: float = 1.0
     source_dns_timeout_seconds: float = 5.0
     report_engine: str = "llm"
+    desk_report_contract_version: str = "desk_editorial_v1"
     report_max_findings_per_batch: int = DEFAULT_REPORT_MAX_FINDINGS_PER_BATCH
     report_max_chars_per_batch: int = DEFAULT_REPORT_MAX_CHARS_PER_BATCH
     report_reasoning_effort: str = "minimal"
@@ -256,6 +257,9 @@ class ApplicationConfig:
                 os.environ.get("SOURCE_DNS_TIMEOUT_SECONDS", "5"),
             ),
             report_engine=os.environ.get("REPORT_ENGINE", "llm"),
+            desk_report_contract_version=os.environ.get(
+                "DESK_REPORT_CONTRACT_VERSION", "desk_editorial_v1",
+            ).strip(),
             report_max_findings_per_batch=int(
                 os.environ.get(
                     "REPORT_MAX_FINDINGS_PER_BATCH",

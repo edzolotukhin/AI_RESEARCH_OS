@@ -99,6 +99,7 @@ class DeskInsightView:
 class DeskReportSectionView:
     title: str
     content: BoundedText
+    paragraphs: tuple[BoundedText, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -124,6 +125,9 @@ class DeskReportView:
     sections: tuple[DeskReportSectionView, ...]
     limitations: tuple[str, ...]
     review: DeskReviewView | None
+    references: tuple[str, ...] = ()
+    revision_number: int | None = None
+    executive_summary_paragraphs: tuple[BoundedText, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -157,17 +161,22 @@ class DeskWorkbenchQueryService:
             run.workflow_template_id,
         )
 
+        upstream_run_id = run_id
+        from application.replay.desk_downstream_replay import REPLAY_KEY
+        replay = self._container.workflow_service.get_task_results(run_id).get(REPLAY_KEY)
+        if isinstance(replay, dict) and isinstance(replay.get("source_workflow_run_id"), str):
+            upstream_run_id = replay["source_workflow_run_id"]
         source_entities = self._container.source_service.list_sources_for_run(
-            run_id, project_id=project.id,
+            upstream_run_id, project_id=project.id,
         )
         evidence_entities = self._container.evidence_service.list_evidence_for_project(
-            project.id, workflow_run_id=run_id,
+            project.id, workflow_run_id=upstream_run_id,
         )
         finding_entities = self._container.finding_service.list_findings_for_project(
-            project.id, workflow_run_id=run_id,
+            project.id, workflow_run_id=upstream_run_id,
         )
         insight_entities = self._container.insight_service.list_insights_for_project(
-            project.id, workflow_run_id=run_id,
+            project.id, workflow_run_id=upstream_run_id,
         )
         reports = self._container.report_query_service.list_reports_for_project(
             project.id, workflow_run_id=run_id,
@@ -434,11 +443,47 @@ class DeskWorkbenchQueryService:
         report = max(reports, key=lambda item: (item.revision_number, item.created_at, item.id))
         related = [item for item in reviews if item.report_id == report.id]
         review = max(related, key=lambda item: (item.review_attempt, item.created_at, item.id)) if related else None
+        from application.report.editorial_contract import EDITORIAL_CONTRACT_VERSION
+        from application.report.presentation_persistence import REPORT_CONTRACT_KEY
+        if report.metadata.get(REPORT_CONTRACT_KEY) == EDITORIAL_CONTRACT_VERSION:
+            if review is None:
+                return DeskReportView(False, "", BoundedText(""), (), (), None)
+            try:
+                from application.deliverables.editorial_delivery import load_approved_editorial_delivery
+                claims = tuple(self._container.project_deliverables_service.report_claims.list_for_report(
+                    report.id, report.revision_number,
+                ))
+                delivery = load_approved_editorial_delivery(report=report, review=review, claims=claims)
+            except (AttributeError, ValueError):
+                return DeskReportView(False, "", BoundedText(""), (), (), self._review(review))
+            document = delivery.document
+            return DeskReportView(
+                available=True,
+                title=document.title,
+                executive_summary=self._bound("\n\n".join(item.text for item in document.executive_summary)),
+                sections=tuple(DeskReportSectionView(
+                    item.title,
+                    self._bound("\n\n".join(value.text for value in item.paragraphs)),
+                    tuple(self._bound(value.text) for value in item.paragraphs),
+                ) for item in document.sections),
+                limitations=document.limitations,
+                review=self._review(review),
+                references=tuple(
+                    f"[{item.display_key}] {item.title}" +
+                    (f" — {item.canonical_url}" if item.canonical_url else "")
+                    for item in document.references
+                ),
+                revision_number=report.revision_number,
+                executive_summary_paragraphs=tuple(
+                    self._bound(item.text) for item in document.executive_summary
+                ),
+            )
         return DeskReportView(
             available=True, title=report.title,
             executive_summary=self._bound(report.executive_summary),
             sections=tuple(DeskReportSectionView(item.title, self._bound(item.content)) for item in report.sections),
             limitations=tuple(report.limitations), review=self._review(review) if review else None,
+            revision_number=report.revision_number,
         )
 
     def _review(self, review) -> DeskReviewView:

@@ -26,6 +26,19 @@ from application.deliverables.desk_finalization import (
     coverage_contract_digest,
 )
 from application.report.source_display import source_display
+from application.report.editorial_contract import EDITORIAL_CONTRACT_VERSION
+from application.report.presentation_persistence import REPORT_CONTRACT_KEY
+from application.deliverables.editorial_delivery import (
+    EditorialDeliveryError,
+    load_approved_editorial_delivery,
+    render_editorial_markdown,
+)
+from application.persistence.records import ArtifactRecord
+from application.report.deduplication import (
+    DR06_RESEARCH_REPORT_TYPE,
+    compute_artifact_deduplication_key,
+    compute_content_checksum,
+)
 
 
 class DeliverableFinalizationError(RuntimeError):
@@ -74,7 +87,7 @@ class ProjectDeliverablesService:
     def __init__(self, *, projects, workflows, reports, reviews, quantitative_state,
                  qualitative_reports=None,
                  store, renderer, presentation_jobs=None, pptx_renderer=None,
-                 report_claims=None) -> None:
+                 report_claims=None, artifacts=None) -> None:
         self.projects = projects
         self.workflows = workflows
         self.reports = reports
@@ -86,6 +99,7 @@ class ProjectDeliverablesService:
         self.presentation_jobs = presentation_jobs
         self.pptx_renderer = pptx_renderer
         self.report_claims = report_claims
+        self.artifacts = artifacts
 
     def _project(self, project_id: str, owner_id: str):
         try:
@@ -136,36 +150,67 @@ class ProjectDeliverablesService:
             except AccessDeniedError:
                 pass
             authority = None
+            editorial = None
+            if approved_review is not None and report.metadata.get(REPORT_CONTRACT_KEY) == EDITORIAL_CONTRACT_VERSION:
+                try:
+                    claims = tuple(self.report_claims.list_for_report(report.id, report.revision_number))
+                    editorial = load_approved_editorial_delivery(
+                        report=report, review=approved_review, claims=claims,
+                    )
+                except (AttributeError, EditorialDeliveryError, ValueError):
+                    approved_review = None
+                    status = "Статус перевірки не підтверджено"
             if approved_review is not None and report.metadata.get("structured_claim_contract") == STRUCTURED_REPORT_CONTRACT:
                 try:
                     authority = self._structured_authority(report, approved_review)
                 except AccessDeniedError:
                     approved_review = None
                     status = "Статус перевірки не підтверджено"
-            source_version = (authority.source_version if authority is not None else
+            source_version = (editorial.provenance.presentation_digest if editorial is not None else
+                authority.source_version if authority is not None else
                 f"revision-{report.revision_number}-review-{approved_review.id}-{approved_review.verdict.value.lower()}"
                 if approved_review is not None else f"revision-{report.revision_number}-review-{review_digest}")
-            sections = tuple(PdfSection(item.title, (item.content,), item.citation_ids)
-                             for item in report.sections)
-            registry = tuple((key, source_display(value))
-                             for key, value in sorted(report.citation_registry.items()))
-            links = tuple(str(value.get("canonical_url")) for value in report.citation_registry.values()
-                          if isinstance(value, dict) and isinstance(value.get("canonical_url"), str))
+            sections = (tuple(PdfSection(
+                item.title,
+                tuple(value.text for value in item.paragraphs),
+                tuple(key for value in item.paragraphs for key in value.citation_keys),
+            ) for item in editorial.document.sections) if editorial is not None else
+                tuple(PdfSection(item.title, (item.content,), item.citation_ids)
+                      for item in report.sections))
+            registry = (tuple(
+                (item.display_key, item.title + (f" — {item.canonical_url}" if item.canonical_url else ""))
+                for item in editorial.document.references
+            ) if editorial is not None else tuple(
+                (key, source_display(value)) for key, value in sorted(report.citation_registry.items())
+            ))
+            links = (tuple(item.canonical_url for item in editorial.document.references if item.canonical_url)
+                     if editorial is not None else tuple(
+                         str(value.get("canonical_url")) for value in report.citation_registry.values()
+                         if isinstance(value, dict) and isinstance(value.get("canonical_url"), str)))
             documents.append(PdfSourceDocument(
                 project_id=project_id, method="DESK", run_id=report.workflow_run_id,
                 study_id=None, source_id=report.id,
                 source_version=source_version,
-                status=status, title=report.title, summary=report.executive_summary,
-                sections=sections, limitations=report.limitations,
+                status=status,
+                title=(editorial.document.title if editorial is not None else report.title),
+                summary=("\n\n".join(item.text for item in editorial.document.executive_summary)
+                         if editorial is not None else report.executive_summary),
+                sections=sections,
+                limitations=(editorial.document.limitations if editorial is not None else report.limitations),
                 citation_registry=registry, created_at=report.created_at,
                 links=links,
                 revision_number=report.revision_number,
                 previous_report_id=report.previous_report_id,
                 approval_review_id=approved_review.id if approved_review else None,
                 approval_decision=(approved_review.verdict.value if approved_review else None),
-                source_run_id=(authority.source_run_id if authority else report.workflow_run_id),
-                claim_set_digest=(authority.claim_set_digest if authority else None),
-                coverage_contract_digest=(authority.coverage_contract_digest if authority else None),
+                source_run_id=(editorial.provenance.source_workflow_run_id if editorial is not None else
+                               authority.source_run_id if authority else report.workflow_run_id),
+                claim_set_digest=(editorial.provenance.claim_set_digest if editorial is not None else
+                                  authority.claim_set_digest if authority else None),
+                coverage_contract_digest=(editorial.provenance.coverage_contract_digest if editorial is not None else
+                                           authority.coverage_contract_digest if authority else None),
+                approved_delivery_provenance=(editorial.provenance if editorial is not None else None),
+                canonical_delivery=(editorial.document if editorial is not None else None),
             ))
         return sorted(documents, key=lambda item: (item.created_at or "", item.revision_number or 0, item.source_id), reverse=True)
 
@@ -333,6 +378,9 @@ class ProjectDeliverablesService:
 
     def _generate_item(self, item: ReportCatalogItem) -> PdfDeliverable:
         if item.pdf is not None:
+            if (item.document.approved_delivery_provenance is not None
+                    and item.pdf.approved_delivery_provenance != item.document.approved_delivery_provenance):
+                raise AccessDeniedError("PDF approved delivery provenance mismatch")
             return item.pdf
         document = item.document
         data = self.renderer.render(document)
@@ -347,6 +395,7 @@ class ProjectDeliverablesService:
             created_at=datetime.now(timezone.utc), storage_key=identifier,
             checksum=checksum, byte_size=len(data),
             filename=f"research-{document.method.lower()}-{identifier}.pdf",
+            approved_delivery_provenance=document.approved_delivery_provenance,
         )
         return self.store.complete(record, data)
 
@@ -368,6 +417,9 @@ class ProjectDeliverablesService:
         if method in {"QUANTITATIVE", "QUALITATIVE"} and record.source_version != document.source_version:
             raise AccessDeniedError("PDF не знайдено")
         if method == "DESK" and record.source_version != document.source_version:
+            raise AccessDeniedError("PDF не знайдено")
+        if (document.approved_delivery_provenance is not None
+                and record.approved_delivery_provenance != document.approved_delivery_provenance):
             raise AccessDeniedError("PDF не знайдено")
         if len(data) != record.byte_size or hashlib.sha256(data).hexdigest() != record.checksum:
             raise AccessDeniedError("PDF не знайдено")
@@ -392,7 +444,10 @@ class ProjectDeliverablesService:
                 "review_id": authority.review_id, "source_run_id": authority.source_run_id,
                 "claim_set_digest": authority.claim_set_digest,
                 "coverage_contract_digest": authority.coverage_contract_digest}
-               if authority is not None else {}))
+               if authority is not None else
+               {"initial_state": "review_approved",
+                "approved_delivery_provenance": document.approved_delivery_provenance}
+               if document.approved_delivery_provenance is not None else {}))
         if job.state in {"failed", "retry_wait"}:
             return self.presentation_jobs.retry(job.id) or job
         return job
@@ -410,11 +465,21 @@ class ProjectDeliverablesService:
             review = self._approved_desk_review(report, reviews)
             if review.id != review_id:
                 raise AccessDeniedError("not approved")
-            authority = self._structured_authority(report, review)
+            editorial = None
+            if report.metadata.get(REPORT_CONTRACT_KEY) == EDITORIAL_CONTRACT_VERSION:
+                claims = tuple(self.report_claims.list_for_report(report.id, report.revision_number))
+                editorial = load_approved_editorial_delivery(report=report, review=review, claims=claims)
+                authority = None
+            else:
+                authority = self._structured_authority(report, review)
             project = self.projects.get_project(project_id)
             item = self._approved_desk_item(self.source(
                 project_id, "DESK", report_id, owner_id=project.owner_principal_id))
-            if (item.document.source_version != authority.source_version
+            if editorial is not None:
+                if item.document.approved_delivery_provenance != editorial.provenance:
+                    raise AccessDeniedError("Editorial finalization provenance mismatch")
+                self._persist_editorial_artifact(report, editorial)
+            elif (item.document.source_version != authority.source_version
                     or item.document.claim_set_digest != authority.claim_set_digest
                     or item.document.coverage_contract_digest != authority.coverage_contract_digest
                     or item.document.source_run_id != authority.source_run_id):
@@ -462,10 +527,37 @@ class ProjectDeliverablesService:
             "review_decision": review.verdict.value,
             "pdf_id": pdf.id,
             "pptx_job_id": job.id,
-            "claim_set_digest": authority.claim_set_digest,
-            "coverage_contract_digest": authority.coverage_contract_digest,
-            "source_run_id": authority.source_run_id,
+            "claim_set_digest": item.document.claim_set_digest or "",
+            "coverage_contract_digest": item.document.coverage_contract_digest or "",
+            "source_run_id": item.document.source_run_id or "",
         }
+
+    def _persist_editorial_artifact(self, report, editorial):
+        if self.artifacts is None:
+            raise AccessDeniedError("Editorial artifact repository unavailable")
+        key = compute_artifact_deduplication_key(
+            workflow_run_id=report.workflow_run_id,
+            artifact_type=DR06_RESEARCH_REPORT_TYPE,
+        )
+        existing = self.artifacts.get_by_deduplication_key(report.workflow_run_id, key)
+        markdown = render_editorial_markdown(editorial.document)
+        checksum = compute_content_checksum(markdown)
+        if existing is not None:
+            if (existing.report_id != report.id or existing.status.lower() != "approved"
+                    or existing.content_checksum != checksum
+                    or existing.approved_delivery_provenance != editorial.provenance):
+                raise AccessDeniedError("Editorial artifact identity mismatch")
+            return existing
+        artifact = ArtifactRecord(
+            id=str(uuid4()), project_id=report.project_id,
+            artifact_type=DR06_RESEARCH_REPORT_TYPE, title=editorial.document.title,
+            content=markdown, run_id=report.workflow_run_id, status="approved",
+            media_type="text/markdown", filename=f"research-report-{report.id}.md",
+            content_checksum=checksum, deduplication_key=key, report_id=report.id,
+            approved_delivery_provenance=editorial.provenance,
+        )
+        self.artifacts.create(artifact)
+        return artifact
 
     def process_next_presentation(self, worker_id: str) -> bool:
         if self.presentation_jobs is None or self.pptx_renderer is None:
@@ -490,6 +582,9 @@ class ProjectDeliverablesService:
                     job.report_revision, job.review_id, job.source_run_id,
                     job.claim_set_digest, job.coverage_contract_digest):
                     raise ValueError("structured finalization authority changed")
+                if (document.approved_delivery_provenance is not None
+                        and job.approved_delivery_provenance != document.approved_delivery_provenance):
+                    raise ValueError("approved presentation provenance changed")
                 self._generate_item(source_item)
             existing = self.store.find(
                 project_id=job.project_id, method=job.method, source_id=job.source_id,
@@ -507,8 +602,26 @@ class ProjectDeliverablesService:
                     byte_size=len(data), filename=f"research-{job.method.lower()}-{identifier}.pptx",
                     media_type=self.pptx_renderer.media_type, format="PPTX",
                     template_version=job.template_version,
+                    approved_delivery_provenance=job.approved_delivery_provenance,
                 )
                 existing = self.store.complete(record, data)
+            if job.approved_delivery_provenance is not None:
+                refreshed = self._approved_desk_item(self.source(
+                    job.project_id, job.method, job.source_id,
+                    owner_id=project.owner_principal_id,
+                ))
+                key = compute_artifact_deduplication_key(
+                    workflow_run_id=job.run_id,
+                    artifact_type=DR06_RESEARCH_REPORT_TYPE,
+                )
+                artifact = (self.artifacts.get_by_deduplication_key(job.run_id, key)
+                            if self.artifacts is not None else None)
+                if (refreshed.pdf is None
+                        or refreshed.pdf.approved_delivery_provenance != job.approved_delivery_provenance
+                        or existing.approved_delivery_provenance != job.approved_delivery_provenance
+                        or artifact is None
+                        or artifact.approved_delivery_provenance != job.approved_delivery_provenance):
+                    raise ValueError("approved delivery set is incomplete or mismatched")
             self.presentation_jobs.complete(job.id, worker_id, existing.id)
         except Exception:
             # The failure code is deliberately content-free; the user may retry.
@@ -591,6 +704,10 @@ class ProjectDeliverablesService:
             "PPTX", self.pptx_renderer.media_type):
             raise AccessDeniedError("Презентацію не знайдено")
         if record.source_version != document.source_version:
+            raise AccessDeniedError("Презентацію не знайдено")
+        if (document.approved_delivery_provenance is not None
+                and (record.approved_delivery_provenance != document.approved_delivery_provenance
+                     or job.approved_delivery_provenance != document.approved_delivery_provenance)):
             raise AccessDeniedError("Презентацію не знайдено")
         if len(data) != record.byte_size or hashlib.sha256(data).hexdigest() != record.checksum:
             raise AccessDeniedError("Презентацію не знайдено")

@@ -217,6 +217,7 @@ def create_application_container(
         presentation_jobs=persistence.presentation_jobs,
         pptx_renderer=PptxRenderer() if persistence.presentation_jobs is not None else None,
         report_claims=report_claim_repository,
+        artifacts=persistence.artifact_repository,
     )
     research_run_result_query_service = ResearchRunResultQueryService(
         workflow_run_repository=workflow_run_repository,
@@ -923,6 +924,18 @@ def _build_agent_executors(
         insight_repository=insight_repository,
         llm_client=stage_llm_clients.analysis,
     )
+    from application.report.editorial_composer import (
+        EditorialComposer,
+        LlmEditorialProposalProvider,
+    )
+    from application.report.editorial_contract import EDITORIAL_CONTRACT_VERSION
+    report_contract_version = config.desk_report_contract_version
+    if report_contract_version not in {EDITORIAL_CONTRACT_VERSION, "desk_report_claim_v1"}:
+        raise ValueError("Unsupported DESK_REPORT_CONTRACT_VERSION")
+    editorial_composer = (
+        EditorialComposer(LlmEditorialProposalProvider(stage_llm_clients.report))
+        if report_contract_version == EDITORIAL_CONTRACT_VERSION else None
+    )
     executors["report"] = (
         overrides.report_executor
         if overrides.report_executor is not None
@@ -937,6 +950,8 @@ def _build_agent_executors(
             report_claim_repository=report_claim_repository,
             artifact_repository=artifact_repository,
             llm_client=stage_llm_clients.report,
+            report_contract_version=report_contract_version,
+            editorial_composer=editorial_composer,
         )
     )
     executors["review"] = (
@@ -955,6 +970,8 @@ def _build_agent_executors(
             review_repository=review_repository,
             llm_client=stage_llm_clients.review,
             deliverable_finalizer=deliverable_finalizer,
+            report_contract_version=report_contract_version,
+            editorial_composer=editorial_composer,
         )
     )
     from application.executors.finalization_executor import FinalizationExecutor

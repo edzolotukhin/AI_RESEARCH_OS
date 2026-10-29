@@ -63,6 +63,8 @@ class PdfSourceDocument:
     source_run_id: str | None = None
     claim_set_digest: str | None = None
     coverage_contract_digest: str | None = None
+    approved_delivery_provenance: ApprovedDeliveryProvenance | None = None
+    canonical_delivery: object | None = None
 
 
 @dataclass(frozen=True)

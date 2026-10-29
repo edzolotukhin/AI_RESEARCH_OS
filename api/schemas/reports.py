@@ -30,6 +30,12 @@ class ReportResponse(BaseModel):
     insight_refs: list[str] = Field(default_factory=list)
     evidence_refs: list[str] = Field(default_factory=list)
     citation_registry: dict[str, dict] = Field(default_factory=dict)
+    report_contract_version: str | None = None
+    revision_number: int | None = None
+    authority_digest: str | None = None
+    presentation_digest: str | None = None
+    references: list[str] = Field(default_factory=list)
+    delivery_available: bool = True
 
 
 class ReportListResponse(BaseModel):

@@ -102,6 +102,7 @@ class ResearchEndpointTests(ApiTestCase):
                         persistence_backend="memory",
                         background_execution_mode="embedded",
                         deterministic_stage_executors=False,
+                        desk_report_contract_version="desk_report_claim_v1",
                         search_provider="deterministic",
                         evidence_extractor="deterministic",
                         research_sufficiency_assessor="deterministic",
