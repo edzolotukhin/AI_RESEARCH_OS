@@ -96,6 +96,7 @@ def compose_assertion(
     if not segments:
         raise _error("semantic_segment_schema", field="assertion.segments", value=segments)
     rendered: list[str] = []
+    previous_was_typed = False
     selected_refs: list[str] = []
     for index, segment in enumerate(segments):
         if not isinstance(segment, dict) or segment.get("type") not in {"text", "fact_ref", "period_ref"}:
@@ -108,6 +109,7 @@ def compose_assertion(
                 _trace(trace, numeric_leakage_result="failed", composition_stage="numeric_leakage")
                 raise _error("numeric_leakage", field=f"assertion.segments[{index}].text", value=segment["text"])
             rendered.append(segment["text"])
+            previous_was_typed = False
         elif kind == "fact_ref":
             if set(segment) != {"type", "fact_ref"} or not isinstance(segment.get("fact_ref"), str):
                 raise _error("semantic_segment_schema", field=f"assertion.segments[{index}]", value=segment)
@@ -126,7 +128,8 @@ def compose_assertion(
                 raise _error("duplicate_fact_ref", field=f"assertion.segments[{index}].fact_ref", value=ref)
             selected_refs.append(ref)
             expression = render_numeric_fact(catalog.facts[ref])
-            rendered.append(expression)
+            _append_typed_segment(rendered, expression, previous_was_typed)
+            previous_was_typed = True
             _trace(trace, rendered_fact_expressions=[expression], resolved_fact_refs=[ref], resolved_numeric_facts=[catalog.facts[ref].to_dict()])
         else:
             if set(segment) != {"type", "period_ref"} or not isinstance(segment.get("period_ref"), str):
@@ -135,7 +138,8 @@ def compose_assertion(
             _trace(trace, period_refs=[ref])
             if ref not in catalog.periods:
                 raise _error("period_ref_invalid", field=f"assertion.segments[{index}].period_ref", value=ref)
-            rendered.append(render_period(catalog.periods[ref]))
+            _append_typed_segment(rendered, render_period(catalog.periods[ref]), previous_was_typed)
+            previous_was_typed = True
             _trace(trace, period_refs=[ref])
     proposition = "".join(rendered).strip()
     if not proposition:
@@ -181,6 +185,13 @@ def _trace(trace: dict[str, Any] | None, **values: Any) -> None:
 
 def _numeric_tokens(proposition: str) -> list[str]:
     return list(extract_numeric_tokens(proposition))[:16]
+
+
+def _append_typed_segment(rendered: list[str], expression: str, previous_was_typed: bool) -> None:
+    """Keep adjacent system-owned typed segments lexically distinct."""
+    if previous_was_typed:
+        rendered.append(" ")
+    rendered.append(expression)
 
 
 def render_numeric_fact(fact: NumericFact) -> str:

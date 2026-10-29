@@ -79,6 +79,53 @@ class ClaimNumericCompositionTests(unittest.TestCase):
         self.assertEqual(assertion["proposition"], "Контекстний період: 2025")
         self.assertEqual(facts, ())
 
+    def test_adjacent_typed_segments_keep_numeric_tokens_independent(self):
+        first = fact("23", "%", periods=(), geography=("україна",))
+        second = fact("36", "%", periods=(), geography=("україна",))
+        catalog = self.catalog(first, second, periods=("2025", "2026"))
+        fact_refs = list(catalog.facts)
+        period_refs = list(catalog.periods)
+
+        cases = (
+            ("period_fact", ("2025", "23%"), {"type": "period_ref", "period_ref": period_refs[0]}, {"type": "fact_ref", "fact_ref": fact_refs[0]}),
+            ("fact_period", ("23%", "2025"), {"type": "fact_ref", "fact_ref": fact_refs[0]}, {"type": "period_ref", "period_ref": period_refs[0]}),
+            ("fact_fact", ("23%", "36%"), {"type": "fact_ref", "fact_ref": fact_refs[0]}, {"type": "fact_ref", "fact_ref": fact_refs[1]}),
+            ("period_period", ("2025", "2026"), {"type": "period_ref", "period_ref": period_refs[0]}, {"type": "period_ref", "period_ref": period_refs[1]}),
+        )
+        for name, expected, *segments in cases:
+            with self.subTest(name=name):
+                trace = {}
+                composed, _ = compose_assertion(self.assertion(*segments), catalog=catalog, trace=trace)
+                self.assertEqual(expected, tuple(trace["composed_numeric_tokens"]))
+                self.assertNotIn("202523%", composed["proposition"])
+
+    def test_three_adjacent_typed_segments_remain_independent(self):
+        first = fact("23", "%", periods=(), geography=())
+        second = fact("36", "%", periods=(), geography=())
+        catalog = self.catalog(first, second, periods=("2025", "2026"))
+        facts = list(catalog.facts)
+        periods = list(catalog.periods)
+        trace = {}
+        compose_assertion(self.assertion(
+            {"type": "period_ref", "period_ref": periods[0]},
+            {"type": "fact_ref", "fact_ref": facts[0]},
+            {"type": "period_ref", "period_ref": periods[1]},
+            {"type": "fact_ref", "fact_ref": facts[1]},
+        ), catalog=catalog, trace=trace)
+        self.assertEqual(("2025", "23%", "2026", "36%"), tuple(trace["composed_numeric_tokens"]))
+
+    def test_explicit_text_separator_is_preserved(self):
+        selected = fact("23", "%", periods=(), geography=())
+        catalog = self.catalog(selected, periods=("2025",))
+        fact_ref = next(iter(catalog.facts))
+        period_ref = next(iter(catalog.periods))
+        composed, _ = compose_assertion(self.assertion(
+            {"type": "period_ref", "period_ref": period_ref},
+            {"type": "text", "text": " — "},
+            {"type": "fact_ref", "fact_ref": fact_ref},
+        ), catalog=catalog)
+        self.assertIn("2025 — 23%", composed["proposition"])
+
     def test_all_numeric_text_leakage_fails(self):
         for text in ("1.06", "1,06", "7,8%", "2021", "48 705", "48\u00a0705", "10 млн", "-3.7%"):
             with self.subTest(text=text), self.assertRaises(NumericCompositionError) as captured:

@@ -43,6 +43,35 @@ class ClaimRepairContractTests(unittest.TestCase):
         self.assertEqual(claims[0].support_evidence_ids, ("ev-1",))
         self.assertEqual(claims[0].scope.geography_country, ("ukraine",))
 
+    def test_repair_typed_segments_insert_lexical_boundary(self) -> None:
+        def initial(request):
+            result = copy.deepcopy(request["authority"])
+            result["scope"]["geography"]["country"].append("poland")
+            catalog = request["numeric_catalog"]
+            result["assertion"] = {
+                "kind": "observation", "certainty": "direct", "direction": "not_applicable",
+                "segments": [
+                    {"type": "period_ref", "period_ref": catalog["periods"][0]["period_ref"]},
+                    {"type": "fact_ref", "fact_ref": catalog["numeric_facts"][0]["fact_ref"]},
+                ],
+            }
+            return result
+
+        def repair(request):
+            return {"claim_id": request["candidate"]["claim_id"],
+                    "assertion": copy.deepcopy(request["candidate"]["assertion"])}
+
+        claims = generate_validated_claims(
+            project_id="project-1", source_workflow_run_id="source-run",
+            report_workflow_run_id="replay-run", design=self.fixture.design,
+            findings=(self.fixture.finding,), insights=(),
+            evidence_by_id={"ev-1": self.fixture.evidence},
+            citation_id_by_source={"source-1": "S1"},
+            candidate_provider=initial, correction_provider=repair,
+        )
+        self.assertEqual(len(claims), 1)
+        self.assertIn("2026 10%", claims[0].proposition)
+
     def test_null_support_scope_validation_and_provenance_reconstruct(self) -> None:
         def repair(request):
             result = self.semantic_delta(request)
