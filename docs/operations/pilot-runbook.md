@@ -17,25 +17,30 @@ This runbook targets one private Linux host. It does not replace OPS-01B backup/
 2. Copy `.env.pilot.example` to ignored `.env.pilot`; replace every `CHANGE_ME` value. Generate URL-safe random secrets, for example `openssl rand -base64 48 | tr -d '=+/\n'`.
 3. Set `PILOT_HOST`, `ALLOWED_HOSTS`, and `TLS_CONTACT_EMAIL`. Leave unused provider keys empty.
 4. Verify the Docker data root is on encrypted storage and has at least 30 GiB free (50 GiB recommended before large imports).
-5. Validate rendering: `docker compose --env-file .env.pilot -f docker-compose.pilot.yml config --quiet`.
+5. Validate rendering: `docker compose --project-name app --env-file .env.pilot -f docker-compose.pilot.yml config --quiet`.
 6. Start PostgreSQL only, wait for healthy, then apply exactly one migration job:
-   `docker compose --env-file .env.pilot -f docker-compose.pilot.yml up -d postgres`
-   `docker compose --env-file .env.pilot -f docker-compose.pilot.yml --profile operations run --rm migrate`
+   `docker compose --project-name app --env-file .env.pilot -f docker-compose.pilot.yml up -d --wait --wait-timeout 120 postgres`
+   `docker compose --project-name app --env-file .env.pilot -f docker-compose.pilot.yml --profile operations run --rm migrate`
 7. Bootstrap the owner once:
-   `docker compose --env-file .env.pilot -f docker-compose.pilot.yml --profile operations run --rm bootstrap-owner`
+   `docker compose --project-name app --env-file .env.pilot -f docker-compose.pilot.yml --profile operations run --rm bootstrap-owner`
    Record the resulting user id as `PILOT_ADMIN_USER_ID`, then remove `PILOT_OWNER_PASSWORD` from the runtime env or secret delivery path.
 8. Start `api`, `worker`, and `proxy`. Verify HTTPS `/health`, `/ready`, login, project access, and logout.
 
 ## Normal release
 
-1. Record current image/commit and database migration head.
-2. Fetch and checkout the exact accepted commit; review release notes and migration reversibility.
-3. Build images, run the one-shot migration service once, then recreate API and worker before proxy only when required.
-4. Verify PostgreSQL, `/ready`, worker health, HTTPS login, and one authorized project page.
+Use only the canonical fail-closed entrypoint documented in
+[`production-deployment.md`](production-deployment.md):
+
+`python -m tools.pilot_deploy --release-sha <40-character-accepted-git-sha>`
+
+Direct production mutation with bare `docker compose`, the default
+`docker-compose.yml`, or an alternate environment file is unsupported. The
+entrypoint owns build, migration, recreate, topology, health and running-source
+verification.
 
 ## Restart
 
-Use `docker compose --env-file .env.pilot -f docker-compose.pilot.yml restart api worker proxy`. PostgreSQL should be restarted only when operationally required. Confirm `/ready` and worker health afterward.
+Use `docker compose --project-name app --env-file .env.pilot -f docker-compose.pilot.yml restart api worker proxy`. PostgreSQL should be restarted only when operationally required. Confirm `/ready` and worker health afterward.
 
 ## Rollback
 
@@ -67,7 +72,7 @@ If the sole administrator cannot sign in, use the interactive recovery command f
 deployed checkout. It reads the replacement password from a no-echo terminal prompt and calls
 the canonical identity service rather than SQL:
 
-`docker compose --env-file .env.pilot -f docker-compose.pilot.yml run --rm api python -m tools.recover_pilot_password --user-id <existing-user-id>`
+`docker compose --project-name app --env-file .env.pilot -f docker-compose.pilot.yml run --rm api python -m tools.recover_pilot_password --user-id <existing-user-id>`
 
 Run it only through authorized server access and hand off the new password out of band. The
 security log records only the event type, target user ID, actor ID, and session revocation.
