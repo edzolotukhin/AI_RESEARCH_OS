@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import copy
+import json
 import re
 import unittest
 
@@ -18,6 +19,7 @@ from application.report.editorial_composer import (
     render_presentation_fact,
     render_presentation_geography,
     render_presentation_period,
+    LlmEditorialProposalProvider,
 )
 from application.report.editorial_contract import (
     CoverageLimitation,
@@ -29,6 +31,7 @@ from application.report.editorial_contract import (
     build_authorized_editorial_catalog,
 )
 from domain.reports.report_claim import ClaimScope, NumericFact
+from domain.ai.llm_response import LLMResponse
 from tests.application.report.test_editorial_contract import claim, numeric
 
 
@@ -552,6 +555,88 @@ class EditorialComposerTests(unittest.TestCase):
     def test_provider_request_declares_prohibitions(self):
         request = build_provider_request(catalog=self.catalog, options=self.options, authority_digest="authority")
         self.assertEqual(["new_facts", "new_numbers", "new_dates", "new_sources", "new_factual_conclusions"], request["prohibited"])
+
+
+class LlmEditorialProposalProviderBoundaryTests(EditorialComposerTests):
+    class Client:
+        def __init__(self, *responses):
+            self.responses = list(responses)
+            self.calls = 0
+
+        def generate(self, prompt):
+            self.calls += 1
+            return self.responses.pop(0)
+
+    def response(self, value, *, finish_reason="stop"):
+        return LLMResponse(content=value, finish_reason=finish_reason, output_tokens=10, max_output_tokens=4096)
+
+    def test_valid_json_content_reaches_mapping_boundary(self):
+        client = self.Client(self.response(json.dumps(self.valid, ensure_ascii=False)))
+        payload = LlmEditorialProposalProvider(client).generate({})
+        self.assertEqual(self.valid, payload)
+        self.assertEqual(1, client.calls)
+
+    def test_invalid_json_fails_closed_with_parse_diagnostic(self):
+        client = self.Client(self.response('{"contract_version":'))
+        with self.assertRaises(EditorialCompositionError) as raised:
+            LlmEditorialProposalProvider(client).generate({})
+        self.assertEqual("invalid_json", raised.exception.diagnostics["parse_failure_category"])
+
+    def test_non_object_json_fails_closed(self):
+        client = self.Client(self.response("[]"))
+        with self.assertRaises(EditorialCompositionError) as raised:
+            LlmEditorialProposalProvider(client).generate({})
+        self.assertEqual("non_object_root", raised.exception.diagnostics["parse_failure_category"])
+
+    def test_empty_and_truncated_json_fail_closed(self):
+        for content in ("", '{"contract_version":"desk_editorial_v1"'):
+            client = self.Client(self.response(content))
+            with self.assertRaises(EditorialCompositionError):
+                LlmEditorialProposalProvider(client).generate({})
+
+    def test_fenced_and_prose_json_remain_rejected_by_syntax_validator(self):
+        for content in (f"```json\n{json.dumps(self.valid)}\n```", f"Here is JSON: {json.dumps(self.valid)}"):
+            client = self.Client(self.response(content))
+            with self.assertRaises(EditorialCompositionError) as raised:
+                LlmEditorialProposalProvider(client).generate({})
+            self.assertEqual("invalid_json", raised.exception.diagnostics["parse_failure_category"])
+
+    def test_initial_invalid_repair_valid_uses_two_calls(self):
+        client = self.Client(self.response("not json"), self.response(json.dumps(self.valid, ensure_ascii=False)))
+        result = EditorialComposer(LlmEditorialProposalProvider(client)).compose(
+            report_id="report-1", revision_number=1, source_report_id="report-1",
+            authority_digest="authority-digest", catalog=self.catalog,
+        )
+        self.assertEqual("desk_editorial_v1", result.report.contract_version)
+        self.assertEqual(2, client.calls)
+
+    def test_initial_and_repair_invalid_are_bounded_to_two_calls(self):
+        client = self.Client(self.response("bad"), self.response("still bad"))
+        with self.assertRaises(EditorialCompositionError):
+            EditorialComposer(LlmEditorialProposalProvider(client)).compose(
+                report_id="report-1", revision_number=1, source_report_id="report-1",
+                authority_digest="authority-digest", catalog=self.catalog,
+            )
+        self.assertEqual(2, client.calls)
+
+    def test_valid_initial_uses_one_call(self):
+        client = self.Client(self.response(json.dumps(self.valid, ensure_ascii=False)))
+        EditorialComposer(LlmEditorialProposalProvider(client)).compose(
+            report_id="report-1", revision_number=1, source_report_id="report-1",
+            authority_digest="authority-digest", catalog=self.catalog,
+        )
+        self.assertEqual(1, client.calls)
+
+    def test_decoded_schema_violation_remains_strict(self):
+        invalid = copy.deepcopy(self.valid)
+        invalid["report_title"] = "Огляд 2026"
+        client = self.Client(self.response(json.dumps(invalid)), self.response(json.dumps(invalid)))
+        with self.assertRaises(EditorialCompositionError):
+            EditorialComposer(LlmEditorialProposalProvider(client)).compose(
+                report_id="report-1", revision_number=1, source_report_id="report-1",
+                authority_digest="authority-digest", catalog=self.catalog,
+            )
+        self.assertEqual(2, client.calls)
 
 
 def canonical_catalog_digest(catalog):

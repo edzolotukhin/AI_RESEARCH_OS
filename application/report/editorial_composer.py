@@ -70,10 +70,26 @@ class LlmEditorialProposalProvider:
             ),
             user=json.dumps(dict(request), ensure_ascii=False, sort_keys=True),
         ))
-        value = JsonValidator().validate(response.content or "")
-        if not isinstance(value, Mapping):
-            raise EditorialCompositionError("malformed_editorial_provider_payload")
-        return value
+        result = JsonValidator().validate(response.content or "")
+        if not result.is_valid:
+            raise EditorialCompositionError(
+                "malformed_editorial_provider_payload",
+                diagnostics={
+                    "parse_failure_category": "invalid_json",
+                    "error": str(result.error or "")[:160],
+                    "error_position": result.error_position,
+                },
+            )
+        payload = result.data
+        if not isinstance(payload, Mapping):
+            raise EditorialCompositionError(
+                "malformed_editorial_provider_payload",
+                diagnostics={
+                    "parse_failure_category": "non_object_root",
+                    "root_type": type(payload).__name__,
+                },
+            )
+        return payload
 
 
 class FrameSegmentType(str, Enum):
