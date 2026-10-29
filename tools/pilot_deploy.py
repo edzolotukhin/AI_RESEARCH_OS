@@ -25,6 +25,7 @@ PROJECT_NAME = "app"
 COMPOSE_FILE = "docker-compose.pilot.yml"
 ENV_FILE = ".env.pilot"
 REQUIRED_SERVICES = ("postgres", "api", "worker")
+RUNTIME_IMAGE_SERVICES = ("api", "worker")
 BACKEND_NETWORK = "app_pilot_backend"
 POSTGRES_VOLUME = "app_pilot_postgres_data"
 COMPOSE_WAIT_TIMEOUT_SECONDS = "120"
@@ -236,7 +237,10 @@ class PilotDeployment:
 
     def build(self) -> None:
         self.runner.run(deployment_commands()[0], mutate=True)
-        for service in ("api", "worker", "migrate"):
+        # ``docker compose images`` reports container-backed images.  The
+        # profile-only migrate service has no container before its one-shot
+        # run, so its empty result is not evidence that the build failed.
+        for service in RUNTIME_IMAGE_SERVICES:
             image = self.runner.run(compose_command("images", "--quiet", service))
             if not image:
                 raise DeploymentGuardError(f"built image identity unavailable for {service}")

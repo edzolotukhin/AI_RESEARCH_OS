@@ -11,6 +11,7 @@ from tools.pilot_deploy import (
     COMPOSE_FILE,
     ENV_FILE,
     POSTGRES_VOLUME,
+    RUNTIME_IMAGE_SERVICES,
     DeploymentGuardError,
     assert_container_topology,
     assert_digest_match,
@@ -54,6 +55,44 @@ def inspection(service):
 
 
 class PilotDeployGuardTests(unittest.TestCase):
+    def test_build_does_not_require_profile_only_migrate_image_identity(self):
+        from tools.pilot_deploy import PilotDeployment
+
+        class BuildRunner:
+            dry_run = False
+
+            def run(self, command, *, mutate=False):
+                values = tuple(command)
+                if "images" in values:
+                    service = values[-1]
+                    return {"api": "api-image", "worker": "worker-image"}.get(service, "")
+                return ""
+
+        deployment = PilotDeployment(
+            root=Path.cwd(), release_sha="a" * 40, runner=BuildRunner(),
+        )
+        deployment.build()
+        self.assertEqual(set(deployment.built_images), set(RUNTIME_IMAGE_SERVICES))
+        self.assertNotIn("migrate", deployment.built_images)
+
+    def test_build_still_fails_closed_for_missing_runtime_image_identity(self):
+        from tools.pilot_deploy import PilotDeployment
+
+        class MissingWorkerRunner:
+            dry_run = False
+
+            def run(self, command, *, mutate=False):
+                values = tuple(command)
+                if "images" in values and values[-1] == "api":
+                    return "api-image"
+                return ""
+
+        deployment = PilotDeployment(
+            root=Path.cwd(), release_sha="a" * 40, runner=MissingWorkerRunner(),
+        )
+        with self.assertRaisesRegex(DeploymentGuardError, "worker"):
+            deployment.build()
+
     def test_deployment_json_uses_fail_closed_central_decoder(self):
         self.assertEqual({"name": "app"}, decode_json_document(
             '{"name": "app"}', context="compose",
