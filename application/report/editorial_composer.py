@@ -60,6 +60,7 @@ class LlmEditorialProposalProvider:
 
     def __init__(self, client) -> None:
         self._client = client
+        self.last_diagnostics: dict[str, Any] = {}
 
     def generate(self, request: Mapping[str, Any]) -> Mapping[str, Any]:
         response = self._client.generate(Prompt(
@@ -78,6 +79,7 @@ class LlmEditorialProposalProvider:
             "finish_reason": response.finish_reason,
             "incomplete_reason": response.incomplete_reason,
         }
+        self.last_diagnostics = dict(common)
         if not result.is_valid:
             raise EditorialCompositionError(
                 "malformed_editorial_provider_payload",
@@ -88,6 +90,7 @@ class LlmEditorialProposalProvider:
                 },
             )
         payload = result.data
+        self.last_diagnostics["decoded_root_type"] = type(payload).__name__
         if not isinstance(payload, Mapping):
             raise EditorialCompositionError(
                 "malformed_editorial_provider_payload",
@@ -246,7 +249,11 @@ class EditorialComposer:
                     revision_number=revision_number, source_report_id=source_report_id,
                     authority_digest=authority_digest, diagnostics=diagnostics,
                 )
-                diagnostics["attempts"].append({"attempt": attempt, "status": "valid", "validation_codes": []})
+                attempt_diagnostics = {
+                    "attempt": attempt, "status": "valid", "validation_codes": [],
+                }
+                attempt_diagnostics.update(_safe_adapter_diagnostics(self._provider))
+                diagnostics["attempts"].append(attempt_diagnostics)
                 diagnostics["presentation_digest"] = canonical_digest(_presentation_digest_payload(result.report))
                 diagnostics["stage"] = "editorial_composition_complete"
                 return EditorialCompositionResult(result.report, result.plan, diagnostics)
@@ -256,6 +263,7 @@ class EditorialComposer:
                     "attempt": attempt, "status": "invalid",
                     "validation_codes": [_error_code(exc)],
                 }
+                attempt_diagnostics.update(_safe_adapter_diagnostics(self._provider))
                 attempt_diagnostics.update(_safe_provider_diagnostics(exc))
                 diagnostics["attempts"].append(attempt_diagnostics)
                 if attempt == "repair":
@@ -870,15 +878,28 @@ def _safe_provider_diagnostics(error: Exception) -> dict[str, Any]:
     diagnostics = getattr(error, "diagnostics", None)
     if not isinstance(diagnostics, Mapping):
         return {}
+    return _bounded_provider_diagnostics(diagnostics)
+
+
+def _safe_adapter_diagnostics(provider: object) -> dict[str, Any]:
+    diagnostics = getattr(provider, "last_diagnostics", None)
+    if not isinstance(diagnostics, Mapping):
+        return {}
+    return _bounded_provider_diagnostics(diagnostics)
+
+
+def _bounded_provider_diagnostics(diagnostics: Mapping[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key in _SAFE_PROVIDER_DIAGNOSTIC_KEYS:
+        if key not in diagnostics:
+            continue
         value = diagnostics.get(key)
         if key in {"content_present"} and isinstance(value, bool):
             result[key] = value
         elif key in {"content_length", "error_position"} and isinstance(value, int):
-            result[key] = value
+            result[key] = max(0, min(value, 10_000_000))
         elif key in {"parse_failure_category", "response_type", "finish_reason", "incomplete_reason", "decoded_root_type"} and (value is None or isinstance(value, str)):
-            result[key] = value
+            result[key] = value[:128] if isinstance(value, str) else None
     return result
 
 

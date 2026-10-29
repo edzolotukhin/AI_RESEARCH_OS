@@ -29,6 +29,51 @@ _ID_LIMITS = {
 }
 
 
+class ApprovedDeliveryProvenanceMismatch(ValueError):
+    """Bounded field-level mismatch; never carries document/provider content."""
+
+    def __init__(self, *, component: str, expected, actual) -> None:
+        self.diagnostics = provenance_mismatch_diagnostics(
+            component=component, expected=expected, actual=actual,
+        )
+        fields = ",".join(self.diagnostics["mismatch_fields"])
+        super().__init__(f"approved delivery provenance mismatch: {component}:{fields}")
+
+
+def provenance_mismatch_diagnostics(*, component: str, expected, actual) -> dict[str, Any]:
+    """Describe only typed provenance identity differences with bounded values."""
+
+    expected_values = expected.to_dict() if isinstance(expected, ApprovedDeliveryProvenance) else {}
+    actual_values = actual.to_dict() if isinstance(actual, ApprovedDeliveryProvenance) else {}
+    mismatch_fields = tuple(
+        field for field in _FIELDS
+        if expected_values.get(field) != actual_values.get(field)
+    )
+
+    def bounded(payload: Mapping[str, Any]) -> dict[str, str | int | None]:
+        return {
+            field: (value if isinstance(value, int) else str(value)[:128] if value is not None else None)
+            for field in mismatch_fields
+            for value in (payload.get(field),)
+        }
+
+    return {
+        "category": "approved_delivery_provenance_mismatch",
+        "component": str(component)[:48],
+        "mismatch_fields": list(mismatch_fields),
+        "expected": bounded(expected_values),
+        "actual": bounded(actual_values),
+    }
+
+
+def provenance_failure_code(*, component: str, expected, actual) -> str:
+    diagnostics = provenance_mismatch_diagnostics(
+        component=component, expected=expected, actual=actual,
+    )
+    fields = "_".join(diagnostics["mismatch_fields"]) or "missing"
+    return f"provenance_mismatch_{str(component)[:24]}_{fields}"[:120]
+
+
 def _identity(value: object, field: str) -> str:
     if (not isinstance(value, str) or not value or value != value.strip()
             or len(value) > _ID_LIMITS[field]):

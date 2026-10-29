@@ -33,6 +33,10 @@ from application.deliverables.editorial_delivery import (
     load_approved_editorial_delivery,
     render_editorial_markdown,
 )
+from application.deliverables.approved_delivery_provenance import (
+    ApprovedDeliveryProvenanceMismatch,
+    provenance_failure_code,
+)
 from application.persistence.records import ArtifactRecord
 from application.report.deduplication import (
     DR06_RESEARCH_REPORT_TYPE,
@@ -42,10 +46,22 @@ from application.report.deduplication import (
 
 
 class DeliverableFinalizationError(RuntimeError):
-    def __init__(self, state: str, code: str) -> None:
+    def __init__(self, state: str, code: str, *, diagnostics=None) -> None:
         super().__init__(code)
         self.state = state
         self.code = code
+        self.diagnostics = dict(diagnostics or {})
+
+
+class _DeliverableComponentError(ValueError):
+    def __init__(self, *, component: str, reason: str) -> None:
+        self.code = f"{component}_{reason}"[:120]
+        self.diagnostics = {
+            "category": "deliverable_component_mismatch",
+            "component": component[:48],
+            "reason": reason[:64],
+        }
+        super().__init__(self.code)
 
 
 @dataclass(frozen=True)
@@ -380,7 +396,10 @@ class ProjectDeliverablesService:
         if item.pdf is not None:
             if (item.document.approved_delivery_provenance is not None
                     and item.pdf.approved_delivery_provenance != item.document.approved_delivery_provenance):
-                raise AccessDeniedError("PDF approved delivery provenance mismatch")
+                raise ApprovedDeliveryProvenanceMismatch(
+                    component="pdf", expected=item.document.approved_delivery_provenance,
+                    actual=item.pdf.approved_delivery_provenance,
+                )
             return item.pdf
         document = item.document
         data = self.renderer.render(document)
@@ -464,7 +483,9 @@ class ProjectDeliverablesService:
                 project_id, workflow_run_id=report.workflow_run_id, report_id=report.id)
             review = self._approved_desk_review(report, reviews)
             if review.id != review_id:
-                raise AccessDeniedError("not approved")
+                raise _DeliverableComponentError(
+                    component="review", reason="stale_or_wrong",
+                )
             editorial = None
             if report.metadata.get(REPORT_CONTRACT_KEY) == EDITORIAL_CONTRACT_VERSION:
                 claims = tuple(self.report_claims.list_for_report(report.id, report.revision_number))
@@ -477,7 +498,11 @@ class ProjectDeliverablesService:
                 project_id, "DESK", report_id, owner_id=project.owner_principal_id))
             if editorial is not None:
                 if item.document.approved_delivery_provenance != editorial.provenance:
-                    raise AccessDeniedError("Editorial finalization provenance mismatch")
+                    raise ApprovedDeliveryProvenanceMismatch(
+                        component="canonical_delivery",
+                        expected=editorial.provenance,
+                        actual=item.document.approved_delivery_provenance,
+                    )
                 self._persist_editorial_artifact(report, editorial)
             elif (item.document.source_version != authority.source_version
                     or item.document.claim_set_digest != authority.claim_set_digest
@@ -485,7 +510,16 @@ class ProjectDeliverablesService:
                     or item.document.source_run_id != authority.source_run_id):
                 raise AccessDeniedError("Structured finalization provenance mismatch")
         except Exception as exc:
-            raise DeliverableFinalizationError("approval_gate_rejected", "approval_gate_rejected") from exc
+            diagnostics = getattr(exc, "diagnostics", {})
+            code = "approval_gate_rejected"
+            if isinstance(exc, ApprovedDeliveryProvenanceMismatch):
+                fields = "_".join(diagnostics.get("mismatch_fields", ())) or "missing"
+                code = f"provenance_mismatch_{diagnostics.get('component', 'approval')}_{fields}"[:120]
+            elif isinstance(exc, _DeliverableComponentError):
+                code = exc.code
+            raise DeliverableFinalizationError(
+                "approval_gate_rejected", code, diagnostics=diagnostics,
+            ) from exc
         try:
             job = self._schedule_presentation_document(item.document, authority)
         except Exception as exc:
@@ -500,15 +534,20 @@ class ProjectDeliverablesService:
                 self.presentation_jobs.transition(job.id, expected=("pdf_generating", "review_approved"), state="pdf_complete")
                 job = self.presentation_jobs.transition(job.id, expected=("pdf_complete",), state="pptx_pending") or job
         except Exception as exc:
+            diagnostics = getattr(exc, "diagnostics", {})
+            code = "pdf_generation_failed"
+            if isinstance(exc, ApprovedDeliveryProvenanceMismatch):
+                fields = "_".join(diagnostics.get("mismatch_fields", ())) or "missing"
+                code = f"provenance_mismatch_{diagnostics.get('component', 'pdf')}_{fields}"[:120]
             if hasattr(self.presentation_jobs, "transition"):
                 self.presentation_jobs.transition(
                     job.id,
                     expected=("review_approved", "pdf_generating"),
                     state="failed_terminal",
-                    failure_code="pdf_generation_failed",
+                    failure_code=code,
                 )
             raise DeliverableFinalizationError(
-                "finalization_failed", "pdf_generation_failed"
+                "finalization_failed", code, diagnostics=diagnostics,
             ) from exc
         if job.state in {"completed", "finalization_complete"}:
             refreshed = self._approved_desk_item(self.source(
@@ -543,9 +582,13 @@ class ProjectDeliverablesService:
         markdown = render_editorial_markdown(editorial.document)
         checksum = compute_content_checksum(markdown)
         if existing is not None:
+            if existing.approved_delivery_provenance != editorial.provenance:
+                raise ApprovedDeliveryProvenanceMismatch(
+                    component="research_report_artifact", expected=editorial.provenance,
+                    actual=existing.approved_delivery_provenance,
+                )
             if (existing.report_id != report.id or existing.status.lower() != "approved"
-                    or existing.content_checksum != checksum
-                    or existing.approved_delivery_provenance != editorial.provenance):
+                    or existing.content_checksum != checksum):
                 raise AccessDeniedError("Editorial artifact identity mismatch")
             return existing
         artifact = ArtifactRecord(
@@ -584,7 +627,11 @@ class ProjectDeliverablesService:
                     raise ValueError("structured finalization authority changed")
                 if (document.approved_delivery_provenance is not None
                         and job.approved_delivery_provenance != document.approved_delivery_provenance):
-                    raise ValueError("approved presentation provenance changed")
+                    raise ApprovedDeliveryProvenanceMismatch(
+                        component="presentation_job",
+                        expected=document.approved_delivery_provenance,
+                        actual=job.approved_delivery_provenance,
+                    )
                 self._generate_item(source_item)
             existing = self.store.find(
                 project_id=job.project_id, method=job.method, source_id=job.source_id,
@@ -616,16 +663,44 @@ class ProjectDeliverablesService:
                 )
                 artifact = (self.artifacts.get_by_deduplication_key(job.run_id, key)
                             if self.artifacts is not None else None)
-                if (refreshed.pdf is None
-                        or refreshed.pdf.approved_delivery_provenance != job.approved_delivery_provenance
-                        or existing.approved_delivery_provenance != job.approved_delivery_provenance
-                        or artifact is None
-                        or artifact.approved_delivery_provenance != job.approved_delivery_provenance):
-                    raise ValueError("approved delivery set is incomplete or mismatched")
+                if refreshed.pdf is None:
+                    raise _DeliverableComponentError(component="pdf", reason="missing")
+                if refreshed.pdf.approved_delivery_provenance != job.approved_delivery_provenance:
+                    raise ApprovedDeliveryProvenanceMismatch(
+                        component="pdf", expected=job.approved_delivery_provenance,
+                        actual=refreshed.pdf.approved_delivery_provenance,
+                    )
+                if existing is None:
+                    raise _DeliverableComponentError(component="pptx", reason="missing")
+                if existing.approved_delivery_provenance != job.approved_delivery_provenance:
+                    raise ApprovedDeliveryProvenanceMismatch(
+                        component="pptx", expected=job.approved_delivery_provenance,
+                        actual=existing.approved_delivery_provenance,
+                    )
+                if artifact is None:
+                    raise _DeliverableComponentError(
+                        component="research_report_artifact", reason="missing",
+                    )
+                if artifact.approved_delivery_provenance != job.approved_delivery_provenance:
+                    raise ApprovedDeliveryProvenanceMismatch(
+                        component="research_report_artifact",
+                        expected=job.approved_delivery_provenance,
+                        actual=artifact.approved_delivery_provenance,
+                    )
             self.presentation_jobs.complete(job.id, worker_id, existing.id)
-        except Exception:
+        except Exception as exc:
             # The failure code is deliberately content-free; the user may retry.
-            self.presentation_jobs.fail(job.id, worker_id, "generation_failed")
+            failure_code = (
+                provenance_failure_code(
+                    component=exc.diagnostics.get("component", "pptx"),
+                    expected=source_item.document.approved_delivery_provenance,
+                    actual=job.approved_delivery_provenance,
+                )
+                if isinstance(exc, ApprovedDeliveryProvenanceMismatch)
+                else exc.code if isinstance(exc, _DeliverableComponentError)
+                else "generation_failed"
+            )
+            self.presentation_jobs.fail(job.id, worker_id, failure_code)
         refreshed = self.presentation_jobs.find(
             project_id=job.project_id, method=job.method, source_id=job.source_id,
             source_version=job.source_version, template_version=job.template_version,

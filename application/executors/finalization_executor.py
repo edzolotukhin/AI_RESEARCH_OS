@@ -33,6 +33,9 @@ class FinalizationExecutor(BaseExecutor):
                 "report_id": str(review.get("report_id") or ""),
                 "review_id": str(review.get("review_id") or ""),
             }
+            diagnostics = getattr(exc, "diagnostics", None)
+            if isinstance(diagnostics, dict) and diagnostics:
+                state["diagnostics"] = diagnostics
             context.write_shared("desk_deliverable_finalization", state)
             update_replay_stage(context, "deliverables", "failed",
                                 failure_code=state["failure_code"])

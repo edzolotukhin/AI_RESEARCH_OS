@@ -43,12 +43,16 @@ class ReviewExecutor(BaseExecutor):
                     review_id=summary.review_id,
                 )
             except Exception as exc:
-                context.write_shared("desk_deliverable_finalization", {
+                state = {
                     "status": getattr(exc, "state", "pdf_failed"),
                     "failure_code": getattr(exc, "code", "deliverable_finalization_failed"),
                     "report_id": summary.report_id,
                     "review_id": summary.review_id,
-                })
+                }
+                diagnostics = getattr(exc, "diagnostics", None)
+                if isinstance(diagnostics, dict) and diagnostics:
+                    state["diagnostics"] = diagnostics
+                context.write_shared("desk_deliverable_finalization", state)
                 update_replay_stage(
                     context, "deliverables", "failed",
                     failure_code=getattr(exc, "code", exc.__class__.__name__),
