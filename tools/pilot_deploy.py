@@ -54,6 +54,13 @@ def compose_command(*args: str) -> tuple[str, ...]:
     )
 
 
+def compose_build_image_reference(service: str) -> str:
+    if service not in RUNTIME_IMAGE_SERVICES:
+        raise DeploymentGuardError(f"unsupported runtime image service: {service}")
+    # Compose names an otherwise unnamed build image as <project>-<service>.
+    return f"{PROJECT_NAME}-{service}"
+
+
 @dataclass
 class Runner:
     root: Path
@@ -241,7 +248,10 @@ class PilotDeployment:
         # profile-only migrate service has no container before its one-shot
         # run, so its empty result is not evidence that the build failed.
         for service in RUNTIME_IMAGE_SERVICES:
-            image = self.runner.run(compose_command("images", "--quiet", service))
+            image = self.runner.run((
+                "docker", "image", "inspect", compose_build_image_reference(service),
+                "--format", "{{.Id}}",
+            ))
             if not image:
                 raise DeploymentGuardError(f"built image identity unavailable for {service}")
             self.built_images[service] = image.splitlines()[0]
@@ -342,7 +352,7 @@ class PilotDeployment:
         if not verify_only:
             self.build(); self.migrate(); self.recreate()
         else:
-            for service in ("api", "worker", "migrate"):
+            for service in RUNTIME_IMAGE_SERVICES:
                 image = self.runner.run(compose_command("images", "--quiet", service))
                 self.built_images[service] = image.splitlines()[0] if image else ""
         self.verify()

@@ -19,6 +19,7 @@ from tools.pilot_deploy import (
     assert_pinned_compose_command,
     assert_single_migration_head,
     compose_command,
+    compose_build_image_reference,
     decode_json_document,
     deployment_commands,
     validate_clean_head,
@@ -55,6 +56,12 @@ def inspection(service):
 
 
 class PilotDeployGuardTests(unittest.TestCase):
+    def test_compose_runtime_build_image_references_are_deterministic(self):
+        self.assertEqual("app-api", compose_build_image_reference("api"))
+        self.assertEqual("app-worker", compose_build_image_reference("worker"))
+        with self.assertRaises(DeploymentGuardError):
+            compose_build_image_reference("migrate")
+
     def test_build_does_not_require_profile_only_migrate_image_identity(self):
         from tools.pilot_deploy import PilotDeployment
 
@@ -63,8 +70,8 @@ class PilotDeployGuardTests(unittest.TestCase):
 
             def run(self, command, *, mutate=False):
                 values = tuple(command)
-                if "images" in values:
-                    service = values[-1]
+                if values[:3] == ("docker", "image", "inspect"):
+                    service = values[3].removeprefix("app-")
                     return {"api": "api-image", "worker": "worker-image"}.get(service, "")
                 return ""
 
@@ -83,7 +90,7 @@ class PilotDeployGuardTests(unittest.TestCase):
 
             def run(self, command, *, mutate=False):
                 values = tuple(command)
-                if "images" in values and values[-1] == "api":
+                if values[:3] == ("docker", "image", "inspect") and values[3] == "app-api":
                     return "api-image"
                 return ""
 
