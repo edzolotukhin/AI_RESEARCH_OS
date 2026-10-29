@@ -145,6 +145,7 @@ def postgresql_application_config(
     report_engine: str = "deterministic",
     review_engine: str = "deterministic",
     research_sufficiency_assessor: str = "deterministic",
+    desk_report_contract_version: str = "desk_report_claim_v1",
 ) -> ApplicationConfig:
     """PostgreSQL ApplicationConfig for integration tests."""
     return ApplicationConfig(
@@ -158,6 +159,7 @@ def postgresql_application_config(
         analysis_engine=analysis_engine,
         report_engine=report_engine,
         review_engine=review_engine,
+        desk_report_contract_version=desk_report_contract_version,
     )
 
 
