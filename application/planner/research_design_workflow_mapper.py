@@ -11,6 +11,7 @@ from domain.workflow_template import WorkflowTemplate
 from domain.workflow_template_builder import WorkflowTemplateBuilder
 
 from .exceptions import PlannerMappingError
+from application.report.contract_selection import H2_REPORT_CONTRACT, H3_REPORT_CONTRACT
 
 
 class ResearchDesignWorkflowMapper:
@@ -26,10 +27,17 @@ class ResearchDesignWorkflowMapper:
     _TASK_ANALYZE = "task-analyze"
     _TASK_REPORT = "task-write-report"
     _TASK_REVIEW = "task-review-report"
+    _TASK_REVIEW_1 = "task-review-report-1"
+    _TASK_REVISION = "task-revise-report"
+    _TASK_REVIEW_2 = "task-review-report-2"
 
-    def __init__(self, *, kernel_profile=None, method_binding=None):
+    def __init__(self, *, kernel_profile=None, method_binding=None,
+                 desk_report_contract_version: str = H2_REPORT_CONTRACT):
         self._kernel_profile = kernel_profile
         self._method_binding = method_binding
+        if desk_report_contract_version not in {H2_REPORT_CONTRACT, H3_REPORT_CONTRACT}:
+            raise ValueError("Unsupported new Desk execution contract")
+        self._desk_report_contract_version = desk_report_contract_version
         if method_binding is not None and kernel_profile is None:
             raise ValueError("CMF Desk activation requires an ARK profile")
 
@@ -123,27 +131,39 @@ class ResearchDesignWorkflowMapper:
                 "implementation_status": "implemented",
             },
         )
-        builder.add_task(
-            id=self._TASK_REVIEW,
-            name="Review research report",
-            executor_id="review",
-            executor_type=ExecutorType.AGENT,
-            depends_on=[self._TASK_REPORT],
-            metadata={
-                "stage_id": "stage-desk-research",
-                "stage_name": "Desk Research",
-                "project_id": project.id,
-                "research_design_id": design.id,
-                "purpose": "review_report",
-                "implementation_status": "implemented",
-            },
-        )
+        review_ids = [self._TASK_REVIEW]
+        if self._desk_report_contract_version == H3_REPORT_CONTRACT:
+            review_ids = [self._TASK_REVIEW_1, self._TASK_REVISION, self._TASK_REVIEW_2]
+        previous = self._TASK_REPORT
+        for definition_id in review_ids:
+            executor_id = "revision" if definition_id == self._TASK_REVISION else "review"
+            builder.add_task(
+                id=definition_id,
+                name=("Revise research report" if executor_id == "revision" else "Review research report"),
+                executor_id=executor_id,
+                executor_type=ExecutorType.AGENT,
+                depends_on=[previous],
+                metadata={
+                    "stage_id": "stage-desk-research",
+                    "stage_name": "Desk Research",
+                    "project_id": project.id,
+                    "research_design_id": design.id,
+                    "purpose": ("revise_report" if executor_id == "revision" else "review_report"),
+                    "review_round": (1 if definition_id == self._TASK_REVIEW_1 else 2 if definition_id == self._TASK_REVIEW_2 else None),
+                    "implementation_status": "implemented",
+                },
+            )
+            previous = definition_id
         builder.add_task(
             id="task-finalize-deliverables",
             name="Finalize approved report deliverables",
             executor_id="finalization",
             executor_type=ExecutorType.AGENT,
-            depends_on=[self._TASK_REVIEW],
+            depends_on=(
+                [self._TASK_REVIEW_1, self._TASK_REVISION, self._TASK_REVIEW_2]
+                if self._desk_report_contract_version == H3_REPORT_CONTRACT
+                else [self._TASK_REVIEW]
+            ),
             metadata={
                 "stage_id": "stage-desk-research",
                 "stage_name": "Desk Research",

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from application.config import ApplicationConfig, ApplicationOverrides
 from application.executors.review_executor import ReviewExecutor
 from application.ports.analysis_ports import FindingRepository, InsightRepository
@@ -12,6 +14,8 @@ from application.ports.source_ports import SourceRepository
 from application.report.report_factory import build_report_service
 from application.report.editorial_composer import EditorialComposer
 from application.review.review_service import ReviewService
+from application.review.contract_router import DeskReviewContractRouter
+from application.review.h3_workflow_review_adapter import H3WorkflowReviewAdapter
 from infrastructure.review.deterministic_review_engine import DeterministicReviewEngine
 from infrastructure.review.llm_review_engine import LlmReviewEngine
 
@@ -60,6 +64,7 @@ def build_review_executor(
     deliverable_finalizer=None,
     report_contract_version: str = "desk_report_claim_v1",
     editorial_composer: EditorialComposer | None = None,
+    contract_services: dict[str, Any] | None = None,
 ) -> ReviewExecutor:
     report_service = build_report_service(
         config=config,
@@ -92,4 +97,16 @@ def build_review_executor(
         max_revision_attempts=config.review_max_revision_attempts,
         max_chars_per_section=config.review_max_chars_per_section,
     )
+    if contract_services:
+        h3_service = contract_services.get("h3")
+        if h3_service is None:
+            h3_service = H3WorkflowReviewAdapter(
+                report_repository=report_repository,
+                report_claim_repository=report_claim_repository,
+                review_repository=review_repository,
+                review_provider=getattr(overrides, "h3_review_provider", None),
+            )
+        review_service = DeskReviewContractRouter(
+            h2=contract_services.get("h2", review_service), h3=h3_service,
+        )
     return ReviewExecutor(review_service=review_service, deliverable_finalizer=deliverable_finalizer)

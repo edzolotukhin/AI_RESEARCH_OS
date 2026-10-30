@@ -63,7 +63,8 @@ def _shared_value(task_results, key):
 
 class DeskDownstreamReplayService:
     def __init__(self, *, projects, workflows, durable_workflows, evidence,
-                 findings, insights, activation_sessions=None) -> None:
+                 findings, insights, activation_sessions=None,
+                 desk_report_contract_version="desk_report_claim_v1") -> None:
         self.projects = projects
         self.workflows = workflows
         self.durable_workflows = durable_workflows
@@ -71,6 +72,10 @@ class DeskDownstreamReplayService:
         self.findings = findings
         self.insights = insights
         self.activation_sessions = activation_sessions
+        from application.report.contract_selection import validate_desk_report_contract
+        self.desk_report_contract_version = validate_desk_report_contract(
+            desk_report_contract_version,
+        )
 
     def start(self, *, project_id: str, source_run_id: str, owner_id: str):
         project = self.projects.get_project(project_id)
@@ -141,14 +146,26 @@ class DeskDownstreamReplayService:
                     return run
 
         attempt_id = str(uuid4())
-        template = WorkflowTemplate(
-            id=f"{REPLAY_TEMPLATE_PREFIX}{attempt_id}",
-            name="Desk downstream finalization replay",
-            task_definitions=[
+        from application.report.contract_selection import H3_REPORT_CONTRACT
+        if self.desk_report_contract_version == H3_REPORT_CONTRACT:
+            replay_tasks = [
+                TaskDefinition("report", "Replay: Write research report", "report"),
+                TaskDefinition("task-review-report-1", "Replay: Review report (round 1)", "review", depends_on=["report"]),
+                TaskDefinition("task-revise-report", "Replay: Revise report", "revision", depends_on=["task-review-report-1"]),
+                TaskDefinition("task-review-report-2", "Replay: Review report (round 2)", "review", depends_on=["task-revise-report"]),
+                TaskDefinition("finalization", "Replay: Finalize PDF and PPTX", "finalization",
+                               depends_on=["task-review-report-1", "task-revise-report", "task-review-report-2"]),
+            ]
+        else:
+            replay_tasks = [
                 TaskDefinition("report", "Replay: Write research report", "report"),
                 TaskDefinition("review", "Replay: Review and finalize", "review", depends_on=["report"]),
                 TaskDefinition("finalization", "Replay: Finalize PDF and PPTX", "finalization", depends_on=["review"]),
-            ],
+            ]
+        template = WorkflowTemplate(
+            id=f"{REPLAY_TEMPLATE_PREFIX}{attempt_id}",
+            name="Desk downstream finalization replay",
+            task_definitions=replay_tasks,
             research_brief_snapshot=source_template.research_brief_snapshot,
             research_design_snapshot=design,
         )
@@ -166,7 +183,11 @@ class DeskDownstreamReplayService:
             "status": "pending",
             "downstream_stages": {"report": "pending", "review": "pending", "deliverables": "pending"},
         }
-        initial = {REPLAY_KEY: lineage, "research_readiness": readiness}
+        from application.report.contract_selection import pin_desk_report_contract
+        initial = pin_desk_report_contract(
+            {REPLAY_KEY: lineage, "research_readiness": readiness},
+            self.desk_report_contract_version,
+        )
         if PIN in task_results:
             initial[PIN] = task_results[PIN]
         return self.durable_workflows.submit_research(

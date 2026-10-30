@@ -289,6 +289,17 @@ class DurableWorkflowService:
             workflow_run=workflow_run,
         )
         restore_runtime_state(context, task_results)
+        from application.report.contract_selection import DESK_REPORT_CONTRACT_PIN
+        if DESK_REPORT_CONTRACT_PIN in task_results:
+            context.write_shared(
+                DESK_REPORT_CONTRACT_PIN,
+                task_results[DESK_REPORT_CONTRACT_PIN],
+            )
+        from application.review.h3_review_branch import H3_REVIEW_BRANCH_KEY
+        for key in (H3_REVIEW_BRANCH_KEY, "review", "review_1", "review_2"):
+            value = task_results.get(key)
+            if isinstance(value, dict):
+                context.write_shared(key, value)
         from application.replay.desk_downstream_replay import REPLAY_KEY
         replay = task_results.get(REPLAY_KEY)
         if isinstance(replay, dict):

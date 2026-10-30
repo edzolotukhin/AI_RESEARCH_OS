@@ -419,6 +419,28 @@ def run_h3_review_cycle(
     return revised, H3ReviewResult(decision2, "h3-review-2", report.id, report.revision_number, tuple(issues2), review_calls + 2)
 
 
+def run_h3_review_once(
+    *, report: Report, claims: tuple[ReportClaim, ...],
+    presentation: H3PresentationEnvelope, coverage_contract_digest: str,
+    review_provider: H3ReviewProvider,
+) -> H3ReviewResult:
+    """Run exactly one durable H3 Review decision.
+
+    The workflow owns revision checkpoints; this primitive deliberately does
+    not compose a revision or perform a second Review decision.
+    """
+    deterministic_h3_pre_review(
+        report=report, claims=claims, presentation=presentation,
+        coverage_contract_digest=coverage_contract_digest,
+    )
+    decision, issues = _review_once(review_provider, report, presentation)
+    return H3ReviewResult(
+        decision=decision, review_id=f"h3-review-{report.revision_number}",
+        report_id=report.id, revision_number=report.revision_number,
+        issues=tuple(issues), provider_call_count=1,
+    )
+
+
 def build_h3_canonical_delivery(
     *, report: Report, claims: tuple[ReportClaim, ...], presentation: H3PresentationEnvelope,
     review: H3ReviewResult, coverage_contract_digest: str,

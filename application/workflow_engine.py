@@ -51,6 +51,7 @@ class WorkflowEngine:
             return context
 
         self._ensure_running(workflow_run)
+        self._reconcile_h3_review_branch(context)
         ensure_run_budget(context)
         if runtime_checkpoint is not None:
             runtime_checkpoint.on_workflow_started(context)
@@ -137,6 +138,13 @@ class WorkflowEngine:
 
         if workflow_run.status == WorkflowStatus.READY:
             workflow_run.start()
+
+    @staticmethod
+    def _reconcile_h3_review_branch(context: WorkflowContext) -> None:
+        """Restore the finite H3 branch before the first durable checkpoint."""
+        from application.review.h3_review_branch import H3ReviewBranchController
+
+        H3ReviewBranchController().reconcile(context)
 
     def _finalize_workflow_status(
         self,

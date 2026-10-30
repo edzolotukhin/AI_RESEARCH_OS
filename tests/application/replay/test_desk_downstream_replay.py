@@ -14,6 +14,7 @@ from application.replay.desk_downstream_replay import (
     source_run_id,
     update_replay_stage,
 )
+from application.report.contract_selection import DESK_REPORT_CONTRACT_PIN, H3_REPORT_CONTRACT
 from domain.workflow_status import WorkflowStatus
 
 
@@ -141,6 +142,24 @@ class DeskDownstreamReplayTests(unittest.TestCase):
         self.assertEqual("downstream_report_review_finalization", lineage["budget_scope"])
         self.assertNotEqual(source.id, lineage["replay_attempt_id"])
         self.assertEqual(before, (workflows.results[source.id], evidence.__dict__, finding.__dict__, insight.__dict__))
+
+    def test_h3_replay_uses_static_expanded_graph_and_persists_report_run_pin(self):
+        service, project, source, _, durable, *_ = _fixture()
+        service.desk_report_contract_version = H3_REPORT_CONTRACT
+
+        service.start(project_id=project.id, source_run_id=source.id, owner_id="owner-1")
+
+        _, template, initial, _ = durable.calls[0]
+        self.assertEqual(
+            ["report", "review", "revision", "review", "finalization"],
+            [task.executor_id for task in template.task_definitions],
+        )
+        by_id = {task.id: task for task in template.task_definitions}
+        self.assertEqual(
+            ["task-review-report-1", "task-revise-report", "task-review-report-2"],
+            by_id["finalization"].depends_on,
+        )
+        self.assertEqual(H3_REPORT_CONTRACT, initial[DESK_REPORT_CONTRACT_PIN])
 
     def test_foreign_owner_is_rejected_before_replay_creation(self):
         service, project, source, _, durable, *_ = _fixture()

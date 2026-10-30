@@ -32,6 +32,7 @@ class Agency:
         workflow_engine: WorkflowEngine,
         durable_workflow_service: DurableWorkflowService | None = None,
         background_execution_enabled: bool = False,
+        desk_report_contract_version: str = "desk_h3_structural_claim_v1",
     ) -> None:
         self._agent_loader = agent_loader
         self._project_service = project_service
@@ -40,6 +41,10 @@ class Agency:
         self._workflow_engine = workflow_engine
         self._durable_workflow_service = durable_workflow_service
         self._background_execution_enabled = background_execution_enabled
+        from application.report.contract_selection import validate_desk_report_contract
+        self._desk_report_contract_version = validate_desk_report_contract(
+            desk_report_contract_version,
+        )
 
         self.initialized = False
 
@@ -88,8 +93,12 @@ class Agency:
         self._project_service.save_project(project)
         if self._durable_workflow_service is not None:
             if self._background_execution_enabled:
+                from application.report.contract_selection import pin_desk_report_contract
                 return self._durable_workflow_service.submit_research(
                     project, workflow_template, run_id=run_id,
+                    initial_task_results=pin_desk_report_contract(
+                        {}, self._desk_report_contract_version,
+                    ),
                 )
             return self._durable_workflow_service.start_research(
                 project, workflow_template, run_id=run_id,

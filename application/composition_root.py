@@ -71,7 +71,7 @@ from application.query.research_status_query_service import (
 from application.services.source_service import SourceService
 from application.evidence.evidence_factory import build_evidence_executor
 from application.analysis.analysis_factory import build_analysis_executor
-from application.report.report_factory import build_report_executor
+from application.report.report_factory import build_report_executor, build_report_service
 from application.review.review_factory import build_review_executor
 from application.research_quality.research_quality_factory import (
     build_research_readiness_executor,
@@ -269,7 +269,8 @@ def create_application_container(
         raise ValueError("ARK activation requires PostgreSQL persistence")
     workflow_template_mapper = ResearchDesignWorkflowMapper(
         kernel_profile=desk_kernel_profile(config) if config.ark_desk_enabled else None,
-        method_binding=methods.resolve("DESK", "1") if config.cmf_desk_enabled else None)
+        method_binding=methods.resolve("DESK", "1") if config.cmf_desk_enabled else None,
+        desk_report_contract_version=config.desk_report_contract_version)
 
     structured_output_parser = StructuredOutputParser()
     planner_payload_contract = ResearchDesignPayloadContract(
@@ -675,6 +676,7 @@ def create_application_container(
         workflow_engine=workflow_engine,
         durable_workflow_service=durable_workflow_service,
         background_execution_enabled=background_execution.http_submission,
+        desk_report_contract_version=config.desk_report_contract_version,
     )
 
     shutdown_callbacks: list = []
@@ -767,6 +769,7 @@ def create_application_container(
         durable_workflows=durable_workflow_service,
         evidence=evidence_repository, findings=finding_repository,
         insights=insight_repository, activation_sessions=persistence.activation_sessions,
+        desk_report_contract_version=config.desk_report_contract_version,
     )
 
     from application.operations.status import JobObservation, OperationsStatusService
@@ -884,6 +887,7 @@ def _build_agent_executors(
             ("analysis", "analyze"),
             ("report", "write_report"),
             ("review", "review_report"),
+            ("revision", "revise_report"),
             ("finalization", "finalize_deliverables"),
         ):
             if executor_id == "research_quality":
@@ -929,12 +933,32 @@ def _build_agent_executors(
         LlmEditorialProposalProvider,
     )
     from application.report.editorial_contract import EDITORIAL_CONTRACT_VERSION
+    from application.report.typed_rendering import H3_CONTRACT_VERSION
     report_contract_version = config.desk_report_contract_version
-    if report_contract_version not in {EDITORIAL_CONTRACT_VERSION, "desk_report_claim_v1"}:
+    if report_contract_version not in {
+        EDITORIAL_CONTRACT_VERSION, "desk_report_claim_v1", H3_CONTRACT_VERSION,
+    }:
         raise ValueError("Unsupported DESK_REPORT_CONTRACT_VERSION")
     editorial_composer = (
         EditorialComposer(LlmEditorialProposalProvider(stage_llm_clients.report))
         if report_contract_version == EDITORIAL_CONTRACT_VERSION else None
+    )
+    h2_report_service = build_report_service(
+        config=config, overrides=overrides,
+        finding_repository=finding_repository, insight_repository=insight_repository,
+        evidence_repository=evidence_repository, source_repository=source_repository,
+        report_repository=report_repository, report_claim_repository=report_claim_repository,
+        artifact_repository=artifact_repository, llm_client=stage_llm_clients.report,
+        report_contract_version="desk_report_claim_v1",
+    )
+    h3_report_service = build_report_service(
+        config=config, overrides=overrides,
+        finding_repository=finding_repository, insight_repository=insight_repository,
+        evidence_repository=evidence_repository, source_repository=source_repository,
+        report_repository=report_repository, report_claim_repository=report_claim_repository,
+        artifact_repository=artifact_repository, llm_client=stage_llm_clients.report,
+        report_contract_version="desk_h3_structural_claim_v1",
+        h3_editorial_provider=getattr(overrides, "h3_editorial_provider", None),
     )
     executors["report"] = (
         overrides.report_executor
@@ -952,6 +976,7 @@ def _build_agent_executors(
             llm_client=stage_llm_clients.report,
             report_contract_version=report_contract_version,
             editorial_composer=editorial_composer,
+            contract_services={"h2": h2_report_service, "h3": h3_report_service},
         )
     )
     executors["review"] = (
@@ -972,7 +997,12 @@ def _build_agent_executors(
             deliverable_finalizer=deliverable_finalizer,
             report_contract_version=report_contract_version,
             editorial_composer=editorial_composer,
+            contract_services={"h2": None},
         )
+    )
+    from application.executors.revision_executor import RevisionExecutor
+    executors["revision"] = RevisionExecutor(
+        revision_service=getattr(overrides, "h3_revision_service", None) or h3_report_service,
     )
     from application.executors.finalization_executor import FinalizationExecutor
     executors["finalization"] = FinalizationExecutor(deliverable_finalizer)

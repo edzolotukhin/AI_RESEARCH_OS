@@ -15,6 +15,7 @@ from application.report.report_service import ReportService
 from application.report.claim_first_report_service import ClaimFirstReportService
 from application.ports.report_claim_repository import ReportClaimRepository
 from application.report.editorial_composer import EditorialComposer
+from application.report.contract_router import DeskReportContractRouter
 from infrastructure.report.deterministic_report_engine import DeterministicReportEngine
 from infrastructure.report.llm_report_engine import LlmReportEngine
 
@@ -62,11 +63,13 @@ def build_report_service(
     llm_client,
     report_contract_version: str = "desk_report_claim_v1",
     editorial_composer: EditorialComposer | None = None,
+    h3_editorial_provider=None,
 ) -> ReportService:
     return ClaimFirstReportService(
         report_claim_repository=report_claim_repository,
         report_contract_version=report_contract_version,
         editorial_composer=editorial_composer,
+        h3_editorial_provider=h3_editorial_provider,
         report_engine=build_report_engine(config, overrides, llm_client=llm_client),
         finding_repository=finding_repository,
         insight_repository=insight_repository,
@@ -95,9 +98,12 @@ def build_report_executor(
     llm_client,
     report_contract_version: str = "desk_report_claim_v1",
     editorial_composer: EditorialComposer | None = None,
+    contract_services: dict[str, ReportService] | None = None,
 ) -> ReportExecutor:
-    return ReportExecutor(
-        report_service=build_report_service(
+    service = (
+        DeskReportContractRouter(**contract_services)
+        if contract_services is not None
+        else build_report_service(
             config=config,
             overrides=overrides,
             finding_repository=finding_repository,
@@ -110,5 +116,8 @@ def build_report_executor(
             llm_client=llm_client,
             report_contract_version=report_contract_version,
             editorial_composer=editorial_composer,
-        ),
+        )
+    )
+    return ReportExecutor(
+        report_service=service,
     )

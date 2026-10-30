@@ -18,7 +18,7 @@ from application.report.h3_claim_generation import (
     generate_h3_structural_claims, restore_h3_claim_structure,
 )
 from application.report.h3_editorial_delivery import (
-    build_h3_editorial_catalog, compose_h3_editorial,
+    H3PresentationEnvelope, build_h3_editorial_catalog, compose_h3_editorial,
     deterministic_h3_pre_review,
 )
 from application.report.claim_contract import canonical_digest
@@ -83,6 +83,16 @@ class ClaimFirstReportService(ReportService):
         )
 
     def write_for_context(self, context: WorkflowContext) -> ReportSummary:
+        from application.report.contract_selection import (
+            DESK_REPORT_CONTRACT_PIN,
+            resolve_pinned_desk_report_contract,
+        )
+        pinned_contract = resolve_pinned_desk_report_contract(
+            {DESK_REPORT_CONTRACT_PIN: context.read_shared(DESK_REPORT_CONTRACT_PIN)},
+            fallback=self._report_contract_version,
+        )
+        if pinned_contract != self._report_contract_version:
+            raise ReportError("Desk report contract changed after workflow creation")
         context.write_shared("report_generation_diagnostics", {"version": 2, "phase": "claim_generation", "status": "started", "workflow_run_id": context.workflow_run.id})
         design = self._resolve_design(context); brief = self._resolve_brief(context)
         project_id = context.project.id; report_run_id = context.workflow_run.id
@@ -432,7 +442,19 @@ class ClaimFirstReportService(ReportService):
             batch_failures=0,
         )
 
-    def revise_for_context(self, context: WorkflowContext, *, review_result: ReviewResult) -> ReportSummary:
+    def revise_for_context(
+        self, context: WorkflowContext, *, review_result: ReviewResult | None = None,
+    ) -> ReportSummary:
+        if review_result is None:
+            payload = context.read_shared("review_1")
+            if not isinstance(payload, dict):
+                raise ReportError("H3 revision requires persisted review_1")
+            try:
+                review_result = ReviewResult.from_dict(payload)
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ReportError("H3 revision review state invalid") from exc
+        if self._report_contract_version == H3_CONTRACT_VERSION:
+            return self._revise_h3_for_context(context, review_result=review_result)
         current = self._latest_report(context.project.id, context.workflow_run.id)
         if current is not None and current.metadata.get("report_contract_version") == EDITORIAL_CONTRACT_VERSION:
             return self._revise_editorial_for_context(
@@ -759,6 +781,131 @@ class ClaimFirstReportService(ReportService):
             report_id=revised.id, artifact_id="", section_count=len(revised.sections),
             sections_rejected=0, batch_failures=0,
         )
+
+    def _revise_h3_for_context(
+        self, context: WorkflowContext, *, review_result: ReviewResult,
+    ) -> dict[str, object]:
+        """Create/reload H3 R2 while retaining the immutable R1 claim set."""
+        if review_result.verdict.value != "revise" or review_result.review_attempt != 1:
+            raise ReportError("H3 revision requires persisted review_1 REVISE")
+        if not callable(getattr(self._h3_editorial_provider, "compose", None)):
+            raise ReportError("H3 revision provider is not configured")
+
+        reports = self._report_repository.list_for_project(
+            context.project.id, workflow_run_id=context.workflow_run.id,
+        )
+        current = next(
+            (item for item in reports if item.id == review_result.report_id), None,
+        )
+        if current is None or current.revision_number != 1:
+            raise ReportError("H3 revision requires exact durable R1")
+        old_claims = tuple(self._report_claim_repository.list_for_report(current.id, 1))
+        if not old_claims:
+            raise ReportError("H3 revision has no durable R1 claims")
+        old_authority_digest = report_claims_authority_digest(old_claims)
+        design = self._resolve_design(context)
+        contract = resolve_report_coverage_contract(report=current, design=design)
+        coverage_digest = canonical_digest(contract.to_metadata())
+        dedup = compute_report_deduplication_key(
+            workflow_run_id=context.workflow_run.id,
+            report_type=DR06_RESEARCH_REPORT_TYPE,
+            generation_method=current.generation_method,
+            revision_number=2,
+        )
+        report_id = str(uuid5(
+            NAMESPACE_URL,
+            f"h3-revision:{context.workflow_run.id}:{current.id}:2",
+        ))
+
+        existing = self._report_repository.get_by_deduplication_key(
+            context.workflow_run.id, dedup,
+        )
+        if existing is not None:
+            if (
+                existing.revision_number != 2
+                or existing.previous_report_id != current.id
+                or existing.id != report_id
+                or existing.project_id != current.project_id
+                or existing.workflow_run_id != current.workflow_run_id
+                or existing.research_design_id != current.research_design_id
+            ):
+                raise ReportError("H3 revision identity conflict")
+            revised = existing
+        else:
+            revised = replace(
+                current,
+                id=report_id,
+                revision_number=2,
+                previous_report_id=current.id,
+                deduplication_key=dedup,
+                approval_status="draft",
+                version=0,
+                created_at=datetime.now(timezone.utc).isoformat(),
+                metadata={
+                    **current.metadata,
+                    "revision_of": current.id,
+                    "triggering_review_id": review_result.id,
+                    "h3_revision": {"status": "composing", "revision_count": 1},
+                },
+            )
+            catalog = build_h3_editorial_catalog(
+                report=revised, claims=old_claims,
+                coverage_contract_digest=coverage_digest,
+            )
+            presentation = compose_h3_editorial(
+                report=revised, catalog=catalog,
+                provider=self._h3_editorial_provider, revision_number=2,
+            )
+            deterministic_h3_pre_review(
+                report=revised, claims=old_claims, presentation=presentation,
+                coverage_contract_digest=coverage_digest,
+            )
+            revised = replace(
+                revised,
+                metadata={
+                    **revised.metadata,
+                    "h3_presentation": presentation.to_dict(),
+                    "h3_revision": {
+                        "status": "completed", "revision_count": 1,
+                        "claim_set_digest": presentation.claim_set_digest,
+                        "authority_digest": old_authority_digest,
+                        "presentation_digest": presentation.presentation_digest,
+                    },
+                },
+            )
+            self._report_repository.create(revised)
+
+        self._report_claim_repository.attach_claims_to_report_revision(
+            revised, old_claims,
+        )
+        stored = self._report_repository.get_by_id(revised.id)
+        stored_claims = tuple(
+            self._report_claim_repository.list_for_report(revised.id, 2)
+        )
+        if stored is None or {item.claim_id for item in stored_claims} != {
+            item.claim_id for item in old_claims
+        }:
+            raise ReportError("H3 revision claim membership mismatch")
+        if report_claims_authority_digest(stored_claims) != old_authority_digest:
+            raise ReportError("H3 revision authority digest mismatch")
+        presentation_payload = stored.metadata.get("h3_presentation")
+        if not isinstance(presentation_payload, dict):
+            raise ReportError("H3 revision presentation missing after persistence")
+        presentation = H3PresentationEnvelope.from_dict(presentation_payload)
+        deterministic_h3_pre_review(
+            report=stored, claims=stored_claims, presentation=presentation,
+            coverage_contract_digest=presentation.coverage_contract_digest,
+        )
+        return {
+            "report_id": stored.id,
+            "revision_number": 2,
+            "previous_report_id": current.id,
+            "revision_count": 1,
+            "claim_ids": sorted(item.claim_id for item in stored_claims),
+            "authority_digest": report_claims_authority_digest(stored_claims),
+            "presentation_digest": presentation.presentation_digest,
+            "claim_set_digest": presentation.claim_set_digest,
+        }
 
 
 def _coverage_limitations(contract) -> tuple[CoverageLimitation, ...]:

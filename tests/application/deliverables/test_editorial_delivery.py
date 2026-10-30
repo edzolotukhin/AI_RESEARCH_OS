@@ -89,7 +89,7 @@ class EditorialDeliveryTests(unittest.TestCase):
         self.assertNotIn("Unsupported ResearchQuestions", markdown)
 
     def test_new_generation_default_and_explicit_legacy_rollback_selector(self):
-        self.assertEqual("desk_editorial_v1", ApplicationConfig().desk_report_contract_version)
+        self.assertEqual("desk_h3_structural_claim_v1", ApplicationConfig().desk_report_contract_version)
         with patch.dict("os.environ", {"DESK_REPORT_CONTRACT_VERSION": "desk_report_claim_v1"}):
             self.assertEqual(
                 "desk_report_claim_v1",

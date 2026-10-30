@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from application.contracts.base_executor import BaseExecutor
 from application.replay.desk_downstream_replay import update_replay_stage
+from application.report.contract_selection import DESK_REPORT_CONTRACT_PIN, H3_REPORT_CONTRACT
+from application.review.h3_review_branch import H3_REVIEW_BRANCH_KEY
 
 
 class FinalizationExecutor(BaseExecutor):
@@ -11,6 +13,10 @@ class FinalizationExecutor(BaseExecutor):
         self._finalizer = finalizer
 
     def run(self, context):
+        if context.read_shared(DESK_REPORT_CONTRACT_PIN) == H3_REPORT_CONTRACT:
+            branch = context.read_shared(H3_REVIEW_BRANCH_KEY)
+            if not isinstance(branch, dict) or branch.get("finalization_eligible") is not True:
+                raise RuntimeError("h3_finalization_not_eligible")
         review = context.read_shared("review")
         if not isinstance(review, dict) or review.get("verdict") != "approve":
             raise RuntimeError("approved_review_required_for_finalization")

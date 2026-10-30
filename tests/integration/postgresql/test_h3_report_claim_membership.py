@@ -161,6 +161,45 @@ class PostgreSQLH3ReportClaimMembershipTests(PostgreSQLIntegrationTestCase):
             self.assertEqual(conn.execute(text("SELECT COUNT(*) FROM report_claims")).scalar_one(), 1)
             self.assertEqual(conn.execute(text("SELECT COUNT(*) FROM report_revision_claims")).scalar_one(), 2)
 
+    def test_j2_revision_survives_repository_restart_without_new_claim_rows(self) -> None:
+        claim = self._claim()
+        r1 = self._report("j2-r1", 1)
+        r2 = self._report("j2-r2", 2, previous=r1.id)
+        self.claims.create_with_report(r1, (claim,))
+        authority_count = self._authority_count()
+        PostgreSQLReportRepository(self.session_factory).create(r2)
+        self.claims.attach_claims_to_report_revision(r2, (claim,))
+
+        restarted_reports = PostgreSQLReportRepository(self.session_factory)
+        restarted_claims = PostgreSQLReportClaimRepository(self.session_factory)
+        loaded_r2 = restarted_reports.get_by_id(r2.id)
+        r1_claims = tuple(restarted_claims.list_for_report(r1.id, 1))
+        r2_claims = tuple(restarted_claims.list_for_report(r2.id, 2))
+
+        self.assertIsNotNone(loaded_r2)
+        self.assertEqual(2, loaded_r2.revision_number)
+        self.assertEqual(r1.id, loaded_r2.previous_report_id)
+        self.assertEqual(
+            tuple(item.claim_id for item in r1_claims),
+            tuple(item.claim_id for item in r2_claims),
+        )
+        self.assertEqual(
+            tuple(item.authority_digest for item in r1_claims),
+            tuple(item.authority_digest for item in r2_claims),
+        )
+        self.assertEqual(authority_count, self._authority_count())
+        with self.engine.connect() as connection:
+            memberships = connection.execute(text(
+                "SELECT report_id, report_revision, report_claim_id "
+                "FROM report_revision_claims "
+                "WHERE report_id IN ('j2-r1', 'j2-r2') "
+                "ORDER BY report_revision"
+            )).all()
+        self.assertEqual(
+            [(r1.id, 1, claim.claim_id), (r2.id, 2, claim.claim_id)],
+            [tuple(item) for item in memberships],
+        )
+
     def test_exact_attachment_is_idempotent_and_partial_or_extra_fails_closed(self) -> None:
         claim = self._claim()
         r1 = self._report("r1", 1)

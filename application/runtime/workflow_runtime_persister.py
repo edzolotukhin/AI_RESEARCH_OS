@@ -62,6 +62,7 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
         return dict(self._task_results)
 
     def on_workflow_started(self, context: WorkflowContext) -> None:
+        self._capture_h3_reconciliation_state(context)
         self._checkpoint(context)
         if self._audit is not None:
             self._audit.workflow_started(context.workflow_run.id)
@@ -168,6 +169,20 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
         self._checkpoint(context, critical=True)
         if self._audit is not None:
             self._audit.record_workflow_outcome(context)
+
+    def _capture_h3_reconciliation_state(self, context: WorkflowContext) -> None:
+        from application.report.contract_selection import (
+            DESK_REPORT_CONTRACT_PIN,
+            H3_REPORT_CONTRACT,
+        )
+        from application.review.h3_review_branch import H3_REVIEW_BRANCH_KEY
+
+        if context.read_shared(DESK_REPORT_CONTRACT_PIN) != H3_REPORT_CONTRACT:
+            return
+        for key in (H3_REVIEW_BRANCH_KEY, "review", "review_1", "review_2"):
+            value = context.read_shared(key)
+            if isinstance(value, dict):
+                self._task_results[key] = dict(value)
 
     def _checkpoint(
         self,

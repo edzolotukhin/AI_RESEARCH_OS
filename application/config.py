@@ -106,7 +106,7 @@ class ApplicationConfig:
     source_min_information_need_coverage_ratio: float = 1.0
     source_dns_timeout_seconds: float = 5.0
     report_engine: str = "llm"
-    desk_report_contract_version: str = "desk_editorial_v1"
+    desk_report_contract_version: str = "desk_h3_structural_claim_v1"
     report_max_findings_per_batch: int = DEFAULT_REPORT_MAX_FINDINGS_PER_BATCH
     report_max_chars_per_batch: int = DEFAULT_REPORT_MAX_CHARS_PER_BATCH
     report_reasoning_effort: str = "minimal"
@@ -123,6 +123,10 @@ class ApplicationConfig:
     review_reasoning_effort: str = "minimal"
     review_max_output_tokens: int = DEFAULT_REVIEW_MAX_OUTPUT_TOKENS
     review_structured_output_max_attempts: int = DEFAULT_REVIEW_STRUCTURED_OUTPUT_MAX_ATTEMPTS
+
+    def __post_init__(self) -> None:
+        from application.report.contract_selection import validate_desk_report_contract
+        validate_desk_report_contract(self.desk_report_contract_version)
     review_max_calls: int = 7
     sufficiency_reasoning_effort: str = "minimal"
     sufficiency_max_output_tokens: int = 8192
@@ -258,7 +262,7 @@ class ApplicationConfig:
             ),
             report_engine=os.environ.get("REPORT_ENGINE", "llm"),
             desk_report_contract_version=os.environ.get(
-                "DESK_REPORT_CONTRACT_VERSION", "desk_editorial_v1",
+                "DESK_REPORT_CONTRACT_VERSION", "desk_h3_structural_claim_v1",
             ).strip(),
             report_max_findings_per_batch=int(
                 os.environ.get(
@@ -448,6 +452,9 @@ class ApplicationOverrides:
     review_engine: SemanticReviewEngine | None = None
     review_repository: Any | None = None
     review_executor: Any | None = None
+    h3_review_provider: Any | None = None
+    h3_editorial_provider: Any | None = None
+    h3_revision_service: Any | None = None
     research_sufficiency_evaluator: Any | None = None
     research_readiness_executor: Any | None = None
     targeted_research_runner: Any | None = None

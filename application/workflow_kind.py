@@ -21,6 +21,8 @@ _DESK_EXECUTOR_SEQUENCES = {
     ("search", "evidence", "research_quality", "analysis", "report", "review"),
     ("search", "evidence", "research_quality", "analysis", "report", "review", "finalization"),
     ("report", "review", "finalization"),
+    ("search", "evidence", "research_quality", "analysis", "report", "review", "revision", "review", "finalization"),
+    ("report", "review", "revision", "review", "finalization"),
 }
 
 
