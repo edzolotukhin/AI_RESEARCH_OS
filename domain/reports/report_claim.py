@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 from typing import Any
 
 
 REPORT_CLAIM_VERSION = "desk_report_claim_v1"
+H3_REPORT_CLAIM_VERSION = "desk_h3_structural_claim_v1"
 CLAIM_KINDS = frozenset({"observation", "trend", "comparison", "association", "causal", "contradiction", "limitation"})
 CERTAINTIES = frozenset({"direct", "qualified", "uncertain", "mixed"})
 DIRECTIONS = frozenset({"increase", "decrease", "stable", "mixed", "not_applicable"})
@@ -130,14 +133,22 @@ class ReportClaim:
     contract_version: str
     authority_digest: str
     validated_at: str
+    structural_assertion: dict[str, Any] | None = None
     version: str = REPORT_CLAIM_VERSION
 
     def __post_init__(self) -> None:
         for field_name in ("claim_id", "project_id", "source_workflow_run_id", "report_workflow_run_id", "design_id", "proposition", "authority_digest", "validated_at"):
             if not str(getattr(self, field_name)).strip():
                 raise ReportClaimContractError(f"{field_name} is required")
-        if self.version != REPORT_CLAIM_VERSION or self.contract_version != REPORT_CLAIM_VERSION:
+        if self.version not in {REPORT_CLAIM_VERSION, H3_REPORT_CLAIM_VERSION} or self.contract_version != self.version:
             raise ReportClaimContractError("unsupported ReportClaim contract version")
+        if self.version == H3_REPORT_CLAIM_VERSION:
+            _validate_h3_structural_assertion(
+                self.structural_assertion, proposition=self.proposition,
+                authority_digest=self.authority_digest,
+            )
+        elif self.structural_assertion is not None:
+            raise ReportClaimContractError("legacy ReportClaim cannot contain structural_assertion")
         if self.kind not in CLAIM_KINDS or self.certainty not in CERTAINTIES or self.direction not in DIRECTIONS:
             raise ReportClaimContractError("invalid assertion enum")
         if self.status != "validated":
@@ -162,6 +173,8 @@ class ReportClaim:
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> ReportClaim:
         expected = {"version", "claim_id", "project_id", "source_workflow_run_id", "report_workflow_run_id", "design_id", "research_question_ids", "information_need_ids", "finding_ids", "insight_ids", "evidence_ids", "assertion", "scope", "support", "validation"}
+        if payload.get("version") == H3_REPORT_CLAIM_VERSION:
+            expected.add("structural_assertion")
         _exact(payload, expected, field="ReportClaim")
         assertion, support, validation = payload["assertion"], payload["support"], payload["validation"]
         _exact(assertion, {"kind", "proposition", "certainty", "direction"}, field="assertion")
@@ -170,7 +183,45 @@ class ReportClaim:
         for key in ("finding_content_digests", "evidence_content_digests"):
             if not isinstance(support[key], dict) or any(not str(k).strip() or not str(v).strip() for k, v in support[key].items()):
                 raise ReportClaimContractError(f"support.{key} must be a non-empty string map")
-        return cls(claim_id=str(payload["claim_id"]), project_id=str(payload["project_id"]), source_workflow_run_id=str(payload["source_workflow_run_id"]), report_workflow_run_id=str(payload["report_workflow_run_id"]), design_id=str(payload["design_id"]), research_question_ids=_strings(payload["research_question_ids"], field="research_question_ids", required=True), information_need_ids=_strings(payload["information_need_ids"], field="information_need_ids", required=True), finding_ids=_strings(payload["finding_ids"], field="finding_ids", required=True), insight_ids=_strings(payload["insight_ids"], field="insight_ids"), evidence_ids=_strings(payload["evidence_ids"], field="evidence_ids", required=True), kind=str(assertion["kind"]), proposition=str(assertion["proposition"]), certainty=str(assertion["certainty"]), direction=str(assertion["direction"]), scope=ClaimScope.from_dict(payload["scope"]), support_evidence_ids=_strings(support["evidence_ids"], field="support.evidence_ids", required=True), source_ids=_strings(support["source_ids"], field="support.source_ids", required=True), citation_ids=_strings(support["citation_ids"], field="support.citation_ids"), finding_content_digests={str(k): str(v) for k, v in support["finding_content_digests"].items()}, evidence_content_digests={str(k): str(v) for k, v in support["evidence_content_digests"].items()}, status=str(validation["status"]), contract_version=str(validation["contract_version"]), authority_digest=str(validation["authority_digest"]), validated_at=str(validation["validated_at"]), version=str(payload["version"]))
+        return cls(claim_id=str(payload["claim_id"]), project_id=str(payload["project_id"]), source_workflow_run_id=str(payload["source_workflow_run_id"]), report_workflow_run_id=str(payload["report_workflow_run_id"]), design_id=str(payload["design_id"]), research_question_ids=_strings(payload["research_question_ids"], field="research_question_ids", required=True), information_need_ids=_strings(payload["information_need_ids"], field="information_need_ids", required=True), finding_ids=_strings(payload["finding_ids"], field="finding_ids", required=True), insight_ids=_strings(payload["insight_ids"], field="insight_ids"), evidence_ids=_strings(payload["evidence_ids"], field="evidence_ids", required=True), kind=str(assertion["kind"]), proposition=str(assertion["proposition"]), certainty=str(assertion["certainty"]), direction=str(assertion["direction"]), scope=ClaimScope.from_dict(payload["scope"]), support_evidence_ids=_strings(support["evidence_ids"], field="support.evidence_ids", required=True), source_ids=_strings(support["source_ids"], field="support.source_ids", required=True), citation_ids=_strings(support["citation_ids"], field="support.citation_ids"), finding_content_digests={str(k): str(v) for k, v in support["finding_content_digests"].items()}, evidence_content_digests={str(k): str(v) for k, v in support["evidence_content_digests"].items()}, status=str(validation["status"]), contract_version=str(validation["contract_version"]), authority_digest=str(validation["authority_digest"]), validated_at=str(validation["validated_at"]), structural_assertion=dict(payload["structural_assertion"]) if "structural_assertion" in payload else None, version=str(payload["version"]))
 
     def to_dict(self) -> dict[str, Any]:
-        return {"version": self.version, "claim_id": self.claim_id, "project_id": self.project_id, "source_workflow_run_id": self.source_workflow_run_id, "report_workflow_run_id": self.report_workflow_run_id, "design_id": self.design_id, "research_question_ids": list(self.research_question_ids), "information_need_ids": list(self.information_need_ids), "finding_ids": list(self.finding_ids), "insight_ids": list(self.insight_ids), "evidence_ids": list(self.evidence_ids), "assertion": {"kind": self.kind, "proposition": self.proposition, "certainty": self.certainty, "direction": self.direction}, "scope": self.scope.to_dict(), "support": {"evidence_ids": list(self.support_evidence_ids), "source_ids": list(self.source_ids), "citation_ids": list(self.citation_ids), "finding_content_digests": dict(self.finding_content_digests), "evidence_content_digests": dict(self.evidence_content_digests)}, "validation": {"status": self.status, "contract_version": self.contract_version, "authority_digest": self.authority_digest, "validated_at": self.validated_at}}
+        payload = {"version": self.version, "claim_id": self.claim_id, "project_id": self.project_id, "source_workflow_run_id": self.source_workflow_run_id, "report_workflow_run_id": self.report_workflow_run_id, "design_id": self.design_id, "research_question_ids": list(self.research_question_ids), "information_need_ids": list(self.information_need_ids), "finding_ids": list(self.finding_ids), "insight_ids": list(self.insight_ids), "evidence_ids": list(self.evidence_ids), "assertion": {"kind": self.kind, "proposition": self.proposition, "certainty": self.certainty, "direction": self.direction}, "scope": self.scope.to_dict(), "support": {"evidence_ids": list(self.support_evidence_ids), "source_ids": list(self.source_ids), "citation_ids": list(self.citation_ids), "finding_content_digests": dict(self.finding_content_digests), "evidence_content_digests": dict(self.evidence_content_digests)}, "validation": {"status": self.status, "contract_version": self.contract_version, "authority_digest": self.authority_digest, "validated_at": self.validated_at}}
+        if self.structural_assertion is not None:
+            payload["structural_assertion"] = self.structural_assertion
+        return payload
+
+
+def _digest(value: Any) -> str:
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _validate_h3_structural_assertion(
+    value: Any, *, proposition: str, authority_digest: str,
+) -> None:
+    if not isinstance(value, dict):
+        raise ReportClaimContractError("H3 structural_assertion must be an object")
+    expected = {
+        "contract_version", "typed_ast", "authority_catalog",
+        "authority_input_digest", "source_authority_digest", "typed_ast_digest", "renderer_version",
+        "locale", "rendered_assertion", "render_digest",
+    }
+    _exact(value, expected, field="structural_assertion")
+    if value["contract_version"] != H3_REPORT_CLAIM_VERSION:
+        raise ReportClaimContractError("H3 structural assertion contract mismatch")
+    if _digest(value["authority_catalog"]) != value["authority_input_digest"]:
+        raise ReportClaimContractError("H3 authority digest mismatch")
+    if value["source_authority_digest"] != authority_digest:
+        raise ReportClaimContractError("H3 source authority digest mismatch")
+    if _digest(value["typed_ast"]) != value["typed_ast_digest"]:
+        raise ReportClaimContractError("H3 AST digest mismatch")
+    if value["rendered_assertion"] != proposition:
+        raise ReportClaimContractError("H3 rendered assertion mismatch")
+    render_payload = {
+        "locale": value["locale"],
+        "renderer_version": value["renderer_version"],
+        "text": value["rendered_assertion"],
+    }
+    if _digest(render_payload) != value["render_digest"]:
+        raise ReportClaimContractError("H3 render digest mismatch")

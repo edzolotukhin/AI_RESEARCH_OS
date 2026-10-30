@@ -87,6 +87,23 @@ class TypedRenderNode:
             "presentation_variant": self.presentation_variant,
         }
 
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "TypedRenderNode":
+        expected = {"node_id", "node_type", "owner_claim_ref", "text", "authority_ref", "presentation_variant"}
+        if not isinstance(payload, Mapping) or set(payload) != expected:
+            raise TypedRenderError(TypedRenderErrorCode.MALFORMED_NODE)
+        try:
+            node_type = TypedRenderNodeType(str(payload["node_type"]))
+        except ValueError as exc:
+            raise TypedRenderError(TypedRenderErrorCode.MALFORMED_NODE) from exc
+        return cls(
+            node_id=str(payload["node_id"]), node_type=node_type,
+            owner_claim_ref=str(payload["owner_claim_ref"]) if payload["owner_claim_ref"] is not None else None,
+            text=str(payload["text"]) if payload["text"] is not None else None,
+            authority_ref=str(payload["authority_ref"]) if payload["authority_ref"] is not None else None,
+            presentation_variant=str(payload["presentation_variant"]) if payload["presentation_variant"] is not None else None,
+        )
+
 
 @dataclass(frozen=True)
 class TypedRenderDocument:
@@ -102,6 +119,17 @@ class TypedRenderDocument:
             "owner_id": self.owner_id,
             "nodes": [item.to_dict() for item in self.nodes],
         }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "TypedRenderDocument":
+        expected = {"contract_version", "document_id", "owner_id", "nodes"}
+        if not isinstance(payload, Mapping) or set(payload) != expected or not isinstance(payload["nodes"], list):
+            raise TypedRenderError(TypedRenderErrorCode.INVALID_CONTRACT)
+        return cls(
+            str(payload["contract_version"]), str(payload["document_id"]),
+            str(payload["owner_id"]),
+            tuple(TypedRenderNode.from_dict(item) for item in payload["nodes"]),
+        )
 
 
 @dataclass(frozen=True)
@@ -226,6 +254,24 @@ class H3AuthorityCatalog:
             },
             "forbidden_source_names": sorted(self.forbidden_source_names),
         }
+
+    @classmethod
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> "H3AuthorityCatalog":
+        expected = {"claims", "facts", "periods", "citations", "limitations", "interpretations", "forbidden_source_names"}
+        if not isinstance(payload, Mapping) or set(payload) != expected:
+            raise TypedRenderError(TypedRenderErrorCode.INVALID_CONTRACT)
+        try:
+            return cls(
+                claims={key: ClaimAuthorityRef(str(value["claim_ref"]), tuple(value["citation_refs"])) for key, value in payload["claims"].items()},
+                facts={key: FactAuthorityRef(str(value["fact_ref"]), str(value["owner_claim_ref"]), NumericFact.from_dict(dict(value["numeric_fact"]))) for key, value in payload["facts"].items()},
+                periods={key: PeriodAuthorityRef(str(value["period_ref"]), str(value["owner_claim_ref"]), str(value["period"]), str(value["fact_ref"]) if value["fact_ref"] is not None else None) for key, value in payload["periods"].items()},
+                citations={key: CitationAuthorityRef(str(value["citation_ref"]), str(value["owner_claim_ref"]), str(value["source_id"]), str(value["display_key"])) for key, value in payload["citations"].items()},
+                limitations={key: LimitationAuthorityRef(str(value["limitation_ref"]), tuple(value["owner_claim_refs"]), str(value["display_text"])) for key, value in payload["limitations"].items()},
+                interpretations={key: InterpretationAuthorityRef(str(value["interpretation_ref"]), tuple(value["owner_claim_refs"]), str(value["label"]), str(value["provider_text"])) for key, value in payload["interpretations"].items()},
+                forbidden_source_names=tuple(str(item) for item in payload["forbidden_source_names"]),
+            )
+        except (KeyError, TypeError, AttributeError, ValueError) as exc:
+            raise TypedRenderError(TypedRenderErrorCode.INVALID_CONTRACT) from exc
 
 
 @dataclass(frozen=True)

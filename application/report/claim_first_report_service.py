@@ -13,6 +13,11 @@ from application.report.claim_generation import ClaimGenerationError, generate_v
 from application.report.claim_rendering import ClaimRenderingError, render_validated_claims, repair_missing_claim_sections
 from application.report.claim_authority import derive_claim_authority
 from application.report.claim_validation import validate_report_claim
+from application.report.h3_claim_generation import (
+    H3CoverageOutcome, H3ReportInsufficientCoverage, H3ReportTechnicalError,
+    generate_h3_structural_claims, restore_h3_claim_structure,
+)
+from application.report.typed_rendering import H3_CONTRACT_VERSION
 from application.report.coverage_contract import CONTRACT_KEY, build_report_coverage_contract, excluded_rq_limitation, resolve_report_coverage_contract
 from application.report.deduplication import DR06_RESEARCH_REPORT_TYPE, compute_artifact_deduplication_key, compute_content_checksum, compute_report_deduplication_key
 from application.report.exceptions import ReportError
@@ -34,6 +39,7 @@ from application.research_quality.analysis_coverage import coverage_snapshot_fro
 from application.research_quality.research_readiness_service import SHARED_STATE_KEY
 from domain.reports.report import Report
 from domain.reports.report_claim import ReportClaim
+from domain.reports.report_section import ReportSection
 from domain.reviews.review_result import ReviewResult
 from runtime.workflow_context import WorkflowContext
 
@@ -49,7 +55,7 @@ class ClaimFirstReportService(ReportService):
     ) -> None:
         report_engine = kwargs.get("report_engine")
         super().__init__(**kwargs)
-        if report_contract_version not in {"desk_report_claim_v1", EDITORIAL_CONTRACT_VERSION}:
+        if report_contract_version not in {"desk_report_claim_v1", EDITORIAL_CONTRACT_VERSION, H3_CONTRACT_VERSION}:
             raise ValueError("unsupported Report contract version")
         if report_contract_version == EDITORIAL_CONTRACT_VERSION and editorial_composer is None:
             raise ValueError("desk_editorial_v1 requires an EditorialComposer")
@@ -61,6 +67,12 @@ class ClaimFirstReportService(ReportService):
         )
         self._claim_correction_provider = getattr(
             report_engine, "repair_claim_candidates", None,
+        )
+        self._h3_candidate_provider = getattr(
+            report_engine, "generate_h3_claim_candidates", None,
+        )
+        self._h3_correction_provider = getattr(
+            report_engine, "repair_h3_claim_candidates", None,
         )
 
     def write_for_context(self, context: WorkflowContext) -> ReportSummary:
@@ -93,6 +105,14 @@ class ClaimFirstReportService(ReportService):
         required = tuple(sorted({rq for item in findings for rq in item.research_question_refs})) if limited else tuple(sorted(question.id for question in design.research_questions))
         contract = build_report_coverage_contract(design=design, limited=limited, required_rq_ids=required)
         mandatory = {rq: tuple(sorted(item.id for item in findings if rq in item.research_question_refs)) for rq in contract.required_rq_ids}
+        if self._report_contract_version == H3_CONTRACT_VERSION:
+            return self._write_h3_claim_stage(
+                context=context, design=design, brief=brief, findings=tuple(findings),
+                insights=tuple(insights), evidence_by_id=evidence_by_id,
+                source_to_citation=source_to_citation, contract=contract,
+                source_run=source_run, coverage=coverage,
+                citation_registry=registry.to_dict(),
+            )
         try:
             if (
                 getattr(self._report_engine, "method_name", "") == "llm"
@@ -238,6 +258,147 @@ class ClaimFirstReportService(ReportService):
         artifact_id = self._persist_artifact(artifact=ArtifactRecord(id=str(uuid4()), project_id=project_id, artifact_type="research_report", title=persisted.title, content=markdown, run_id=report_run_id, status="draft", media_type="text/markdown", filename=safe_report_filename(persisted.title), content_checksum=checksum, deduplication_key=artifact_dedup, report_id=report_id), workflow_run_id=report_run_id, deduplication_key=artifact_dedup)
         context.write_shared("report_generation_diagnostics", {"version": 2, "phase": "persisted", "status": "completed", "workflow_run_id": report_run_id, "source_run_id": source_run, "report_id": report_id, "claim_count": len(claims)})
         return ReportSummary(report_id=report_id, artifact_id=artifact_id, section_count=len(sections), sections_rejected=0, batch_failures=0)
+
+    def _write_h3_claim_stage(
+        self, *, context: WorkflowContext, design, brief, findings, insights,
+        evidence_by_id, source_to_citation, contract, source_run: str, coverage,
+        citation_registry,
+    ) -> ReportSummary:
+        report_run_id = context.workflow_run.id
+        required_ins = tuple(sorted(
+            need.id for need in design.information_needs
+            if need.research_question_id in set(contract.required_rq_ids)
+        ))
+        if not callable(self._h3_candidate_provider):
+            result = generate_h3_structural_claims(
+                project_id=context.project.id, source_workflow_run_id=source_run,
+                report_workflow_run_id=report_run_id, design=design,
+                findings=(), insights=(), evidence_by_id={}, citation_id_by_source={},
+                candidate_provider=lambda _: {"contract_version": H3_CONTRACT_VERSION, "claims": []},
+                correction_provider=None,
+                required_research_question_ids=contract.required_rq_ids,
+                required_information_need_ids=required_ins,
+            )
+            result = replace(result, coverage_outcome=H3CoverageOutcome.TECHNICAL_ERROR)
+            context.write_shared("report_generation_diagnostics", {
+                **result.to_diagnostic_dict(), "phase": "h3_claim_generation",
+                "status": "failed", "failure_category": "provider_not_configured",
+            })
+            raise H3ReportTechnicalError(result)
+        result = generate_h3_structural_claims(
+            project_id=context.project.id, source_workflow_run_id=source_run,
+            report_workflow_run_id=report_run_id, design=design,
+            findings=findings, insights=insights, evidence_by_id=evidence_by_id,
+            citation_id_by_source=source_to_citation,
+            candidate_provider=self._h3_candidate_provider,
+            correction_provider=self._h3_correction_provider,
+            required_research_question_ids=contract.required_rq_ids,
+            required_information_need_ids=required_ins,
+        )
+        diagnostic = {
+            **result.to_diagnostic_dict(), "phase": "h3_claim_generation",
+            "workflow_run_id": report_run_id, "source_run_id": source_run,
+        }
+        if result.coverage_outcome is H3CoverageOutcome.TECHNICAL_ERROR:
+            context.write_shared("report_generation_diagnostics", {**diagnostic, "status": "failed"})
+            raise H3ReportTechnicalError(result)
+        if result.coverage_outcome is H3CoverageOutcome.REPORT_INSUFFICIENT_COVERAGE:
+            context.write_shared("report_generation_diagnostics", {**diagnostic, "status": "insufficient_coverage"})
+            raise H3ReportInsufficientCoverage(result)
+
+        sections = tuple(
+            ReportSection(
+                id=f"h3-section-{index}", title=f"Structural claim {index}",
+                content=claim.proposition,
+                research_question_refs=claim.research_question_ids,
+                finding_refs=claim.finding_ids, insight_refs=claim.insight_ids,
+                evidence_refs=claim.evidence_ids, citation_ids=claim.citation_ids,
+                claim_refs=(claim.claim_id,),
+                metadata={
+                    "contract_version": H3_CONTRACT_VERSION,
+                    "typed_ast_digest": claim.structural_assertion["typed_ast_digest"],
+                    "render_digest": claim.structural_assertion["render_digest"],
+                },
+            )
+            for index, claim in enumerate(result.claims, start=1)
+        )
+        excluded = excluded_rq_limitation(contract)
+        controlled = (
+            "Some optional structural claims were rejected; required coverage remains satisfied."
+            if result.coverage_outcome is H3CoverageOutcome.LIMITED else None
+        )
+        limitations = tuple(dict.fromkeys([
+            *design.limitations,
+            *((excluded,) if excluded else ()),
+            *((controlled,) if controlled else ()),
+        ]))
+        revision = 1
+        method = "claim-first:h3-structural"
+        dedup = compute_report_deduplication_key(
+            workflow_run_id=report_run_id, report_type=DR06_RESEARCH_REPORT_TYPE,
+            generation_method=method, revision_number=revision,
+        )
+        report_id = str(uuid4())
+        metadata = {
+            CONTRACT_KEY: contract.to_metadata(),
+            "report_scope": contract.mode,
+            "structured_claim_contract": H3_CONTRACT_VERSION,
+            "h3_claim_generation": result.to_diagnostic_dict(),
+        }
+        if coverage is not None:
+            metadata.update(coverage.to_dict())
+        report = Report(
+            id=report_id, project_id=context.project.id, workflow_run_id=report_run_id,
+            research_design_id=design.id, title=brief.title or "Desk Research Report",
+            language=brief.language or design.language or "uk",
+            sections=sections,
+            executive_summary=" ".join(claim.proposition for claim in result.claims),
+            limitations=limitations, created_at=datetime.now(timezone.utc).isoformat(),
+            generation_method=method,
+            finding_refs=tuple(sorted({ref for claim in result.claims for ref in claim.finding_ids})),
+            insight_refs=tuple(sorted({ref for claim in result.claims for ref in claim.insight_ids})),
+            evidence_refs=tuple(sorted({ref for claim in result.claims for ref in claim.evidence_ids})),
+            citation_registry=citation_registry, deduplication_key=dedup, revision_number=revision,
+            approval_status="draft", metadata=metadata,
+        )
+        try:
+            self._report_claim_repository.create_with_report(report, result.claims)
+        except Exception as exc:
+            failed = {**diagnostic, "status": "failed", "failure_category": "persistence_error"}
+            context.write_shared("report_generation_diagnostics", failed)
+            technical = result.__class__(
+                result.claims, result.diagnostics, H3CoverageOutcome.TECHNICAL_ERROR,
+                result.missing_research_question_ids, result.missing_information_need_ids,
+                result.provider_attempt_count, result.repair_count,
+            )
+            raise H3ReportTechnicalError(technical) from exc
+        stored = self._report_repository.get_by_id(report_id)
+        if stored is None:
+            technical = replace(result, coverage_outcome=H3CoverageOutcome.TECHNICAL_ERROR)
+            context.write_shared("report_generation_diagnostics", {
+                **diagnostic, "status": "failed", "failure_category": "report_reload_failed",
+            })
+            raise H3ReportTechnicalError(technical)
+        try:
+            reloaded = tuple(self._report_claim_repository.list_for_report(report_id, revision))
+            if len(reloaded) != len(result.claims):
+                raise ValueError("h3_claim_reload_count_mismatch")
+            for claim in reloaded:
+                restore_h3_claim_structure(claim)
+        except Exception as exc:
+            technical = replace(result, coverage_outcome=H3CoverageOutcome.TECHNICAL_ERROR)
+            context.write_shared("report_generation_diagnostics", {
+                **diagnostic, "status": "failed", "failure_category": "structural_reload_failed",
+            })
+            raise H3ReportTechnicalError(technical) from exc
+        context.write_shared("report_generation_diagnostics", {
+            **diagnostic, "status": "completed", "report_id": report_id,
+        })
+        return ReportSummary(
+            report_id=report_id, artifact_id="", section_count=len(sections),
+            sections_rejected=sum(item.outcome.value != "ACCEPTED" for item in result.diagnostics),
+            batch_failures=0,
+        )
 
     def revise_for_context(self, context: WorkflowContext, *, review_result: ReviewResult) -> ReportSummary:
         current = self._latest_report(context.project.id, context.workflow_run.id)
