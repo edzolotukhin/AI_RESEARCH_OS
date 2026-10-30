@@ -32,6 +32,19 @@ from tests.integration.postgresql.helpers import (
 )
 
 
+class AlembicRevisionIdentifierTests(unittest.TestCase):
+    def test_027_revision_identifier_fits_alembic_version_column(self) -> None:
+        from importlib.util import module_from_spec, spec_from_file_location
+        from pathlib import Path
+
+        path = Path("alembic/versions/027_h3_report_revision_claim_membership.py")
+        spec = spec_from_file_location("migration_027", path)
+        assert spec and spec.loader
+        migration = module_from_spec(spec)
+        spec.loader.exec_module(migration)
+        self.assertLessEqual(len(migration.revision), 32)
+
+
 @unittest.skipUnless(integration_tests_enabled(), "isolated PostgreSQL integration database required")
 class PostgreSQLMigration027Tests(unittest.TestCase):
     def test_upgrade_026_to_027_backfills_h2_membership(self) -> None:
@@ -52,7 +65,7 @@ class PostgreSQLMigration027Tests(unittest.TestCase):
                 connection.execute(text("INSERT INTO projects (id,name,status,created_at,updated_at,version) VALUES ('m027-project','M027','ACTIVE','', '', 1)"))
                 connection.execute(text("INSERT INTO reports (id,project_id,workflow_run_id,research_design_id,title,language,sections,executive_summary,limitations,created_at,generation_method,finding_refs,insight_refs,evidence_refs,citation_registry,deduplication_key,revision_number,approval_status,metadata,version) VALUES ('m027-report','m027-project','m027-run','m027-design','R','uk','[]','','[]',CURRENT_TIMESTAMP,'h2','[]','[]','[]','{}','m027-key',1,'draft','{}',0)"))
                 connection.execute(text("INSERT INTO report_claims (id,report_id,report_revision,project_id,source_workflow_run_id,report_workflow_run_id,research_design_id,contract_version,claim_payload,authority_digest,created_at) VALUES ('m027-claim','m027-report',1,'m027-project','m027-source','m027-run','m027-design','desk_report_claim_v1','{}','m027-digest',CURRENT_TIMESTAMP)"))
-            command.upgrade(config, "027_h3_report_revision_claim_membership")
+            command.upgrade(config, "027_h3_claim_membership")
             with engine.connect() as connection:
                 self.assertEqual(connection.execute(text("SELECT COUNT(*) FROM report_revision_claims WHERE report_claim_id='m027-claim'")).scalar_one(), 1)
                 self.assertEqual(connection.execute(text("SELECT contract_version FROM report_claims WHERE id='m027-claim'")).scalar_one(), "desk_report_claim_v1")
@@ -77,7 +90,7 @@ class PostgreSQLMigration027Tests(unittest.TestCase):
         try:
             with engine.connect() as connection:
                 self.assertEqual(connection.execute(text("SELECT COUNT(*) FROM pg_tables WHERE schemaname='public'")).scalar_one(), 0)
-            command.upgrade(config, "027_h3_report_revision_claim_membership")
+            command.upgrade(config, "027_h3_claim_membership")
             with engine.begin() as connection:
                 connection.execute(text("INSERT INTO projects (id,name,status,created_at,updated_at,version) VALUES ('d027-project','D027','ACTIVE','', '', 1)"))
                 connection.execute(text("INSERT INTO reports (id,project_id,workflow_run_id,research_design_id,title,language,sections,executive_summary,limitations,created_at,generation_method,finding_refs,insight_refs,evidence_refs,citation_registry,deduplication_key,revision_number,approval_status,metadata,version) VALUES ('d027-r1','d027-project','run','design','R','uk','[]','','[]',CURRENT_TIMESTAMP,'h3','[]','[]','[]','{}','d027-r1',1,'draft','{}',0),('d027-r2','d027-project','run','design','R','uk','[]','','[]',CURRENT_TIMESTAMP,'h3','[]','[]','[]','{}','d027-r2',2,'draft','{}',0)"))
