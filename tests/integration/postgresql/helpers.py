@@ -189,35 +189,16 @@ def reset_schema(engine: Engine) -> None:
 
 
 def truncate_all_tables(engine: Engine) -> None:
-    table_names = [
-        "browser_sessions",
-        "project_memberships",
-        "users",
-        "research_submissions",
-        "api_keys",
-        "execution_log_entries",
-        "workflow_tasks",
-        "workflow_runs",
-        "workflow_templates",
-        "artifacts",
-        "sources",
-        "knowledge_items",
-        "projects",
-    ]
     with engine.begin() as connection:
-        existing = set(
-            connection.execute(
-                text(
-                    "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
-                )
-            ).scalars()
-        )
-        for table_name in table_names:
-            if table_name not in existing:
-                continue
-            connection.execute(
-                text(f"TRUNCATE TABLE {table_name} RESTART IDENTITY CASCADE")
+        table_names = connection.execute(
+            text(
+                "SELECT tablename FROM pg_tables "
+                "WHERE schemaname = 'public' AND tablename <> 'alembic_version'"
             )
+        ).scalars().all()
+        if table_names:
+            quoted = ", ".join(f'"{name.replace(chr(34), chr(34) * 2)}"' for name in table_names)
+            connection.execute(text(f"TRUNCATE TABLE {quoted} RESTART IDENTITY CASCADE"))
 
 
 def ensure_schema_migrated(engine: Engine | None = None) -> None:

@@ -32,6 +32,12 @@ from tests.integration.postgresql.helpers import (
 )
 
 
+def _reset_migration_database(engine) -> None:
+    with engine.begin() as connection:
+        connection.execute(text("DROP SCHEMA public CASCADE"))
+        connection.execute(text("CREATE SCHEMA public"))
+
+
 class AlembicRevisionIdentifierTests(unittest.TestCase):
     def test_027_revision_identifier_fits_alembic_version_column(self) -> None:
         from importlib.util import module_from_spec, spec_from_file_location
@@ -58,8 +64,7 @@ class PostgreSQLMigration027Tests(unittest.TestCase):
         previous_url = os.environ.get("DATABASE_URL")
         os.environ["DATABASE_URL"] = database_url
         try:
-            with engine.connect() as connection:
-                self.assertEqual(connection.execute(text("SELECT COUNT(*) FROM pg_tables WHERE schemaname='public'")).scalar_one(), 0)
+            _reset_migration_database(engine)
             command.upgrade(config, "026_approved_delivery_provenance")
             with engine.begin() as connection:
                 connection.execute(text("INSERT INTO projects (id,name,status,created_at,updated_at,version) VALUES ('m027-project','M027','ACTIVE','', '', 1)"))
@@ -71,14 +76,12 @@ class PostgreSQLMigration027Tests(unittest.TestCase):
                 self.assertEqual(connection.execute(text("SELECT contract_version FROM report_claims WHERE id='m027-claim'")).scalar_one(), "desk_report_claim_v1")
                 self.assertEqual(connection.execute(text("SELECT id FROM reports WHERE id='m027-report'")).scalar_one(), "m027-report")
         finally:
-            try:
-                command.downgrade(config, "base")
-            finally:
-                engine.dispose()
-                if previous_url is None:
-                    os.environ.pop("DATABASE_URL", None)
-                else:
-                    os.environ["DATABASE_URL"] = previous_url
+            _reset_migration_database(engine)
+            engine.dispose()
+            if previous_url is None:
+                os.environ.pop("DATABASE_URL", None)
+            else:
+                os.environ["DATABASE_URL"] = previous_url
 
     def test_downgrade_refuses_after_h3_multi_membership(self) -> None:
         database_url = os.environ.get("DATABASE_URL_MIGRATION_TEST")
@@ -88,8 +91,7 @@ class PostgreSQLMigration027Tests(unittest.TestCase):
         previous_url = os.environ.get("DATABASE_URL")
         os.environ["DATABASE_URL"] = database_url
         try:
-            with engine.connect() as connection:
-                self.assertEqual(connection.execute(text("SELECT COUNT(*) FROM pg_tables WHERE schemaname='public'")).scalar_one(), 0)
+            _reset_migration_database(engine)
             command.upgrade(config, "027_h3_claim_membership")
             with engine.begin() as connection:
                 connection.execute(text("INSERT INTO projects (id,name,status,created_at,updated_at,version) VALUES ('d027-project','D027','ACTIVE','', '', 1)"))
@@ -102,10 +104,7 @@ class PostgreSQLMigration027Tests(unittest.TestCase):
                 self.assertEqual(connection.execute(text("SELECT COUNT(*) FROM report_revision_claims WHERE report_claim_id='d027-claim'")).scalar_one(), 2)
                 self.assertEqual(connection.execute(text("SELECT authority_digest FROM report_claims WHERE id='d027-claim'")).scalar_one(), "d027-digest")
         finally:
-            try:
-                command.downgrade(config, "base")
-            except Exception:
-                pass
+            _reset_migration_database(engine)
             engine.dispose()
             if previous_url is None:
                 os.environ.pop("DATABASE_URL", None)
@@ -134,6 +133,8 @@ class PostgreSQLH3ReportClaimMembershipTests(PostgreSQLIntegrationTestCase):
 
     def _claim(self):
         fixture = _Fixture()
+        fixture.evidence = [replace(item, project_id=self.project.id) for item in fixture.evidence]
+        fixture.findings = [replace(item, project_id=self.project.id) for item in fixture.findings]
         result = generate_h3_structural_claims(
             project_id=self.project.id, source_workflow_run_id="source-run",
             report_workflow_run_id="report-run", design=fixture.design,
