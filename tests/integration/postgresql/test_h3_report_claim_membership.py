@@ -212,11 +212,27 @@ class PostgreSQLH3ReportClaimMembershipTests(PostgreSQLIntegrationTestCase):
         self.claims.create_with_report(report, (claim,))
         foreign_project = ProjectFactory().create("Foreign lineage project")
         PostgreSQLProjectRepository(self.session_factory).create(foreign_project)
-        foreign = replace(report, id="foreign-report", project_id=foreign_project.id, revision_number=2, previous_report_id="lineage-report")
+        foreign = replace(
+            report,
+            id="foreign-report",
+            project_id=foreign_project.id,
+            workflow_run_id="foreign-report-run",
+            deduplication_key="foreign-report-key",
+            revision_number=2,
+            previous_report_id="lineage-report",
+        )
         PostgreSQLReportRepository(self.session_factory).create(foreign)
         with self.assertRaises(ReportClaimConflictError):
             self.claims.attach_claims_to_report_revision(foreign, (claim,))
-        wrong_design = replace(report, id="wrong-design-report", revision_number=2, previous_report_id="lineage-report", research_design_id="other-design")
+        wrong_design = replace(
+            report,
+            id="wrong-design-report",
+            workflow_run_id="wrong-design-run",
+            deduplication_key="wrong-design-key",
+            revision_number=2,
+            previous_report_id="lineage-report",
+            research_design_id="other-design",
+        )
         PostgreSQLReportRepository(self.session_factory).create(wrong_design)
         with self.assertRaises(ReportClaimConflictError):
             self.claims.attach_claims_to_report_revision(wrong_design, (claim,))
