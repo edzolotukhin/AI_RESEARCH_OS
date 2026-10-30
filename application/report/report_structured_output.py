@@ -5,6 +5,8 @@ from typing import Any
 
 from application.exceptions.structured_output_error import StructuredOutputError
 from application.structured_output.parser import StructuredOutputParser
+from application.report.typed_rendering import TypedRenderNodeType
+from domain.reports.report_claim import CERTAINTIES, CLAIM_KINDS, DIRECTIONS
 
 from domain.ai.llm_response import LLMResponse
 from domain.ai.prompt import Prompt
@@ -36,17 +38,23 @@ REPORT_SUMMARY_PAYLOAD_SCHEMA = """
 }
 """.strip()
 
+def _h3_enum_schema(name: str, values: frozenset[str] | tuple[str, ...]) -> str:
+    return '"' + name + '": {"type":"string","enum":[' + ",".join(
+        '"' + value + '"' for value in sorted(values)
+    ) + ']}'
+
+
 H3_CLAIM_PAYLOAD_SCHEMA = """
 {
   "contract_version": "desk_h3_structural_claim_v1",
   "claims": [{
     "claim_id": "string",
-    "kind": "string",
-    "certainty": "string",
-    "direction": "string",
+    %s,
+    %s,
+    %s,
     "nodes": [{
       "node_id": "string",
-      "node_type": "string",
+      "node_type": {"type":"string","enum":[%s]},
       "owner_claim_ref": "string|null",
       "text": "string|null",
       "authority_ref": "string|null",
@@ -54,7 +62,12 @@ H3_CLAIM_PAYLOAD_SCHEMA = """
     }]
   }]
 }
-""".strip()
+""".strip() % (
+    _h3_enum_schema("kind", CLAIM_KINDS),
+    _h3_enum_schema("certainty", CERTAINTIES),
+    _h3_enum_schema("direction", DIRECTIONS),
+    ",".join('"' + item.value + '"' for item in TypedRenderNodeType),
+)
 
 _RESPONSE_PREVIEW_LIMIT = 800
 

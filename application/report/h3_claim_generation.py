@@ -40,7 +40,8 @@ class H3ProviderPayloadError(ValueError):
 
     def __init__(self, message: str, *, field_path: str | None = None,
                  expected_kind: str | None = None, actual_kind: str | None = None,
-                 shape: str | None = None, parser_stage: str = "h3_dto") -> None:
+                 shape: str | None = None, parser_stage: str = "h3_dto",
+                 allowed_values: tuple[str, ...] = (), actual_token: str | None = None) -> None:
         super().__init__(message)
         self.error_code = message
         self.field_path = field_path
@@ -48,6 +49,8 @@ class H3ProviderPayloadError(ValueError):
         self.actual_kind = actual_kind
         self.shape = shape
         self.parser_stage = parser_stage
+        self.allowed_values = tuple(allowed_values)[:32]
+        self.actual_token = actual_token[:64] if isinstance(actual_token, str) else None
 
 
 def _kind(value: Any) -> str:
@@ -131,6 +134,8 @@ class H3ClaimDiagnostic:
     bounded_shape_summary: str | None = None
     parser_stage: str | None = None
     repair_correlation: str | None = None
+    allowed_values: tuple[str, ...] = ()
+    actual_token: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -154,6 +159,8 @@ class H3ClaimDiagnostic:
             "bounded_shape_summary": self.bounded_shape_summary,
             "parser_stage": self.parser_stage,
             "repair_correlation": self.repair_correlation,
+            "allowed_values": list(self.allowed_values)[:32],
+            "actual_token": self.actual_token,
         }
 
 
@@ -358,6 +365,7 @@ def _provider_request(prepared: list[_Prepared]) -> dict[str, Any]:
     return {
         "contract_version": H3_CONTRACT_VERSION,
         "instruction": "Return typed nodes only. TEXT must contain no digits, URLs, source names, or authority annotations.",
+        "allowed_vocabulary": _allowed_vocabulary(),
         "candidates": [
             {
                 "claim_id": item.claim_id,
@@ -375,6 +383,7 @@ def _repair_request(invalid: list[tuple[_Prepared, Exception]]) -> dict[str, Any
     return {
         "contract_version": H3_CONTRACT_VERSION,
         "repair": True,
+        "allowed_vocabulary": _allowed_vocabulary(),
         "candidates": [
             {
                 "claim_id": item.claim_id,
@@ -383,6 +392,15 @@ def _repair_request(invalid: list[tuple[_Prepared, Exception]]) -> dict[str, Any
             }
             for item, exc in invalid
         ],
+    }
+
+
+def _allowed_vocabulary() -> dict[str, list[str]]:
+    return {
+        "kind": sorted(CLAIM_KINDS),
+        "certainty": sorted(CERTAINTIES),
+        "direction": sorted(DIRECTIONS),
+        "node_type": [item.value for item in TypedRenderNodeType],
     }
 
 
@@ -435,12 +453,15 @@ def _decode_response(payload: Any) -> dict[str, dict[str, Any]]:
                     "malformed_h3_claim_payload", field_path=f"claims[{index}].nodes",
                     expected_kind="array", actual_kind=_kind(item["nodes"]), shape=_shape(item["nodes"]),
                 )
-            if item["kind"] not in CLAIM_KINDS or item["certainty"] not in CERTAINTIES or item["direction"] not in DIRECTIONS:
-                raise H3ProviderPayloadError(
-                    "invalid_h3_assertion_enum", field_path=f"claims[{index}]",
-                    expected_kind="allowed enum values", actual_kind="string/object",
-                    shape=_shape(item),
-                )
+            for field, allowed in (("kind", CLAIM_KINDS), ("certainty", CERTAINTIES), ("direction", DIRECTIONS)):
+                value = item[field]
+                if value not in allowed:
+                    raise H3ProviderPayloadError(
+                        "invalid_h3_assertion_enum", field_path=f"claims[{index}].assertion.{field}",
+                        expected_kind=f"enum:{field}", actual_kind=_kind(value), shape=_shape(value),
+                        allowed_values=tuple(sorted(allowed)),
+                        actual_token=(value if isinstance(value, str) else None),
+                    )
         result[claim_id] = item
     return result
 
@@ -550,6 +571,8 @@ def _rejected(item: _Prepared, exc: Exception, attempts: int, repair: bool) -> H
         bounded_shape_summary=payload.shape if payload else None,
         parser_stage=payload.parser_stage if payload else None,
         repair_correlation=item.claim_id if repair else None,
+        allowed_values=(payload.allowed_values if payload else ()),
+        actual_token=(payload.actual_token if payload else None),
     )
 
 

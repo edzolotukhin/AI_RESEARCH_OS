@@ -20,6 +20,8 @@ from domain.findings.finding import Finding
 from domain.findings.insight import Insight
 from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
 from domain.reports.report_claim import ReportClaim, ReportClaimContractError
+from domain.reports.report_claim import CERTAINTIES, CLAIM_KINDS, DIRECTIONS
+from application.report.typed_rendering import TypedRenderNodeType
 from application.research_scope.authoritative_scope import SCOPE_KEY, SCOPE_VERSION
 from infrastructure.persistence.memory.in_memory_report_claim_repository import InMemoryReportClaimRepository
 from infrastructure.persistence.memory.in_memory_report_repository import InMemoryReportRepository
@@ -260,6 +262,59 @@ class H3ClaimGenerationTests(unittest.TestCase):
         self.assertEqual(diagnostic["expected_kind"], "array")
         self.assertEqual(diagnostic["actual_kind"], "object")
         self.assertEqual(diagnostic["repair_correlation"], diagnostic["candidate_id"])
+
+    def test_all_canonical_assertion_vocabularies_are_accepted(self):
+        for field, values in (("kind", CLAIM_KINDS), ("certainty", CERTAINTIES), ("direction", DIRECTIONS)):
+            for value in values:
+                with self.subTest(field=field, value=value):
+                    def provider(request, field=field, value=value):
+                        response = _valid_response(request)
+                        response["claims"][0][field] = value
+                        return response
+                    result = self.generate(provider=provider)
+                    self.assertEqual(len(result.claims), 1)
+        self.assertEqual({item.value for item in TypedRenderNodeType}, {
+            "TEXT", "FACT_REF", "PERIOD_REF", "CLAIM_REF", "CITATION_REF",
+            "LIMITATION_REF", "INTERPRETATION_REF",
+        })
+
+    def test_invalid_assertion_enum_reports_exact_field_and_allows_one_repair(self):
+        for field in ("kind", "certainty", "direction"):
+            calls = []
+            requests = []
+            def initial(request, field=field):
+                calls.append("initial")
+                requests.append(request)
+                response = _valid_response(request)
+                response["claims"][0][field] = "INVALID_ENUM"
+                return response
+            def repair(request):
+                calls.append("repair")
+                requests.append(request)
+                return _valid_response(request)
+            with self.subTest(field=field):
+                result = self.generate(provider=initial, repair=repair)
+                self.assertEqual(calls, ["initial", "repair"])
+                self.assertEqual(requests[0]["allowed_vocabulary"], requests[1]["allowed_vocabulary"])
+                self.assertEqual(len(result.claims), 1)
+                self.assertEqual(result.repair_count, 1)
+                self.assertEqual(result.coverage_outcome, H3CoverageOutcome.SUCCESS)
+
+    def test_invalid_repaired_enum_fails_closed_with_exact_field(self):
+        def initial(request):
+            response = _valid_response(request)
+            response["claims"][0]["kind"] = "INVALID_ENUM"
+            return response
+        def repair(request):
+            response = _valid_response(request)
+            response["claims"][0]["kind"] = "still-invalid"
+            return response
+        result = self.generate(provider=initial, repair=repair)
+        self.assertEqual(result.claims, ())
+        diagnostic = result.diagnostics[0].to_dict()
+        self.assertEqual(diagnostic["field_path"], "claims[0].assertion.kind")
+        self.assertEqual(diagnostic["actual_token"], "still-invalid")
+        self.assertEqual(diagnostic["allowed_values"], sorted(CLAIM_KINDS))
 
     def test_parser_and_authority_diagnostics_remain_distinct(self):
         def provider(request):
