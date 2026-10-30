@@ -94,6 +94,23 @@ class PostgreSQLApprovedDeliveryProvenanceTests(PostgreSQLIntegrationTestCase):
             approved_delivery_provenance=self.provenance,
         )
         self.assertEqual(job.approved_delivery_provenance, self.provenance)
+        direct = jobs.schedule(
+            project_id=self.project_id, method="DESK", run_id=self.report_run_id,
+            study_id=None, source_id=self.report_id, source_version="direct-v1",
+            status_snapshot="Approved", template_version="test-template",
+            renderer_version="test-renderer", initial_state="review_approved",
+            report_revision=self.provenance.revision_number,
+            review_id=self.provenance.review_id,
+            source_run_id=self.provenance.source_workflow_run_id,
+            claim_set_digest=self.provenance.claim_set_digest,
+            coverage_contract_digest=self.provenance.coverage_contract_digest,
+            authority_digest=self.provenance.authority_digest,
+            presentation_digest=self.provenance.presentation_digest,
+        )
+        self.assertEqual(direct.approved_delivery_provenance, self.provenance)
+        claimed = jobs.claim_next("qualification-worker")
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed.approved_delivery_provenance, self.provenance)
         legacy = jobs.schedule(
             project_id=self.project_id, method="DESK", run_id="legacy-run",
             study_id=None, source_id="legacy-report", source_version="legacy-v1",

@@ -55,6 +55,8 @@ class PostgreSQLPresentationJobs:
                  review_id: str | None = None, source_run_id: str | None = None,
                  claim_set_digest: str | None = None,
                  coverage_contract_digest: str | None = None,
+                 authority_digest: str | None = None,
+                 presentation_digest: str | None = None,
                  approved_delivery_provenance: ApprovedDeliveryProvenance | None = None) -> PresentationJob:
         validate_storage_binding(
             approved_delivery_provenance,
@@ -67,11 +69,17 @@ class PostgreSQLPresentationJobs:
             coverage_contract_digest=coverage_contract_digest,
         )
         if approved_delivery_provenance is not None:
+            if authority_digest is not None and authority_digest != approved_delivery_provenance.authority_digest:
+                raise ValueError("authority_digest mismatch")
+            if presentation_digest is not None and presentation_digest != approved_delivery_provenance.presentation_digest:
+                raise ValueError("presentation_digest mismatch")
             report_revision = approved_delivery_provenance.revision_number
             review_id = approved_delivery_provenance.review_id
             source_run_id = approved_delivery_provenance.source_workflow_run_id
             claim_set_digest = approved_delivery_provenance.claim_set_digest
             coverage_contract_digest = approved_delivery_provenance.coverage_contract_digest
+            authority_digest = approved_delivery_provenance.authority_digest
+            presentation_digest = approved_delivery_provenance.presentation_digest
         now = datetime.now(timezone.utc)
         values = dict(id=str(uuid4()), project_id=project_id, method=method, run_id=run_id,
                       study_id=study_id, source_id=source_id, source_version=source_version,
@@ -82,10 +90,8 @@ class PostgreSQLPresentationJobs:
                       report_revision=report_revision, review_id=review_id,
                       source_run_id=source_run_id, claim_set_digest=claim_set_digest,
                       coverage_contract_digest=coverage_contract_digest,
-                      authority_digest=(approved_delivery_provenance.authority_digest
-                                        if approved_delivery_provenance else None),
-                      presentation_digest=(approved_delivery_provenance.presentation_digest
-                                           if approved_delivery_provenance else None))
+                      authority_digest=authority_digest,
+                      presentation_digest=presentation_digest)
         with self._sessions.session() as session:
             session.execute(insert(PresentationJobModel).values(**values).on_conflict_do_nothing(
                 constraint="uq_presentation_job_identity"))
