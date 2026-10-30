@@ -168,8 +168,9 @@ class PostgreSQLH3ReportClaimMembershipTests(PostgreSQLIntegrationTestCase):
         self.assertEqual(self.claims.attach_claims_to_report_revision(r1, (claim,)), 1)
         with self.assertRaises(ReportClaimConflictError):
             self.claims.attach_claims_to_report_revision(r1, ())
+        extra = replace(claim, claim_id="claim-2")
         with self.assertRaises(ReportClaimConflictError):
-            self.claims.attach_claims_to_report_revision(r1, (replace(claim, proposition="changed"),))
+            self.claims.attach_claims_to_report_revision(r1, (claim, extra))
 
     def test_h2_compatibility_trigger_and_claim_immutability(self) -> None:
         claim = self._claim()
@@ -194,18 +195,24 @@ class PostgreSQLH3ReportClaimMembershipTests(PostgreSQLIntegrationTestCase):
         claim = self._claim()
         report = self._report("immutable-report", 1)
         self.claims.create_with_report(report, (claim,))
-        with self.engine.begin() as conn:
-            with self.assertRaises(Exception):
+        with self.assertRaises(Exception):
+            with self.engine.begin() as conn:
                 conn.execute(text("UPDATE report_revision_claims SET report_revision=2 WHERE report_id='immutable-report'"))
-            with self.assertRaises(Exception):
+        with self.engine.connect() as conn:
+            self.assertEqual(conn.execute(text("SELECT COUNT(*) FROM report_revision_claims WHERE report_id='immutable-report'")).scalar_one(), 1)
+        with self.assertRaises(Exception):
+            with self.engine.begin() as conn:
                 conn.execute(text("DELETE FROM report_revision_claims WHERE report_id='immutable-report'"))
+        with self.engine.connect() as conn:
             self.assertEqual(conn.execute(text("SELECT COUNT(*) FROM report_revision_claims WHERE report_id='immutable-report'")).scalar_one(), 1)
 
     def test_foreign_project_design_and_lineage_are_rejected(self) -> None:
         claim = self._claim()
         report = self._report("lineage-report", 1)
         self.claims.create_with_report(report, (claim,))
-        foreign = replace(report, id="foreign-report", project_id="foreign-project", revision_number=2, previous_report_id="lineage-report")
+        foreign_project = ProjectFactory().create("Foreign lineage project")
+        PostgreSQLProjectRepository(self.session_factory).create(foreign_project)
+        foreign = replace(report, id="foreign-report", project_id=foreign_project.id, revision_number=2, previous_report_id="lineage-report")
         PostgreSQLReportRepository(self.session_factory).create(foreign)
         with self.assertRaises(ReportClaimConflictError):
             self.claims.attach_claims_to_report_revision(foreign, (claim,))
