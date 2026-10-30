@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Mapping
 
 from application.deliverables.approved_delivery_provenance import ApprovedDeliveryProvenance
 from application.deliverables.desk_finalization import claim_set_digest, coverage_contract_digest
@@ -58,6 +59,7 @@ class CanonicalDeliveryDocument:
     sections: tuple[DeliverySection, ...]
     limitations: tuple[str, ...]
     references: tuple[DeliveryReference, ...]
+    structural_provenance: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)

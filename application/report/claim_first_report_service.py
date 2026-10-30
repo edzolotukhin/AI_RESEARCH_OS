@@ -17,6 +17,11 @@ from application.report.h3_claim_generation import (
     H3CoverageOutcome, H3ReportInsufficientCoverage, H3ReportTechnicalError,
     generate_h3_structural_claims, restore_h3_claim_structure,
 )
+from application.report.h3_editorial_delivery import (
+    build_h3_editorial_catalog, compose_h3_editorial,
+    deterministic_h3_pre_review,
+)
+from application.report.claim_contract import canonical_digest
 from application.report.typed_rendering import H3_CONTRACT_VERSION
 from application.report.coverage_contract import CONTRACT_KEY, build_report_coverage_contract, excluded_rq_limitation, resolve_report_coverage_contract
 from application.report.deduplication import DR06_RESEARCH_REPORT_TYPE, compute_artifact_deduplication_key, compute_content_checksum, compute_report_deduplication_key
@@ -51,6 +56,7 @@ class ClaimFirstReportService(ReportService):
         self, *, report_claim_repository: ReportClaimRepository,
         report_contract_version: str = "desk_report_claim_v1",
         editorial_composer: EditorialComposer | None = None,
+        h3_editorial_provider=None,
         **kwargs,
     ) -> None:
         report_engine = kwargs.get("report_engine")
@@ -62,6 +68,7 @@ class ClaimFirstReportService(ReportService):
         self._report_claim_repository = report_claim_repository
         self._report_contract_version = report_contract_version
         self._editorial_composer = editorial_composer
+        self._h3_editorial_provider = h3_editorial_provider
         self._claim_candidate_provider = getattr(
             report_engine, "generate_claim_candidates", None,
         )
@@ -361,6 +368,31 @@ class ClaimFirstReportService(ReportService):
             citation_registry=citation_registry, deduplication_key=dedup, revision_number=revision,
             approval_status="draft", metadata=metadata,
         )
+        if self._h3_editorial_provider is not None:
+            coverage_digest = canonical_digest(contract.to_metadata())
+            try:
+                editorial_catalog = build_h3_editorial_catalog(
+                    report=report, claims=result.claims,
+                    coverage_contract_digest=coverage_digest,
+                )
+                presentation = compose_h3_editorial(
+                    report=report, catalog=editorial_catalog,
+                    provider=self._h3_editorial_provider,
+                )
+                deterministic_h3_pre_review(
+                    report=report, claims=result.claims, presentation=presentation,
+                    coverage_contract_digest=coverage_digest,
+                )
+                metadata = dict(report.metadata)
+                metadata["h3_presentation"] = presentation.to_dict()
+                report = replace(report, metadata=metadata)
+            except Exception as exc:
+                context.write_shared("report_generation_diagnostics", {
+                    **diagnostic, "status": "failed",
+                    "failure_category": "h3_editorial_composition",
+                    "code": str(getattr(exc, "code", type(exc).__name__))[:96],
+                })
+                raise H3ReportTechnicalError(replace(result, coverage_outcome=H3CoverageOutcome.TECHNICAL_ERROR)) from exc
         try:
             self._report_claim_repository.create_with_report(report, result.claims)
         except Exception as exc:

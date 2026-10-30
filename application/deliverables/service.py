@@ -27,6 +27,8 @@ from application.deliverables.desk_finalization import (
 )
 from application.report.source_display import source_display
 from application.report.editorial_contract import EDITORIAL_CONTRACT_VERSION
+from application.report.typed_rendering import H3_CONTRACT_VERSION
+from application.report.h3_editorial_delivery import load_approved_h3_delivery
 from application.report.presentation_persistence import REPORT_CONTRACT_KEY
 from application.deliverables.editorial_delivery import (
     EditorialDeliveryError,
@@ -174,6 +176,15 @@ class ProjectDeliverablesService:
                         report=report, review=approved_review, claims=claims,
                     )
                 except (AttributeError, EditorialDeliveryError, ValueError):
+                    approved_review = None
+                    status = "Статус перевірки не підтверджено"
+            if approved_review is not None and report.metadata.get("structured_claim_contract") == H3_CONTRACT_VERSION:
+                try:
+                    claims = tuple(self.report_claims.list_for_report(report.id, report.revision_number))
+                    editorial = load_approved_h3_delivery(
+                        report=report, review=approved_review, claims=claims,
+                    )
+                except (AttributeError, ValueError):
                     approved_review = None
                     status = "Статус перевірки не підтверджено"
             if approved_review is not None and report.metadata.get("structured_claim_contract") == STRUCTURED_REPORT_CONTRACT:
@@ -462,7 +473,15 @@ class ProjectDeliverablesService:
             **({"initial_state": "review_approved", "report_revision": authority.report_revision,
                 "review_id": authority.review_id, "source_run_id": authority.source_run_id,
                 "claim_set_digest": authority.claim_set_digest,
-                "coverage_contract_digest": authority.coverage_contract_digest}
+                "coverage_contract_digest": authority.coverage_contract_digest,
+                "authority_digest": (
+                    document.approved_delivery_provenance.authority_digest
+                    if document.approved_delivery_provenance is not None else None
+                ),
+                "presentation_digest": (
+                    document.approved_delivery_provenance.presentation_digest
+                    if document.approved_delivery_provenance is not None else None
+                )}
                if authority is not None else
                {"initial_state": "review_approved",
                 "approved_delivery_provenance": document.approved_delivery_provenance}
@@ -491,12 +510,34 @@ class ProjectDeliverablesService:
                 claims = tuple(self.report_claims.list_for_report(report.id, report.revision_number))
                 editorial = load_approved_editorial_delivery(report=report, review=review, claims=claims)
                 authority = None
+            elif report.metadata.get("structured_claim_contract") == H3_CONTRACT_VERSION:
+                claims = tuple(self.report_claims.list_for_report(report.id, report.revision_number))
+                editorial = load_approved_h3_delivery(report=report, review=review, claims=claims)
+                provenance = editorial.provenance
+                authority = DeskFinalizationAuthority(
+                    project_id=report.project_id,
+                    report_run_id=provenance.report_workflow_run_id,
+                    source_run_id=provenance.source_workflow_run_id,
+                    design_id=report.research_design_id,
+                    report_id=provenance.report_id,
+                    report_revision=provenance.revision_number,
+                    review_id=provenance.review_id,
+                    claim_set_digest=provenance.claim_set_digest,
+                    coverage_contract_digest=provenance.coverage_contract_digest,
+                )
             else:
                 authority = self._structured_authority(report, review)
             project = self.projects.get_project(project_id)
             item = self._approved_desk_item(self.source(
                 project_id, "DESK", report_id, owner_id=project.owner_principal_id))
             if editorial is not None:
+                structural = getattr(item.document.canonical_delivery, "structural_provenance", None)
+                if report.metadata.get("structured_claim_contract") == H3_CONTRACT_VERSION:
+                    expected = editorial.document.structural_provenance
+                    if structural != expected:
+                        raise _DeliverableComponentError(
+                            component="canonical_delivery", reason="h3_structural_provenance_mismatch",
+                        )
                 if item.document.approved_delivery_provenance != editorial.provenance:
                     raise ApprovedDeliveryProvenanceMismatch(
                         component="canonical_delivery",
