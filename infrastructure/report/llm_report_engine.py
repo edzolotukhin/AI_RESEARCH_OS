@@ -21,6 +21,7 @@ from application.report.exceptions import ReportConfigurationError
 from application.research_scope.authoritative_scope import scope_for_finding
 from application.execution.exceptions import BudgetExhaustedError
 from application.report.report_structured_output import (
+    H3_CLAIM_PAYLOAD_SCHEMA,
     REPORT_SECTIONS_PAYLOAD_SCHEMA,
     REPORT_SUMMARY_PAYLOAD_SCHEMA,
     ReportStructuredOutputGenerator,
@@ -91,19 +92,16 @@ class LlmReportEngine:
 
     def _generate_h3_claim_payload(self, request: dict[str, Any], *, repair: bool) -> dict[str, Any]:
         operation = "bounded structural claim repair" if repair else "structural claim generation"
-        schema = '{"contract_version":"desk_h3_structural_claim_v1","claims":[]}'
-        if repair:
-            schema = '{"contract_version":"desk_h3_structural_claim_v1","claims":[]}'
         return self._claim_structured_output.generate(
             Prompt(
                 system=(
                     "Generate typed H3 structural ReportClaims only from the supplied "
                     "authoritative envelopes. Never render factual prose or derive values. "
-                    f"This is one bounded {operation} request.\nREQUIRED JSON SHAPE\n{schema}"
+                    f"This is one bounded {operation} request.\nREQUIRED JSON SHAPE\n{H3_CLAIM_PAYLOAD_SCHEMA}"
                 ),
                 user=json.dumps(request, ensure_ascii=False, sort_keys=True),
             ),
-            payload_schema=schema,
+            payload_schema=H3_CLAIM_PAYLOAD_SCHEMA,
         )
 
     def _generate_claim_payload(

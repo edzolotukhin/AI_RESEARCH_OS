@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import inspect
 import unittest
+import json
 from dataclasses import replace
 from hashlib import sha256
 from unittest import mock
@@ -35,6 +36,8 @@ from infrastructure.persistence.memory.in_memory_evidence_repository import InMe
 from infrastructure.persistence.memory.in_memory_finding_repository import InMemoryFindingRepository
 from infrastructure.persistence.memory.in_memory_insight_repository import InMemoryInsightRepository
 from infrastructure.persistence.memory.in_memory_source_repository import InMemorySourceRepository
+from infrastructure.report.llm_report_engine import LlmReportEngine
+from domain.ai.llm_response import LLMResponse
 from runtime.workflow_context import WorkflowContext
 from tests.fixtures.research_brief import sample_research_brief
 
@@ -131,6 +134,41 @@ class H3ClaimGenerationTests(unittest.TestCase):
         self.assertEqual(claim.version, H3_CONTRACT_VERSION)
         self.assertIsNotNone(claim.structural_assertion)
 
+    def test_production_scale_authority_accepts_valid_claim_provider_free(self):
+        fixture = _Fixture()
+        for index in range(2, 20):
+            evidence = fixture._evidence(index, "rq-1", "in-1", _scope())
+            fixture.evidence.append(evidence)
+            if index <= 4:
+                fixture.findings.append(fixture._finding(index, "rq-1", "in-1", evidence, _scope()))
+        result = self.generate(
+            fixture,
+            required_rqs=("rq-1",), required_ins=("in-1",),
+        )
+        self.assertEqual(result.coverage_outcome, H3CoverageOutcome.SUCCESS)
+        self.assertEqual(len(fixture.evidence), 19)
+        self.assertEqual(len(fixture.findings), 4)
+        self.assertGreaterEqual(len(result.claims), 1)
+
+    def test_llm_engine_uses_same_wrapped_schema_for_initial_and_repair(self):
+        class Client:
+            def __init__(self): self.prompts = []
+            def generate(self, prompt, *, options=None):
+                self.prompts.append(prompt)
+                request = json.loads(prompt.user.split("BOUNDED CLAIM REQUEST\n", 1)[-1])
+                return LLMResponse(content=json.dumps(_valid_response(request)))
+
+        client = Client()
+        engine = LlmReportEngine(llm_client=client, structured_output_max_attempts=1)
+        request = {"contract_version": H3_CONTRACT_VERSION, "candidates": []}
+        self.assertEqual(engine.generate_h3_claim_candidates(request)["claims"], [])
+        self.assertEqual(engine.repair_h3_claim_candidates(request)["claims"], [])
+        self.assertEqual(
+            client.prompts[0].system.split("REQUIRED JSON SHAPE\n", 1)[1],
+            client.prompts[1].system.split("REQUIRED JSON SHAPE\n", 1)[1],
+        )
+        self.assertIn('"claims": [', client.prompts[1].system)
+
     def test_multiple_facts_overlapping_and_fact_local_periods(self):
         fixture = _Fixture()
         second = _scope("8.7", ("2025", "2026"))["numeric_facts"][0]
@@ -198,6 +236,41 @@ class H3ClaimGenerationTests(unittest.TestCase):
         result = self.generate(provider=lambda _: {"claims": []})
         self.assertEqual(result.coverage_outcome, H3CoverageOutcome.REPORT_INSUFFICIENT_COVERAGE)
         self.assertEqual(result.provider_attempt_count, 1)
+        diagnostic = result.diagnostics[0].to_dict()
+        self.assertEqual(diagnostic["phase"], "INITIAL")
+        self.assertEqual(diagnostic["field_path"], "root")
+        self.assertEqual(diagnostic["expected_kind"], "object")
+        self.assertEqual(diagnostic["actual_kind"], "object")
+        self.assertEqual(diagnostic["bounded_shape_summary"], "object(keys=claims)")
+
+    def test_malformed_repair_has_bounded_phase_diagnostic(self):
+        calls = []
+        def initial(request):
+            calls.append("initial")
+            return _valid_response(request, text="Число 12 ")
+        def repair(request):
+            calls.append("repair")
+            return {"contract_version": H3_CONTRACT_VERSION, "claims": {}}
+        result = self.generate(provider=initial, repair=repair)
+        self.assertEqual(calls, ["initial", "repair"])
+        self.assertEqual(result.coverage_outcome, H3CoverageOutcome.REPORT_INSUFFICIENT_COVERAGE)
+        diagnostic = result.diagnostics[0].to_dict()
+        self.assertEqual(diagnostic["phase"], "REPAIR")
+        self.assertEqual(diagnostic["field_path"], "claims")
+        self.assertEqual(diagnostic["expected_kind"], "array")
+        self.assertEqual(diagnostic["actual_kind"], "object")
+        self.assertEqual(diagnostic["repair_correlation"], diagnostic["candidate_id"])
+
+    def test_parser_and_authority_diagnostics_remain_distinct(self):
+        def provider(request):
+            response = _valid_response(request)
+            response["claims"][0]["nodes"][1]["authority_ref"] = "foreign-fact"
+            return response
+        result = self.generate(provider=provider)
+        diagnostic = result.diagnostics[0].to_dict()
+        self.assertEqual(diagnostic["phase"], "INITIAL")
+        self.assertIsNone(diagnostic["field_path"])
+        self.assertIn("unknown_fact_ref", diagnostic["structural_error_codes"])
 
     def test_single_bounded_batch_repair_succeeds(self):
         fixture = _Fixture(two=True); calls = []

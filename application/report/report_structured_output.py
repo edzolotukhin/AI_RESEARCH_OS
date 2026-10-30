@@ -36,6 +36,26 @@ REPORT_SUMMARY_PAYLOAD_SCHEMA = """
 }
 """.strip()
 
+H3_CLAIM_PAYLOAD_SCHEMA = """
+{
+  "contract_version": "desk_h3_structural_claim_v1",
+  "claims": [{
+    "claim_id": "string",
+    "kind": "string",
+    "certainty": "string",
+    "direction": "string",
+    "nodes": [{
+      "node_id": "string",
+      "node_type": "string",
+      "owner_claim_ref": "string|null",
+      "text": "string|null",
+      "authority_ref": "string|null",
+      "presentation_variant": "string|null"
+    }]
+  }]
+}
+""".strip()
+
 _RESPONSE_PREVIEW_LIMIT = 800
 
 

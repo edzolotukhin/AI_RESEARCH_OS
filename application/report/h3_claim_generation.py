@@ -10,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
+import re
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
@@ -35,7 +36,44 @@ H3CandidateProvider = Callable[[dict[str, Any]], dict[str, Any]]
 
 
 class H3ProviderPayloadError(ValueError):
-    pass
+    """Bounded, non-content diagnostics for a provider contract failure."""
+
+    def __init__(self, message: str, *, field_path: str | None = None,
+                 expected_kind: str | None = None, actual_kind: str | None = None,
+                 shape: str | None = None, parser_stage: str = "h3_dto") -> None:
+        super().__init__(message)
+        self.error_code = message
+        self.field_path = field_path
+        self.expected_kind = expected_kind
+        self.actual_kind = actual_kind
+        self.shape = shape
+        self.parser_stage = parser_stage
+
+
+def _kind(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return type(value).__name__[:32]
+
+
+def _shape(value: Any) -> str:
+    """Return only bounded structural metadata, never provider content."""
+    if isinstance(value, dict):
+        keys = sorted(str(key)[:48] for key in value)[:24]
+        return "object(keys=" + ",".join(keys) + ")"
+    if isinstance(value, list):
+        return f"array(length={min(len(value), 1000)})"
+    return _kind(value)
 
 
 class H3UnsupportedCandidate(ValueError):
@@ -84,6 +122,15 @@ class H3ClaimDiagnostic:
     affected_reference_ids: tuple[str, ...] = ()
     authority_digest: str | None = None
     ast_digest: str | None = None
+    phase: str = "INITIAL"
+    candidate_index: int | None = None
+    error_code: str | None = None
+    field_path: str | None = None
+    expected_kind: str | None = None
+    actual_kind: str | None = None
+    bounded_shape_summary: str | None = None
+    parser_stage: str | None = None
+    repair_correlation: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -98,6 +145,15 @@ class H3ClaimDiagnostic:
             "affected_reference_ids": list(self.affected_reference_ids)[:32],
             "authority_digest": self.authority_digest,
             "ast_digest": self.ast_digest,
+            "phase": self.phase,
+            "candidate_index": self.candidate_index,
+            "error_code": self.error_code,
+            "field_path": self.field_path,
+            "expected_kind": self.expected_kind,
+            "actual_kind": self.actual_kind,
+            "bounded_shape_summary": self.bounded_shape_summary,
+            "parser_stage": self.parser_stage,
+            "repair_correlation": self.repair_correlation,
         }
 
 
@@ -332,26 +388,59 @@ def _repair_request(invalid: list[tuple[_Prepared, Exception]]) -> dict[str, Any
 
 def _decode_response(payload: Any) -> dict[str, dict[str, Any]]:
     if not isinstance(payload, dict) or set(payload) != {"contract_version", "claims"}:
-        raise H3ProviderPayloadError("malformed_h3_provider_payload")
-    if payload["contract_version"] != H3_CONTRACT_VERSION or not isinstance(payload["claims"], list):
-        raise H3ProviderPayloadError("malformed_h3_provider_payload")
+        raise H3ProviderPayloadError(
+            "malformed_h3_provider_payload", field_path="root",
+            expected_kind="object", actual_kind=_kind(payload), shape=_shape(payload),
+        )
+    if payload["contract_version"] != H3_CONTRACT_VERSION:
+        raise H3ProviderPayloadError(
+            "malformed_h3_provider_payload", field_path="contract_version",
+            expected_kind="string", actual_kind=_kind(payload["contract_version"]),
+            shape=_shape(payload["contract_version"]),
+        )
+    if not isinstance(payload["claims"], list):
+        raise H3ProviderPayloadError(
+            "malformed_h3_provider_payload", field_path="claims",
+            expected_kind="array", actual_kind=_kind(payload["claims"]),
+            shape=_shape(payload["claims"]),
+        )
     result: dict[str, dict[str, Any]] = {}
-    for item in payload["claims"]:
+    for index, item in enumerate(payload["claims"]):
         if not isinstance(item, dict):
-            raise H3ProviderPayloadError("malformed_h3_claim_payload")
+            raise H3ProviderPayloadError(
+                "malformed_h3_claim_payload", field_path=f"claims[{index}]",
+                expected_kind="object", actual_kind=_kind(item), shape=_shape(item),
+            )
         if set(item) == {"claim_id", "outcome", "category"}:
             if item["outcome"] != H3ClaimOutcome.REJECTED_UNSUPPORTED.value or not str(item["category"]).strip():
-                raise H3ProviderPayloadError("malformed_h3_claim_rejection")
+                raise H3ProviderPayloadError(
+                    "malformed_h3_claim_rejection", field_path=f"claims[{index}]",
+                    expected_kind="rejection object", actual_kind="object", shape=_shape(item),
+                )
         elif set(item) != {"claim_id", "kind", "certainty", "direction", "nodes"}:
-            raise H3ProviderPayloadError("malformed_h3_claim_payload")
+            raise H3ProviderPayloadError(
+                "malformed_h3_claim_payload", field_path=f"claims[{index}]",
+                expected_kind="claim object", actual_kind="object", shape=_shape(item),
+            )
         claim_id = str(item["claim_id"])
         if not claim_id or claim_id in result:
-            raise H3ProviderPayloadError("malformed_h3_claim_payload")
+            raise H3ProviderPayloadError(
+                "duplicate_or_empty_claim_id", field_path=f"claims[{index}].claim_id",
+                expected_kind="non-empty unique string", actual_kind=_kind(item.get("claim_id")),
+                shape=_shape(item.get("claim_id")),
+            )
         if "nodes" in item:
             if not isinstance(item["nodes"], list):
-                raise H3ProviderPayloadError("malformed_h3_claim_payload")
+                raise H3ProviderPayloadError(
+                    "malformed_h3_claim_payload", field_path=f"claims[{index}].nodes",
+                    expected_kind="array", actual_kind=_kind(item["nodes"]), shape=_shape(item["nodes"]),
+                )
             if item["kind"] not in CLAIM_KINDS or item["certainty"] not in CERTAINTIES or item["direction"] not in DIRECTIONS:
-                raise H3ProviderPayloadError("invalid_h3_assertion_enum")
+                raise H3ProviderPayloadError(
+                    "invalid_h3_assertion_enum", field_path=f"claims[{index}]",
+                    expected_kind="allowed enum values", actual_kind="string/object",
+                    shape=_shape(item),
+                )
         result[claim_id] = item
     return result
 
@@ -360,13 +449,23 @@ def _document(item: _Prepared, raw: dict[str, Any]) -> TypedRenderDocument:
     nodes: list[TypedRenderNode] = []
     for index, payload in enumerate(raw["nodes"]):
         if not isinstance(payload, dict) or set(payload) - {"node_id", "node_type", "owner_claim_ref", "text", "authority_ref", "presentation_variant"}:
-            raise H3ProviderPayloadError("malformed_h3_node")
+            raise H3ProviderPayloadError(
+                "malformed_h3_node", field_path=f"nodes[{index}]",
+                expected_kind="object", actual_kind=_kind(payload), shape=_shape(payload),
+            )
         if "node_type" not in payload:
-            raise H3ProviderPayloadError("malformed_h3_node")
+            raise H3ProviderPayloadError(
+                "malformed_h3_node", field_path=f"nodes[{index}].node_type",
+                expected_kind="string", actual_kind="missing", shape="missing",
+            )
         try:
             node_type = TypedRenderNodeType(str(payload["node_type"]))
         except ValueError as exc:
-            raise H3ProviderPayloadError("invalid_h3_node_type") from exc
+            raise H3ProviderPayloadError(
+                "invalid_h3_node_type", field_path=f"nodes[{index}].node_type",
+                expected_kind="allowed node type", actual_kind=_kind(payload["node_type"]),
+                shape=_shape(payload["node_type"]),
+            ) from exc
         nodes.append(TypedRenderNode(
             node_id=str(payload.get("node_id") or f"{item.claim_id}:node:{index + 1}"),
             node_type=node_type,
@@ -431,12 +530,26 @@ def _rejected(item: _Prepared, exc: Exception, attempts: int, repair: bool) -> H
     affected = ()
     if isinstance(exc, KeyError):
         affected = (str(exc.args[0]),)
+    payload = exc if isinstance(exc, H3ProviderPayloadError) else None
+    candidate_index = None
+    if payload and payload.field_path:
+        match = re.search(r"claims\[(\d+)\]", payload.field_path)
+        candidate_index = int(match.group(1)) if match else None
     return H3ClaimDiagnostic(
         item.claim_id, item.authority.research_question_ids, item.authority.information_need_ids,
         (H3ClaimOutcome.REJECTED_UNSUPPORTED if isinstance(exc, H3UnsupportedCandidate) else H3ClaimOutcome.REJECTED_PROVIDER_INVALID),
         (str(exc)[:96] if isinstance(exc, H3UnsupportedCandidate) else type(exc).__name__), attempts, repair,
         structural_error_codes=tuple(_error_codes(exc)), affected_reference_ids=affected,
         authority_digest=authority_input_digest(item.catalog),
+        phase="REPAIR" if repair else "INITIAL",
+        candidate_index=candidate_index,
+        error_code=(payload.error_code if payload else (str(exc)[:96] or type(exc).__name__)),
+        field_path=payload.field_path if payload else None,
+        expected_kind=payload.expected_kind if payload else None,
+        actual_kind=payload.actual_kind if payload else None,
+        bounded_shape_summary=payload.shape if payload else None,
+        parser_stage=payload.parser_stage if payload else None,
+        repair_correlation=item.claim_id if repair else None,
     )
 
 
