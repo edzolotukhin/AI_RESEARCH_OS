@@ -6,14 +6,16 @@ import os
 import unittest
 from dataclasses import dataclass
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import NullPool
 from sqlalchemy.engine import make_url
 
 from application.config import ApplicationConfig
-from infrastructure.persistence.postgresql.database import Base
 from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
+from infrastructure.persistence.postgresql.readiness import resolve_expected_alembic_head
 
 
 class DeterministicStructuredPptxRenderer:
@@ -184,8 +186,30 @@ def register_engine_cleanup(
 
 
 def reset_schema(engine: Engine) -> None:
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
+    """Reset the disposable integration schema to the Alembic repository head."""
+    database_url = get_test_database_url()
+    previous_url = os.environ.get("DATABASE_URL")
+    engine.dispose()
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("DROP SCHEMA public CASCADE"))
+            connection.execute(text("CREATE SCHEMA public"))
+        os.environ["DATABASE_URL"] = database_url
+        command.upgrade(Config("alembic.ini"), "head")
+        expected_head = resolve_expected_alembic_head()
+        with engine.connect() as connection:
+            actual_head = connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one()
+        if actual_head != expected_head:
+            raise AssertionError(
+                f"Alembic reset head mismatch: expected {expected_head}, got {actual_head}"
+            )
+    finally:
+        if previous_url is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = previous_url
 
 
 def truncate_all_tables(engine: Engine) -> None:
