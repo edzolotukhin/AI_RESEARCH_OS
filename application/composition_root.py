@@ -934,6 +934,7 @@ def _build_agent_executors(
     )
     from application.report.editorial_contract import EDITORIAL_CONTRACT_VERSION
     from application.report.typed_rendering import H3_CONTRACT_VERSION
+    from infrastructure.report.h3_llm_providers import LlmH3EditorialProvider
     report_contract_version = config.desk_report_contract_version
     if report_contract_version not in {
         EDITORIAL_CONTRACT_VERSION, "desk_report_claim_v1", H3_CONTRACT_VERSION,
@@ -958,7 +959,10 @@ def _build_agent_executors(
         report_repository=report_repository, report_claim_repository=report_claim_repository,
         artifact_repository=artifact_repository, llm_client=stage_llm_clients.report,
         report_contract_version="desk_h3_structural_claim_v1",
-        h3_editorial_provider=getattr(overrides, "h3_editorial_provider", None),
+        h3_editorial_provider=(
+            getattr(overrides, "h3_editorial_provider", None)
+            or LlmH3EditorialProvider(stage_llm_clients.report)
+        ),
     )
     executors["report"] = (
         overrides.report_executor

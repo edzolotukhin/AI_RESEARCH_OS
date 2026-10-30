@@ -18,6 +18,7 @@ from application.review.contract_router import DeskReviewContractRouter
 from application.review.h3_workflow_review_adapter import H3WorkflowReviewAdapter
 from infrastructure.review.deterministic_review_engine import DeterministicReviewEngine
 from infrastructure.review.llm_review_engine import LlmReviewEngine
+from infrastructure.review.h3_llm_provider import LlmH3ReviewProvider
 
 
 def build_semantic_review_engine(
@@ -104,7 +105,10 @@ def build_review_executor(
                 report_repository=report_repository,
                 report_claim_repository=report_claim_repository,
                 review_repository=review_repository,
-                review_provider=getattr(overrides, "h3_review_provider", None),
+                review_provider=(
+                    getattr(overrides, "h3_review_provider", None)
+                    or LlmH3ReviewProvider(llm_client)
+                ),
             )
         review_service = DeskReviewContractRouter(
             h2=contract_services.get("h2", review_service), h3=h3_service,

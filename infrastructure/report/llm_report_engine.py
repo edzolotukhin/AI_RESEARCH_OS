@@ -83,6 +83,29 @@ class LlmReportEngine:
     def repair_claim_candidates(self, request: dict[str, Any]) -> dict[str, Any]:
         return self._generate_claim_payload(request, repair=True)
 
+    def generate_h3_claim_candidates(self, request: dict[str, Any]) -> dict[str, Any]:
+        return self._generate_h3_claim_payload(request, repair=False)
+
+    def repair_h3_claim_candidates(self, request: dict[str, Any]) -> dict[str, Any]:
+        return self._generate_h3_claim_payload(request, repair=True)
+
+    def _generate_h3_claim_payload(self, request: dict[str, Any], *, repair: bool) -> dict[str, Any]:
+        operation = "bounded structural claim repair" if repair else "structural claim generation"
+        schema = '{"contract_version":"desk_h3_structural_claim_v1","claims":[]}'
+        if repair:
+            schema = '{"contract_version":"desk_h3_structural_claim_v1","claims":[]}'
+        return self._claim_structured_output.generate(
+            Prompt(
+                system=(
+                    "Generate typed H3 structural ReportClaims only from the supplied "
+                    "authoritative envelopes. Never render factual prose or derive values. "
+                    f"This is one bounded {operation} request.\nREQUIRED JSON SHAPE\n{schema}"
+                ),
+                user=json.dumps(request, ensure_ascii=False, sort_keys=True),
+            ),
+            payload_schema=schema,
+        )
+
     def _generate_claim_payload(
         self,
         request: dict[str, Any],

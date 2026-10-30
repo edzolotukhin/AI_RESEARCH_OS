@@ -21,6 +21,7 @@ from application.report.h3_editorial_delivery import (
     H3PresentationEnvelope, build_h3_editorial_catalog, compose_h3_editorial,
     deterministic_h3_pre_review,
 )
+from application.report.h3_provider_contract import budget_for_context, h3_provider_budget
 from application.report.claim_contract import canonical_digest
 from application.report.typed_rendering import H3_CONTRACT_VERSION
 from application.report.coverage_contract import CONTRACT_KEY, build_report_coverage_contract, excluded_rq_limitation, resolve_report_coverage_contract
@@ -302,16 +303,17 @@ class ClaimFirstReportService(ReportService):
                 "status": "failed", "failure_category": "provider_not_configured",
             })
             raise H3ReportTechnicalError(result)
-        result = generate_h3_structural_claims(
-            project_id=context.project.id, source_workflow_run_id=source_run,
-            report_workflow_run_id=report_run_id, design=design,
-            findings=findings, insights=insights, evidence_by_id=evidence_by_id,
-            citation_id_by_source=source_to_citation,
-            candidate_provider=self._h3_candidate_provider,
-            correction_provider=self._h3_correction_provider,
-            required_research_question_ids=contract.required_rq_ids,
-            required_information_need_ids=required_ins,
-        )
+        with h3_provider_budget(budget_for_context(context)):
+            result = generate_h3_structural_claims(
+                project_id=context.project.id, source_workflow_run_id=source_run,
+                report_workflow_run_id=report_run_id, design=design,
+                findings=findings, insights=insights, evidence_by_id=evidence_by_id,
+                citation_id_by_source=source_to_citation,
+                candidate_provider=self._h3_candidate_provider,
+                correction_provider=self._h3_correction_provider,
+                required_research_question_ids=contract.required_rq_ids,
+                required_information_need_ids=required_ins,
+            )
         diagnostic = {
             **result.to_diagnostic_dict(), "phase": "h3_claim_generation",
             "workflow_run_id": report_run_id, "source_run_id": source_run,
@@ -385,10 +387,11 @@ class ClaimFirstReportService(ReportService):
                     report=report, claims=result.claims,
                     coverage_contract_digest=coverage_digest,
                 )
-                presentation = compose_h3_editorial(
-                    report=report, catalog=editorial_catalog,
-                    provider=self._h3_editorial_provider,
-                )
+                with h3_provider_budget(budget_for_context(context)):
+                    presentation = compose_h3_editorial(
+                        report=report, catalog=editorial_catalog,
+                        provider=self._h3_editorial_provider,
+                    )
                 deterministic_h3_pre_review(
                     report=report, claims=result.claims, presentation=presentation,
                     coverage_contract_digest=coverage_digest,
@@ -852,10 +855,11 @@ class ClaimFirstReportService(ReportService):
                 report=revised, claims=old_claims,
                 coverage_contract_digest=coverage_digest,
             )
-            presentation = compose_h3_editorial(
-                report=revised, catalog=catalog,
-                provider=self._h3_editorial_provider, revision_number=2,
-            )
+            with h3_provider_budget(budget_for_context(context)):
+                presentation = compose_h3_editorial(
+                    report=revised, catalog=catalog,
+                    provider=self._h3_editorial_provider, revision_number=2,
+                )
             deterministic_h3_pre_review(
                 report=revised, claims=old_claims, presentation=presentation,
                 coverage_contract_digest=coverage_digest,

@@ -12,6 +12,7 @@ from enum import Enum
 from typing import Any, Mapping, Protocol
 
 from application.report.claim_contract import canonical_digest
+from application.report.h3_provider_contract import debit_h3_provider_call
 from application.report.h3_claim_generation import restore_h3_claim_structure
 from application.report.typed_rendering import (
     H3AuthorityCatalog, H3_CONTRACT_VERSION, H3_LOCALE, H3_RENDERER_VERSION,
@@ -287,6 +288,7 @@ def compose_h3_editorial(
     for attempt in range(2):
         attempts += 1
         try:
+            debit_h3_provider_call()
             request = {
                 "contract_version": H3_CONTRACT_VERSION,
                 "role": "organize_typed_references_and_numeric_free_text",
@@ -505,6 +507,7 @@ def _decode_editorial_document(payload: Any) -> TypedRenderDocument:
 
 
 def _review_once(provider: H3ReviewProvider, report: Report, presentation: H3PresentationEnvelope) -> tuple[H3ReviewDecision, list[Mapping[str, Any]]]:
+    debit_h3_provider_call()
     payload = provider.review({
         "contract_version": H3_PRESENTATION_VERSION,
         "report_id": report.id, "revision_number": report.revision_number,

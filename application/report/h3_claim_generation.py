@@ -174,6 +174,8 @@ def generate_h3_structural_claims(
 
     attempts = 1
     try:
+        from application.report.h3_provider_contract import debit_h3_provider_call
+        debit_h3_provider_call()
         raw = candidate_provider(_provider_request(prepared))
         candidates = _decode_response(raw)
     except Exception as exc:
@@ -212,6 +214,8 @@ def generate_h3_structural_claims(
         repair_count = 1
         attempts += 1
         try:
+            from application.report.h3_provider_contract import debit_h3_provider_call
+            debit_h3_provider_call()
             repaired = _decode_response(correction_provider(_repair_request(invalid)))
         except Exception as repair_exc:
             repaired = {}

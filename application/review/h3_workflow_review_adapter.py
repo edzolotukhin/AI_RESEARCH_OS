@@ -12,6 +12,7 @@ from application.report.contract_selection import H3_REPORT_CONTRACT
 from application.report.h3_editorial_delivery import (
     H3ReviewDecision, H3PresentationEnvelope, run_h3_review_once,
 )
+from application.report.h3_provider_contract import budget_for_context, h3_provider_budget
 from application.review.deduplication import compute_review_deduplication_key
 from application.review.exceptions import ReviewError
 from application.review.review_service import ReviewSummary, _MAX_DEDUP_RETRIES
@@ -63,11 +64,12 @@ class H3WorkflowReviewAdapter:
             return self._summary(existing)
         if self._provider is None:
             raise ReviewError("H3 Review provider is not configured")
-        result = run_h3_review_once(
-            report=report, claims=claims, presentation=presentation,
-            coverage_contract_digest=presentation.coverage_contract_digest,
-            review_provider=self._provider,
-        )
+        with h3_provider_budget(budget_for_context(context)):
+            result = run_h3_review_once(
+                report=report, claims=claims, presentation=presentation,
+                coverage_contract_digest=presentation.coverage_contract_digest,
+                review_provider=self._provider,
+            )
         verdict = {
             H3ReviewDecision.APPROVE: ReviewVerdict.APPROVE,
             H3ReviewDecision.REVISE: ReviewVerdict.REVISE,
