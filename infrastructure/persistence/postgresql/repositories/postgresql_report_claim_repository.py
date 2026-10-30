@@ -10,6 +10,7 @@ from infrastructure.persistence.postgresql.mappers.report_mapper import report_t
 from infrastructure.persistence.postgresql.project_activity import record_activity
 from infrastructure.persistence.postgresql.mappers.report_claim_mapper import report_claim_from_model, report_claim_to_model
 from infrastructure.persistence.postgresql.models.report_claim_model import ReportClaimModel
+from infrastructure.persistence.postgresql.models.report_claim_membership_model import ReportClaimMembershipModel
 from infrastructure.persistence.postgresql.models.report_model import ReportModel
 from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
 
@@ -22,8 +23,7 @@ class PostgreSQLReportClaimRepository(ReportClaimRepository):
         self.create_many((claim,), report_id=report_id, report_revision=report_revision)
 
     def create_with_report(self, report: Report, claims: tuple[ReportClaim, ...]) -> int:
-        if any(claim.project_id != report.project_id or claim.report_workflow_run_id != report.workflow_run_id or claim.design_id != report.research_design_id for claim in claims):
-            raise ReportClaimConflictError("ReportClaim target revision ownership mismatch")
+        self._validate_membership(report, claims)
         with self._session_factory.session() as session:
             try:
                 session.add(report_to_model(report, version=1))
@@ -34,6 +34,11 @@ class PostgreSQLReportClaimRepository(ReportClaimRepository):
                 session.add_all([report_claim_to_model(claim, report_id=report.id, report_revision=report.revision_number) for claim in claims])
                 record_activity(session, project_id=report.project_id, semantic_key=f"desk-report:{report.id}", event_type="DESK_REPORT_DRAFT_CREATED", source_kind="report", source_id=report.id, run_id=report.workflow_run_id, method="DESK", occurred_at=report.created_at)
                 session.flush()
+                membership_count = session.query(ReportClaimMembershipModel).filter_by(
+                    report_id=report.id, report_revision=report.revision_number,
+                ).count()
+                if membership_count != len(claims):
+                    raise ReportClaimConflictError("ReportClaim membership backfill failed")
             except IntegrityError as exc:
                 session.rollback()
                 raise ReportClaimConflictError("Atomic structured Report persistence failed") from exc
@@ -61,5 +66,57 @@ class PostgreSQLReportClaimRepository(ReportClaimRepository):
 
     def list_for_report(self, report_id: str, report_revision: int) -> list[ReportClaim]:
         with self._session_factory.session() as session:
-            models = session.scalars(select(ReportClaimModel).where(ReportClaimModel.report_id == report_id, ReportClaimModel.report_revision == report_revision).order_by(ReportClaimModel.id)).all()
+            models = session.scalars(
+                select(ReportClaimModel)
+                .join(
+                    ReportClaimMembershipModel,
+                    ReportClaimMembershipModel.report_claim_id == ReportClaimModel.id,
+                )
+                .where(
+                    ReportClaimMembershipModel.report_id == report_id,
+                    ReportClaimMembershipModel.report_revision == report_revision,
+                )
+                .order_by(ReportClaimModel.id)
+            ).all()
             return [report_claim_from_model(item) for item in models]
+
+    def attach_claims_to_report_revision(self, report: Report, claims: tuple[ReportClaim, ...]) -> int:
+        self._validate_membership(report, claims)
+        expected = {claim.claim_id for claim in claims}
+        with self._session_factory.session() as session:
+            existing = set(session.scalars(
+                select(ReportClaimMembershipModel.report_claim_id).where(
+                    ReportClaimMembershipModel.report_id == report.id,
+                    ReportClaimMembershipModel.report_revision == report.revision_number,
+                )
+            ).all())
+            if existing and existing != expected:
+                raise ReportClaimConflictError("ReportClaim membership is partial or incompatible")
+            session.add_all([
+                ReportClaimMembershipModel(
+                    report_id=report.id, report_revision=report.revision_number,
+                    report_claim_id=claim.claim_id,
+                ) for claim in claims if claim.claim_id not in existing
+            ])
+            session.flush()
+        return 1
+
+    def _validate_membership(self, report: Report, claims: tuple[ReportClaim, ...]) -> None:
+        if not claims:
+            raise ReportClaimConflictError("ReportClaim membership must not be empty")
+        if report.revision_number > 1 and not report.previous_report_id:
+            raise ReportClaimConflictError("Report revision parent is missing")
+        if report.metadata.get("structured_claim_contract") == "desk_h3_structural_claim_v1":
+            if any(claim.contract_version != "desk_h3_structural_claim_v1" for claim in claims):
+                raise ReportClaimConflictError("H3 ReportClaim contract mismatch")
+            if report.previous_report_id:
+                previous = self.list_for_report(report.previous_report_id, report.revision_number - 1)
+                if {item.claim_id for item in previous} != {item.claim_id for item in claims}:
+                    raise ReportClaimConflictError("H3 ReportClaim authority set mismatch")
+        if any(
+            claim.project_id != report.project_id
+            or claim.design_id != report.research_design_id
+            or claim.report_workflow_run_id != report.workflow_run_id
+            for claim in claims
+        ):
+            raise ReportClaimConflictError("ReportClaim membership lineage mismatch")
