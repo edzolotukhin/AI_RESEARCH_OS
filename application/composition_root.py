@@ -997,7 +997,7 @@ def _build_agent_executors(
             deliverable_finalizer=deliverable_finalizer,
             report_contract_version=report_contract_version,
             editorial_composer=editorial_composer,
-            contract_services={"h2": None},
+            contract_services={"h3": None},
         )
     )
     from application.executors.revision_executor import RevisionExecutor

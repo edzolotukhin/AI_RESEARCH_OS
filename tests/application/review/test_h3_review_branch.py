@@ -10,6 +10,7 @@ from application.report.contract_selection import DESK_REPORT_CONTRACT_PIN, H2_R
 from application.review.h3_review_branch import (
     H3ReviewBranchController, H3_REVIEW_BRANCH_KEY, H3_REVIEW_EXHAUSTED,
 )
+from application.review.contract_router import DeskReviewContractRouter
 from application.review.review_service import ReviewSummary
 from application.task_scheduler import TaskScheduler
 from application.task_executor import TaskExecutor
@@ -46,6 +47,22 @@ def _context(*, current: str) -> WorkflowContext:
 
 
 class H3ReviewBranchTests(unittest.TestCase):
+    def test_contract_router_has_concrete_h2_and_h3_routes(self):
+        h2 = Mock()
+        h3 = Mock()
+        h2.review_for_context.return_value = _summary("approve")
+        h3.review_for_context.return_value = _summary("approve")
+        router = DeskReviewContractRouter(h2=h2, h3=h3)
+        context = Mock()
+        context.read_shared.side_effect = [None, H3_REPORT_CONTRACT, "unknown"]
+
+        self.assertIs(router._services[H2_REPORT_CONTRACT], h2)
+        self.assertIs(router._services[H3_REPORT_CONTRACT], h3)
+        router.review_for_context(context)
+        router.review_for_context(context)
+        with self.assertRaises(ValueError):
+            router.review_for_context(context)
+
     def test_round_one_approve_satisfies_bypass_and_unlocks_finalization(self):
         context = _context(current="r1")
         H3ReviewBranchController().apply_review_result(context, _summary("approve"))
