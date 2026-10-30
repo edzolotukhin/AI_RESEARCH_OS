@@ -474,4 +474,3 @@ def _result(
     else:
         outcome = H3CoverageOutcome.SUCCESS
     return H3ClaimGenerationResult(claims, tuple(diagnostics), outcome, missing_rqs, missing_ins, attempts, repair_count)
-
