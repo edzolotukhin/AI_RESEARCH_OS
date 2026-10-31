@@ -12,6 +12,7 @@ from application.report.h3_claim_generation import (
     H3ClaimOutcome, H3CoverageOutcome, generate_h3_structural_claims,
     restore_h3_claim_structure,
 )
+from application.report.h3_coverage_plan import build_h3_coverage_plan
 from application.report.typed_rendering import H3_CONTRACT_VERSION
 from application.report.claim_first_report_service import ClaimFirstReportService
 from application.evidence.grounding import verify_grounding
@@ -113,7 +114,7 @@ def _valid_response(request, *, text="Рівень становив ", include_c
 
 
 class H3ClaimGenerationTests(unittest.TestCase):
-    def generate(self, fixture=None, provider=_valid_response, repair=None, required_rqs=None, required_ins=None):
+    def generate(self, fixture=None, provider=_valid_response, repair=None, required_rqs=None, required_ins=None, coverage_plan=None):
         fixture = fixture or _Fixture()
         return generate_h3_structural_claims(
             project_id="project-1", source_workflow_run_id="source-run",
@@ -124,7 +125,49 @@ class H3ClaimGenerationTests(unittest.TestCase):
             candidate_provider=provider, correction_provider=repair,
             required_research_question_ids=required_rqs or ("rq-1",),
             required_information_need_ids=required_ins or ("in-1",),
+            coverage_plan=coverage_plan,
         )
+
+    def test_evidence_only_required_need_is_unfillable_before_provider(self):
+        fixture = _Fixture(two=True)
+        fixture.findings = fixture.findings[:1]
+        plan = build_h3_coverage_plan(
+            design=fixture.design,
+            required_information_need_ids=("in-1", "in-2"),
+            findings=tuple(fixture.findings),
+            evidence_by_id={item.id: item for item in fixture.evidence},
+            insights=(),
+        )
+        calls = []
+        result = self.generate(
+            fixture, provider=lambda request: calls.append(request),
+            required_ins=("in-1", "in-2"), coverage_plan=plan,
+        )
+        self.assertEqual(calls, [])
+        self.assertEqual(result.provider_attempt_count, 0)
+        self.assertEqual(result.coverage_outcome, H3CoverageOutcome.REPORT_INSUFFICIENT_COVERAGE)
+        self.assertEqual(result.coverage_diagnostics[0]["reason_code"], "required_information_need_unfillable")
+
+    def test_coverable_provider_omission_is_typed_after_provider(self):
+        fixture = _Fixture(two=True)
+        plan = build_h3_coverage_plan(
+            design=fixture.design,
+            required_information_need_ids=("in-1", "in-2"),
+            findings=tuple(fixture.findings),
+            evidence_by_id={item.id: item for item in fixture.evidence},
+            insights=(),
+        )
+        def provider(request):
+            self.assertEqual({item["information_need_id"] for item in request["coverage_slots"]}, {"in-1", "in-2"})
+            response = _valid_response(request)
+            return {"contract_version": response["contract_version"], "claims": response["claims"][:1]}
+        result = self.generate(
+            fixture, provider=provider, required_rqs=("rq-1", "rq-2"),
+            required_ins=("in-1", "in-2"), coverage_plan=plan,
+        )
+        self.assertEqual(result.provider_attempt_count, 1)
+        self.assertEqual(result.coverage_outcome, H3CoverageOutcome.REPORT_INSUFFICIENT_COVERAGE)
+        self.assertEqual(result.coverage_diagnostics[0]["reason_code"], "provider_coverage_omission")
 
     def test_valid_structural_claim_decimal_percent_period_citation(self):
         result = self.generate()

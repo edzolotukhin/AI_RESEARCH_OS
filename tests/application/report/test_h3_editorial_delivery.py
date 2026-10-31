@@ -107,6 +107,50 @@ class H3EditorialDeliveryTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(presentation.report_id, "report-1")
 
+    def test_editorial_initial_and_repair_schema_are_identical(self):
+        calls = []
+        class Provider:
+            def compose(self, request):
+                calls.append(request)
+                return _editorial_payload(request, bad="unknown" if len(calls) == 1 else None)
+        compose_h3_editorial(report=self.report, catalog=self.catalog, provider=Provider())
+        self.assertEqual(calls[0]["response_schema"], calls[1]["response_schema"])
+        self.assertEqual(calls[0]["purpose"], "editorial")
+
+    def test_review_invalid_decision_and_issue_shape_have_exact_paths(self):
+        from application.report.h3_editorial_delivery import _review_once
+        class BadDecision:
+            def review(self, request): return {"decision": "MAYBE", "issues": []}
+        with self.assertRaises(H3EditorialError) as decision:
+            _review_once(BadDecision(), self.report, compose_h3_editorial(
+                report=self.report, catalog=self.catalog,
+                provider=type("P", (), {"compose": lambda _, request: _editorial_payload(request)})(),
+            ))
+        self.assertEqual(decision.exception.field_path, "decision")
+
+    def test_editorial_invalid_node_type_reports_exact_path_and_repairs_once(self):
+        calls = []
+        class Provider:
+            def compose(self, request):
+                calls.append(request)
+                payload = _editorial_payload(request)
+                if len(calls) == 1:
+                    payload["typed_document"]["nodes"][1]["node_type"] = "UNKNOWN"
+                return payload
+        presentation = compose_h3_editorial(
+            report=self.report, catalog=self.catalog, provider=Provider(),
+        )
+        self.assertEqual(presentation.report_id, "report-1")
+        self.assertEqual(len(calls), 2)
+
+    def test_editorial_missing_node_field_is_exact_and_fail_closed(self):
+        payload = _editorial_payload({"authority_catalog": self.catalog.authority.to_canonical_dict()})
+        del payload["typed_document"]["nodes"][1]["authority_ref"]
+        with self.assertRaises(H3EditorialError) as captured:
+            from application.report.h3_editorial_delivery import _decode_editorial_document
+            _decode_editorial_document(payload)
+        self.assertEqual(captured.exception.field_path, "typed_document.nodes[1].authority_ref")
+
     def test_deterministic_provenance_failure_does_not_repair(self):
         calls = []
         class Provider:

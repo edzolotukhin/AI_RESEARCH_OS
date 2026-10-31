@@ -16,7 +16,7 @@ from application.report.h3_provider_contract import debit_h3_provider_call
 from application.report.h3_claim_generation import restore_h3_claim_structure
 from application.report.typed_rendering import (
     H3AuthorityCatalog, H3_CONTRACT_VERSION, H3_LOCALE, H3_RENDERER_VERSION,
-    TypedRenderDocument, TypedRenderError, TypedRenderNode,
+    TypedRenderDocument, TypedRenderError, TypedRenderNode, TypedRenderNodeType,
     authority_input_digest, render_typed_document, typed_ast_digest,
     rendered_output_digest, validate_typed_render_document,
 )
@@ -28,9 +28,12 @@ H3_PRESENTATION_VERSION = "desk_h3_structural_presentation_v1"
 
 
 class H3EditorialError(ValueError):
-    def __init__(self, code: str, *, repairable: bool = False) -> None:
+    def __init__(self, code: str, *, repairable: bool = False,
+                 field_path: str | None = None, actual_kind: str | None = None) -> None:
         self.code = code
         self.repairable = repairable
+        self.field_path = field_path
+        self.actual_kind = actual_kind
         super().__init__(code)
 
 
@@ -38,6 +41,33 @@ class H3ReviewDecision(str, Enum):
     APPROVE = "APPROVE"
     REVISE = "REVISE"
     REJECT = "REJECT"
+
+
+H3_EDITORIAL_RESPONSE_SCHEMA = {
+    "type": "object",
+    "required": ("contract_version", "typed_document"),
+    "properties": {
+        "contract_version": {"type": "string", "const": H3_CONTRACT_VERSION},
+        "typed_document": {
+            "type": "object",
+            "required": ("contract_version", "document_id", "owner_id", "nodes"),
+            "node_type": tuple(item.value for item in TypedRenderNodeType),
+        },
+    },
+}
+
+H3_REVIEW_RESPONSE_SCHEMA = {
+    "type": "object",
+    "required": ("decision", "issues"),
+    "properties": {
+        "decision": {"type": "string", "enum": tuple(item.value for item in H3ReviewDecision)},
+        "issues": {"type": "array", "items": {
+            "type": "object",
+            "required": ("code", "severity", "message"),
+            "properties": {"code": "string", "severity": "string", "message": "string"},
+        }},
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -291,13 +321,16 @@ def compose_h3_editorial(
             debit_h3_provider_call()
             request = {
                 "contract_version": H3_CONTRACT_VERSION,
+                "purpose": "revision" if revision_number and revision_number > 1 else "editorial",
+                "report_id": report.id,
+                "revision_number": revision_number or report.revision_number,
                 "role": "organize_typed_references_and_numeric_free_text",
                 "authority_digest": catalog.authority_digest,
                 "claim_set_digest": catalog.claim_set_digest,
                 "coverage_contract_digest": catalog.coverage_contract_digest,
                 "claims": list(catalog.claims.values()),
                 "authority_catalog": catalog.authority.to_canonical_dict(),
-                "response_schema": {"fields": ["contract_version", "typed_document"]},
+                "response_schema": H3_EDITORIAL_RESPONSE_SCHEMA,
             }
             if attempt:
                 request["repair"] = True
@@ -497,13 +530,36 @@ def _merge_catalogs(catalogs: list[H3AuthorityCatalog]) -> H3AuthorityCatalog:
 
 def _decode_editorial_document(payload: Any) -> TypedRenderDocument:
     if not isinstance(payload, Mapping) or set(payload) != {"contract_version", "typed_document"}:
-        raise H3EditorialError("h3_editorial_schema", repairable=True)
+        raise H3EditorialError("h3_editorial_schema", repairable=True, field_path="response")
     if payload["contract_version"] != H3_CONTRACT_VERSION:
-        raise H3EditorialError("h3_editorial_contract", repairable=True)
+        raise H3EditorialError("h3_editorial_contract", repairable=True, field_path="contract_version")
+    typed = payload.get("typed_document")
+    if not isinstance(typed, Mapping):
+        raise H3EditorialError("invalid_contract", repairable=True, field_path="typed_document")
+    if not isinstance(typed.get("nodes"), list):
+        raise H3EditorialError("invalid_contract", repairable=True, field_path="typed_document.nodes")
+    expected_node = {"node_id", "node_type", "owner_claim_ref", "text", "authority_ref", "presentation_variant"}
+    for index, node in enumerate(typed["nodes"]):
+        path = f"typed_document.nodes[{index}]"
+        if not isinstance(node, Mapping):
+            raise H3EditorialError("malformed_node", repairable=True, field_path=path)
+        missing = sorted(expected_node - set(node))
+        extra = sorted(set(node) - expected_node)
+        if missing or extra:
+            field = missing[0] if missing else extra[0]
+            raise H3EditorialError("malformed_node", repairable=True, field_path=f"{path}.{field}")
+        if node["node_type"] not in {item.value for item in TypedRenderNodeType}:
+            raise H3EditorialError("malformed_node", repairable=True, field_path=f"{path}.node_type", actual_kind=type(node["node_type"]).__name__)
     try:
-        return TypedRenderDocument.from_dict(payload["typed_document"])
+        return TypedRenderDocument.from_dict(typed)
     except TypedRenderError as exc:
-        raise H3EditorialError(exc.code.value, repairable=True) from exc
+        path = "typed_document"
+        if isinstance(payload.get("typed_document"), Mapping):
+            if exc.code.value == "malformed_node":
+                path = "typed_document.nodes"
+            elif exc.code.value == "invalid_contract":
+                path = "typed_document"
+        raise H3EditorialError(exc.code.value, repairable=True, field_path=path) from exc
 
 
 def _review_once(provider: H3ReviewProvider, report: Report, presentation: H3PresentationEnvelope) -> tuple[H3ReviewDecision, list[Mapping[str, Any]]]:
@@ -514,14 +570,24 @@ def _review_once(provider: H3ReviewProvider, report: Report, presentation: H3Pre
         "presentation_digest": presentation.presentation_digest,
         "rendered_presentation": presentation.rendered_presentation,
         "allowed_dimensions": ["clarity", "organization", "synthesis", "repetition", "executive_summary_usefulness", "limitation_wording", "interpretation_communication"],
+        "response_schema": H3_REVIEW_RESPONSE_SCHEMA,
     })
     if not isinstance(payload, Mapping) or set(payload) != {"decision", "issues"} or not isinstance(payload["issues"], list):
-        raise H3EditorialError("h3_review_schema")
+        raise H3EditorialError("h3_review_schema", field_path="response")
     try:
         decision = H3ReviewDecision(str(payload["decision"]))
     except ValueError as exc:
-        raise H3EditorialError("h3_review_decision") from exc
-    issues = tuple(item for item in payload["issues"] if isinstance(item, Mapping))
+        raise H3EditorialError(
+            "h3_review_decision", field_path="decision",
+            actual_kind=type(payload.get("decision")).__name__,
+        ) from exc
+    if any(not isinstance(item, Mapping) for item in payload["issues"]):
+        raise H3EditorialError("h3_review_issue", field_path="issues")
+    issues = tuple({
+        "code": str(item.get("code", "unknown"))[:96],
+        "severity": str(item.get("severity", "unknown"))[:32],
+        "message": str(item.get("message", ""))[:512],
+    } for item in payload["issues"])
     return decision, list(issues)
 
 

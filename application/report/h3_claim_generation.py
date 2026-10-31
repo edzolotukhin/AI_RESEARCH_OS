@@ -15,6 +15,7 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from application.report.claim_authority import ClaimAuthority, ClaimAuthorityError, derive_claim_authority
+from application.report.h3_coverage_plan import H3CoveragePlan
 from application.report.typed_rendering import (
     CitationAuthorityRef, ClaimAuthorityRef, FactAuthorityRef, H3AuthorityCatalog,
     H3_CONTRACT_VERSION, H3_LOCALE, H3_RENDERER_VERSION, PeriodAuthorityRef,
@@ -173,6 +174,7 @@ class H3ClaimGenerationResult:
     missing_information_need_ids: tuple[str, ...]
     provider_attempt_count: int
     repair_count: int
+    coverage_diagnostics: tuple[dict[str, Any], ...] = ()
 
     def to_diagnostic_dict(self) -> dict[str, Any]:
         return {
@@ -184,6 +186,7 @@ class H3ClaimGenerationResult:
             "missing_information_need_ids": list(self.missing_information_need_ids),
             "provider_attempt_count": self.provider_attempt_count,
             "repair_count": self.repair_count,
+            "coverage_diagnostics": [dict(item) for item in self.coverage_diagnostics[:16]],
             "claims": [item.to_dict() for item in self.diagnostics],
         }
 
@@ -206,7 +209,14 @@ def generate_h3_structural_claims(
     correction_provider: H3CandidateProvider | None,
     required_research_question_ids: tuple[str, ...],
     required_information_need_ids: tuple[str, ...],
+    coverage_plan: H3CoveragePlan | None = None,
 ) -> H3ClaimGenerationResult:
+    if coverage_plan is not None and not coverage_plan.is_fully_fillable:
+        gaps = tuple(item.to_dict() for item in coverage_plan.unfillable_required_information_needs)
+        return _result(
+            (), [], required_research_question_ids, required_information_need_ids, 0, 0,
+            coverage_diagnostics=gaps, coverage_plan=coverage_plan,
+        )
     prepared: list[_Prepared] = []
     diagnostics: list[H3ClaimDiagnostic] = []
     technical = False
@@ -231,15 +241,15 @@ def generate_h3_structural_claims(
                 H3ClaimOutcome.AUTHORITY_INVALID, type(exc).__name__, 0, False,
             ))
     if technical:
-        return _result((), diagnostics, required_research_question_ids, required_information_need_ids, 0, 0, technical=True)
+        return _result((), diagnostics, required_research_question_ids, required_information_need_ids, 0, 0, technical=True, coverage_plan=coverage_plan)
     if not prepared:
-        return _result((), diagnostics, required_research_question_ids, required_information_need_ids, 0, 0)
+        return _result((), diagnostics, required_research_question_ids, required_information_need_ids, 0, 0, coverage_plan=coverage_plan)
 
     attempts = 1
     try:
         from application.report.h3_provider_contract import debit_h3_provider_call
         debit_h3_provider_call()
-        raw = candidate_provider(_provider_request(prepared))
+        raw = candidate_provider(_provider_request(prepared, coverage_plan=coverage_plan))
         candidates = _decode_response(raw)
     except Exception as exc:
         candidates = {}
@@ -266,7 +276,7 @@ def generate_h3_structural_claims(
                     authority_digest=authority_input_digest(item.catalog),
                 ))
                 return _result(tuple(claims), diagnostics, required_research_question_ids,
-                               required_information_need_ids, attempts, 0, technical=True)
+                               required_information_need_ids, attempts, 0, technical=True, coverage_plan=coverage_plan)
             invalid.append((item, exc))
         else:
             claims.append(claim)
@@ -279,7 +289,9 @@ def generate_h3_structural_claims(
         try:
             from application.report.h3_provider_contract import debit_h3_provider_call
             debit_h3_provider_call()
-            repaired = _decode_response(correction_provider(_repair_request(invalid)))
+            repaired = _decode_response(
+                correction_provider(_repair_request(invalid, coverage_plan=coverage_plan))
+            )
         except Exception as repair_exc:
             repaired = {}
             repair_batch_error: Exception | None = repair_exc
@@ -299,7 +311,7 @@ def generate_h3_structural_claims(
                         authority_digest=authority_input_digest(item.catalog),
                     ))
                     return _result(tuple(claims), diagnostics, required_research_question_ids,
-                                   required_information_need_ids, attempts, repair_count, technical=True)
+                                   required_information_need_ids, attempts, repair_count, technical=True, coverage_plan=coverage_plan)
                 diagnostics.append(_rejected(item, exc, attempts, True))
             else:
                 claims.append(claim)
@@ -307,7 +319,7 @@ def generate_h3_structural_claims(
     else:
         for item, exc in invalid:
             diagnostics.append(_rejected(item, exc, attempts, False))
-    return _result(tuple(claims), diagnostics, required_research_question_ids, required_information_need_ids, attempts, repair_count)
+    return _result(tuple(claims), diagnostics, required_research_question_ids, required_information_need_ids, attempts, repair_count, coverage_plan=coverage_plan)
 
 
 def restore_h3_claim_structure(claim: ReportClaim) -> tuple[TypedRenderDocument, H3AuthorityCatalog]:
@@ -361,11 +373,17 @@ def _catalog_for_authority(
     ), citation_ids
 
 
-def _provider_request(prepared: list[_Prepared]) -> dict[str, Any]:
+def _provider_request(
+    prepared: list[_Prepared], *, coverage_plan: H3CoveragePlan | None = None,
+) -> dict[str, Any]:
     return {
         "contract_version": H3_CONTRACT_VERSION,
         "instruction": "Return typed nodes only. TEXT must contain no digits, URLs, source names, or authority annotations.",
         "allowed_vocabulary": _allowed_vocabulary(),
+        "coverage_slots": (
+            [item.to_dict() for item in coverage_plan.coverable_slots]
+            if coverage_plan is not None else []
+        ),
         "candidates": [
             {
                 "claim_id": item.claim_id,
@@ -379,11 +397,17 @@ def _provider_request(prepared: list[_Prepared]) -> dict[str, Any]:
     }
 
 
-def _repair_request(invalid: list[tuple[_Prepared, Exception]]) -> dict[str, Any]:
+def _repair_request(
+    invalid: list[tuple[_Prepared, Exception]], *, coverage_plan: H3CoveragePlan | None = None,
+) -> dict[str, Any]:
     return {
         "contract_version": H3_CONTRACT_VERSION,
         "repair": True,
         "allowed_vocabulary": _allowed_vocabulary(),
+        "coverage_slots": (
+            [item.to_dict() for item in coverage_plan.coverable_slots]
+            if coverage_plan is not None else []
+        ),
         "candidates": [
             {
                 "claim_id": item.claim_id,
@@ -600,11 +624,21 @@ def _result(
     claims: tuple[ReportClaim, ...], diagnostics: list[H3ClaimDiagnostic],
     required_rqs: tuple[str, ...], required_ins: tuple[str, ...],
     attempts: int, repair_count: int, *, technical: bool = False,
+    coverage_diagnostics: tuple[dict[str, Any], ...] = (),
+    coverage_plan: H3CoveragePlan | None = None,
 ) -> H3ClaimGenerationResult:
     covered_rqs = {ref for claim in claims for ref in claim.research_question_ids}
     covered_ins = {ref for claim in claims for ref in claim.information_need_ids}
     missing_rqs = tuple(sorted(set(required_rqs) - covered_rqs))
     missing_ins = tuple(sorted(set(required_ins) - covered_ins))
+    diagnostics_for_coverage = list(coverage_diagnostics)
+    if coverage_plan is not None:
+        coverable = {item.information_need_id for item in coverage_plan.coverable_slots}
+        diagnostics_for_coverage.extend({
+            "information_need_id": item,
+            "coverability": "COVERABLE",
+            "reason_code": "provider_coverage_omission",
+        } for item in sorted(set(missing_ins) & coverable))
     if technical:
         outcome = H3CoverageOutcome.TECHNICAL_ERROR
     elif missing_rqs or missing_ins:
@@ -613,4 +647,7 @@ def _result(
         outcome = H3CoverageOutcome.LIMITED
     else:
         outcome = H3CoverageOutcome.SUCCESS
-    return H3ClaimGenerationResult(claims, tuple(diagnostics), outcome, missing_rqs, missing_ins, attempts, repair_count)
+    return H3ClaimGenerationResult(
+        claims, tuple(diagnostics), outcome, missing_rqs, missing_ins,
+        attempts, repair_count, tuple(diagnostics_for_coverage),
+    )

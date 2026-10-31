@@ -17,6 +17,7 @@ from application.report.h3_claim_generation import (
     H3CoverageOutcome, H3ReportInsufficientCoverage, H3ReportTechnicalError,
     generate_h3_structural_claims, restore_h3_claim_structure,
 )
+from application.report.h3_coverage_plan import build_h3_coverage_plan
 from application.report.h3_editorial_delivery import (
     H3PresentationEnvelope, build_h3_editorial_catalog, compose_h3_editorial,
     deterministic_h3_pre_review,
@@ -287,6 +288,13 @@ class ClaimFirstReportService(ReportService):
             need.id for need in design.information_needs
             if need.research_question_id in set(contract.required_rq_ids)
         ))
+        coverage_plan = build_h3_coverage_plan(
+            design=design,
+            required_information_need_ids=required_ins,
+            findings=findings,
+            evidence_by_id=evidence_by_id,
+            insights=insights,
+        )
         if not callable(self._h3_candidate_provider):
             result = generate_h3_structural_claims(
                 project_id=context.project.id, source_workflow_run_id=source_run,
@@ -296,6 +304,7 @@ class ClaimFirstReportService(ReportService):
                 correction_provider=None,
                 required_research_question_ids=contract.required_rq_ids,
                 required_information_need_ids=required_ins,
+                coverage_plan=coverage_plan,
             )
             result = replace(result, coverage_outcome=H3CoverageOutcome.TECHNICAL_ERROR)
             context.write_shared("report_generation_diagnostics", {
@@ -313,6 +322,7 @@ class ClaimFirstReportService(ReportService):
                 correction_provider=self._h3_correction_provider,
                 required_research_question_ids=contract.required_rq_ids,
                 required_information_need_ids=required_ins,
+                coverage_plan=coverage_plan,
             )
         diagnostic = {
             **result.to_diagnostic_dict(), "phase": "h3_claim_generation",
@@ -404,6 +414,8 @@ class ClaimFirstReportService(ReportService):
                     **diagnostic, "status": "failed",
                     "failure_category": "h3_editorial_composition",
                     "code": str(getattr(exc, "code", type(exc).__name__))[:96],
+                    "field_path": getattr(exc, "field_path", None),
+                    "actual_kind": getattr(exc, "actual_kind", None),
                 })
                 raise H3ReportTechnicalError(replace(result, coverage_outcome=H3CoverageOutcome.TECHNICAL_ERROR)) from exc
         try:
