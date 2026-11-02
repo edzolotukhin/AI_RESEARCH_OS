@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 
 from application.scheduling.scheduling_result import SchedulingResult
 from runtime.workflow_context import WorkflowContext
@@ -24,6 +24,15 @@ class WorkflowRuntimeCheckpoint(Protocol):
 
     def on_task_progress(self, context: WorkflowContext) -> None:
         """Optional mid-task checkpoint for long-running executors."""
+        ...
+
+    def persist_named_result(
+        self,
+        context: WorkflowContext,
+        key: str,
+        value: Any,
+    ) -> None:
+        """Persist one durable result through the canonical version owner."""
         ...
 
     def on_task_finished(

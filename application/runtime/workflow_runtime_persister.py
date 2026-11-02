@@ -30,6 +30,7 @@ from application.execution.heartbeat import LeaseGuard
 from application.executors.design_generation_executor import (
     DESIGN_GENERATION_DIAGNOSTIC_KEY,
 )
+from application.runtime.checkpoint_context import CHECKPOINT_FAILURE_HANDLER_KEY
 
 
 class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
@@ -88,6 +89,18 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
         if task is None:
             return
         self._task_results[task.id] = capture_task_progress(context, task.id)
+        self._checkpoint(context, critical=True)
+
+    def persist_named_result(
+        self,
+        context: WorkflowContext,
+        key: str,
+        value: Any,
+    ) -> None:
+        """Persist executor-owned durable state without creating a second writer."""
+        if not key:
+            raise ValueError("Durable result key must not be empty.")
+        self._task_results[key] = value
         self._checkpoint(context, critical=True)
 
     def on_task_finished(
@@ -203,6 +216,9 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
                 task_results=self._task_results,
             )
         except Exception as exc:
+            failure_handler = context.services.get(CHECKPOINT_FAILURE_HANDLER_KEY)
+            if callable(failure_handler):
+                failure_handler(exc)
             raise CheckpointPersistenceError(
                 f"Failed to checkpoint WorkflowRun {self._run_id}."
             ) from exc

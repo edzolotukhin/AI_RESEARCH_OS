@@ -27,9 +27,16 @@ from infrastructure.persistence.memory.in_memory_authority_extension_repository 
 )
 from infrastructure.persistence.memory.in_memory_source_repository import InMemorySourceRepository
 from application.authority_extension.stage_adapters import (
-    ExtensionImmutableSourceRepositoryProxy, _extension_dispatch,
+    AuthorityExtensionStageExecutor,
+    ExtensionImmutableSourceRepositoryProxy,
+    _extension_dispatch,
 )
 from domain.sources.source import Source
+from domain.project import Project
+from runtime.workflow_context import WorkflowContext
+from application.runtime.workflow_runtime_persister import WorkflowRuntimePersister
+from application.runtime.checkpoint_context import CHECKPOINT_SERVICE_KEY
+from application.persistence.exceptions import CheckpointPersistenceError
 
 
 class _Workflows:
@@ -58,6 +65,7 @@ class _Workflows:
     def save_workflow_run(self, run, *, expected_version, task_results):
         if expected_version != self.versions[run.id]: raise RuntimeError("version conflict")
         self.results[run.id] = dict(task_results); self.versions[run.id] += 1
+        return self.versions[run.id]
 
 
 def _design():
@@ -349,6 +357,74 @@ class SelectedAuthorityExtensionTests(unittest.TestCase):
         stored = self.extensions.get_by_id(self.extension.extension_id)
         self.assertEqual(stored.status.value, "technical_error")
         self.assertEqual(stored.terminal_reason, "network unavailable")
+
+    def _runtime_owned_plan(self):
+        workflows = _Workflows()
+        extensions = InMemoryAuthorityExtensionRepository()
+        states = WorkflowExtensionStateStore(workflows)
+        service = SelectedAuthorityExtensionService(
+            workflow_service=workflows,
+            extension_repository=extensions,
+            composed_authority_repository=InMemoryComposedAuthorityRepository(extensions),
+            state_store=states,
+            capability_check=lambda: True,
+        )
+        extension = service.start(
+            project_id="project",
+            parent_workflow_run_id="parent",
+            design=_design(),
+            selected_information_need_ids=("in1", "in2_real_adjustment", "in3"),
+            idempotency_key="runtime-version-test",
+            confirmed=True,
+        )
+        service.activate(extension.extension_id)
+        run_id = extension.extension_workflow_run_id
+        run = workflows.get_workflow_run(run_id)
+        task = run.tasks[0]
+        task.ready()
+        task.start()
+        context = WorkflowContext(run, Project("project", "P"), workflows.templates[0])
+        context.current_task = task
+        persister = WorkflowRuntimePersister(
+            workflow_service=workflows,
+            audit=None,
+            run_id=run_id,
+            initial_version=workflows.get_workflow_run_version(run_id),
+            task_results=workflows.get_task_results(run_id),
+        )
+        context.services[CHECKPOINT_SERVICE_KEY] = persister
+        return workflows, extensions, service, extension, context, task, persister
+
+    def test_extension_plan_uses_runtime_as_single_workflow_version_owner(self):
+        workflows, _, service, extension, context, task, persister = self._runtime_owned_plan()
+        persister.on_task_running(context)
+        AuthorityExtensionStageExecutor("extension_plan", service).run(context)
+        task.complete()
+        persister.on_task_finished(context, error=None)
+
+        self.assertEqual(
+            persister.expected_version,
+            workflows.get_workflow_run_version(extension.extension_workflow_run_id),
+        )
+        state = workflows.get_task_results(extension.extension_workflow_run_id)
+        self.assertIn(WorkflowExtensionStateStore.KEY, state)
+
+    def test_checkpoint_conflict_marks_extension_technical_error(self):
+        workflows, extensions, service, extension, context, task, persister = self._runtime_owned_plan()
+        persister.on_task_running(context)
+        AuthorityExtensionStageExecutor("extension_plan", service).run(context)
+        workflows.save_workflow_run(
+            context.workflow_run,
+            expected_version=workflows.get_workflow_run_version(extension.extension_workflow_run_id),
+            task_results=workflows.get_task_results(extension.extension_workflow_run_id),
+        )
+        task.complete()
+
+        with self.assertRaises(CheckpointPersistenceError):
+            persister.on_task_finished(context, error=None)
+        stored = extensions.get_by_id(extension.extension_id)
+        self.assertEqual(stored.status.value, "technical_error")
+        self.assertEqual(stored.terminal_reason, "RuntimeError")
 
 
 if __name__ == "__main__":

@@ -1,1 +1,2 @@
 CHECKPOINT_SERVICE_KEY = "workflow_runtime_checkpoint"
+CHECKPOINT_FAILURE_HANDLER_KEY = "workflow_checkpoint_failure_handler"

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import re
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -145,17 +147,48 @@ class WorkflowExtensionStateStore:
 
     def __init__(self, workflow_service) -> None:
         self._workflows = workflow_service
+        self._runtime_context: ContextVar[Any | None] = ContextVar(
+            "authority_extension_runtime_context",
+            default=None,
+        )
+
+    @contextmanager
+    def runtime_scope(self, context):
+        token = self._runtime_context.set(context)
+        try:
+            yield
+        finally:
+            self._runtime_context.reset(token)
 
     def load(self, workflow_run_id: str) -> ExtensionState | None:
+        context = self._runtime_context.get()
+        if context is not None:
+            payload = context.read_shared(self.KEY)
+            if isinstance(payload, dict):
+                return _state_from_dict(payload)
         payload = self._workflows.get_task_results(workflow_run_id).get(self.KEY)
         if not isinstance(payload, dict):
             return None
         return _state_from_dict(payload)
 
     def save(self, state: ExtensionState) -> None:
+        payload = _state_to_dict(state)
+        context = self._runtime_context.get()
+        if context is not None:
+            from application.runtime.checkpoint_context import CHECKPOINT_SERVICE_KEY
+
+            checkpoint = context.services.get(CHECKPOINT_SERVICE_KEY)
+            persist = getattr(checkpoint, "persist_named_result", None)
+            if not callable(persist):
+                raise ExtensionContractError(
+                    "authority extension runtime checkpoint is unavailable"
+                )
+            context.write_shared(self.KEY, payload)
+            persist(context, self.KEY, payload)
+            return
         run = self._workflows.get_workflow_run(state.workflow_run_id)
         results = self._workflows.get_task_results(state.workflow_run_id)
-        results[self.KEY] = _state_to_dict(state)
+        results[self.KEY] = payload
         version = self._workflows.get_workflow_run_version(state.workflow_run_id)
         self._workflows.save_workflow_run(run, expected_version=version, task_results=results)
 
@@ -307,6 +340,10 @@ class SelectedAuthorityExtensionService:
         self.compositions = composed_authority_repository
         self.states = state_store
         self.capability_check = capability_check or (lambda: False)
+
+    def runtime_state_scope(self, context):
+        scope = getattr(self.states, "runtime_scope", None)
+        return scope(context) if callable(scope) else nullcontext()
 
     def start(self, *, project_id: str, parent_workflow_run_id: str,
               design: ResearchDesign, selected_information_need_ids: Iterable[str],

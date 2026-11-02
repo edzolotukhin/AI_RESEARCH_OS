@@ -18,12 +18,15 @@ from tests.application.authority_extension.test_selected_workflow import Selecte
 from tests.application.authority_extension.test_selected_workflow import _Workflows, _design
 from application.authority_extension.selected_workflow import (
     InMemoryExtensionStateStore, SelectedAuthorityExtensionService,
+    WorkflowExtensionStateStore,
     _state_from_dict, _state_to_dict,
 )
 from domain.research_authority import ResearchAuthorityExtension
 from infrastructure.persistence.memory.in_memory_authority_extension_repository import InMemoryAuthorityExtensionRepository, InMemoryComposedAuthorityRepository
 from domain.factories.task_factory import TaskFactory
 from domain.factories.workflow_run_factory import WorkflowRunFactory
+from application.runtime.workflow_runtime_persister import WorkflowRuntimePersister
+from application.runtime.checkpoint_context import CHECKPOINT_SERVICE_KEY
 
 SYNTHETIC_TIMESTAMP = "2025-01-01T00:00:00+00:00"
 
@@ -90,6 +93,118 @@ class _AnalysisBoundary:
 
 
 class P2ProductionShapedAcceptanceTests(SelectedAuthorityExtensionTests):
+    def _runtime_graph(self):
+        workflows = _Workflows()
+        extensions = InMemoryAuthorityExtensionRepository()
+        compositions = InMemoryComposedAuthorityRepository(extensions)
+        service = SelectedAuthorityExtensionService(
+            workflow_service=workflows,
+            extension_repository=extensions,
+            composed_authority_repository=compositions,
+            state_store=WorkflowExtensionStateStore(workflows),
+            capability_check=lambda: True,
+        )
+        extension = service.start(
+            project_id="project",
+            parent_workflow_run_id="parent",
+            design=_design(),
+            selected_information_need_ids=("in1", "in2_real_adjustment", "in3"),
+            idempotency_key="runtime-lifecycle",
+            confirmed=True,
+        )
+        service.activate(extension.extension_id)
+        run_id = extension.extension_workflow_run_id
+        run = workflows.get_workflow_run(run_id)
+        context = WorkflowContext(run, Project("project", "P"), workflows.templates[0])
+        persister = WorkflowRuntimePersister(
+            workflow_service=workflows,
+            audit=None,
+            run_id=run_id,
+            initial_version=workflows.get_workflow_run_version(run_id),
+            task_results=workflows.get_task_results(run_id),
+        )
+        context.services[CHECKPOINT_SERVICE_KEY] = persister
+        return workflows, extensions, compositions, service, extension, context, persister
+
+    @staticmethod
+    def _run_runtime_stage(context, persister, executor):
+        task = next(
+            item for item in context.workflow_run.tasks
+            if item.definition_id == executor.stage
+        )
+        task.ready()
+        task.start()
+        context.current_task = task
+        persister.on_task_running(context)
+        executor.run(context)
+        task.complete()
+        persister.on_task_finished(context, error=None)
+
+    def test_six_stage_runtime_has_one_workflow_version_owner(self):
+        workflows, extensions, compositions, service, extension, context, persister = self._runtime_graph()
+        run_id = extension.extension_workflow_run_id
+        sources, evidence, findings = (
+            InMemorySourceRepository(),
+            InMemoryEvidenceRepository(),
+            InMemoryFindingRepository(),
+        )
+        delegates = {
+            "extension_search": _SearchBoundary(sources, run_id),
+            "extension_evidence": _EvidenceBoundary(sources, evidence, run_id),
+            "extension_analysis": _AnalysisBoundary(evidence, findings, run_id),
+        }
+        for stage in (
+            "extension_plan", "extension_search", "extension_evidence",
+            "extension_readiness", "extension_analysis", "extension_finalize",
+        ):
+            self._run_runtime_stage(
+                context,
+                persister,
+                AuthorityExtensionStageExecutor(
+                    stage, service, delegates.get(stage), evidence, findings,
+                ),
+            )
+        context.workflow_run.complete()
+        persister.on_workflow_finalized(context, error=None)
+
+        self.assertEqual(context.workflow_run.status.value, "completed")
+        self.assertEqual(extensions.get_by_id(extension.extension_id).status.value, "succeeded")
+        self.assertEqual(len(compositions._items), 1)
+        self.assertEqual(persister.expected_version, workflows.get_workflow_run_version(run_id))
+
+    def test_runtime_technical_failure_is_terminal_for_run_and_extension(self):
+        workflows, extensions, _, service, extension, context, persister = self._runtime_graph()
+        evidence, findings = InMemoryEvidenceRepository(), InMemoryFindingRepository()
+        self._run_runtime_stage(
+            context, persister,
+            AuthorityExtensionStageExecutor("extension_plan", service),
+        )
+
+        class FailingSearch:
+            def run(self, context):
+                raise RuntimeError("deterministic search failure")
+
+        task = next(item for item in context.workflow_run.tasks if item.definition_id == "extension_search")
+        task.ready()
+        task.start()
+        context.current_task = task
+        persister.on_task_running(context)
+        error = RuntimeError("deterministic search failure")
+        with self.assertRaisesRegex(RuntimeError, "deterministic search failure"):
+            AuthorityExtensionStageExecutor(
+                "extension_search", service, FailingSearch(), evidence, findings,
+            ).run(context)
+        task.fail()
+        context.workflow_run.fail()
+        persister.on_task_finished(context, error=error)
+        persister.on_workflow_finalized(context, error=error)
+
+        self.assertEqual(context.workflow_run.status.value, "failed")
+        stored = extensions.get_by_id(extension.extension_id)
+        self.assertEqual(stored.status.value, "technical_error")
+        self.assertEqual(stored.terminal_reason, "RuntimeError")
+        self.assertEqual(persister.expected_version, workflows.get_workflow_run_version(extension.extension_workflow_run_id))
+
     def _checkpoint_after_evidence(self, *, evaluate=False):
         sources, evidence, findings = InMemorySourceRepository(), InMemoryEvidenceRepository(), InMemoryFindingRepository()
         run_id = self.extension.extension_workflow_run_id

@@ -24,6 +24,8 @@ from infrastructure.persistence.postgresql.repositories.postgresql_source_reposi
 from infrastructure.persistence.postgresql.repositories.postgresql_evidence_repository import PostgreSQLEvidenceRepository
 from infrastructure.persistence.postgresql.repositories.postgresql_finding_repository import PostgreSQLFindingRepository
 from tests.application.authority_extension.test_p2_acceptance_harness import _SearchBoundary, _EvidenceBoundary, _AnalysisBoundary
+from application.runtime.workflow_runtime_persister import WorkflowRuntimePersister
+from application.runtime.checkpoint_context import CHECKPOINT_SERVICE_KEY
 
 SYNTHETIC_TIMESTAMP = "2025-01-01T00:00:00+00:00"
 
@@ -229,3 +231,58 @@ class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
         again = service.finalize(run_id, created_at=SYNTHETIC_TIMESTAMP)
         self.assertEqual(again.composition_digest, state.composition_digest)
         self.assertEqual(again.composition_id, state.composition_id)
+
+    def test_extension_plan_runtime_checkpoint_owns_postgresql_version(self):
+        workflows = WorkflowService(
+            workflow_template_repository=PostgreSQLWorkflowTemplateRepository(self.session_factory),
+            workflow_run_repository=PostgreSQLWorkflowRunRepository(self.session_factory),
+            workflow_run_factory=WorkflowRunFactory(TaskFactory()),
+        )
+        extensions = PostgreSQLAuthorityExtensionRepository(self.session_factory)
+        service = SelectedAuthorityExtensionService(
+            workflow_service=workflows,
+            extension_repository=extensions,
+            composed_authority_repository=PostgreSQLComposedAuthorityRepository(self.session_factory),
+            state_store=WorkflowExtensionStateStore(workflows),
+            capability_check=lambda: True,
+        )
+        design = ResearchDesign("runtime-design", (ResearchQuestion("rq", "RQ"),), (
+            InformationNeed("in1", "rq", "nominal", timeframe="2021,2022", geography="UA"),
+        ))
+        extension = service.start(
+            project_id="project",
+            parent_workflow_run_id="parent",
+            design=design,
+            selected_information_need_ids=("in1",),
+            idempotency_key="pg-runtime-version",
+            confirmed=True,
+        )
+        service.activate(extension.extension_id)
+        run_id = extension.extension_workflow_run_id
+        run = workflows.get_workflow_run(run_id)
+        task = run.tasks[0]
+        task.ready()
+        task.start()
+        context = WorkflowContext(run, Project("project", "P"), workflows.get_template(run.workflow_template_id))
+        context.current_task = task
+        persister = WorkflowRuntimePersister(
+            workflow_service=workflows,
+            audit=None,
+            run_id=run_id,
+            initial_version=workflows.get_workflow_run_version(run_id),
+            task_results=workflows.get_task_results(run_id),
+        )
+        context.services[CHECKPOINT_SERVICE_KEY] = persister
+
+        persister.on_task_running(context)
+        AuthorityExtensionStageExecutor("extension_plan", service).run(context)
+        task.complete()
+        persister.on_task_finished(context, error=None)
+
+        fresh_workflows = WorkflowService(
+            workflow_template_repository=PostgreSQLWorkflowTemplateRepository(DatabaseSessionFactory(self.engine)),
+            workflow_run_repository=PostgreSQLWorkflowRunRepository(DatabaseSessionFactory(self.engine)),
+            workflow_run_factory=WorkflowRunFactory(TaskFactory()),
+        )
+        self.assertEqual(persister.expected_version, fresh_workflows.get_workflow_run_version(run_id))
+        self.assertIn(WorkflowExtensionStateStore.KEY, fresh_workflows.get_task_results(run_id))

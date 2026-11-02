@@ -10,6 +10,7 @@ from application.authority_extension.selected_workflow import (
 )
 from application.contracts.base_executor import BaseExecutor
 from application.runtime.task_result_codec import capture_task_result
+from application.runtime.checkpoint_context import CHECKPOINT_FAILURE_HANDLER_KEY
 from runtime.workflow_context import WorkflowContext
 
 _extension_dispatch: ContextVar[tuple[Any, str] | None] = ContextVar("authority_extension_dispatch", default=None)
@@ -61,6 +62,17 @@ class AuthorityExtensionStageExecutor(BaseExecutor):
     finding_repository: Any | None = None
 
     def run(self, context: WorkflowContext) -> WorkflowContext:
+        run_id = context.workflow_run.id
+        context.services[CHECKPOINT_FAILURE_HANDLER_KEY] = (
+            lambda error: self.service.fail_technical(
+                run_id,
+                type(error).__name__,
+            )
+        )
+        with self.service.runtime_state_scope(context):
+            return self._run_in_scope(context)
+
+    def _run_in_scope(self, context: WorkflowContext) -> WorkflowContext:
         run_id = context.workflow_run.id
         try:
             if self.stage == "extension_plan":
