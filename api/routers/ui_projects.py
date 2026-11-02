@@ -1,6 +1,6 @@
 from pathlib import Path
 from uuid import uuid4
-from fastapi import APIRouter, Form, Request, status
+from fastapi import APIRouter, Form, Header, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from api.ui.presentation import parse_brief_form
@@ -8,6 +8,11 @@ from api.ui.pdf_csrf import token as pdf_csrf_token, valid as valid_pdf_csrf
 from api.ui.project_workspace_facade import build_project_workspace_facade
 from application.persistence.exceptions import AccessDeniedError, EntityNotFoundError, AuthenticationRequiredError
 from application.quantitative.ui_service import QuantitativeUiError
+from application.authority_extension.selected_workflow import ExtensionContractError
+from api.routers.authority_extensions import (
+    AuthorityExtensionRequest,
+    AuthorityExtensionResponse,
+)
 
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
 router = APIRouter(prefix="/ui/projects", tags=["project-workspace"])
@@ -280,6 +285,45 @@ def project_desk_finalization_replay(request: Request, project_id: str, source_r
     except ValueError as exc:
         return templates.TemplateResponse(request, "projects/error.html", {
             "request": request, "message": str(exc)}, status_code=409)
+
+@router.post(
+    "/{project_id}/authority-extensions",
+    response_model=AuthorityExtensionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    include_in_schema=False,
+)
+def project_authority_extension(
+    request: Request,
+    project_id: str,
+    body: AuthorityExtensionRequest,
+    idempotency_key: str = Header(
+        alias="Idempotency-Key", min_length=1, max_length=128,
+    ),
+):
+    origin = request.headers.get("origin")
+    if not origin or origin.rstrip("/") != str(request.base_url).rstrip("/"):
+        return Response(status_code=403)
+    try:
+        extension = _facade(request).create_authority_extension(
+            project_id,
+            parent_source_workflow_run_id=body.parent_source_workflow_run_id,
+            selected_information_need_ids=body.selected_information_need_ids,
+            confirmed=body.confirmed,
+            idempotency_key=idempotency_key,
+        )
+    except (AccessDeniedError, EntityNotFoundError):
+        return Response(status_code=404)
+    except (ExtensionContractError, ValueError) as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+    return AuthorityExtensionResponse(
+        extension_id=extension.extension_id,
+        workflow_run_id=extension.extension_workflow_run_id,
+        status=extension.status.value,
+        selected_information_need_ids=list(
+            extension.selected_information_need_ids,
+        ),
+        gap_contract_digest=extension.gap_contract_digest,
+    )
 @router.get("/{project_id}/desk/new", response_class=HTMLResponse, include_in_schema=False)
 def desk_new(request: Request, project_id: str):
     try:

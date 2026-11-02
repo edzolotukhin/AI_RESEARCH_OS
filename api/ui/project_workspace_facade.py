@@ -105,6 +105,40 @@ class ProjectWorkspaceFacade:
         _, owner = self._project_owner(project_id, mutate=True)
         return self.container.desk_downstream_replay_service.start(
             project_id=project_id, source_run_id=source_run_id, owner_id=owner)
+    def create_authority_extension(
+        self,
+        project_id: str,
+        *,
+        parent_source_workflow_run_id: str,
+        selected_information_need_ids: list[str],
+        confirmed: bool,
+        idempotency_key: str,
+    ):
+        self._project_owner(project_id, mutate=True, owner=True)
+        parent, _ = self.authorization.require_run(
+            self.principal, parent_source_workflow_run_id,
+        )
+        if parent.project_id != project_id:
+            from application.persistence.exceptions import EntityNotFoundError
+            raise EntityNotFoundError("Parent workflow not found")
+        template = self.container.workflow_service.get_template(
+            parent.workflow_template_id,
+        )
+        design = template.research_design_snapshot
+        if design is None:
+            raise ValueError("Parent workflow has no immutable research design")
+        service = self.container.authority_extension_service
+        if service is None:
+            raise RuntimeError("Authority extension service unavailable")
+        extension = service.start(
+            project_id=project_id,
+            parent_workflow_run_id=parent.id,
+            design=design,
+            selected_information_need_ids=selected_information_need_ids,
+            idempotency_key=idempotency_key,
+            confirmed=confirmed,
+        )
+        return service.activate(extension.extension_id)
     def download_presentation(self, project_id: str, method: str, source_id: str, deliverable_id: str):
         _,owner=self._project_owner(project_id); return self.container.project_deliverables_service.download_presentation(project_id, method, source_id, deliverable_id, owner_id=owner)
     def start_desk(self, project_id: str, brief_payload: dict):
