@@ -12,6 +12,8 @@ class AuthorityExtensionStatus(StrEnum):
     ACTIVE = "active"
     SUCCEEDED = "succeeded"
     INSUFFICIENT = "insufficient"
+    CONFLICTING = "conflicting"
+    TECHNICAL_ERROR = "technical_error"
     FAILED = "failed"
 
 

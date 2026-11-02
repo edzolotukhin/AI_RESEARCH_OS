@@ -1,0 +1,355 @@
+from __future__ import annotations
+
+import unittest
+from dataclasses import replace
+
+from application.authority_extension.selected_workflow import (
+    EXTENSION_STAGES,
+    PROVIDER_BUDGET_MAX,
+    SEARCH_BUDGET_MAX,
+    AuthorityObservation,
+    ExtensionBudgetExceeded,
+    ExtensionContractError,
+    ExtensionFinding,
+    GapOutcome,
+    InMemoryExtensionStateStore,
+    SelectedAuthorityExtensionService,
+    WorkflowExtensionStateStore,
+    derive_gap_contract,
+    extension_template,
+    qualify_gap,
+)
+from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
+from domain.workflow_run import WorkflowRun
+from infrastructure.persistence.memory.in_memory_authority_extension_repository import (
+    InMemoryAuthorityExtensionRepository,
+    InMemoryComposedAuthorityRepository,
+)
+from infrastructure.persistence.memory.in_memory_source_repository import InMemorySourceRepository
+from application.authority_extension.stage_adapters import (
+    ExtensionImmutableSourceRepositoryProxy, _extension_dispatch,
+)
+from domain.sources.source import Source
+
+
+class _Workflows:
+    def __init__(self):
+        self.runs = {"parent": WorkflowRun(id="parent", project_id="project", workflow_template_id="desk")}
+        self.templates = []
+        self.results = {"parent": {}}
+        self.versions = {"parent": 0}
+
+    def get_workflow_run(self, run_id): return self.runs[run_id]
+    def publish_template_snapshot(self, template, *, project_id): self.templates.append(template)
+    def create_workflow_run(self, template, *, project_id, run_id, initially_paused=False):
+        from domain.factories.task_factory import TaskFactory
+        from domain.factories.workflow_run_factory import WorkflowRunFactory
+        run = WorkflowRunFactory(TaskFactory()).create(template, run_id=run_id, project_id=project_id)
+        if initially_paused:
+            run.ready(); run.start(); run.pause()
+        self.runs[run_id] = run
+        self.results[run_id] = {}
+        self.versions[run_id] = 0
+        return run
+    def delete_workflow_run(self, run_id):
+        self.runs.pop(run_id, None); self.results.pop(run_id, None); self.versions.pop(run_id, None)
+    def get_task_results(self, run_id): return dict(self.results[run_id])
+    def get_workflow_run_version(self, run_id): return self.versions[run_id]
+    def save_workflow_run(self, run, *, expected_version, task_results):
+        if expected_version != self.versions[run.id]: raise RuntimeError("version conflict")
+        self.results[run.id] = dict(task_results); self.versions[run.id] += 1
+
+
+def _design():
+    question = ResearchQuestion("rq", "Retail market")
+    return ResearchDesign(
+        id="design", research_questions=(question,),
+        information_needs=(
+            InformationNeed("in1", "rq", "nominal retail turnover", timeframe="2021,2022", geography="UA"),
+            InformationNeed("in2_real_adjustment", "rq", "retail real-volume constant-price", timeframe="2021,2022", geography="UA"),
+            InformationNeed("in3", "rq", "comparable retail trend", timeframe="2021,2022", geography="UA"),
+            InformationNeed("unrelated", "rq", "unrelated", timeframe="2021", geography="UA"),
+        ),
+    )
+
+
+class SelectedAuthorityExtensionTests(unittest.TestCase):
+    def setUp(self):
+        self.workflows = _Workflows()
+        self.extensions = InMemoryAuthorityExtensionRepository()
+        self.compositions = InMemoryComposedAuthorityRepository(self.extensions)
+        self.states = InMemoryExtensionStateStore()
+        self.service = SelectedAuthorityExtensionService(
+            workflow_service=self.workflows, extension_repository=self.extensions,
+            composed_authority_repository=self.compositions, state_store=self.states,
+            capability_check=lambda: True,
+        )
+        self.extension = self.service.start(
+            project_id="project", parent_workflow_run_id="parent", design=_design(),
+            selected_information_need_ids=("in1", "in2_real_adjustment", "in3"),
+            idempotency_key="idem", confirmed=True,
+        )
+
+    def _observation(self, need, source, *, kind="nominal", periods=("2021", "2022"),
+                     run=None, evidence_id=None, project="project", design="design", conflicting=False):
+        return AuthorityObservation(
+            evidence_id=evidence_id or f"e-{need}-{source}", source_identity=source,
+            information_need_ids=(need,), research_question_ids=("rq",), metric=need,
+            geography="UA", periods=periods, authority_kind=kind,
+            workflow_run_id=run or self.extension.extension_workflow_run_id,
+            research_design_id=design, project_id=project, conflicting=conflicting,
+        )
+
+    def _sufficient(self):
+        items = []
+        for need in ("in1", "in3"):
+            items += [self._observation(need, "a"), self._observation(need, "b")]
+        items += [
+            self._observation("in2_real_adjustment", "a", kind="retail_real_volume"),
+            self._observation("in2_real_adjustment", "b", kind="retail_real_volume"),
+        ]
+        return items
+
+    def _findings(self):
+        state = self.states.load(self.extension.extension_workflow_run_id)
+        assert state is not None
+        values = []
+        for need in self.extension.selected_information_need_ids:
+            evidence = tuple(item.evidence_id for item in state.observations if need in item.information_need_ids)
+            values.append(ExtensionFinding(
+                f"f-{need}", need, evidence, self.extension.extension_workflow_run_id,
+                "project", "design",
+            ))
+        return values
+
+    def test_static_dag_and_idempotent_submission(self):
+        template = self.workflows.templates[0]
+        self.assertEqual(tuple(item.id for item in template.task_definitions), EXTENSION_STAGES)
+        self.assertEqual(
+            {item.id for item in template.research_design_snapshot.information_needs},
+            {"in1", "in2_real_adjustment", "in3"},
+        )
+        again = self.service.start(
+            project_id="project", parent_workflow_run_id="parent", design=_design(),
+            selected_information_need_ids=("in3", "in2_real_adjustment", "in1"),
+            idempotency_key="idem", confirmed=True,
+        )
+        self.assertEqual(again.extension_id, self.extension.extension_id)
+        self.assertEqual(len(self.workflows.runs), 2)
+
+    def test_capability_gate_activates_only_complete_runtime(self):
+        activated = self.service.activate(self.extension.extension_id)
+        self.assertEqual(activated.status.value, "active")
+        self.assertEqual(
+            self.workflows.runs[self.extension.extension_workflow_run_id].status.value,
+            "running",
+        )
+        blocked_service = SelectedAuthorityExtensionService(
+            workflow_service=self.workflows,
+            extension_repository=self.extensions,
+            composed_authority_repository=self.compositions,
+            state_store=self.states,
+            capability_check=lambda: False,
+        )
+        other = blocked_service.start(
+            project_id="project", parent_workflow_run_id="parent", design=_design(),
+            selected_information_need_ids=("in1",), idempotency_key="blocked", confirmed=True,
+        )
+        with self.assertRaises(ExtensionContractError):
+            blocked_service.activate(other.extension_id)
+        self.assertEqual(self.workflows.runs[other.extension_workflow_run_id].status.value, "paused")
+
+    def test_confirmation_and_idempotency_conflict_fail_closed(self):
+        with self.assertRaises(ExtensionContractError):
+            self.service.start(project_id="project", parent_workflow_run_id="parent", design=_design(),
+                               selected_information_need_ids=("in1",), idempotency_key="x", confirmed=False)
+        with self.assertRaises(ExtensionContractError):
+            self.service.start(project_id="project", parent_workflow_run_id="parent", design=_design(),
+                               selected_information_need_ids=("in1",), idempotency_key="idem", confirmed=True)
+
+    def test_search_budget_is_durable_and_n_plus_one_is_pre_dispatch(self):
+        calls = []
+        for _ in range(SEARCH_BUDGET_MAX):
+            self.service.dispatch_search(self.extension.extension_workflow_run_id, lambda: calls.append(1))
+        with self.assertRaises(ExtensionBudgetExceeded):
+            self.service.dispatch_search(self.extension.extension_workflow_run_id, lambda: calls.append(1))
+        self.assertEqual(len(calls), SEARCH_BUDGET_MAX)
+        replacement = SelectedAuthorityExtensionService(
+            workflow_service=self.workflows, extension_repository=self.extensions,
+            composed_authority_repository=self.compositions, state_store=self.states)
+        with self.assertRaises(ExtensionBudgetExceeded):
+            replacement.dispatch_search(self.extension.extension_workflow_run_id, lambda: calls.append(1))
+
+    def test_satisfied_need_receives_zero_additional_search_calls(self):
+        self.service.record_observations(self.extension.extension_workflow_run_id, self._sufficient())
+        self.service.evaluate(self.extension.extension_workflow_run_id)
+        calls = []
+        result = self.service.dispatch_search(
+            self.extension.extension_workflow_run_id, lambda: calls.append(1),
+            information_need_id="in1",
+        )
+        self.assertIsNone(result)
+        self.assertEqual(calls, [])
+        self.assertEqual(self.states.load(self.extension.extension_workflow_run_id).budget.search_used, 0)
+
+    def test_unrelated_search_is_rejected_before_dispatch(self):
+        calls = []
+        with self.assertRaises(ExtensionContractError):
+            self.service.dispatch_search(
+                self.extension.extension_workflow_run_id, lambda: calls.append(1),
+                information_need_id="unrelated",
+            )
+        self.assertEqual(calls, [])
+
+    def test_provider_budget_is_durable_and_n_plus_one_is_pre_dispatch(self):
+        calls = []
+        for _ in range(PROVIDER_BUDGET_MAX):
+            self.service.dispatch_provider(self.extension.extension_workflow_run_id, lambda: calls.append(1))
+        with self.assertRaises(ExtensionBudgetExceeded):
+            self.service.dispatch_provider(self.extension.extension_workflow_run_id, lambda: calls.append(1))
+        self.assertEqual(len(calls), PROVIDER_BUDGET_MAX)
+
+    def test_workflow_state_store_survives_service_reconstruction(self):
+        workflows = _Workflows()
+        extensions = InMemoryAuthorityExtensionRepository()
+        compositions = InMemoryComposedAuthorityRepository(extensions)
+        first = SelectedAuthorityExtensionService(
+            workflow_service=workflows, extension_repository=extensions,
+            composed_authority_repository=compositions,
+            state_store=WorkflowExtensionStateStore(workflows),
+        )
+        extension = first.start(
+            project_id="project", parent_workflow_run_id="parent", design=_design(),
+            selected_information_need_ids=("in1",), idempotency_key="durable", confirmed=True,
+        )
+        first.dispatch_search(extension.extension_workflow_run_id, lambda: None)
+        second = SelectedAuthorityExtensionService(
+            workflow_service=workflows, extension_repository=extensions,
+            composed_authority_repository=compositions,
+            state_store=WorkflowExtensionStateStore(workflows),
+        )
+        second.dispatch_search(extension.extension_workflow_run_id, lambda: None)
+        restored = WorkflowExtensionStateStore(workflows).load(extension.extension_workflow_run_id)
+        self.assertEqual(restored.budget.search_used, 2)
+
+    def test_cpi_and_nominal_plus_cpi_do_not_satisfy_real_adjustment(self):
+        gap = derive_gap_contract(_design(), ("in2_real_adjustment",))[0]
+        cpi = [self._observation("in2_real_adjustment", "a", kind="cpi"),
+               self._observation("in2_real_adjustment", "b", kind="cpi")]
+        self.assertEqual(qualify_gap(gap, cpi), GapOutcome.INSUFFICIENT)
+        nominal = cpi + [self._observation("in2_real_adjustment", "c", kind="nominal")]
+        self.assertEqual(qualify_gap(gap, nominal), GapOutcome.INSUFFICIENT)
+
+    def test_real_volume_with_independent_sources_satisfies(self):
+        gap = derive_gap_contract(_design(), ("in2_real_adjustment",))[0]
+        values = [self._observation("in2_real_adjustment", "a", kind="retail_real_volume"),
+                  self._observation("in2_real_adjustment", "b", kind="retail_deflator")]
+        self.assertEqual(qualify_gap(gap, values), GapOutcome.SATISFIED)
+
+    def test_same_source_does_not_inflate_independence(self):
+        gap = derive_gap_contract(_design(), ("in1",))[0]
+        values = [self._observation("in1", "same", evidence_id="one"),
+                  self._observation("in1", "same", evidence_id="two")]
+        self.assertEqual(qualify_gap(gap, values), GapOutcome.INSUFFICIENT)
+
+    def test_missing_period_is_insufficient(self):
+        gap = derive_gap_contract(_design(), ("in1",))[0]
+        values = [self._observation("in1", "a", periods=("2022",)),
+                  self._observation("in1", "b", periods=("2022",))]
+        self.assertEqual(qualify_gap(gap, values), GapOutcome.INSUFFICIENT)
+
+    def test_isolated_trend_observations_are_insufficient(self):
+        gap = derive_gap_contract(_design(), ("in3",))[0]
+        values = [self._observation("in3", "a", periods=("2022",))]
+        self.assertEqual(qualify_gap(gap, values), GapOutcome.INSUFFICIENT)
+
+    def test_conflict_is_separate_outcome(self):
+        gap = derive_gap_contract(_design(), ("in1",))[0]
+        self.assertEqual(qualify_gap(gap, [self._observation("in1", "a", conflicting=True)]), GapOutcome.CONFLICTING)
+
+    def test_scope_cross_project_design_member_and_unrelated_rejected(self):
+        cases = [
+            self._observation("in1", "a", project="other"),
+            self._observation("in1", "a", design="other"),
+            self._observation("in1", "a", run="foreign"),
+            self._observation("unrelated", "a"),
+        ]
+        for value in cases:
+            with self.subTest(value=value):
+                with self.assertRaises(ExtensionContractError):
+                    self.service.record_observations(self.extension.extension_workflow_run_id, [value])
+
+    def test_evidence_retry_is_idempotent(self):
+        value = self._observation("in1", "a")
+        self.service.record_observations(self.extension.extension_workflow_run_id, [value])
+        state = self.service.record_observations(self.extension.extension_workflow_run_id, [value])
+        self.assertEqual(len(state.observations), 1)
+
+    def test_finding_retry_is_idempotent_and_cross_member_rejected(self):
+        self.service.record_observations(self.extension.extension_workflow_run_id, self._sufficient())
+        value = self._findings()[0]
+        self.service.record_findings(self.extension.extension_workflow_run_id, [value])
+        state = self.service.record_findings(self.extension.extension_workflow_run_id, [value])
+        self.assertEqual(len(state.findings), 1)
+        with self.assertRaises(ExtensionContractError):
+            self.service.record_findings(self.extension.extension_workflow_run_id, [replace(value, finding_id="bad", evidence_ids=("foreign",))])
+
+    def test_incomplete_findings_prevent_composition(self):
+        self.service.record_observations(self.extension.extension_workflow_run_id, self._sufficient())
+        state = self.service.finalize(self.extension.extension_workflow_run_id, created_at="now")
+        self.assertIsNone(state.composition_id)
+        self.assertEqual(self.extensions.get_by_id(self.extension.extension_id).status.value, "insufficient")
+
+    def test_one_insufficient_need_prevents_composition(self):
+        values = [item for item in self._sufficient() if "in3" not in item.information_need_ids]
+        self.service.record_observations(self.extension.extension_workflow_run_id, values)
+        self.service.record_findings(self.extension.extension_workflow_run_id, [
+            ExtensionFinding("f-in1", "in1", tuple(item.evidence_id for item in values if "in1" in item.information_need_ids), self.extension.extension_workflow_run_id, "project", "design")])
+        state = self.service.finalize(self.extension.extension_workflow_run_id, created_at="now")
+        self.assertIsNone(state.composition_id)
+        from application.report.h3_coverage_plan import build_h3_coverage_plan
+        plan = build_h3_coverage_plan(
+            design=self.workflows.templates[0].research_design_snapshot,
+            required_information_need_ids=self.extension.selected_information_need_ids,
+            findings=(), evidence_by_id={}, insights=(),
+        )
+        self.assertFalse(plan.is_fully_fillable)
+
+    def test_happy_path_and_finalize_retry_keep_same_digest(self):
+        self.service.record_observations(self.extension.extension_workflow_run_id, self._sufficient())
+        self.service.record_findings(self.extension.extension_workflow_run_id, self._findings())
+        first = self.service.finalize(self.extension.extension_workflow_run_id, created_at="now")
+        second = self.service.finalize(self.extension.extension_workflow_run_id, created_at="later")
+        self.assertEqual(first.composition_digest, second.composition_digest)
+        self.assertEqual(self.extensions.get_by_id(self.extension.extension_id).status.value, "succeeded")
+        self.assertEqual(len(self.compositions._items), 1)
+
+    def test_parent_observation_can_support_composed_authority_without_mutation(self):
+        value = self._observation("in1", "parent-source", run="parent")
+        state = self.service.record_observations(self.extension.extension_workflow_run_id, [value])
+        self.assertEqual(state.observations[0].workflow_run_id, "parent")
+        self.assertEqual(self.workflows.runs["parent"].project_id, "project")
+
+    def test_parent_source_rediscovery_does_not_mutate_parent(self):
+        repository = InMemorySourceRepository()
+        original = Source("s", "project", "https://x", "https://x", "x", "now",
+                          workflow_run_refs=("parent",), research_design_refs=("design",))
+        repository.create(original)
+        proxy = ExtensionImmutableSourceRepositoryProxy(repository)
+        candidate = replace(original, workflow_run_refs=("parent", self.extension.extension_workflow_run_id))
+        token = _extension_dispatch.set((self.service, self.extension.extension_workflow_run_id))
+        try:
+            proxy.save(candidate, expected_version=original.version)
+        finally:
+            _extension_dispatch.reset(token)
+        self.assertEqual(repository.get_by_id("s").workflow_run_refs, ("parent",))
+
+    def test_technical_failure_is_durable(self):
+        self.service.fail_technical(self.extension.extension_workflow_run_id, "network unavailable")
+        stored = self.extensions.get_by_id(self.extension.extension_id)
+        self.assertEqual(stored.status.value, "technical_error")
+        self.assertEqual(stored.terminal_reason, "network unavailable")
+
+
+if __name__ == "__main__":
+    unittest.main()

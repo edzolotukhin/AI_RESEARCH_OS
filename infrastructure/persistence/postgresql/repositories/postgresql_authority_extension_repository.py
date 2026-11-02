@@ -25,6 +25,27 @@ class PostgreSQLAuthorityExtensionRepository:
         with self._session_factory.session() as session:
             model = session.scalar(select(AuthorityExtensionModel).where(AuthorityExtensionModel.project_id == project_id, AuthorityExtensionModel.idempotency_key == idempotency_key))
             return _extension(model) if model else None
+    def save(self, extension):
+        with self._session_factory.session() as session:
+            model = session.get(AuthorityExtensionModel, extension.extension_id)
+            if model is None:
+                raise ValueError(f"Authority extension not found: {extension.extension_id}")
+            immutable = (
+                model.project_id, model.research_design_id,
+                model.parent_source_workflow_run_id, model.extension_workflow_run_id,
+                tuple(model.selected_information_need_ids), model.gap_contract_digest,
+                model.idempotency_key, model.created_at,
+            )
+            candidate = (
+                extension.project_id, extension.research_design_id,
+                extension.parent_source_workflow_run_id, extension.extension_workflow_run_id,
+                tuple(extension.selected_information_need_ids), extension.gap_contract_digest,
+                extension.idempotency_key, extension.created_at,
+            )
+            if immutable != candidate:
+                raise ValueError("authority extension immutable identity mismatch")
+            model.status = extension.status.value
+            model.terminal_reason = extension.terminal_reason
 
 
 class PostgreSQLComposedAuthorityRepository:

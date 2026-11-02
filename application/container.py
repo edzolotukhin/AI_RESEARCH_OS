@@ -79,6 +79,7 @@ class ApplicationContainer:
     quantitative_authority_finalization_service: Any | None = None
     quantitative_authority_product_service: Any | None = None
     operations_status_service: Any | None = None
+    authority_extension_service: Any | None = None
     _shutdown_callbacks: list[ShutdownCallback] = field(default_factory=list)
 
     @property

@@ -139,10 +139,17 @@ class AnalysisService:
             coverage.supported_aspects_by_information_need if coverage is not None else None
         )
 
-        evidence_items = self._evidence_repository.list_for_project(
-            project_id,
-            workflow_run_id=workflow_run_id,
-        )
+        extension_authority = context.read_shared("authority_extension_members")
+        allowed_workflow_run_ids = (workflow_run_id,)
+        if isinstance(extension_authority, dict):
+            members = extension_authority.get("workflow_run_ids")
+            if isinstance(members, list) and workflow_run_id in members:
+                allowed_workflow_run_ids = tuple(str(item) for item in members)
+        evidence_items = []
+        for member_run_id in allowed_workflow_run_ids:
+            evidence_items.extend(self._evidence_repository.list_for_project(
+                project_id, workflow_run_id=member_run_id,
+            ))
         evidence_items = qualifying_evidence(
             design=design, evidence=evidence_items, brief=brief,
             source_repository=self._source_repository,
@@ -274,6 +281,7 @@ class AnalysisService:
                             )
                             if coverage is not None else None
                         ),
+                        allowed_workflow_run_ids=allowed_workflow_run_ids,
                     )
                 except InvalidAnalysisProvenanceError as exc:
                     finding_candidates_rejected += 1

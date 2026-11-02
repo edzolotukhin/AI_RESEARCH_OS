@@ -39,6 +39,7 @@ def validate_finding_candidate(
     design: ResearchDesign,
     eligible_information_need_ids: tuple[str, ...] | None = None,
     supported_aspects_by_information_need: dict[str, tuple[str, ...]] | None = None,
+    allowed_workflow_run_ids: tuple[str, ...] | None = None,
 ) -> FindingCandidate:
     if not candidate.statement.strip():
         raise InvalidAnalysisProvenanceError(
@@ -66,7 +67,8 @@ def validate_finding_candidate(
                 f"Evidence {evidence_id} belongs to a different project",
                 category=REJECTION_CATEGORY_CROSS_PROJECT_REF,
             )
-        if evidence.workflow_run_id != workflow_run_id:
+        allowed_runs = set(allowed_workflow_run_ids or (workflow_run_id,))
+        if evidence.workflow_run_id not in allowed_runs:
             raise InvalidAnalysisProvenanceError(
                 f"Evidence {evidence_id} belongs to a different workflow run",
                 category=REJECTION_CATEGORY_CROSS_RUN_REF,

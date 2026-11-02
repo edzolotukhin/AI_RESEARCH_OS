@@ -18,6 +18,11 @@ class InMemoryAuthorityExtensionRepository:
     def get_by_idempotency_key(self, project_id, idempotency_key):
         return next((item for item in self._items.values() if item.project_id == project_id and item.idempotency_key == idempotency_key), None)
 
+    def save(self, extension):
+        if extension.extension_id not in self._items:
+            raise ValueError(f"Authority extension not found: {extension.extension_id}")
+        self._items[extension.extension_id] = extension
+
 
 class InMemoryComposedAuthorityRepository:
     def __init__(self, extension_repository=None):

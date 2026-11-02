@@ -177,6 +177,23 @@ def create_application_container(
         workflow_run_repository=workflow_run_repository,
         workflow_run_factory=workflow_run_factory,
     )
+    from application.authority_extension.selected_workflow import (
+        SelectedAuthorityExtensionService,
+        WorkflowExtensionStateStore,
+    )
+    authority_extension_service = SelectedAuthorityExtensionService(
+        workflow_service=workflow_service,
+        extension_repository=persistence.authority_extension_repository,
+        composed_authority_repository=persistence.composed_authority_repository,
+        state_store=WorkflowExtensionStateStore(workflow_service),
+        capability_check=lambda: all(
+            registry.tools.exists(executor_id)
+            for executor_id in __import__(
+                "application.authority_extension.selected_workflow",
+                fromlist=["EXTENSION_EXECUTORS"],
+            ).EXTENSION_EXECUTORS
+        ),
+    )
 
     artifact_service = ArtifactService(
         artifact_repository=persistence.artifact_repository,
@@ -187,6 +204,8 @@ def create_application_container(
     )
 
     source_repository = overrides.source_repository or persistence.source_repository
+    from application.authority_extension.stage_adapters import ExtensionImmutableSourceRepositoryProxy
+    source_repository = ExtensionImmutableSourceRepositoryProxy(source_repository)
     source_service = SourceService(source_repository=source_repository)
     evidence_repository = (
         overrides.evidence_repository or persistence.evidence_repository
@@ -241,6 +260,15 @@ def create_application_container(
     from application.llm.stage_llm_clients import resolve_stage_llm_clients
 
     stage_llm_clients = resolve_stage_llm_clients(config, overrides)
+    from application.llm.stage_llm_clients import StageLlmClients
+    from application.authority_extension.stage_adapters import ExtensionProviderBudgetProxy
+    stage_llm_clients = StageLlmClients(
+        planner=stage_llm_clients.planner,
+        analysis=ExtensionProviderBudgetProxy(stage_llm_clients.analysis),
+        report=stage_llm_clients.report,
+        review=stage_llm_clients.review,
+        evidence=ExtensionProviderBudgetProxy(stage_llm_clients.evidence),
+    )
     planner_llm_client = stage_llm_clients.planner
 
     executor_catalog = ExecutorCatalog.from_capabilities(
@@ -330,6 +358,25 @@ def create_application_container(
         project_service=project_service,
         workflow_service=workflow_service,
     )
+    from application.authority_extension.selected_workflow import EXTENSION_STAGES, EXTENSION_EXECUTORS
+    from application.authority_extension.stage_adapters import AuthorityExtensionStageExecutor, ExtensionSearchBudgetProxy
+    source_acquisition_service = getattr(agent_executors["search"], "_source_acquisition_service", None)
+    if source_acquisition_service is not None:
+        source_acquisition_service._search_provider = ExtensionSearchBudgetProxy(
+            source_acquisition_service._search_provider,
+        )
+    extension_delegates = {
+        "extension_search": agent_executors["search"],
+        "extension_evidence": agent_executors["evidence"],
+        "extension_analysis": agent_executors["analysis"],
+    }
+    for stage, executor_id in zip(EXTENSION_STAGES, EXTENSION_EXECUTORS):
+        registry.tools.register(executor_id, AuthorityExtensionStageExecutor(
+            stage=stage, service=authority_extension_service,
+            delegate=extension_delegates.get(stage),
+            evidence_repository=evidence_repository,
+            finding_repository=finding_repository,
+        ))
 
     # Always retain support for already-pinned ARK runs, even when activation is
     # disabled for new runs. No new executor registry IDs or second worker.
@@ -824,6 +871,7 @@ def create_application_container(
         quantitative_authority_finalization_service=quantitative_authority_finalization_service,
         quantitative_authority_product_service=quantitative_authority_product_service,
         operations_status_service=operations_status_service,
+        authority_extension_service=authority_extension_service,
         _shutdown_callbacks=shutdown_callbacks,
     )
 
