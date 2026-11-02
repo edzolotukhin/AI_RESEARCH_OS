@@ -73,6 +73,7 @@ def build_research_readiness_service(
     evidence_repository: EvidenceRepository,
     source_repository: SourceRepository,
     llm_client,
+    composed_authority_repository=None,
 ) -> ResearchReadinessService:
     evaluator = build_research_sufficiency_evaluator(
         config=config,
@@ -115,6 +116,7 @@ def build_research_readiness_service(
         evidence_repository=evidence_repository,
         source_repository=source_repository,
         loop_service=loop_service,
+        composed_authority_repository=composed_authority_repository,
     )
 
 
@@ -125,6 +127,7 @@ def build_research_readiness_executor(
     evidence_repository: EvidenceRepository,
     source_repository: SourceRepository,
     llm_client,
+    composed_authority_repository=None,
 ) -> ResearchReadinessExecutor | DeterministicResearchReadinessExecutor:
     if overrides.research_readiness_executor is not None:
         return overrides.research_readiness_executor
@@ -144,5 +147,6 @@ def build_research_readiness_executor(
             evidence_repository=evidence_repository,
             source_repository=source_repository,
             llm_client=llm_client,
+            composed_authority_repository=composed_authority_repository,
         ),
     )

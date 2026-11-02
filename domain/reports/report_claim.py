@@ -207,7 +207,22 @@ def _validate_h3_structural_assertion(
         "authority_input_digest", "source_authority_digest", "typed_ast_digest", "renderer_version",
         "locale", "rendered_assertion", "render_digest",
     }
+    if "composed_authority" in value:
+        expected.add("composed_authority")
     _exact(value, expected, field="structural_assertion")
+    if "composed_authority" in value:
+        composed = value["composed_authority"]
+        if not isinstance(composed, dict):
+            raise ReportClaimContractError("H3 composed authority must be an object")
+        _exact(composed, {
+            "authority_mode", "parent_source_workflow_run_id",
+            "composition_member_workflow_run_ids", "composition_version",
+            "composition_digest",
+        }, field="structural_assertion.composed_authority")
+        if composed["authority_mode"] != "composed":
+            raise ReportClaimContractError("H3 composed authority mode mismatch")
+        if not composed["composition_member_workflow_run_ids"]:
+            raise ReportClaimContractError("H3 composed authority membership is empty")
     if value["contract_version"] != H3_REPORT_CLAIM_VERSION:
         raise ReportClaimContractError("H3 structural assertion contract mismatch")
     if _digest(value["authority_catalog"]) != value["authority_input_digest"]:

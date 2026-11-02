@@ -27,6 +27,7 @@ from infrastructure.persistence.postgresql.models.workflow_template_model import
 )
 from infrastructure.persistence.postgresql.models.qualitative_state_model import QualitativeStateModel
 from infrastructure.persistence.postgresql.models.identity_model import UserModel, BrowserSessionModel, ProjectMembershipModel
+from infrastructure.persistence.postgresql.models.authority_extension_model import AuthorityExtensionModel, ComposedAuthorityModel, ComposedAuthorityMemberModel
 
 __all__ = [
     "ArtifactModel",
@@ -49,4 +50,5 @@ __all__ = [
     "WorkflowTemplateModel",
     "QualitativeStateModel",
     "UserModel", "BrowserSessionModel", "ProjectMembershipModel",
+    "AuthorityExtensionModel", "ComposedAuthorityModel", "ComposedAuthorityMemberModel",
 ]

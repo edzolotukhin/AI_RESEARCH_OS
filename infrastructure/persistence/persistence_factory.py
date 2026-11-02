@@ -112,6 +112,8 @@ from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
 from application.deliverables.store import InMemoryPdfStore
 from infrastructure.persistence.postgresql.repositories.postgresql_pdf_store import PostgreSQLPdfStore
 from infrastructure.persistence.postgresql.repositories.postgresql_presentation_jobs import PostgreSQLPresentationJobs
+from infrastructure.persistence.memory.in_memory_authority_extension_repository import InMemoryAuthorityExtensionRepository, InMemoryComposedAuthorityRepository
+from infrastructure.persistence.postgresql.repositories.postgresql_authority_extension_repository import PostgreSQLAuthorityExtensionRepository, PostgreSQLComposedAuthorityRepository
 
 
 @dataclass(frozen=True)
@@ -139,6 +141,8 @@ class PersistenceBundle:
     engine: Engine | None = None
     activation_sessions: object | None = None
     identity_store: object | None = None
+    authority_extension_repository: object | None = None
+    composed_authority_repository: object | None = None
 
 
 def resolve_persistence_backend() -> str:
@@ -156,6 +160,7 @@ def build_persistence_bundle(
     if backend == "memory":
         workflow_run_repository = InMemoryWorkflowRunRepository()
         report_repository = InMemoryReportRepository()
+        authority_extensions = InMemoryAuthorityExtensionRepository()
         return PersistenceBundle(
             project_repository=InMemoryProjectRepository(),
             workflow_template_repository=InMemoryWorkflowTemplateRepository(),
@@ -180,11 +185,14 @@ def build_persistence_bundle(
             qualitative_state_repository=InMemoryQualitativeStateRepository(),
             activation_sessions=InMemoryActivationCoordinator(),
             identity_store=InMemoryIdentityStore(),
+            authority_extension_repository=authority_extensions,
+            composed_authority_repository=InMemoryComposedAuthorityRepository(authority_extensions),
         )
 
     if backend == "file":
         workflow_run_repository = InMemoryWorkflowRunRepository()
         report_repository = InMemoryReportRepository()
+        authority_extensions = InMemoryAuthorityExtensionRepository()
         return PersistenceBundle(
             project_repository=FileProjectRepository(projects_root=projects_root),
             workflow_template_repository=InMemoryWorkflowTemplateRepository(),
@@ -206,6 +214,8 @@ def build_persistence_bundle(
             quantitative_state_repository=None,
             qualitative_state_repository=InMemoryQualitativeStateRepository(),
             identity_store=InMemoryIdentityStore(),
+            authority_extension_repository=authority_extensions,
+            composed_authority_repository=InMemoryComposedAuthorityRepository(authority_extensions),
         )
 
     if backend == "postgresql":
@@ -245,6 +255,8 @@ def build_persistence_bundle(
             engine=engine,
             activation_sessions=session_factory,
             identity_store=PostgreSQLIdentityStore(session_factory),
+            authority_extension_repository=PostgreSQLAuthorityExtensionRepository(session_factory),
+            composed_authority_repository=PostgreSQLComposedAuthorityRepository(session_factory),
         )
 
     raise ValueError(

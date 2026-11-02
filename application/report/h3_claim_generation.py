@@ -14,7 +14,8 @@ import re
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
-from application.report.claim_authority import ClaimAuthority, ClaimAuthorityError, derive_claim_authority
+from application.report.claim_authority import ClaimAuthority, ClaimAuthorityError, derive_claim_authority, derive_composed_claim_authority
+from domain.research_authority import ComposedResearchAuthority
 from application.report.h3_coverage_plan import H3CoveragePlan
 from application.report.typed_rendering import (
     CitationAuthorityRef, ClaimAuthorityRef, FactAuthorityRef, H3AuthorityCatalog,
@@ -210,6 +211,7 @@ def generate_h3_structural_claims(
     required_research_question_ids: tuple[str, ...],
     required_information_need_ids: tuple[str, ...],
     coverage_plan: H3CoveragePlan | None = None,
+    composed_authority: ComposedResearchAuthority | None = None,
 ) -> H3ClaimGenerationResult:
     if coverage_plan is not None and not coverage_plan.is_fully_fillable:
         gaps = tuple(item.to_dict() for item in coverage_plan.unfillable_required_information_needs)
@@ -223,10 +225,17 @@ def generate_h3_structural_claims(
     for finding in findings:
         candidate_id = str(uuid5(NAMESPACE_URL, f"h3:{report_workflow_run_id}:{finding.id}"))
         try:
-            authority = derive_claim_authority(
-                project_id=project_id, source_workflow_run_id=source_workflow_run_id,
-                report_workflow_run_id=report_workflow_run_id, design=design,
-                findings=(finding,), evidence_by_id=evidence_by_id,
+            authority = (
+                derive_composed_claim_authority(
+                    composition=composed_authority,
+                    report_workflow_run_id=report_workflow_run_id, design=design,
+                    findings=(finding,), evidence_by_id=evidence_by_id,
+                ) if composed_authority is not None else
+                derive_claim_authority(
+                    project_id=project_id, source_workflow_run_id=source_workflow_run_id,
+                    report_workflow_run_id=report_workflow_run_id, design=design,
+                    findings=(finding,), evidence_by_id=evidence_by_id,
+                )
             )
             insight_ids = tuple(sorted(item.id for item in insights if finding.id in item.finding_refs))
             catalog, citation_ids = _catalog_for_authority(
@@ -540,6 +549,14 @@ def _build_claim(item: _Prepared, raw: dict[str, Any]) -> ReportClaim:
         "rendered_assertion": rendered.text,
         "render_digest": rendered.render_digest,
     }
+    if authority.authority_mode == "composed":
+        envelope["composed_authority"] = {
+            "authority_mode": authority.authority_mode,
+            "parent_source_workflow_run_id": authority.parent_source_workflow_run_id,
+            "composition_member_workflow_run_ids": list(authority.composition_member_workflow_run_ids),
+            "composition_version": authority.composition_version,
+            "composition_digest": authority.composition_digest,
+        }
     return ReportClaim(
         claim_id=item.claim_id, project_id=authority.project_id,
         source_workflow_run_id=authority.source_workflow_run_id,

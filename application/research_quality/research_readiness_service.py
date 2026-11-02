@@ -56,12 +56,34 @@ class ResearchReadinessService:
         gate: ResearchReadinessGate | None = None,
         loop_service: ResearchLoopService | None = None,
         source_repository: SourceRepository | None = None,
+        composed_authority_repository=None,
     ) -> None:
         self._evaluator = evaluator
         self._evidence_repository = evidence_repository
         self._gate = gate or ResearchReadinessGate()
         self._loop_service = loop_service
         self._source_repository = source_repository
+        self._composed_authority_repository = composed_authority_repository
+
+    def _evidence_for_context(self, context: WorkflowContext):
+        from application.authority_extension import composition_for_context
+        composition = composition_for_context(
+            context, self._composed_authority_repository,
+        )
+        if composition is None:
+            return self._evidence_repository.list_for_project(
+                context.project.id, workflow_run_id=context.workflow_run.id,
+            )
+        values = []
+        seen = set()
+        for run_id in composition.member_workflow_run_ids:
+            for item in self._evidence_repository.list_for_project(
+                context.project.id, workflow_run_id=run_id,
+            ):
+                if item.id not in seen:
+                    seen.add(item.id)
+                    values.append(item)
+        return values
 
     @funnel.observed("qualification")
     def evaluate_for_context(
@@ -70,10 +92,7 @@ class ResearchReadinessService:
     ) -> ResearchReadinessResult:
         self._require_source_repository()
         design = self._require_design(context)
-        evidence = self._evidence_repository.list_for_project(
-            context.project.id,
-            workflow_run_id=context.workflow_run.id,
-        )
+        evidence = self._evidence_for_context(context)
         evidence = qualifying_evidence(
             design=design, evidence=evidence,
             source_repository=self._source_repository,
@@ -165,9 +184,7 @@ class ResearchReadinessService:
             evidence=qualifying_evidence(
                 design=design,
                 source_repository=self._source_repository,
-                evidence=self._evidence_repository.list_for_project(
-                    context.project.id, workflow_run_id=context.workflow_run.id,
-                ),
+            evidence=self._evidence_for_context(context),
                 brief=(context.workflow_template.research_brief_snapshot if context.workflow_template else None),
             ),
             previous=candidate,
@@ -217,10 +234,7 @@ class ResearchReadinessService:
 
         self._require_source_repository()
         design = self._require_design(context)
-        evidence = self._evidence_repository.list_for_project(
-            context.project.id,
-            workflow_run_id=context.workflow_run.id,
-        )
+        evidence = self._evidence_for_context(context)
         evidence = qualifying_evidence(
             design=design, evidence=evidence,
             source_repository=self._source_repository,

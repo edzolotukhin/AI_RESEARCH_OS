@@ -321,6 +321,7 @@ def create_application_container(
         report_claim_repository=report_claim_repository,
         review_repository=review_repository,
         artifact_repository=persistence.artifact_repository,
+        composed_authority_repository=persistence.composed_authority_repository,
         stage_llm_clients=stage_llm_clients,
         deliverable_finalizer=project_deliverables_service,
     )
@@ -865,6 +866,7 @@ def _build_agent_executors(
     report_claim_repository,
     review_repository,
     artifact_repository,
+    composed_authority_repository,
     stage_llm_clients,
     deliverable_finalizer=None,
 ) -> dict:
@@ -918,6 +920,7 @@ def _build_agent_executors(
         evidence_repository=evidence_repository,
         source_repository=source_repository,
         llm_client=stage_llm_clients.evidence,
+        composed_authority_repository=composed_authority_repository,
     )
     executors["analysis"] = build_analysis_executor(
         source_repository=source_repository,
@@ -963,6 +966,7 @@ def _build_agent_executors(
             getattr(overrides, "h3_editorial_provider", None)
             or LlmH3EditorialProvider(stage_llm_clients.report)
         ),
+        composed_authority_repository=composed_authority_repository,
     )
     executors["report"] = (
         overrides.report_executor

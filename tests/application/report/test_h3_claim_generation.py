@@ -43,6 +43,8 @@ from infrastructure.report.llm_report_engine import LlmReportEngine
 from domain.ai.llm_response import LLMResponse
 from runtime.workflow_context import WorkflowContext
 from tests.fixtures.research_brief import sample_research_brief
+from application.authority_extension import COMPOSED_AUTHORITY_KEY, build_composition
+from infrastructure.persistence.memory.in_memory_authority_extension_repository import InMemoryComposedAuthorityRepository
 
 
 def _scope(value: str = "7.8", periods: tuple[str, ...] = ("2026",), unit: str = "%"):
@@ -549,6 +551,68 @@ class H3ClaimGenerationTests(unittest.TestCase):
         self.assertEqual(len(stored), 1)
         self.assertEqual(stored[0].report_workflow_run_id, "source-run")
         self.assertEqual(summary.artifact_id, "")
+
+    def test_real_claim_first_service_selects_composed_extension_authority(self):
+        fixture = _Fixture(); project = ProjectFactory().create("H3 composed")
+        evidence = replace(fixture.evidence[0], project_id=project.id,
+                           workflow_run_id="source-run", deduplication_key="evidence")
+        finding = replace(fixture.findings[0], project_id=project.id,
+                          workflow_run_id="extension-run", deduplication_key="finding")
+        source_text = "E"
+        source = Source(
+            id="source-1", project_id=project.id, url="https://example.com/source",
+            canonical_url="https://example.com/source", title="Source",
+            retrieved_at="2026-01-01T00:00:00Z", retrieval_status=RetrievalStatus.ACQUIRED,
+            content_text=source_text, content_checksum=sha256(source_text.encode()).hexdigest(),
+            research_question_refs=("rq-1",), information_need_refs=("in-1",),
+            workflow_run_refs=("source-run",), research_design_refs=(fixture.design.id,),
+        )
+        evidence.source_content_checksum = source.content_checksum
+        evidence.source_locator = verify_grounding(source_text=source_text, excerpt="E").to_dict()
+        sources = InMemorySourceRepository(); sources.create(source)
+        evidences = InMemoryEvidenceRepository(); evidences.create(evidence)
+        findings = InMemoryFindingRepository(); findings.create(finding)
+        reports = InMemoryReportRepository(); claims = InMemoryReportClaimRepository(reports)
+        composition = build_composition(
+            composition_id="composition", project_id=project.id,
+            research_design_id=fixture.design.id,
+            parent_source_workflow_run_id="source-run",
+            member_workflow_run_ids=("source-run", "extension-run"),
+            selected_information_need_ids=("in-1",), created_at="now",
+        )
+        compositions = InMemoryComposedAuthorityRepository(); compositions.create_or_get(composition)
+        template = WorkflowTemplateBuilder(id="template", name="T").add_task(
+            id="report", name="Write", executor_id="report", executor_type=ExecutorType.AGENT,
+        ).build()
+        template.research_brief_snapshot = replace(sample_research_brief(), timeframe="")
+        template.research_design_snapshot = fixture.design
+        run = WorkflowRunFactory(task_factory=TaskFactory()).create(template=template, run_id="source-run")
+        run.project_id = project.id
+        context = WorkflowContext(project=project, workflow_run=run,
+                                  workflow_template=template, current_task=run.tasks[0])
+        context.write_shared(COMPOSED_AUTHORITY_KEY, {
+            "composition_id": composition.composition_id,
+            "composition_digest": composition.composition_digest,
+        })
+        class Engine:
+            method_name = "h3-test"
+            def generate_h3_claim_candidates(self, request): return _valid_response(request)
+            def repair_h3_claim_candidates(self, request): return _valid_response(request)
+        service = ClaimFirstReportService(
+            report_claim_repository=claims, report_contract_version=H3_CONTRACT_VERSION,
+            report_engine=Engine(), finding_repository=findings,
+            insight_repository=InMemoryInsightRepository(), evidence_repository=evidences,
+            source_repository=sources, report_repository=reports,
+            artifact_repository=InMemoryArtifactRepository(), max_findings_per_batch=10,
+            max_chars_per_batch=10000, composed_authority_repository=compositions,
+        )
+        summary = service.write_for_context(context)
+        stored = claims.list_for_report(summary.report_id, 1)
+        provenance = stored[0].structural_assertion["composed_authority"]
+        self.assertEqual(stored[0].finding_ids, (finding.id,))
+        self.assertEqual(provenance["composition_digest"], composition.composition_digest)
+        self.assertEqual(provenance["composition_member_workflow_run_ids"],
+                         ["source-run", "extension-run"])
 
     def test_h3_generator_has_no_h2_prose_authority_dependencies(self):
         import application.report.h3_claim_generation as module

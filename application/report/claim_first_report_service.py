@@ -59,6 +59,7 @@ class ClaimFirstReportService(ReportService):
         report_contract_version: str = "desk_report_claim_v1",
         editorial_composer: EditorialComposer | None = None,
         h3_editorial_provider=None,
+        composed_authority_repository=None,
         **kwargs,
     ) -> None:
         report_engine = kwargs.get("report_engine")
@@ -71,6 +72,7 @@ class ClaimFirstReportService(ReportService):
         self._report_contract_version = report_contract_version
         self._editorial_composer = editorial_composer
         self._h3_editorial_provider = h3_editorial_provider
+        self._composed_authority_repository = composed_authority_repository
         self._claim_candidate_provider = getattr(
             report_engine, "generate_claim_candidates", None,
         )
@@ -100,10 +102,15 @@ class ClaimFirstReportService(ReportService):
         project_id = context.project.id; report_run_id = context.workflow_run.id
         from application.replay.desk_downstream_replay import source_run_id
         source_run = source_run_id(context)
+        from application.authority_extension import composition_for_context
+        composition = composition_for_context(context, self._composed_authority_repository)
+        authority_runs = (
+            composition.member_workflow_run_ids if composition is not None else (source_run,)
+        )
         coverage = coverage_snapshot_from_payload(context.read_shared(SHARED_STATE_KEY))
         limited = coverage is not None and not coverage.complete_design_ready
-        findings = self._finding_repository.list_for_project(project_id, workflow_run_id=source_run)
-        insights = self._insight_repository.list_for_project(project_id, workflow_run_id=source_run)
+        findings = [item for run_id in authority_runs for item in self._finding_repository.list_for_project(project_id, workflow_run_id=run_id)]
+        insights = [item for run_id in authority_runs for item in self._insight_repository.list_for_project(project_id, workflow_run_id=run_id)]
         if not findings:
             raise ReportError(f"No run-scoped findings available for report in run {report_run_id}")
         if limited:
@@ -113,9 +120,9 @@ class ClaimFirstReportService(ReportService):
             insights = [item for item in insights if set(item.finding_refs) <= finding_ids]
             if not findings:
                 raise ReportError("Limited report has no eligible validated Findings")
-        evidence = qualifying_evidence(design=design, evidence=self._evidence_repository.list_for_project(project_id, workflow_run_id=source_run), brief=brief, source_repository=self._source_repository)
+        evidence = qualifying_evidence(design=design, evidence=[item for run_id in authority_runs for item in self._evidence_repository.list_for_project(project_id, workflow_run_id=run_id)], brief=brief, source_repository=self._source_repository)
         evidence_by_id = {item.id: item for item in evidence}
-        sources = [item for item in self._source_repository.list_for_project(project_id) if source_run in item.workflow_run_refs]
+        sources = [item for item in self._source_repository.list_for_project(project_id) if set(authority_runs).intersection(item.workflow_run_refs)]
         sources_by_id = {item.id: item for item in sources}
         registry = CitationRegistry()
         for item in evidence:
@@ -130,7 +137,7 @@ class ClaimFirstReportService(ReportService):
                 insights=tuple(insights), evidence_by_id=evidence_by_id,
                 source_to_citation=source_to_citation, contract=contract,
                 source_run=source_run, coverage=coverage,
-                citation_registry=registry.to_dict(),
+                citation_registry=registry.to_dict(), composed_authority=composition,
             )
         try:
             if (
@@ -281,7 +288,7 @@ class ClaimFirstReportService(ReportService):
     def _write_h3_claim_stage(
         self, *, context: WorkflowContext, design, brief, findings, insights,
         evidence_by_id, source_to_citation, contract, source_run: str, coverage,
-        citation_registry,
+        citation_registry, composed_authority=None,
     ) -> ReportSummary:
         report_run_id = context.workflow_run.id
         required_ins = tuple(sorted(
@@ -305,6 +312,7 @@ class ClaimFirstReportService(ReportService):
                 required_research_question_ids=contract.required_rq_ids,
                 required_information_need_ids=required_ins,
                 coverage_plan=coverage_plan,
+                composed_authority=composed_authority,
             )
             result = replace(result, coverage_outcome=H3CoverageOutcome.TECHNICAL_ERROR)
             context.write_shared("report_generation_diagnostics", {
@@ -323,6 +331,7 @@ class ClaimFirstReportService(ReportService):
                 required_research_question_ids=contract.required_rq_ids,
                 required_information_need_ids=required_ins,
                 coverage_plan=coverage_plan,
+                composed_authority=composed_authority,
             )
         diagnostic = {
             **result.to_diagnostic_dict(), "phase": "h3_claim_generation",

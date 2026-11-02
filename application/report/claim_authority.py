@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from application.report.claim_contract import authority_digest, content_digest, scope_from_authoritative_payload
+from application.report.claim_contract import authority_digest, canonical_digest, content_digest, scope_from_authoritative_payload
 from application.research_scope.authoritative_scope import SCOPE_KEY, combine_evidence_scopes, scope_for_finding
 from domain.evidence.evidence import Evidence
 from domain.findings.finding import Finding
 from domain.planning.research_design import ResearchDesign
 from domain.reports.report_claim import ClaimScope
+from domain.research_authority import ComposedResearchAuthority
 
 
 class ClaimAuthorityError(ValueError):
@@ -31,6 +32,11 @@ class ClaimAuthority:
     finding_content_digests: dict[str, str]
     evidence_content_digests: dict[str, str]
     authority_digest: str
+    authority_mode: str = "single_source"
+    parent_source_workflow_run_id: str | None = None
+    composition_member_workflow_run_ids: tuple[str, ...] = ()
+    composition_version: str | None = None
+    composition_digest: str | None = None
 
 
 def derive_claim_authority(*, project_id: str, source_workflow_run_id: str, report_workflow_run_id: str, design: ResearchDesign, findings: tuple[Finding, ...], evidence_by_id: dict[str, Evidence]) -> ClaimAuthority:
@@ -72,4 +78,53 @@ def derive_claim_authority(*, project_id: str, source_workflow_run_id: str, repo
     finding_digests = {item.id: content_digest({"statement": item.statement, "rationale": item.rationale, "evidence_refs": sorted(item.evidence_refs), "scope": scope_for_finding(item, evidence_by_id)}) for item in findings}
     evidence_digests = {item.id: content_digest({"statement": item.statement, "source_excerpt": item.source_excerpt, "source_id": item.source_id, "source_content_checksum": item.source_content_checksum}) for item in evidence}
     digest = authority_digest(source_workflow_run_id=source_workflow_run_id, design_id=design.id, finding_content_digests=finding_digests, evidence_content_digests=evidence_digests, scope=scope)
-    return ClaimAuthority(project_id, source_workflow_run_id, report_workflow_run_id, design.id, tuple(sorted(rq_ids)), tuple(sorted(need_ids)), tuple(sorted(finding_ids)), tuple(sorted(evidence_ids)), tuple(sorted({item.source_id for item in evidence})), scope, finding_digests, evidence_digests, digest)
+    return ClaimAuthority(project_id, source_workflow_run_id, report_workflow_run_id, design.id, tuple(sorted(rq_ids)), tuple(sorted(need_ids)), tuple(sorted(finding_ids)), tuple(sorted(evidence_ids)), tuple(sorted({item.source_id for item in evidence})), scope, finding_digests, evidence_digests, digest, parent_source_workflow_run_id=source_workflow_run_id)
+
+
+def derive_composed_claim_authority(*, composition: ComposedResearchAuthority, report_workflow_run_id: str, design: ResearchDesign, findings: tuple[Finding, ...], evidence_by_id: dict[str, Evidence]) -> ClaimAuthority:
+    """Derive H3 authority from an immutable, explicit run composition.
+
+    This is deliberately separate from the legacy single-run function so
+    historical H2/H3 validation cannot silently become cross-run validation.
+    """
+    if composition.research_design_id != design.id:
+        raise ClaimAuthorityError("composition design is foreign")
+    members = set(composition.member_workflow_run_ids)
+    if not findings:
+        raise ClaimAuthorityError("at least one validated Finding is required")
+    for finding in findings:
+        if (finding.project_id != composition.project_id or
+                finding.research_design_id != design.id or
+                finding.workflow_run_id not in members):
+            raise ClaimAuthorityError("Finding is outside composed authority")
+        for evidence_id in finding.evidence_refs:
+            evidence = evidence_by_id.get(evidence_id)
+            if (evidence is None or evidence.project_id != composition.project_id or
+                    evidence.research_design_id != design.id or
+                    evidence.workflow_run_id not in members):
+                raise ClaimAuthorityError("Evidence is outside composed authority")
+    authority = _derive_composed_legacy_shape(
+        composition=composition, report_workflow_run_id=report_workflow_run_id,
+        design=design, findings=findings, evidence_by_id=evidence_by_id,
+    )
+    return authority
+
+
+def _derive_composed_legacy_shape(*, composition, report_workflow_run_id, design, findings, evidence_by_id):
+    allowed_rqs = {item.id for item in design.research_questions}
+    allowed_needs = {item.id for item in design.information_needs}
+    finding_ids = {item.id for item in findings}
+    evidence_ids = {ref for item in findings for ref in item.evidence_refs}
+    evidence = [evidence_by_id[item] for item in sorted(evidence_ids)]
+    rq_ids = {ref for item in findings for ref in item.research_question_refs}
+    need_ids = {ref for item in findings for ref in item.information_need_refs}
+    if not rq_ids <= allowed_rqs or not need_ids <= allowed_needs:
+        raise ClaimAuthorityError("composed Finding scope is invalid")
+    if any(not set(item.research_question_refs) <= rq_ids or not set(item.information_need_refs) <= need_ids for item in evidence):
+        raise ClaimAuthorityError("composed Evidence is outside Finding reachability")
+    scope_payload = combine_evidence_scopes(evidence)
+    scope = scope_from_authoritative_payload(scope_payload)
+    finding_digests = {item.id: content_digest({"statement": item.statement, "rationale": item.rationale, "evidence_refs": sorted(item.evidence_refs), "scope": scope_for_finding(item, evidence_by_id)}) for item in findings}
+    evidence_digests = {item.id: content_digest({"statement": item.statement, "source_excerpt": item.source_excerpt, "source_id": item.source_id, "source_content_checksum": item.source_content_checksum}) for item in evidence}
+    digest = canonical_digest({"composition_digest": composition.composition_digest, "authority_digest": authority_digest(source_workflow_run_id=composition.parent_source_workflow_run_id, design_id=design.id, finding_content_digests=finding_digests, evidence_content_digests=evidence_digests, scope=scope)})
+    return ClaimAuthority(composition.project_id, composition.parent_source_workflow_run_id, report_workflow_run_id, design.id, tuple(sorted(rq_ids)), tuple(sorted(need_ids)), tuple(sorted(finding_ids)), tuple(sorted(evidence_ids)), tuple(sorted({item.source_id for item in evidence})), scope, finding_digests, evidence_digests, digest, authority_mode="composed", parent_source_workflow_run_id=composition.parent_source_workflow_run_id, composition_member_workflow_run_ids=composition.member_workflow_run_ids, composition_version=composition.composition_version, composition_digest=composition.composition_digest)

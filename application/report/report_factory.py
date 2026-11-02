@@ -64,12 +64,14 @@ def build_report_service(
     report_contract_version: str = "desk_report_claim_v1",
     editorial_composer: EditorialComposer | None = None,
     h3_editorial_provider=None,
+    composed_authority_repository=None,
 ) -> ReportService:
     return ClaimFirstReportService(
         report_claim_repository=report_claim_repository,
         report_contract_version=report_contract_version,
         editorial_composer=editorial_composer,
         h3_editorial_provider=h3_editorial_provider,
+        composed_authority_repository=composed_authority_repository,
         report_engine=build_report_engine(config, overrides, llm_client=llm_client),
         finding_repository=finding_repository,
         insight_repository=insight_repository,

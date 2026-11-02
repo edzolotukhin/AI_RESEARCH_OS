@@ -123,6 +123,11 @@ class PostgreSQLMigrationSmokeTests(unittest.TestCase):
         self.assertIn("pdf_deliverables", table_names)
         self.assertIn("presentation_jobs", table_names)
         self.assertIn("report_claims", table_names)
+        self.assertTrue({
+            "research_authority_extensions",
+            "composed_research_authorities",
+            "composed_research_authority_members",
+        }.issubset(table_names))
         self.assertTrue({"users", "browser_sessions", "project_memberships"}.issubset(table_names))
         with self.engine.connect() as connection:
             columns = set(connection.execute(text(
