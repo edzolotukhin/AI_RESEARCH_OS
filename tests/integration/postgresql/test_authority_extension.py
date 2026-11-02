@@ -154,6 +154,21 @@ class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
             )
             return workflows, extensions, compositions, service
 
+        def runtime_context(workflows, run_id):
+            context = WorkflowContext(
+                workflows.get_workflow_run(run_id),
+                Project("project", "P"),
+                workflows.get_template("desk-authority-extension-v1"),
+            )
+            context.services[CHECKPOINT_SERVICE_KEY] = WorkflowRuntimePersister(
+                workflow_service=workflows,
+                audit=None,
+                run_id=run_id,
+                initial_version=workflows.get_workflow_run_version(run_id),
+                task_results=workflows.get_task_results(run_id),
+            )
+            return context
+
         design = ResearchDesign("design", (ResearchQuestion("rq", "RQ"),), (
             InformationNeed("in1", "rq", "nominal", timeframe="2021,2022", geography="UA"),
             InformationNeed("in2_real_adjustment", "rq", "retail real-volume", timeframe="2021,2022", geography="UA"),
@@ -172,7 +187,7 @@ class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
             PostgreSQLEvidenceRepository(self.session_factory),
             PostgreSQLFindingRepository(self.session_factory),
         )
-        context = WorkflowContext(workflows.get_workflow_run(run_id), Project("project", "P"), workflows.get_template("desk-authority-extension-v1"))
+        context = runtime_context(workflows, run_id)
         for stage, delegate in (
             ("extension_plan", None), ("extension_search", _SearchBoundary(sources, run_id)),
             ("extension_evidence", _EvidenceBoundary(sources, evidence, run_id)),
@@ -186,7 +201,7 @@ class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
             PostgreSQLSourceRepository(fresh_factory), PostgreSQLEvidenceRepository(fresh_factory),
             PostgreSQLFindingRepository(fresh_factory),
         )
-        context = WorkflowContext(workflows.get_workflow_run(run_id), Project("project", "P"), workflows.get_template("desk-authority-extension-v1"))
+        context = runtime_context(workflows, run_id)
         evidence_count = len(evidence.list_for_project("project", workflow_run_id=run_id))
         service.record_observations(run_id, service._state(run_id).observations)
         self.assertEqual(
@@ -208,7 +223,7 @@ class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
             PostgreSQLSourceRepository(analysis_factory), PostgreSQLEvidenceRepository(analysis_factory),
             PostgreSQLFindingRepository(analysis_factory),
         )
-        context = WorkflowContext(workflows.get_workflow_run(run_id), Project("project", "P"), workflows.get_template("desk-authority-extension-v1"))
+        context = runtime_context(workflows, run_id)
         self.assertEqual(service._state(run_id).budget, before_budget)
         self.assertTrue(service._state(run_id).outcomes)
         for stage, delegate in (

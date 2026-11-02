@@ -409,6 +409,39 @@ class SelectedAuthorityExtensionTests(unittest.TestCase):
         state = workflows.get_task_results(extension.extension_workflow_run_id)
         self.assertIn(WorkflowExtensionStateStore.KEY, state)
 
+    def test_unresolved_information_needs_is_checkpoint_less_and_read_only(self):
+        workflows, _, service, extension, _, _, _ = self._runtime_owned_plan()
+        run_id = extension.extension_workflow_run_id
+        before_version = workflows.get_workflow_run_version(run_id)
+        before_results = workflows.get_task_results(run_id)
+
+        unresolved = service.unresolved_information_need_ids(run_id)
+
+        self.assertEqual(
+            unresolved,
+            ("in1", "in2_real_adjustment", "in3"),
+        )
+        self.assertEqual(workflows.get_workflow_run_version(run_id), before_version)
+        self.assertEqual(workflows.get_task_results(run_id), before_results)
+
+    def test_evaluate_persists_through_runtime_checkpoint(self):
+        workflows, _, service, extension, context, _, persister = self._runtime_owned_plan()
+        run_id = extension.extension_workflow_run_id
+        with service.runtime_state_scope(context):
+            state = service.evaluate(run_id)
+
+        self.assertEqual(
+            dict(state.outcomes),
+            {
+                "in1": GapOutcome.INSUFFICIENT,
+                "in2_real_adjustment": GapOutcome.INSUFFICIENT,
+                "in3": GapOutcome.INSUFFICIENT,
+            },
+        )
+        self.assertEqual(persister.expected_version, workflows.get_workflow_run_version(run_id))
+        persisted = workflows.get_task_results(run_id)[WorkflowExtensionStateStore.KEY]
+        self.assertEqual(len(persisted["outcomes"]), 3)
+
     def test_checkpoint_conflict_marks_extension_technical_error(self):
         workflows, extensions, service, extension, context, task, persister = self._runtime_owned_plan()
         persister.on_task_running(context)

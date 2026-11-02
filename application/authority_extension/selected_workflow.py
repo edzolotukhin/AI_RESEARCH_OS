@@ -426,8 +426,9 @@ class SelectedAuthorityExtensionService:
         return operation()
 
     def unresolved_information_need_ids(self, workflow_run_id: str) -> tuple[str, ...]:
-        state = self.evaluate(workflow_run_id)
-        return tuple(key for key, value in state.outcomes if value != GapOutcome.SATISFIED)
+        state = self._state(workflow_run_id)
+        outcomes = self._evaluate_outcomes(state)
+        return tuple(key for key, value in outcomes if value != GapOutcome.SATISFIED)
 
     def dispatch_provider(self, workflow_run_id: str, operation: Callable[[], Any]) -> Any:
         state = self._state(workflow_run_id)
@@ -456,10 +457,19 @@ class SelectedAuthorityExtensionService:
 
     def evaluate(self, workflow_run_id: str) -> ExtensionState:
         state = self._state(workflow_run_id)
-        outcomes = tuple((gap.information_need_id, qualify_gap(gap, state.observations)) for gap in state.gaps)
+        outcomes = self._evaluate_outcomes(state)
         updated = replace(state, outcomes=outcomes)
         self.states.save(updated)
         return updated
+
+    @staticmethod
+    def _evaluate_outcomes(
+        state: ExtensionState,
+    ) -> tuple[tuple[str, GapOutcome], ...]:
+        return tuple(
+            (gap.information_need_id, qualify_gap(gap, state.observations))
+            for gap in state.gaps
+        )
 
     def record_findings(self, workflow_run_id: str,
                         findings: Iterable[ExtensionFinding]) -> ExtensionState:
