@@ -201,13 +201,13 @@ class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
             PostgreSQLSourceRepository(fresh_factory), PostgreSQLEvidenceRepository(fresh_factory),
             PostgreSQLFindingRepository(fresh_factory),
         )
-        context = runtime_context(workflows, run_id)
         evidence_count = len(evidence.list_for_project("project", workflow_run_id=run_id))
         service.record_observations(run_id, service._state(run_id).observations)
         self.assertEqual(
             len(evidence.list_for_project("project", workflow_run_id=run_id)),
             evidence_count,
         )
+        context = runtime_context(workflows, run_id)
         AuthorityExtensionStageExecutor(
             "extension_readiness", service, None, evidence, findings,
         ).run(context)
@@ -301,3 +301,38 @@ class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
         )
         self.assertEqual(persister.expected_version, fresh_workflows.get_workflow_run_version(run_id))
         self.assertIn(WorkflowExtensionStateStore.KEY, fresh_workflows.get_task_results(run_id))
+
+    def test_runtime_persister_advances_version_across_multiple_named_results(self):
+        workflows = WorkflowService(
+            workflow_template_repository=PostgreSQLWorkflowTemplateRepository(self.session_factory),
+            workflow_run_repository=PostgreSQLWorkflowRunRepository(self.session_factory),
+            workflow_run_factory=WorkflowRunFactory(TaskFactory()),
+        )
+        run = workflows.get_workflow_run("extension")
+        context = WorkflowContext(run, Project("project", "P"), None)
+        persister = WorkflowRuntimePersister(
+            workflow_service=workflows,
+            audit=None,
+            run_id=run.id,
+            initial_version=workflows.get_workflow_run_version(run.id),
+            task_results=workflows.get_task_results(run.id),
+        )
+        context.services[CHECKPOINT_SERVICE_KEY] = persister
+
+        expected_version = persister.expected_version
+        for index in range(1, 4):
+            persister.persist_named_result(
+                context,
+                f"authority_extension_checkpoint_{index}",
+                {"sequence": index},
+            )
+            expected_version += 1
+            self.assertEqual(persister.expected_version, expected_version)
+            self.assertEqual(workflows.get_workflow_run_version(run.id), expected_version)
+
+        stored_results = workflows.get_task_results(run.id)
+        self.assertEqual(
+            [stored_results[f"authority_extension_checkpoint_{index}"]["sequence"]
+             for index in range(1, 4)],
+            [1, 2, 3],
+        )
