@@ -25,6 +25,8 @@ from infrastructure.persistence.memory.in_memory_authority_extension_repository 
 from domain.factories.task_factory import TaskFactory
 from domain.factories.workflow_run_factory import WorkflowRunFactory
 
+SYNTHETIC_TIMESTAMP = "2025-01-01T00:00:00+00:00"
+
 
 class _SearchBoundary:
     def __init__(self, sources, extension_run): self.sources, self.run_id = sources, extension_run
@@ -33,7 +35,7 @@ class _SearchBoundary:
             for suffix in ("a", "b"):
                 value = Source(
                     f"xs-{need}-{suffix}", "project", f"https://{need}-{suffix}",
-                    f"https://{need}-{suffix}", need, "now",
+                    f"https://{need}-{suffix}", need, SYNTHETIC_TIMESTAMP,
                     information_need_refs=(need,), research_question_refs=("rq",),
                     workflow_run_refs=(self.run_id,), research_design_refs=("design",),
                     content_text=f"{need} 2021 2022", content_checksum=f"c-{need}-{suffix}",
@@ -54,7 +56,7 @@ class _EvidenceBoundary:
             )
             value = Evidence(
                 f"xe-{source.id}", "project", source.id, source.content_checksum,
-                self.run_id, "design", f"{need} authority", "2021–2022 authority", "now",
+                self.run_id, "design", f"{need} authority", "2021–2022 authority", SYNTHETIC_TIMESTAMP,
                 research_question_refs=("rq",), information_need_refs=(need,),
                 deduplication_key=f"d-{source.id}", metadata={
                     "observation_period": "2021–2022",
@@ -80,7 +82,7 @@ class _AnalysisBoundary:
             refs = tuple(item.id for item in values if need in item.information_need_refs)
             self.findings.create(Finding(
                 f"xf-{need}", "project", self.run_id, "design", f"Finding {need}",
-                "synthetic validated authority", refs, "now",
+                "synthetic validated authority", refs, SYNTHETIC_TIMESTAMP,
                 research_question_refs=("rq",), information_need_refs=(need,),
                 deduplication_key=f"f-{need}",
             ))
@@ -175,7 +177,7 @@ class P2ProductionShapedAcceptanceTests(SelectedAuthorityExtensionTests):
             composed_authority_repository=compositions, state_store=states,
             capability_check=lambda: True,
         )
-        result = fresh.finalize(run_id, created_at="later")
+        result = fresh.finalize(run_id, created_at=SYNTHETIC_TIMESTAMP)
         self.assertIsNone(result.composition_id)
         self.assertEqual(extensions.get_by_id(stored.extension_id).status.value, "insufficient")
         self.assertEqual(len(compositions._items), 0)
@@ -185,23 +187,23 @@ class P2ProductionShapedAcceptanceTests(SelectedAuthorityExtensionTests):
         for index in range(30):
             sources.create(Source(
                 f"ps-{index}", "project", f"https://parent-{index}", f"https://parent-{index}",
-                "parent", "now", workflow_run_refs=("parent",), research_design_refs=("design",),
+                "parent", SYNTHETIC_TIMESTAMP, workflow_run_refs=("parent",), research_design_refs=("design",),
                 content_text="parent", content_checksum=f"pc-{index}",
             ))
         for index in range(19):
             evidence.create(Evidence(
                 f"pe-{index}", "project", f"ps-{index}", f"pc-{index}", "parent", "design",
-                "parent evidence", "parent evidence", "now", deduplication_key=f"pe-{index}",
+                "parent evidence", "parent evidence", SYNTHETIC_TIMESTAMP, deduplication_key=f"pe-{index}",
             ))
         for index in range(4):
             findings.create(Finding(
                 f"pf-{index}", "project", "parent", "design", "parent finding", "parent",
-                (f"pe-{index}",), "now", deduplication_key=f"pf-{index}",
+                (f"pe-{index}",), SYNTHETIC_TIMESTAMP, deduplication_key=f"pf-{index}",
             ))
         for index in range(5):
             insights.create(Insight(
                 f"pi-{index}", "project", "parent", "design", "parent insight", "parent",
-                (f"pf-{index % 4}",), "now", deduplication_key=f"pi-{index}",
+                (f"pf-{index % 4}",), SYNTHETIC_TIMESTAMP, deduplication_key=f"pi-{index}",
             ))
         parent_plan = build_h3_coverage_plan(
             design=self.workflows.templates[0].research_design_snapshot,

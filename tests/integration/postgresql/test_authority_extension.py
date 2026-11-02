@@ -25,21 +25,23 @@ from infrastructure.persistence.postgresql.repositories.postgresql_evidence_repo
 from infrastructure.persistence.postgresql.repositories.postgresql_finding_repository import PostgreSQLFindingRepository
 from tests.application.authority_extension.test_p2_acceptance_harness import _SearchBoundary, _EvidenceBoundary, _AnalysisBoundary
 
+SYNTHETIC_TIMESTAMP = "2025-01-01T00:00:00+00:00"
+
 
 @unittest.skipUnless(integration_tests_enabled(), "isolated PostgreSQL integration database required")
 class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
     def setUp(self):
         super().setUp()
         with self.engine.begin() as connection:
-            connection.execute(text("INSERT INTO projects (id,name,status,created_at,updated_at,version) VALUES ('project','P','ACTIVE','','',1)"))
-            connection.execute(text("INSERT INTO projects (id,name,status,created_at,updated_at,version) VALUES ('foreign-project','F','ACTIVE','','',1)"))
+            connection.execute(text("INSERT INTO projects (id,name,status,created_at,updated_at,version) VALUES ('project','P','ACTIVE',:ts,:ts,1)"), {"ts": SYNTHETIC_TIMESTAMP})
+            connection.execute(text("INSERT INTO projects (id,name,status,created_at,updated_at,version) VALUES ('foreign-project','F','ACTIVE',:ts,:ts,1)"), {"ts": SYNTHETIC_TIMESTAMP})
             for run_id, project_id in (("parent", "project"), ("extension", "project"),
                                        ("wrong-design", "project"), ("foreign", "foreign-project")):
                 connection.execute(text("INSERT INTO workflow_runs (id,project_id,workflow_template_id,status,dependency_graph,task_results,version) VALUES (:id,:project_id,'template','completed',CAST('{}' AS jsonb),CAST('{}' AS jsonb),0)"), {"id": run_id, "project_id": project_id})
 
     def test_extension_and_composition_round_trip_and_idempotency(self):
         extensions = PostgreSQLAuthorityExtensionRepository(self.session_factory)
-        extension = ResearchAuthorityExtension("ext", "project", "design", "parent", "extension", ("in1", "in2"), "gap", "idem", "now")
+        extension = ResearchAuthorityExtension("ext", "project", "design", "parent", "extension", ("in1", "in2"), "gap", "idem", SYNTHETIC_TIMESTAMP)
         self.assertEqual(extensions.create_or_get(extension), extension)
         self.assertEqual(extensions.create_or_get(extension).extension_id, "ext")
         fresh_extensions = PostgreSQLAuthorityExtensionRepository(DatabaseSessionFactory(self.engine))
@@ -51,7 +53,7 @@ class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
             AuthorityExtensionStatus.SUCCEEDED,
         )
 
-        value = build_composition(composition_id="composition", project_id="project", research_design_id="design", parent_source_workflow_run_id="parent", member_workflow_run_ids=("parent", "extension"), selected_information_need_ids=("in1", "in2"), created_at="now")
+        value = build_composition(composition_id="composition", project_id="project", research_design_id="design", parent_source_workflow_run_id="parent", member_workflow_run_ids=("parent", "extension"), selected_information_need_ids=("in1", "in2"), created_at=SYNTHETIC_TIMESTAMP)
         compositions = PostgreSQLComposedAuthorityRepository(self.session_factory)
         self.assertEqual(compositions.create_or_get(value), value)
         self.assertEqual(compositions.create_or_get(value).composition_digest, value.composition_digest)
@@ -68,18 +70,18 @@ class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
         extensions = PostgreSQLAuthorityExtensionRepository(self.session_factory)
         extensions.create_or_get(ResearchAuthorityExtension(
             "ext", "project", "design", "parent", "extension", ("in1",),
-            "gap", "idem", "now",
+            "gap", "idem", SYNTHETIC_TIMESTAMP,
         ))
         extensions.create_or_get(ResearchAuthorityExtension(
             "wrong", "project", "other-design", "parent", "wrong-design", ("in1",),
-            "gap", "wrong-idem", "now",
+            "gap", "wrong-idem", SYNTHETIC_TIMESTAMP,
         ))
         compositions = PostgreSQLComposedAuthorityRepository(self.session_factory)
         valid = build_composition(
             composition_id="composition", project_id="project", research_design_id="design",
             parent_source_workflow_run_id="parent",
             member_workflow_run_ids=("parent", "extension"),
-            selected_information_need_ids=("in1",), created_at="now",
+            selected_information_need_ids=("in1",), created_at=SYNTHETIC_TIMESTAMP,
         )
         compositions.create_or_get(valid)
         loaded = PostgreSQLComposedAuthorityRepository(
@@ -110,7 +112,7 @@ class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
             composition_id="wrong-design-composition", project_id="project",
             research_design_id="design", parent_source_workflow_run_id="parent",
             member_workflow_run_ids=("parent", "wrong-design"),
-            selected_information_need_ids=("in1",), created_at="now",
+            selected_information_need_ids=("in1",), created_at=SYNTHETIC_TIMESTAMP,
         )
         with self.assertRaises(ValueError):
             compositions.create_or_get(wrong_design)
@@ -119,7 +121,7 @@ class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
             composition_id="foreign-composition", project_id="project",
             research_design_id="design", parent_source_workflow_run_id="parent",
             member_workflow_run_ids=("parent", "foreign"),
-            selected_information_need_ids=("in1",), created_at="now",
+            selected_information_need_ids=("in1",), created_at=SYNTHETIC_TIMESTAMP,
         )
         with self.assertRaises(ValueError):
             compositions.create_or_get(cross_project)
@@ -131,8 +133,8 @@ class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
                     "(extension_id,project_id,research_design_id,parent_source_workflow_run_id,"
                     "extension_workflow_run_id,selected_information_need_ids,gap_contract_digest,"
                     "idempotency_key,created_at,status) VALUES "
-                    "('bad','project','design','parent','missing',CAST('[]' AS jsonb),'gap','bad','now','completed')"
-                ))
+                    "('bad','project','design','parent','missing',CAST('[]' AS jsonb),'gap','bad',:ts,'completed')"
+                ), {"ts": SYNTHETIC_TIMESTAMP})
 
     def test_complete_extension_resumes_from_post_evidence_with_fresh_services(self):
         def graph(factory):
@@ -224,6 +226,6 @@ class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
         self.assertEqual(len(evidence.list_for_project("project", workflow_run_id=run_id)), 6)
         self.assertEqual(len(findings.list_for_project("project", workflow_run_id=run_id)), 3)
         self.assertIsNotNone(compositions.get_by_id(state.composition_id))
-        again = service.finalize(run_id, created_at="again")
+        again = service.finalize(run_id, created_at=SYNTHETIC_TIMESTAMP)
         self.assertEqual(again.composition_digest, state.composition_digest)
         self.assertEqual(again.composition_id, state.composition_id)
