@@ -10,13 +10,21 @@ from domain.research_authority import AuthorityExtensionStatus, ResearchAuthorit
 from infrastructure.persistence.postgresql.repositories.postgresql_authority_extension_repository import PostgreSQLAuthorityExtensionRepository, PostgreSQLComposedAuthorityRepository
 from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
 from tests.integration.postgresql.helpers import PostgreSQLIntegrationTestCase, integration_tests_enabled
-from application.authority_extension.selected_workflow import SelectedAuthorityExtensionService, WorkflowExtensionStateStore
+from application.authority_extension.identity import canonical_gap_digest
+from application.authority_extension.selected_workflow import (
+    SelectedAuthorityExtensionService,
+    WorkflowExtensionStateStore,
+    derive_gap_contract,
+    extension_template_id,
+)
+from application.persistence.exceptions import DuplicateEntityError
 from application.authority_extension.stage_adapters import AuthorityExtensionStageExecutor
 from application.services.workflow_service import WorkflowService
 from domain.factories.task_factory import TaskFactory
 from domain.factories.workflow_run_factory import WorkflowRunFactory
 from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
 from domain.project import Project
+from domain.workflow_template import WorkflowTemplate
 from runtime.workflow_context import WorkflowContext
 from infrastructure.persistence.postgresql.repositories.postgresql_workflow_template_repository import PostgreSQLWorkflowTemplateRepository
 from infrastructure.persistence.postgresql.repositories.postgresql_workflow_run_repository import PostgreSQLWorkflowRunRepository
@@ -67,6 +75,117 @@ class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
             self.assertEqual(connection.execute(text("SELECT COUNT(*) FROM research_authority_extensions")).scalar_one(), 1)
             self.assertEqual(connection.execute(text("SELECT COUNT(*) FROM composed_research_authorities")).scalar_one(), 1)
             self.assertEqual(connection.execute(text("SELECT COUNT(*) FROM composed_research_authority_members")).scalar_one(), 2)
+
+    def test_second_attempt_uses_distinct_immutable_template_and_survives_reload(self):
+        def graph(factory):
+            workflows = WorkflowService(
+                workflow_template_repository=PostgreSQLWorkflowTemplateRepository(factory),
+                workflow_run_repository=PostgreSQLWorkflowRunRepository(factory),
+                workflow_run_factory=WorkflowRunFactory(TaskFactory()),
+            )
+            extensions = PostgreSQLAuthorityExtensionRepository(factory)
+            return workflows, extensions, SelectedAuthorityExtensionService(
+                workflow_service=workflows,
+                extension_repository=extensions,
+                composed_authority_repository=PostgreSQLComposedAuthorityRepository(factory),
+                state_store=WorkflowExtensionStateStore(workflows),
+                capability_check=lambda: True,
+            )
+
+        design = ResearchDesign("design", (ResearchQuestion("rq", "RQ"),), (
+            InformationNeed("in1", "rq", "nominal", timeframe="2021,2022", geography="UA"),
+            InformationNeed("in2_real_adjustment", "rq", "retail real-volume", timeframe="2021,2022", geography="UA"),
+            InformationNeed("in3", "rq", "trend", timeframe="2021,2022", geography="UA"),
+        ))
+        selected = ("in1", "in2_real_adjustment", "in3")
+        workflows, extensions, service = graph(self.session_factory)
+        first = service.start(
+            project_id="project", parent_workflow_run_id="parent", design=design,
+            selected_information_need_ids=selected,
+            idempotency_key="first-attempt", confirmed=True,
+        )
+        service.fail_technical(first.extension_workflow_run_id, "first attempt failed")
+        first_run = workflows.get_workflow_run(first.extension_workflow_run_id)
+        first_template = workflows.get_template(first_run.workflow_template_id)
+
+        fresh_factory = DatabaseSessionFactory(self.engine)
+        workflows, extensions, service = graph(fresh_factory)
+        second = service.start(
+            project_id="project", parent_workflow_run_id="parent", design=design,
+            selected_information_need_ids=selected,
+            idempotency_key="second-attempt", confirmed=True,
+        )
+        second_run = workflows.get_workflow_run(second.extension_workflow_run_id)
+        self.assertNotEqual(second.extension_id, first.extension_id)
+        self.assertNotEqual(second_run.id, first_run.id)
+        self.assertNotEqual(second_run.workflow_template_id, first_run.workflow_template_id)
+        self.assertEqual(workflows.get_template(first_run.workflow_template_id), first_template)
+        self.assertEqual(
+            extensions.get_by_id(first.extension_id).status,
+            AuthorityExtensionStatus.TECHNICAL_ERROR,
+        )
+
+        repeated = service.start(
+            project_id="project", parent_workflow_run_id="parent", design=design,
+            selected_information_need_ids=tuple(reversed(selected)),
+            idempotency_key="second-attempt", confirmed=True,
+        )
+        self.assertEqual(repeated.extension_id, second.extension_id)
+        with self.engine.connect() as connection:
+            self.assertEqual(connection.execute(text(
+                "SELECT COUNT(*) FROM research_authority_extensions"
+            )).scalar_one(), 2)
+            self.assertEqual(connection.execute(text(
+                "SELECT COUNT(*) FROM workflow_runs WHERE workflow_template_id LIKE 'desk-authority-extension-v1-%'"
+            )).scalar_one(), 2)
+            self.assertEqual(connection.execute(text(
+                "SELECT COUNT(*) FROM workflow_templates WHERE id LIKE 'desk-authority-extension-v1-%'"
+            )).scalar_one(), 2)
+
+        reloaded_factory = DatabaseSessionFactory(self.engine)
+        reloaded_workflows, reloaded_extensions, _ = graph(reloaded_factory)
+        self.assertEqual(
+            reloaded_extensions.get_by_idempotency_key("project", "second-attempt").extension_id,
+            second.extension_id,
+        )
+        self.assertEqual(
+            reloaded_workflows.get_workflow_run(second.extension_workflow_run_id).workflow_template_id,
+            second_run.workflow_template_id,
+        )
+        self.assertEqual(
+            reloaded_workflows.get_template(second_run.workflow_template_id).id,
+            second_run.workflow_template_id,
+        )
+
+        mismatch_key = "mismatched-attempt"
+        gaps = derive_gap_contract(design, selected)
+        mismatch_id = extension_template_id(
+            project_id="project",
+            parent_workflow_run_id="parent",
+            design_id=design.id,
+            gap_contract_digest=canonical_gap_digest([gap.to_dict() for gap in gaps]),
+            idempotency_key=mismatch_key,
+        )
+        PostgreSQLWorkflowTemplateRepository(reloaded_factory).save_snapshot(
+            WorkflowTemplate(mismatch_id, "Materially different", []),
+            project_id="project",
+        )
+        with self.assertRaisesRegex(
+            DuplicateEntityError,
+            f"WorkflowTemplate already exists: {mismatch_id}",
+        ):
+            service.start(
+                project_id="project", parent_workflow_run_id="parent", design=design,
+                selected_information_need_ids=selected,
+                idempotency_key=mismatch_key, confirmed=True,
+            )
+        with self.engine.connect() as connection:
+            self.assertEqual(connection.execute(text(
+                "SELECT COUNT(*) FROM research_authority_extensions"
+            )).scalar_one(), 2)
+            self.assertEqual(connection.execute(text(
+                "SELECT COUNT(*) FROM workflow_runs WHERE workflow_template_id=:template_id"
+            ), {"template_id": mismatch_id}).scalar_one(), 0)
 
     def test_composition_rejects_foreign_lineage_and_reader_preserves_owners(self):
         extensions = PostgreSQLAuthorityExtensionRepository(self.session_factory)
@@ -155,10 +274,11 @@ class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
             return workflows, extensions, compositions, service
 
         def runtime_context(workflows, run_id):
+            run = workflows.get_workflow_run(run_id)
             context = WorkflowContext(
-                workflows.get_workflow_run(run_id),
+                run,
                 Project("project", "P"),
-                workflows.get_template("desk-authority-extension-v1"),
+                workflows.get_template(run.workflow_template_id),
             )
             context.services[CHECKPOINT_SERVICE_KEY] = WorkflowRuntimePersister(
                 workflow_service=workflows,

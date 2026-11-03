@@ -237,7 +237,9 @@ def _state_from_dict(payload: dict[str, Any]) -> ExtensionState:
     )
 
 
-def extension_template(*, design: ResearchDesign) -> WorkflowTemplate:
+def extension_template(
+    *, design: ResearchDesign, template_id: str = EXTENSION_TEMPLATE_ID,
+) -> WorkflowTemplate:
     definitions: list[TaskDefinition] = []
     for index, stage in enumerate(EXTENSION_STAGES):
         definitions.append(TaskDefinition(
@@ -247,7 +249,7 @@ def extension_template(*, design: ResearchDesign) -> WorkflowTemplate:
             metadata={"authority_extension": True},
         ))
     return WorkflowTemplate(
-        id=EXTENSION_TEMPLATE_ID, name="Bounded selected authority extension",
+        id=template_id, name="Bounded selected authority extension",
         task_definitions=definitions, research_design_snapshot=design,
     )
 
@@ -329,6 +331,21 @@ def _stable_id(prefix: str, *parts: str) -> str:
     return f"{prefix}-{digest}"
 
 
+def extension_template_id(
+    *, project_id: str, parent_workflow_run_id: str, design_id: str,
+    gap_contract_digest: str, idempotency_key: str,
+) -> str:
+    """Identify one immutable authority-extension attempt snapshot."""
+    return _stable_id(
+        EXTENSION_TEMPLATE_ID,
+        project_id,
+        parent_workflow_run_id,
+        design_id,
+        gap_contract_digest,
+        idempotency_key,
+    )
+
+
 class SelectedAuthorityExtensionService:
     """Application controller; external dispatch is injected and budget-wrapped."""
 
@@ -362,9 +379,17 @@ class SelectedAuthorityExtensionService:
             raise ExtensionContractError("parent workflow is outside project")
         gaps = derive_gap_contract(design, selected_information_need_ids)
         payload = [gap.to_dict() for gap in gaps]
+        gap_contract_digest = canonical_gap_digest(payload)
         run_id = str(uuid4())
         template = extension_template(
             design=selected_design(design, (gap.information_need_id for gap in gaps)),
+            template_id=extension_template_id(
+                project_id=project_id,
+                parent_workflow_run_id=parent_workflow_run_id,
+                design_id=design.id,
+                gap_contract_digest=gap_contract_digest,
+                idempotency_key=idempotency_key,
+            ),
         )
         self.workflows.publish_template_snapshot(template, project_id=project_id)
         # The generic worker must not claim the run until the extension stage
@@ -379,7 +404,7 @@ class SelectedAuthorityExtensionService:
             parent_source_workflow_run_id=parent_workflow_run_id,
             extension_workflow_run_id=run_id,
             selected_information_need_ids=tuple(gap.information_need_id for gap in gaps),
-            gap_contract_digest=canonical_gap_digest(payload),
+            gap_contract_digest=gap_contract_digest,
             idempotency_key=idempotency_key, created_at=datetime.now(UTC).isoformat(),
         )
         try:

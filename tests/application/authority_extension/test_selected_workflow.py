@@ -17,10 +17,14 @@ from application.authority_extension.selected_workflow import (
     WorkflowExtensionStateStore,
     derive_gap_contract,
     extension_template,
+    extension_template_id,
     qualify_gap,
 )
+from application.authority_extension.identity import canonical_gap_digest
+from application.persistence.exceptions import DuplicateEntityError
 from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
 from domain.workflow_run import WorkflowRun
+from domain.workflow_template import WorkflowTemplate
 from infrastructure.persistence.memory.in_memory_authority_extension_repository import (
     InMemoryAuthorityExtensionRepository,
     InMemoryComposedAuthorityRepository,
@@ -43,11 +47,17 @@ class _Workflows:
     def __init__(self):
         self.runs = {"parent": WorkflowRun(id="parent", project_id="project", workflow_template_id="desk")}
         self.templates = []
+        self.template_by_id = {}
         self.results = {"parent": {}}
         self.versions = {"parent": 0}
 
     def get_workflow_run(self, run_id): return self.runs[run_id]
-    def publish_template_snapshot(self, template, *, project_id): self.templates.append(template)
+    def publish_template_snapshot(self, template, *, project_id):
+        if template.id in self.template_by_id:
+            raise DuplicateEntityError(f"WorkflowTemplate already exists: {template.id}")
+        self.templates.append(template)
+        self.template_by_id[template.id] = template
+    def get_template(self, template_id): return self.template_by_id[template_id]
     def create_workflow_run(self, template, *, project_id, run_id, initially_paused=False):
         from domain.factories.task_factory import TaskFactory
         from domain.factories.workflow_run_factory import WorkflowRunFactory
@@ -144,6 +154,67 @@ class SelectedAuthorityExtensionTests(unittest.TestCase):
         )
         self.assertEqual(again.extension_id, self.extension.extension_id)
         self.assertEqual(len(self.workflows.runs), 2)
+
+    def test_second_attempt_gets_distinct_immutable_template_and_run(self):
+        self.service.fail_technical(
+            self.extension.extension_workflow_run_id, "first attempt failed",
+        )
+        second = self.service.start(
+            project_id="project", parent_workflow_run_id="parent", design=_design(),
+            selected_information_need_ids=("in1", "in2_real_adjustment", "in3"),
+            idempotency_key="second-attempt", confirmed=True,
+        )
+
+        first_run = self.workflows.runs[self.extension.extension_workflow_run_id]
+        second_run = self.workflows.runs[second.extension_workflow_run_id]
+        self.assertNotEqual(second.extension_id, self.extension.extension_id)
+        self.assertNotEqual(second_run.id, first_run.id)
+        self.assertNotEqual(second_run.workflow_template_id, first_run.workflow_template_id)
+        self.assertIs(self.workflows.get_template(first_run.workflow_template_id), self.workflows.templates[0])
+        self.assertIs(self.workflows.get_template(second_run.workflow_template_id), self.workflows.templates[1])
+        self.assertEqual(
+            self.extensions.get_by_id(self.extension.extension_id).status.value,
+            "technical_error",
+        )
+
+        repeated = self.service.start(
+            project_id="project", parent_workflow_run_id="parent", design=_design(),
+            selected_information_need_ids=("in3", "in2_real_adjustment", "in1"),
+            idempotency_key="second-attempt", confirmed=True,
+        )
+        self.assertEqual(repeated.extension_id, second.extension_id)
+        self.assertEqual(len(self.workflows.templates), 2)
+        self.assertEqual(len(self.workflows.runs), 3)
+
+    def test_attempt_template_identity_mismatch_fails_before_run_or_extension(self):
+        selected = ("in1", "in2_real_adjustment", "in3")
+        gaps = derive_gap_contract(_design(), selected)
+        template_id = extension_template_id(
+            project_id="project",
+            parent_workflow_run_id="parent",
+            design_id="design",
+            gap_contract_digest=canonical_gap_digest([gap.to_dict() for gap in gaps]),
+            idempotency_key="mismatched-attempt",
+        )
+        self.workflows.publish_template_snapshot(
+            WorkflowTemplate(template_id, "Materially different", []),
+            project_id="project",
+        )
+        before_runs = set(self.workflows.runs)
+        before_extensions = set(self.extensions._items)
+
+        with self.assertRaisesRegex(
+            DuplicateEntityError,
+            f"WorkflowTemplate already exists: {template_id}",
+        ):
+            self.service.start(
+                project_id="project", parent_workflow_run_id="parent", design=_design(),
+                selected_information_need_ids=selected,
+                idempotency_key="mismatched-attempt", confirmed=True,
+            )
+
+        self.assertEqual(set(self.workflows.runs), before_runs)
+        self.assertEqual(set(self.extensions._items), before_extensions)
 
     def test_capability_gate_activates_only_complete_runtime(self):
         activated = self.service.activate(self.extension.extension_id)
