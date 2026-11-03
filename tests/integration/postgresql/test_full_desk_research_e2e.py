@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import copy
+import ast
 from dataclasses import replace
 from hashlib import sha256
+import json
+import re
 import unittest
 
 from application.composition_root import create_application_container
@@ -33,6 +36,7 @@ from domain.sources.source import Source
 from domain.sources.source_candidate import SourceCandidate
 from domain.task_definition import TaskDefinition
 from domain.workflow_template import WorkflowTemplate
+from domain.ai.llm_response import LLMResponse
 from tests.application.report.test_h3_claim_generation import _valid_response
 from tests.application.report.test_h3_editorial_delivery import _editorial_payload
 from tests.api.helpers import drain_background_runs
@@ -237,6 +241,60 @@ class _PdfRenderer:
         return b"%PDF-1.4\n% provider-free qualification\n"
 
 
+class _AnalysisProvider:
+    """Deterministic provider double used behind the production analysis path."""
+
+    def __init__(self):
+        self.calls = []
+
+    def generate(self, prompt, *, options=None):
+        self.calls.append(prompt)
+        if '"verdicts"' in prompt.system:
+            candidate_ids = re.findall(r"candidate_id=([^\s]+)", prompt.user)
+            return LLMResponse(content=json.dumps({
+                "verdicts": [
+                    {
+                        "candidate_id": candidate_id,
+                        "status": "SUPPORTED",
+                        "supported_evidence_ids": [
+                            ast.literal_eval(refs)[0]
+                            for refs in re.findall(
+                                r"evidence_refs=\[([^\]]+)\]", prompt.user,
+                            )[:1]
+                            if ast.literal_eval(refs)
+                        ],
+                        "unsupported_claim_parts": [],
+                        "rationale": "deterministic supported fixture",
+                    }
+                    for candidate_id in candidate_ids
+                ],
+            }))
+        if '"insights"' in prompt.system:
+            finding_ids = re.findall(r"- id=([^\s]+) statement=", prompt.user)
+            return LLMResponse(content=json.dumps({
+                "insights": [{
+                    "statement": "Selected evidence indicates a stable trend.",
+                    "implication": "The selected scope is analyzable.",
+                    "finding_refs": finding_ids[:1],
+                    "research_question_refs": ["rq-retail"],
+                    "confidence": 0.8,
+                }],
+            }))
+        evidence_ids = re.findall(r"- id=([^\s]+) statement=", prompt.user)
+        need = NEEDS[0]
+        return LLMResponse(content=json.dumps({
+            "findings": [{
+                "statement": "Selected evidence supports the retail trend.",
+                "rationale": "The selected evidence is directly grounded.",
+                "evidence_refs": evidence_ids[:1],
+                "research_question_refs": ["rq-retail"],
+                "information_need_refs": [need],
+                "finding_type": "synthesis",
+                "confidence": 0.8,
+            }],
+        }))
+
+
 @unittest.skipUnless(integration_tests_enabled(), "isolated PostgreSQL integration database required")
 class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
     def _parent(self, container, design):
@@ -410,6 +468,7 @@ class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
             item for member in durable_composition.member_workflow_run_ids
             for item in fresh.finding_service.list_findings_for_project(PROJECT, workflow_run_id=member)
         ]
+
         all_insights = [
             item for member in durable_composition.member_workflow_run_ids
             for item in fresh.insight_service.list_insights_for_project(PROJECT, workflow_run_id=member)
@@ -467,3 +526,74 @@ class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
             fresh.finding_service.count_for_run(PROJECT, PARENT),
             fresh.insight_service.count_for_run(PROJECT, PARENT),
         ))
+
+    def test_production_shaped_analysis_uses_budget_proxy_and_selected_scope(self):
+        design = _design(); search = _Search(); extractor = _EvidenceExtractor(design)
+        provider = _AnalysisProvider()
+        container = create_application_container(
+            config=postgresql_application_config(
+                background_execution_mode="external", search_provider="deterministic",
+                evidence_extractor="deterministic", analysis_engine="llm",
+                report_engine="deterministic", review_engine="deterministic",
+                desk_report_contract_version=H3_CONTRACT_VERSION,
+            ),
+            overrides=ApplicationOverrides(
+                search_provider=search, source_retriever=_Retriever(),
+                evidence_extractor=extractor, analysis_llm_client=provider,
+                report_engine=_H3Engine(), h3_editorial_provider=_Editorial(),
+                h3_review_provider=_Review(),
+            ),
+        )
+        self.addCleanup(container.shutdown)
+        container.agency.initialize()
+        configure_structured_finalization_test_boundary(container)
+        self._parent(container, design)
+        extension = container.authority_extension_service.start(
+            project_id=PROJECT, parent_workflow_run_id=PARENT, design=design,
+            selected_information_need_ids=NEEDS,
+            idempotency_key="production-shaped-analysis-e2e", confirmed=True,
+        )
+        container.authority_extension_service.activate(extension.extension_id)
+        drain_background_runs(container, worker_id="extension-worker")
+        extension = container.authority_extension_service.extensions.get_by_id(extension.extension_id)
+        state = container.authority_extension_service._state(extension.extension_workflow_run_id)
+        self.assertEqual("succeeded", extension.status.value)
+        self.assertGreaterEqual(len(provider.calls), 3)
+        self.assertLessEqual(len(provider.calls), 7)
+        self.assertTrue(any(NEEDS[0] in prompt.user for prompt in provider.calls))
+        self.assertFalse(any("archive" in prompt.user for prompt in provider.calls))
+        self.assertTrue(all(
+            need in set(NEEDS)
+            for prompt in provider.calls
+            for need in re.findall(r"information_needs=\['([^']+)'\]", prompt.user)
+        ))
+        self.assertIsNotNone(state.composition_id)
+        self.assertEqual(3, state.budget.analysis_reserved)
+        self.assertEqual(len(provider.calls), state.budget.provider_used)
+        self.assertGreater(
+            container.finding_service.count_for_run(
+                PROJECT, extension.extension_workflow_run_id,
+            ),
+            0,
+        )
+        fresh = create_application_container(
+            config=postgresql_application_config(
+                background_execution_mode="external", search_provider="deterministic",
+                evidence_extractor="deterministic", analysis_engine="llm",
+                report_engine="deterministic", review_engine="deterministic",
+                desk_report_contract_version=H3_CONTRACT_VERSION,
+            ),
+            overrides=ApplicationOverrides(
+                search_provider=search, source_retriever=_Retriever(),
+                evidence_extractor=extractor, analysis_llm_client=provider,
+                report_engine=_H3Engine(), h3_editorial_provider=_Editorial(),
+                h3_review_provider=_Review(),
+            ),
+        )
+        self.addCleanup(fresh.shutdown)
+        fresh.agency.initialize()
+        restored = fresh.authority_extension_service._state(
+            extension.extension_workflow_run_id,
+        )
+        self.assertEqual(state.budget, restored.budget)
+        self.assertEqual(state.composition_id, restored.composition_id)
