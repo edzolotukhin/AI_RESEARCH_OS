@@ -280,25 +280,34 @@ class _AnalysisProvider:
                     "confidence": 0.8,
                 }],
             }))
-        evidence_ids = re.findall(r"- id=([^\s]+) statement=", prompt.user)
-        needs = re.findall(r"information_needs=\['([^']+)'\]", prompt.user)
-        if not needs:
-            raise AssertionError(
-                "analysis prompt did not expose InformationNeed for Evidence",
+        evidence_records = []
+        for line in prompt.user.splitlines():
+            if not (
+                line.startswith("- id=")
+                and " statement=" in line
+                and " information_needs=" in line
+            ):
+                continue
+            match = re.match(
+                r"^- id=(?P<evidence_id>[^\s]+) statement=.* "
+                r"information_needs=(?P<needs>\[[^\]]*\])$",
+                line,
             )
-        evidence_lines = [
-            line for line in prompt.user.splitlines() if line.startswith("- id=")
-        ]
-        first_evidence_id = re.match(r"- id=([^\s]+)", evidence_lines[0]).group(1)
-        first_evidence_need = re.search(
-            r"information_needs=\['([^']+)'\]", evidence_lines[0],
-        ).group(1)
-        if first_evidence_need != needs[0]:
+            if match is None:
+                raise AssertionError(f"unparseable Evidence prompt line: {line!r}")
+            parsed_needs = ast.literal_eval(match.group("needs"))
+            if not isinstance(parsed_needs, list) or len(parsed_needs) != 1:
+                raise AssertionError(
+                    "Evidence must have exactly one unambiguous InformationNeed: "
+                    f"{line!r}",
+                )
+            evidence_records.append((match.group("evidence_id"), parsed_needs[0]))
+        if not evidence_records:
             raise AssertionError(
-                f"InformationNeed {needs[0]!r} does not match Evidence "
-                f"{first_evidence_id!r} ({first_evidence_need!r})",
+                "analysis prompt did not expose a parseable Evidence record",
             )
-        need = needs[0]
+        evidence_ids = [evidence_id for evidence_id, _ in evidence_records]
+        need = evidence_records[0][1]
         return LLMResponse(content=json.dumps({
             "findings": [{
                 "statement": "Selected evidence supports the retail trend.",
