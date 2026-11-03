@@ -10,6 +10,7 @@ from domain.planning.research_design import (
     ResearchDesign,
     ResearchQuestion,
 )
+from domain.research_brief import ResearchBrief
 from domain.task_definition import TaskDefinition
 from domain.workflow_template import WorkflowTemplate
 from tests.api.helpers import build_test_container
@@ -47,6 +48,7 @@ class AuthorityExtensionOperatorIngressTests(unittest.TestCase):
             "parent-template",
             "Parent",
             [TaskDefinition("t", "t", "search")],
+            research_brief_snapshot=ResearchBrief("Parent", "Parent question"),
             research_design_snapshot=design,
         )
         self.container.workflow_service.publish_template_snapshot(

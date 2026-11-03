@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
+from domain.research_brief import ResearchBrief
 from domain.task_definition import TaskDefinition
 from domain.workflow_template import WorkflowTemplate
 from tests.api.auth_helpers import auth_headers, bootstrap_second_test_api_key
@@ -15,7 +16,11 @@ class AuthorityExtensionApiTests(ApiTestCase):
             "design", (ResearchQuestion("rq", "RQ"),),
             (InformationNeed("in1", "rq", "Need", timeframe="2021", geography="UA"),),
         )
-        template = WorkflowTemplate("parent-template", "Parent", [TaskDefinition("t", "t", "search")], research_design_snapshot=design)
+        template = WorkflowTemplate(
+            "parent-template", "Parent", [TaskDefinition("t", "t", "search")],
+            research_brief_snapshot=ResearchBrief("Parent", "Parent question"),
+            research_design_snapshot=design,
+        )
         self.container.workflow_service.publish_template_snapshot(template, project_id=self.project_id)
         self.parent = self.container.workflow_service.create_workflow_run(template, project_id=self.project_id)
         self.url = f"/projects/{self.project_id}/authority-extensions"
