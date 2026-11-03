@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from contextvars import ContextVar
 import re
 from typing import Any
@@ -14,6 +14,10 @@ from application.runtime.checkpoint_context import CHECKPOINT_FAILURE_HANDLER_KE
 from runtime.workflow_context import WorkflowContext
 
 _extension_dispatch: ContextVar[tuple[Any, str] | None] = ContextVar("authority_extension_dispatch", default=None)
+_extension_runtime_context: ContextVar[Any | None] = ContextVar(
+    "authority_extension_runtime_context",
+    default=None,
+)
 
 
 class ExtensionSearchBudgetProxy:
@@ -50,6 +54,102 @@ class ExtensionImmutableSourceRepositoryProxy:
             if persisted is not None and run_id not in persisted.workflow_run_refs:
                 return persisted.version
         return self._delegate.save(source, expected_version=expected_version)
+
+    def list_for_project(
+        self,
+        project_id,
+        *,
+        research_question_id=None,
+        retrieval_status=None,
+        workflow_run_id=None,
+    ):
+        values = self._delegate.list_for_project(
+            project_id,
+            research_question_id=research_question_id,
+            retrieval_status=retrieval_status,
+            workflow_run_id=workflow_run_id,
+        )
+        current = _extension_dispatch.get()
+        context = _extension_runtime_context.get()
+        if current is None or context is None:
+            return values
+        service, run_id = current
+        if workflow_run_id != run_id:
+            return values
+
+        acquisition = context.read_shared("source_acquisition")
+        funnel = context.read_shared("research_funnel_v1")
+        if not isinstance(acquisition, dict) or not isinstance(funnel, dict):
+            return values
+        raw_source_ids = acquisition.get("source_ids")
+        raw_events = funnel.get("events")
+        if not isinstance(raw_source_ids, list) or not isinstance(raw_events, list):
+            return values
+
+        extension = service.extensions.get_by_id(service._state(run_id).extension_id)
+        gaps = {gap.information_need_id: gap for gap in service._state(run_id).gaps}
+        needs_by_source: dict[str, set[str]] = {}
+        for event in raw_events:
+            if not isinstance(event, dict) or event.get("kind") != "candidate_decision":
+                continue
+            source_id = str(event.get("source_id") or "")
+            need_id = str(event.get("target_in") or "")
+            if source_id and need_id in gaps:
+                needs_by_source.setdefault(source_id, set()).add(need_id)
+
+        by_id = {source.id: source for source in values}
+        for raw_source_id in raw_source_ids:
+            source_id = str(raw_source_id)
+            if source_id in by_id:
+                continue
+            source = self._delegate.get_by_id(source_id)
+            need_ids = tuple(sorted(needs_by_source.get(source_id, ())))
+            if source is None or source.project_id != project_id or not need_ids:
+                continue
+            question_ids = tuple(
+                dict.fromkeys(gaps[need_id].research_question_id for need_id in need_ids)
+            )
+            if research_question_id is not None and research_question_id not in question_ids:
+                continue
+            if retrieval_status is not None and source.retrieval_status.value != retrieval_status:
+                continue
+            records = list((source.metadata or {}).get("discovery_records") or [])
+            records.extend(
+                {
+                    "workflow_run_id": run_id,
+                    "research_design_id": extension.research_design_id,
+                    "research_question_id": gaps[need_id].research_question_id,
+                    "information_need_id": need_id,
+                    "query_id": f"sq-{need_id}",
+                }
+                for need_id in need_ids
+            )
+            virtual = replace(
+                source,
+                query_refs=tuple(
+                    dict.fromkeys(
+                        (*source.query_refs, *(f"sq-{item}" for item in need_ids)),
+                    ),
+                ),
+                research_question_refs=tuple(
+                    dict.fromkeys((*source.research_question_refs, *question_ids)),
+                ),
+                information_need_refs=tuple(
+                    dict.fromkeys((*source.information_need_refs, *need_ids)),
+                ),
+                workflow_run_refs=tuple(
+                    dict.fromkeys((*source.workflow_run_refs, run_id)),
+                ),
+                research_design_refs=tuple(
+                    dict.fromkeys(
+                        (*source.research_design_refs, extension.research_design_id),
+                    ),
+                ),
+                metadata={**(source.metadata or {}), "discovery_records": records},
+            )
+            by_id[virtual.id] = virtual
+        return sorted(by_id.values(), key=lambda item: item.id)
+
     def __getattr__(self, name): return getattr(self._delegate, name)
 
 
@@ -92,9 +192,11 @@ class AuthorityExtensionStageExecutor(BaseExecutor):
                 if self.delegate is None:
                     raise ExtensionContractError("extension stage delegate unavailable")
                 token = _extension_dispatch.set((self.service, run_id))
+                context_token = _extension_runtime_context.set(context)
                 try:
                     context = self.delegate.run(context)
                 finally:
+                    _extension_runtime_context.reset(context_token)
                     _extension_dispatch.reset(token)
                 if self.stage == "extension_evidence":
                     self._capture_evidence(context)

@@ -18,12 +18,19 @@ from application.authority_extension.selected_workflow import (
     extension_template_id,
 )
 from application.persistence.exceptions import DuplicateEntityError
-from application.authority_extension.stage_adapters import AuthorityExtensionStageExecutor
+from application.authority_extension.stage_adapters import (
+    AuthorityExtensionStageExecutor,
+    ExtensionImmutableSourceRepositoryProxy,
+    _extension_dispatch,
+    _extension_runtime_context,
+)
+from application.evidence.evidence_extraction_service import EvidenceExtractionService
 from application.services.workflow_service import WorkflowService
 from domain.factories.task_factory import TaskFactory
 from domain.factories.workflow_run_factory import WorkflowRunFactory
 from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
 from domain.project import Project
+from domain.sources.source import Source
 from domain.workflow_template import WorkflowTemplate
 from runtime.workflow_context import WorkflowContext
 from infrastructure.persistence.postgresql.repositories.postgresql_workflow_template_repository import PostgreSQLWorkflowTemplateRepository
@@ -31,6 +38,7 @@ from infrastructure.persistence.postgresql.repositories.postgresql_workflow_run_
 from infrastructure.persistence.postgresql.repositories.postgresql_source_repository import PostgreSQLSourceRepository
 from infrastructure.persistence.postgresql.repositories.postgresql_evidence_repository import PostgreSQLEvidenceRepository
 from infrastructure.persistence.postgresql.repositories.postgresql_finding_repository import PostgreSQLFindingRepository
+from infrastructure.evidence.deterministic_evidence_extractor import DeterministicEvidenceExtractor
 from tests.application.authority_extension.test_p2_acceptance_harness import _SearchBoundary, _EvidenceBoundary, _AnalysisBoundary
 from application.runtime.workflow_runtime_persister import WorkflowRuntimePersister
 from application.runtime.checkpoint_context import CHECKPOINT_SERVICE_KEY
@@ -366,6 +374,129 @@ class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
         again = service.finalize(run_id, created_at=SYNTHETIC_TIMESTAMP)
         self.assertEqual(again.composition_digest, state.composition_digest)
         self.assertEqual(again.composition_id, state.composition_id)
+
+    def test_parent_source_selected_by_extension_is_visible_after_repository_reload(self):
+        def graph(factory):
+            workflows = WorkflowService(
+                workflow_template_repository=PostgreSQLWorkflowTemplateRepository(factory),
+                workflow_run_repository=PostgreSQLWorkflowRunRepository(factory),
+                workflow_run_factory=WorkflowRunFactory(TaskFactory()),
+            )
+            extensions = PostgreSQLAuthorityExtensionRepository(factory)
+            return workflows, SelectedAuthorityExtensionService(
+                workflow_service=workflows,
+                extension_repository=extensions,
+                composed_authority_repository=PostgreSQLComposedAuthorityRepository(factory),
+                state_store=WorkflowExtensionStateStore(workflows),
+                capability_check=lambda: True,
+            )
+
+        design = ResearchDesign(
+            "parent-source-design",
+            (ResearchQuestion("rq", "What is the market outlook?"),),
+            (InformationNeed("in1", "rq", "Need market data"),),
+        )
+        workflows, service = graph(self.session_factory)
+        extension = service.start(
+            project_id="project",
+            parent_workflow_run_id="parent",
+            design=design,
+            selected_information_need_ids=("in1",),
+            idempotency_key="pg-parent-source-visibility",
+            confirmed=True,
+        )
+        service.activate(extension.extension_id)
+        run_id = extension.extension_workflow_run_id
+        sources = PostgreSQLSourceRepository(self.session_factory)
+        parent_source = Source(
+            id="parent-selected-source",
+            project_id="project",
+            url="https://example.com/parent-source",
+            canonical_url="https://example.com/parent-source",
+            title="Parent source",
+            retrieved_at=SYNTHETIC_TIMESTAMP,
+            content_text="Acquired market report body text.",
+            content_checksum="parent-source-checksum",
+            workflow_run_refs=("parent",),
+            research_design_refs=(design.id,),
+            information_need_refs=("in1",),
+            research_question_refs=("rq",),
+            metadata={
+                "discovery_records": [
+                    {
+                        "workflow_run_id": "parent",
+                        "research_design_id": design.id,
+                        "research_question_id": "rq",
+                        "information_need_id": "in1",
+                        "query_id": "sq-in1",
+                    },
+                ],
+            },
+        )
+        sources.create(parent_source)
+        before = sources.get_by_id(parent_source.id).to_dict()
+
+        run = workflows.get_workflow_run(run_id)
+        results = workflows.get_task_results(run_id)
+        results.update(
+            {
+                "source_acquisition": {"source_ids": [parent_source.id]},
+                "research_funnel_v1": {
+                    "version": 1,
+                    "sequence": 0,
+                    "events": [
+                        {
+                            "kind": "candidate_decision",
+                            "source_id": parent_source.id,
+                            "target_in": "in1",
+                            "reason": "selected",
+                        },
+                    ],
+                    "dropped_events": 0,
+                    "observer_errors": 0,
+                },
+            },
+        )
+        workflows.save_workflow_run(
+            run,
+            expected_version=workflows.get_workflow_run_version(run_id),
+            task_results=results,
+        )
+
+        fresh_factory = DatabaseSessionFactory(self.engine)
+        fresh_workflows, fresh_service = graph(fresh_factory)
+        fresh_sources = PostgreSQLSourceRepository(fresh_factory)
+        evidence = PostgreSQLEvidenceRepository(fresh_factory)
+        fresh_run = fresh_workflows.get_workflow_run(run_id)
+        context = WorkflowContext(
+            fresh_run,
+            Project("project", "P"),
+            fresh_workflows.get_template(fresh_run.workflow_template_id),
+        )
+        context.shared_state.update(fresh_workflows.get_task_results(run_id))
+        proxy = ExtensionImmutableSourceRepositoryProxy(fresh_sources)
+        extraction = EvidenceExtractionService(
+            evidence_extractor=DeterministicEvidenceExtractor(),
+            evidence_repository=evidence,
+            source_repository=proxy,
+        )
+        dispatch_token = _extension_dispatch.set((fresh_service, run_id))
+        context_token = _extension_runtime_context.set(context)
+        try:
+            visible = proxy.list_for_project("project", workflow_run_id=run_id)
+            summary = extraction.extract_for_context(context)
+        finally:
+            _extension_runtime_context.reset(context_token)
+            _extension_dispatch.reset(dispatch_token)
+
+        self.assertEqual([item.id for item in visible], [parent_source.id])
+        self.assertEqual(summary.evidence_extracted, 1)
+        self.assertEqual(
+            evidence.list_for_project("project", workflow_run_id=run_id)[0].source_id,
+            parent_source.id,
+        )
+        self.assertEqual(fresh_sources.get_by_id(parent_source.id).to_dict(), before)
+        self.assertEqual(len(fresh_sources.list_for_project("project")), 1)
 
     def test_extension_plan_runtime_checkpoint_owns_postgresql_version(self):
         workflows = WorkflowService(

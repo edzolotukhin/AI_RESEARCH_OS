@@ -30,11 +30,20 @@ from infrastructure.persistence.memory.in_memory_authority_extension_repository 
     InMemoryComposedAuthorityRepository,
 )
 from infrastructure.persistence.memory.in_memory_source_repository import InMemorySourceRepository
+from infrastructure.persistence.memory.in_memory_evidence_repository import (
+    InMemoryEvidenceRepository,
+)
+from infrastructure.evidence.deterministic_evidence_extractor import (
+    DeterministicEvidenceExtractor,
+)
 from application.authority_extension.stage_adapters import (
     AuthorityExtensionStageExecutor,
     ExtensionImmutableSourceRepositoryProxy,
     _extension_dispatch,
+    _extension_runtime_context,
 )
+from application.evidence.run_scoped_provenance import resolve_run_scoped_context
+from application.evidence.evidence_extraction_service import EvidenceExtractionService
 from domain.sources.source import Source
 from domain.project import Project
 from runtime.workflow_context import WorkflowContext
@@ -422,6 +431,111 @@ class SelectedAuthorityExtensionTests(unittest.TestCase):
         finally:
             _extension_dispatch.reset(token)
         self.assertEqual(repository.get_by_id("s").workflow_run_refs, ("parent",))
+
+    def test_parent_source_selected_by_extension_is_visible_without_mutation(self):
+        repository = InMemorySourceRepository()
+        original = Source(
+            "s",
+            "project",
+            "https://x",
+            "https://x",
+            "x",
+            "now",
+            workflow_run_refs=("parent",),
+            research_design_refs=("design",),
+            information_need_refs=("in1",),
+            content_text="Acquired market report body text.",
+            content_checksum="checksum",
+        )
+        repository.create(original)
+        proxy = ExtensionImmutableSourceRepositoryProxy(repository)
+
+        class _Context:
+            @staticmethod
+            def read_shared(key):
+                return {
+                    "source_acquisition": {"source_ids": ["s"]},
+                    "research_funnel_v1": {
+                        "events": [
+                            {
+                                "kind": "candidate_decision",
+                                "source_id": "s",
+                                "target_in": "in1",
+                                "reason": "selected",
+                            },
+                        ],
+                    },
+                }.get(key)
+
+        run_id = self.extension.extension_workflow_run_id
+        dispatch_token = _extension_dispatch.set((self.service, run_id))
+        context_token = _extension_runtime_context.set(_Context())
+        try:
+            selected = proxy.list_for_project("project", workflow_run_id=run_id)
+        finally:
+            _extension_runtime_context.reset(context_token)
+            _extension_dispatch.reset(dispatch_token)
+
+        self.assertEqual([source.id for source in selected], ["s"])
+        run_context = resolve_run_scoped_context(
+            source=selected[0],
+            design=_design(),
+            workflow_run_id=run_id,
+            research_design_id="design",
+        )
+        self.assertEqual(run_context.information_need_ids, ("in1",))
+
+        workflow_context = WorkflowContext(
+            project=Project(id="project", name="Project"),
+            workflow_template=self.workflows.templates[0],
+            workflow_run=self.workflows.runs[run_id],
+        )
+        workflow_context.write_shared("source_acquisition", {"source_ids": ["s"]})
+        workflow_context.write_shared(
+            "research_funnel_v1",
+            {
+                "version": 1,
+                "sequence": 0,
+                "dropped_events": 0,
+                "observer_errors": 0,
+                "events": [
+                    {
+                        "kind": "candidate_decision",
+                        "source_id": "s",
+                        "target_in": "in1",
+                        "reason": "selected",
+                    },
+                ],
+            },
+        )
+        evidence = InMemoryEvidenceRepository()
+        extraction = EvidenceExtractionService(
+            evidence_extractor=DeterministicEvidenceExtractor(),
+            evidence_repository=evidence,
+            source_repository=proxy,
+        )
+        dispatch_token = _extension_dispatch.set((self.service, run_id))
+        context_token = _extension_runtime_context.set(workflow_context)
+        try:
+            summary = extraction.extract_for_context(workflow_context)
+        finally:
+            _extension_runtime_context.reset(context_token)
+            _extension_dispatch.reset(dispatch_token)
+        self.assertEqual(summary.evidence_extracted, 1)
+        self.assertEqual(
+            evidence.list_for_project("project", workflow_run_id=run_id)[0].source_id,
+            "s",
+        )
+
+        persisted = repository.get_by_id("s")
+        self.assertEqual(persisted.workflow_run_refs, ("parent",))
+        self.assertNotIn(
+            run_id,
+            {
+                record.get("workflow_run_id")
+                for record in persisted.metadata.get("discovery_records", [])
+            },
+        )
 
     def test_technical_failure_is_durable(self):
         self.service.fail_technical(self.extension.extension_workflow_run_id, "network unavailable")
