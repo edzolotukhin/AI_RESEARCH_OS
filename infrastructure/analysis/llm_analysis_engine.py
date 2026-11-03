@@ -6,6 +6,7 @@ from typing import Any
 from domain.findings.finding_type import FindingType
 
 from application.analysis.exceptions import AnalysisConfigurationError
+from application.authority_extension.selected_workflow import ExtensionBudgetExceeded
 from application.execution.exceptions import BudgetExhaustedError
 from application.ports.analysis_ports import (
     AnalysisInput,
@@ -79,6 +80,8 @@ class LlmAnalysisEngine:
                 ),
             )
         except BudgetExhaustedError:
+            raise
+        except ExtensionBudgetExceeded:
             raise
         except Exception as exc:
             raise AnalysisConfigurationError("LLM finding analysis failed") from exc
@@ -182,6 +185,8 @@ class LlmAnalysisEngine:
                 ),
             )
         except BudgetExhaustedError:
+            raise
+        except ExtensionBudgetExceeded:
             raise
         except Exception as exc:
             raise AnalysisConfigurationError("LLM insight analysis failed") from exc

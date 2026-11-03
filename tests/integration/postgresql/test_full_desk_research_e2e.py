@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import copy
+import ast
 from dataclasses import replace
 from hashlib import sha256
+import json
+import re
 import unittest
 
 from application.composition_root import create_application_container
@@ -33,6 +36,7 @@ from domain.sources.source import Source
 from domain.sources.source_candidate import SourceCandidate
 from domain.task_definition import TaskDefinition
 from domain.workflow_template import WorkflowTemplate
+from domain.ai.llm_response import LLMResponse
 from tests.application.report.test_h3_claim_generation import _valid_response
 from tests.application.report.test_h3_editorial_delivery import _editorial_payload
 from tests.api.helpers import drain_background_runs
@@ -237,6 +241,113 @@ class _PdfRenderer:
         return b"%PDF-1.4\n% provider-free qualification\n"
 
 
+class _AnalysisProvider:
+    """Deterministic provider double used behind the production analysis path."""
+
+    def __init__(self):
+        self.calls = []
+
+    def generate(self, prompt, *, options=None):
+        self.calls.append(prompt)
+        if '"verdicts"' in prompt.system:
+            candidate_blocks = []
+            current = None
+            for line in prompt.user.splitlines():
+                candidate_match = re.fullmatch(r"- candidate_id=([^\s]+)", line)
+                if candidate_match:
+                    if current is not None:
+                        candidate_blocks.append(current)
+                    current = {
+                        "candidate_id": candidate_match.group(1),
+                        "evidence_refs": None,
+                    }
+                    continue
+                if current is None or not line.startswith("  evidence_refs="):
+                    continue
+                if current["evidence_refs"] is not None:
+                    raise AssertionError(
+                        f"duplicate evidence_refs for {current['candidate_id']}",
+                    )
+                refs = ast.literal_eval(line.split("=", 1)[1])
+                if not isinstance(refs, list) or not refs or not all(
+                    isinstance(ref, str) and ref for ref in refs
+                ):
+                    raise AssertionError(
+                        f"missing or malformed Evidence refs for {current['candidate_id']}",
+                    )
+                current["evidence_refs"] = refs
+            if current is not None:
+                candidate_blocks.append(current)
+            if not candidate_blocks or any(
+                block["evidence_refs"] is None for block in candidate_blocks
+            ):
+                raise AssertionError(
+                    "entailment prompt has missing candidate-to-Evidence mapping",
+                )
+            return LLMResponse(content=json.dumps({
+                "verdicts": [
+                    {
+                        "candidate_id": block["candidate_id"],
+                        "status": "SUPPORTED",
+                        "supported_evidence_ids": block["evidence_refs"],
+                        "unsupported_claim_parts": [],
+                        "rationale": "deterministic supported fixture",
+                    }
+                    for block in candidate_blocks
+                ],
+            }))
+        if '"insights"' in prompt.system:
+            finding_ids = re.findall(r"- id=([^\s]+) statement=", prompt.user)
+            return LLMResponse(content=json.dumps({
+                "insights": [{
+                    "statement": "Selected evidence indicates a stable trend.",
+                    "implication": "The selected scope is analyzable.",
+                    "finding_refs": finding_ids[:1],
+                    "research_question_refs": ["rq-retail"],
+                    "confidence": 0.8,
+                }],
+            }))
+        evidence_records = []
+        for line in prompt.user.splitlines():
+            if not (
+                line.startswith("- id=")
+                and " statement=" in line
+                and " information_needs=" in line
+            ):
+                continue
+            match = re.match(
+                r"^- id=(?P<evidence_id>[^\s]+) statement=.* "
+                r"information_needs=(?P<needs>\[[^\]]*\])$",
+                line,
+            )
+            if match is None:
+                raise AssertionError(f"unparseable Evidence prompt line: {line!r}")
+            parsed_needs = ast.literal_eval(match.group("needs"))
+            if not isinstance(parsed_needs, list) or len(parsed_needs) != 1:
+                raise AssertionError(
+                    "Evidence must have exactly one unambiguous InformationNeed: "
+                    f"{line!r}",
+                )
+            evidence_records.append((match.group("evidence_id"), parsed_needs[0]))
+        if not evidence_records:
+            raise AssertionError(
+                "analysis prompt did not expose a parseable Evidence record",
+            )
+        evidence_ids = [evidence_id for evidence_id, _ in evidence_records]
+        need = evidence_records[0][1]
+        return LLMResponse(content=json.dumps({
+            "findings": [{
+                "statement": "Selected evidence supports the retail trend.",
+                "rationale": "The selected evidence is directly grounded.",
+                "evidence_refs": evidence_ids[:1],
+                "research_question_refs": ["rq-retail"],
+                "information_need_refs": [need],
+                "finding_type": "synthesis",
+                "confidence": 0.8,
+            }],
+        }))
+
+
 @unittest.skipUnless(integration_tests_enabled(), "isolated PostgreSQL integration database required")
 class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
     def _parent(self, container, design):
@@ -410,6 +521,7 @@ class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
             item for member in durable_composition.member_workflow_run_ids
             for item in fresh.finding_service.list_findings_for_project(PROJECT, workflow_run_id=member)
         ]
+
         all_insights = [
             item for member in durable_composition.member_workflow_run_ids
             for item in fresh.insight_service.list_insights_for_project(PROJECT, workflow_run_id=member)
@@ -467,3 +579,83 @@ class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
             fresh.finding_service.count_for_run(PROJECT, PARENT),
             fresh.insight_service.count_for_run(PROJECT, PARENT),
         ))
+
+    def test_production_shaped_analysis_uses_budget_proxy_and_selected_scope(self):
+        design = _design(); search = _Search(); extractor = _EvidenceExtractor(design)
+        provider = _AnalysisProvider()
+        container = create_application_container(
+            config=postgresql_application_config(
+                background_execution_mode="external", search_provider="deterministic",
+                evidence_extractor="deterministic", analysis_engine="llm",
+                report_engine="deterministic", review_engine="deterministic",
+                desk_report_contract_version=H3_CONTRACT_VERSION,
+            ),
+            overrides=ApplicationOverrides(
+                search_provider=search, source_retriever=_Retriever(),
+                evidence_extractor=extractor, analysis_llm_client=provider,
+                report_engine=_H3Engine(), h3_editorial_provider=_Editorial(),
+                h3_review_provider=_Review(),
+            ),
+        )
+        self.addCleanup(container.shutdown)
+        container.agency.initialize()
+        configure_structured_finalization_test_boundary(container)
+        self._parent(container, design)
+        extension = container.authority_extension_service.start(
+            project_id=PROJECT, parent_workflow_run_id=PARENT, design=design,
+            selected_information_need_ids=NEEDS,
+            idempotency_key="production-shaped-analysis-e2e", confirmed=True,
+        )
+        container.authority_extension_service.activate(extension.extension_id)
+        drain_background_runs(container, worker_id="extension-worker")
+        extension = container.authority_extension_service.extensions.get_by_id(extension.extension_id)
+        state = container.authority_extension_service._state(extension.extension_workflow_run_id)
+        self.assertEqual("insufficient", extension.status.value)
+        self.assertGreaterEqual(len(provider.calls), 3)
+        self.assertLessEqual(len(provider.calls), 7)
+        self.assertTrue(any(NEEDS[0] in prompt.user for prompt in provider.calls))
+        self.assertFalse(any("archive" in prompt.user for prompt in provider.calls))
+        self.assertTrue(all(
+            need in set(NEEDS)
+            for prompt in provider.calls
+            for need in re.findall(r"information_needs=\['([^']+)'\]", prompt.user)
+        ))
+        outcomes = dict(state.outcomes)
+        self.assertEqual(set(NEEDS), set(outcomes))
+        self.assertEqual(
+            {need: "satisfied" for need in NEEDS},
+            {need: value.value for need, value in outcomes.items()},
+        )
+        finding_needs = {item.information_need_id for item in state.findings}
+        self.assertNotEqual(set(NEEDS), finding_needs)
+        self.assertIsNone(state.composition_id)
+        self.assertEqual(3, state.budget.analysis_reserved)
+        self.assertEqual(len(provider.calls), state.budget.provider_used)
+        self.assertGreater(
+            container.finding_service.count_for_run(
+                PROJECT, extension.extension_workflow_run_id,
+            ),
+            0,
+        )
+        fresh = create_application_container(
+            config=postgresql_application_config(
+                background_execution_mode="external", search_provider="deterministic",
+                evidence_extractor="deterministic", analysis_engine="llm",
+                report_engine="deterministic", review_engine="deterministic",
+                desk_report_contract_version=H3_CONTRACT_VERSION,
+            ),
+            overrides=ApplicationOverrides(
+                search_provider=search, source_retriever=_Retriever(),
+                evidence_extractor=extractor, analysis_llm_client=provider,
+                report_engine=_H3Engine(), h3_editorial_provider=_Editorial(),
+                h3_review_provider=_Review(),
+            ),
+        )
+        self.addCleanup(fresh.shutdown)
+        fresh.agency.initialize()
+        restored = fresh.authority_extension_service._state(
+            extension.extension_workflow_run_id,
+        )
+        self.assertEqual(state.budget, restored.budget)
+        self.assertIsNone(restored.composition_id)
+        self.assertEqual(outcomes, dict(restored.outcomes))

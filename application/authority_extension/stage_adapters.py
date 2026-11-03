@@ -14,7 +14,7 @@ from application.runtime.task_result_codec import capture_task_result
 from application.runtime.checkpoint_context import CHECKPOINT_FAILURE_HANDLER_KEY
 from runtime.workflow_context import WorkflowContext
 
-_extension_dispatch: ContextVar[tuple[Any, str] | None] = ContextVar("authority_extension_dispatch", default=None)
+_extension_dispatch: ContextVar[tuple[Any, str, str] | None] = ContextVar("authority_extension_dispatch", default=None)
 _extension_runtime_context: ContextVar[Any | None] = ContextVar(
     "authority_extension_runtime_context",
     default=None,
@@ -27,7 +27,7 @@ class ExtensionSearchBudgetProxy:
     def search(self, query):
         current = _extension_dispatch.get()
         if current is None: return self._delegate.search(query)
-        service, run_id = current
+        service, run_id, *_ = current
         return service.dispatch_search(
             run_id, lambda: self._delegate.search(query),
             information_need_id=query.information_need_id,
@@ -39,8 +39,12 @@ class ExtensionProviderBudgetProxy:
     def generate(self, *args, **kwargs):
         current = _extension_dispatch.get()
         if current is None: return self._delegate.generate(*args, **kwargs)
-        service, run_id = current
-        return service.dispatch_provider(run_id, lambda: self._delegate.generate(*args, **kwargs))
+        service, run_id, *stage = current
+        return service.dispatch_provider(
+            run_id,
+            lambda: self._delegate.generate(*args, **kwargs),
+            stage=stage[0] if stage else None,
+        )
     def __getattr__(self, name): return getattr(self._delegate, name)
 
 
@@ -50,7 +54,7 @@ class ExtensionImmutableSourceRepositoryProxy:
     def save(self, source, *, expected_version=None):
         current = _extension_dispatch.get()
         if current is not None:
-            _, run_id = current
+            _, run_id, *_ = current
             persisted = self._delegate.get_by_id(source.id)
             if persisted is not None and run_id not in persisted.workflow_run_refs:
                 return persisted.version
@@ -74,7 +78,7 @@ class ExtensionImmutableSourceRepositoryProxy:
         context = _extension_runtime_context.get()
         if current is None or context is None:
             return values
-        service, run_id = current
+        service, run_id, *_ = current
         if workflow_run_id != run_id:
             return values
 
@@ -178,6 +182,7 @@ class AuthorityExtensionStageExecutor(BaseExecutor):
         try:
             if self.stage == "extension_plan":
                 state = self.service._state(run_id)
+                state = self.service.reserve_analysis_budget(run_id)
                 context.write_shared("authority_extension_plan", {
                     "selected_information_need_ids": [gap.information_need_id for gap in state.gaps],
                     "unresolved_information_need_ids": list(self.service.unresolved_information_need_ids(run_id)),
@@ -192,7 +197,7 @@ class AuthorityExtensionStageExecutor(BaseExecutor):
             elif self.stage in {"extension_search", "extension_evidence"}:
                 if self.delegate is None:
                     raise ExtensionContractError("extension stage delegate unavailable")
-                token = _extension_dispatch.set((self.service, run_id))
+                token = _extension_dispatch.set((self.service, run_id, self.stage.removeprefix("extension_")))
                 context_token = _extension_runtime_context.set(context)
                 try:
                     context = self.delegate.run(context)
@@ -206,7 +211,7 @@ class AuthorityExtensionStageExecutor(BaseExecutor):
             elif self.stage == "extension_analysis":
                 if self.delegate is None:
                     raise ExtensionContractError("extension analysis delegate unavailable")
-                token = _extension_dispatch.set((self.service, run_id))
+                token = _extension_dispatch.set((self.service, run_id, "analysis"))
                 try:
                     context = self.delegate.run(context)
                 finally:

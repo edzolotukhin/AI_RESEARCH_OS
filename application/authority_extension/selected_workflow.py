@@ -99,6 +99,8 @@ class ExtensionFinding:
 class BudgetState:
     search_used: int = 0
     provider_used: int = 0
+    analysis_reserved: int = 0
+    analysis_used: int = 0
 
     def consume_search(self) -> "BudgetState":
         if self.search_used >= SEARCH_BUDGET_MAX:
@@ -109,6 +111,31 @@ class BudgetState:
         if self.provider_used >= PROVIDER_BUDGET_MAX:
             raise ExtensionBudgetExceeded("authority_extension_provider_budget_exhausted")
         return replace(self, provider_used=self.provider_used + 1)
+
+    def reserve_analysis(self, required: int) -> "BudgetState":
+        required = max(0, int(required))
+        if self.provider_used + required > PROVIDER_BUDGET_MAX:
+            raise ExtensionBudgetExceeded(
+                "authority_extension_analysis_reservation_exceeds_budget",
+            )
+        return replace(self, analysis_reserved=required)
+
+    def consume_provider_for_stage(self, stage: str) -> "BudgetState":
+        if stage == "analysis":
+            if self.analysis_used >= self.analysis_reserved:
+                raise ExtensionBudgetExceeded(
+                    "authority_extension_analysis_budget_exhausted",
+                )
+        elif self.provider_used - self.analysis_used >= (
+            PROVIDER_BUDGET_MAX - self.analysis_reserved
+        ):
+            raise ExtensionBudgetExceeded(
+                "authority_extension_evidence_budget_exhausted",
+            )
+        next_state = replace(self, provider_used=self.provider_used + 1)
+        if stage == "analysis":
+            next_state = replace(next_state, analysis_used=self.analysis_used + 1)
+        return next_state
 
 
 @dataclass(frozen=True)
@@ -199,7 +226,12 @@ def _state_to_dict(state: ExtensionState) -> dict[str, Any]:
         "extension_id": state.extension_id,
         "workflow_run_id": state.workflow_run_id,
         "gaps": [gap.to_dict() for gap in state.gaps],
-        "budget": {"search_used": state.budget.search_used, "provider_used": state.budget.provider_used},
+        "budget": {
+            "search_used": state.budget.search_used,
+            "provider_used": state.budget.provider_used,
+            "analysis_reserved": state.budget.analysis_reserved,
+            "analysis_used": state.budget.analysis_used,
+        },
         "observations": [item.__dict__ for item in state.observations],
         "findings": [item.__dict__ for item in state.findings],
         "outcomes": [[key, value.value] for key, value in state.outcomes],
@@ -363,6 +395,21 @@ class SelectedAuthorityExtensionService:
         scope = getattr(self.states, "runtime_scope", None)
         return scope(context) if callable(scope) else nullcontext()
 
+    def reserve_analysis_budget(self, workflow_run_id: str) -> ExtensionState:
+        state = self._state(workflow_run_id)
+        required_questions = {
+            gap.research_question_id for gap in state.gaps
+        }
+        # One finding call per selected research question, one insight call,
+        # and one entailment call are the minimum analysis allocation.
+        required = max(1, len(required_questions)) + 2
+        updated = replace(
+            state,
+            budget=state.budget.reserve_analysis(required),
+        )
+        self.states.save(updated)
+        return updated
+
     def start(self, *, project_id: str, parent_workflow_run_id: str,
               design: ResearchDesign, selected_information_need_ids: Iterable[str],
               idempotency_key: str, confirmed: bool) -> ResearchAuthorityExtension:
@@ -460,9 +507,16 @@ class SelectedAuthorityExtensionService:
         outcomes = self._evaluate_outcomes(state)
         return tuple(key for key, value in outcomes if value != GapOutcome.SATISFIED)
 
-    def dispatch_provider(self, workflow_run_id: str, operation: Callable[[], Any]) -> Any:
+    def dispatch_provider(
+        self, workflow_run_id: str, operation: Callable[[], Any], *, stage: str | None = None,
+    ) -> Any:
         state = self._state(workflow_run_id)
-        next_state = replace(state, budget=state.budget.consume_provider())
+        budget = (
+            state.budget.consume_provider_for_stage(stage)
+            if stage in {"evidence", "analysis"}
+            else state.budget.consume_provider()
+        )
+        next_state = replace(state, budget=budget)
         self.states.save(next_state)  # persist before dispatch
         return operation()
 
