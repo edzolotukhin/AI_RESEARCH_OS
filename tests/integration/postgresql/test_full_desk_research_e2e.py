@@ -622,7 +622,12 @@ class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
         ))
         outcomes = dict(state.outcomes)
         self.assertEqual(set(NEEDS), set(outcomes))
-        self.assertTrue(any(value.value == "insufficient" for value in outcomes.values()))
+        self.assertEqual(
+            {need: "satisfied" for need in NEEDS},
+            {need: value.value for need, value in outcomes.items()},
+        )
+        finding_needs = {item.information_need_id for item in state.findings}
+        self.assertNotEqual(set(NEEDS), finding_needs)
         self.assertIsNone(state.composition_id)
         self.assertEqual(3, state.budget.analysis_reserved)
         self.assertEqual(len(provider.calls), state.budget.provider_used)
