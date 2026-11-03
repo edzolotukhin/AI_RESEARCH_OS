@@ -306,7 +306,7 @@ class SelectedAuthorityExtensionTests(unittest.TestCase):
     def test_analysis_reservation_caps_evidence_and_survives_reload(self):
         self.service.reserve_analysis_budget(self.extension.extension_workflow_run_id)
         calls = []
-        for _ in range(4):
+        for _ in range(3):
             self.service.dispatch_provider(
                 self.extension.extension_workflow_run_id,
                 lambda: calls.append("evidence"), stage="evidence",
@@ -316,7 +316,7 @@ class SelectedAuthorityExtensionTests(unittest.TestCase):
                 self.extension.extension_workflow_run_id,
                 lambda: calls.append("evidence"), stage="evidence",
             )
-        for _ in range(3):
+        for _ in range(4):
             self.service.dispatch_provider(
                 self.extension.extension_workflow_run_id,
                 lambda: calls.append("analysis"), stage="analysis",
@@ -341,12 +341,12 @@ class SelectedAuthorityExtensionTests(unittest.TestCase):
         restored = durable.load(
             self.extension.extension_workflow_run_id,
         )
-        self.assertEqual((7, 3, 3), (
+        self.assertEqual((7, 4, 4), (
             restored.budget.provider_used,
             restored.budget.analysis_reserved,
             restored.budget.analysis_used,
         ))
-        self.assertEqual(calls, ["evidence"] * 4 + ["analysis"] * 3)
+        self.assertEqual(calls, ["evidence"] * 3 + ["analysis"] * 4)
 
     def test_workflow_state_store_survives_service_reconstruction(self):
         workflows = _Workflows()
