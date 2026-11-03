@@ -250,23 +250,50 @@ class _AnalysisProvider:
     def generate(self, prompt, *, options=None):
         self.calls.append(prompt)
         if '"verdicts"' in prompt.system:
-            candidate_ids = re.findall(r"candidate_id=([^\s]+)", prompt.user)
+            candidate_blocks = []
+            current = None
+            for line in prompt.user.splitlines():
+                candidate_match = re.fullmatch(r"- candidate_id=([^\s]+)", line)
+                if candidate_match:
+                    if current is not None:
+                        candidate_blocks.append(current)
+                    current = {
+                        "candidate_id": candidate_match.group(1),
+                        "evidence_refs": None,
+                    }
+                    continue
+                if current is None or not line.startswith("  evidence_refs="):
+                    continue
+                if current["evidence_refs"] is not None:
+                    raise AssertionError(
+                        f"duplicate evidence_refs for {current['candidate_id']}",
+                    )
+                refs = ast.literal_eval(line.split("=", 1)[1])
+                if not isinstance(refs, list) or not refs or not all(
+                    isinstance(ref, str) and ref for ref in refs
+                ):
+                    raise AssertionError(
+                        f"missing or malformed Evidence refs for {current['candidate_id']}",
+                    )
+                current["evidence_refs"] = refs
+            if current is not None:
+                candidate_blocks.append(current)
+            if not candidate_blocks or any(
+                block["evidence_refs"] is None for block in candidate_blocks
+            ):
+                raise AssertionError(
+                    "entailment prompt has missing candidate-to-Evidence mapping",
+                )
             return LLMResponse(content=json.dumps({
                 "verdicts": [
                     {
-                        "candidate_id": candidate_id,
+                        "candidate_id": block["candidate_id"],
                         "status": "SUPPORTED",
-                        "supported_evidence_ids": [
-                            ast.literal_eval(refs)[0]
-                            for refs in re.findall(
-                                r"evidence_refs=\[([^\]]+)\]", prompt.user,
-                            )[:1]
-                            if ast.literal_eval(refs)
-                        ],
+                        "supported_evidence_ids": block["evidence_refs"],
                         "unsupported_claim_parts": [],
                         "rationale": "deterministic supported fixture",
                     }
-                    for candidate_id in candidate_ids
+                    for block in candidate_blocks
                 ],
             }))
         if '"insights"' in prompt.system:
