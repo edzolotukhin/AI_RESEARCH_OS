@@ -281,7 +281,24 @@ class _AnalysisProvider:
                 }],
             }))
         evidence_ids = re.findall(r"- id=([^\s]+) statement=", prompt.user)
-        need = NEEDS[0]
+        needs = re.findall(r"information_needs=\['([^']+)'\]", prompt.user)
+        if not needs:
+            raise AssertionError(
+                "analysis prompt did not expose InformationNeed for Evidence",
+            )
+        evidence_lines = [
+            line for line in prompt.user.splitlines() if line.startswith("- id=")
+        ]
+        first_evidence_id = re.match(r"- id=([^\s]+)", evidence_lines[0]).group(1)
+        first_evidence_need = re.search(
+            r"information_needs=\['([^']+)'\]", evidence_lines[0],
+        ).group(1)
+        if first_evidence_need != needs[0]:
+            raise AssertionError(
+                f"InformationNeed {needs[0]!r} does not match Evidence "
+                f"{first_evidence_id!r} ({first_evidence_need!r})",
+            )
+        need = needs[0]
         return LLMResponse(content=json.dumps({
             "findings": [{
                 "statement": "Selected evidence supports the retail trend.",
