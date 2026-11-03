@@ -26,6 +26,7 @@ EXTENSION_STAGES = (
 EXTENSION_EXECUTORS = tuple(f"authority-{stage.replace('_', '-')}" for stage in EXTENSION_STAGES)
 SEARCH_BUDGET_MAX = 12
 PROVIDER_BUDGET_MAX = 7
+MAX_CONSERVATIVE_ANALYSIS_FINDING_BATCHES = 2
 
 
 class ExtensionContractError(ValueError):
@@ -400,9 +401,21 @@ class SelectedAuthorityExtensionService:
         required_questions = {
             gap.research_question_id for gap in state.gaps
         }
-        # One finding call per selected research question, one insight call,
-        # and one entailment call are the minimum analysis allocation.
-        required = max(1, len(required_questions)) + 2
+        # Reserve one finding call per selected research question, with a
+        # bounded second finding batch for a broad single-question selection.
+        # This covers the P5 shape without making a global four-call
+        # reservation for every extension. Insight and entailment each need
+        # one additional call.
+        finding_batches = max(1, len(required_questions))
+        if (
+            len(required_questions) == 1
+            and len(state.gaps) >= 3
+        ):
+            finding_batches = min(
+                MAX_CONSERVATIVE_ANALYSIS_FINDING_BATCHES,
+                finding_batches + 1,
+            )
+        required = finding_batches + 2
         updated = replace(
             state,
             budget=state.budget.reserve_analysis(required),

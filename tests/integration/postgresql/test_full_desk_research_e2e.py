@@ -629,7 +629,7 @@ class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
         finding_needs = {item.information_need_id for item in state.findings}
         self.assertNotEqual(set(NEEDS), finding_needs)
         self.assertIsNone(state.composition_id)
-        self.assertEqual(3, state.budget.analysis_reserved)
+        self.assertEqual(4, state.budget.analysis_reserved)
         self.assertEqual(len(provider.calls), state.budget.provider_used)
         self.assertGreater(
             container.finding_service.count_for_run(
