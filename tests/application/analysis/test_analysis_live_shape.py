@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from domain.ai.llm_response import LLMResponse
 from domain.evidence.evidence import Evidence
 from domain.evidence.evidence_type import EvidenceType
 from domain.findings.finding_type import FindingType
-from domain.planning.research_design import ResearchDesign, ResearchQuestion
+from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
 from domain.research_brief import ResearchBrief
 
 from application.analysis.analysis_service import AnalysisService
@@ -18,6 +18,11 @@ from application.analysis.diagnostics import (
     REJECTION_CATEGORY_INVALID_EVIDENCE_REF,
 )
 from application.analysis.exceptions import AnalysisError, AnalysisConfigurationError
+from application.authority_extension.selected_workflow import ExtensionBudgetExceeded
+from application.authority_extension.stage_adapters import (
+    ExtensionProviderBudgetProxy,
+    _extension_dispatch,
+)
 from application.ports.analysis_ports import AnalysisInput, FindingCandidate, InsightCandidate
 from infrastructure.analysis.llm_analysis_engine import LlmAnalysisEngine
 from infrastructure.persistence.memory.in_memory_evidence_repository import (
@@ -140,6 +145,96 @@ class InsightEchoEngine:
 
 
 class AnalysisLiveShapeRegressionTests(unittest.TestCase):
+    def test_extension_analysis_filters_composed_evidence_to_selected_needs(self) -> None:
+        question = ResearchQuestion("rq-selected", "Selected question")
+        design = ResearchDesign(
+            id="design-scope",
+            research_questions=(question,),
+            information_needs=(
+                InformationNeed("in-selected", "rq-selected", "Selected"),
+                InformationNeed("in-other", "rq-selected", "Other"),
+            ),
+        )
+        context = _analysis_context(run_id="run-scope", design=design)
+        context.write_shared("authority_extension_members", {
+            "workflow_run_ids": ["parent-scope", "run-scope"],
+        })
+        context.write_shared("authority_extension_plan", {
+            "selected_information_need_ids": ["in-selected"],
+        })
+        evidence = InMemoryEvidenceRepository()
+        for item_id, run_id, need_id in (
+            ("parent-selected", "parent-scope", "in-selected"),
+            ("parent-other", "parent-scope", "in-other"),
+            ("extension-selected", "run-scope", "in-selected"),
+        ):
+            evidence.create(Evidence(
+                id=item_id, project_id="project-live", source_id=f"source-{item_id}",
+                source_content_checksum=f"checksum-{item_id}", workflow_run_id=run_id,
+                research_design_id="design-scope", statement=item_id,
+                source_excerpt=item_id, created_at="2026-08-04T00:00:00+00:00",
+                research_question_refs=("rq-selected",),
+                information_need_refs=(need_id,), deduplication_key=item_id,
+            ))
+
+        class RecordingEngine:
+            def __init__(self):
+                self.batch_ids = []
+            def analyze_findings(self, analysis_input):
+                self.batch_ids.append(tuple(item.id for item in analysis_input.evidence_batch))
+                return []
+            def analyze_insights(self, analysis_input):
+                return []
+
+        engine = RecordingEngine()
+        service = AnalysisService(
+            analysis_engine=engine, evidence_repository=evidence,
+            finding_repository=InMemoryFindingRepository(),
+            insight_repository=InMemoryInsightRepository(),
+            max_evidence_per_batch=20, max_chars_per_batch=12000,
+        )
+        with patch(
+            "application.analysis.analysis_service.qualifying_evidence",
+            side_effect=lambda **kwargs: tuple(kwargs["evidence"]),
+        ):
+            with self.assertRaises(AnalysisError):
+                service.analyze_for_context(context)
+        self.assertEqual(engine.batch_ids, [("parent-selected", "extension-selected")])
+
+    def test_extension_budget_exhaustion_is_not_masked_by_llm_engine(self) -> None:
+        provider = Mock()
+
+        class ExhaustedService:
+            def dispatch_provider(self, run_id, operation, *, stage=None):
+                raise ExtensionBudgetExceeded(
+                    "authority_extension_analysis_budget_exhausted",
+                )
+
+        engine = LlmAnalysisEngine(
+            llm_client=ExtensionProviderBudgetProxy(provider),
+        )
+        analysis_input = AnalysisInput(
+            project_id="project-live",
+            workflow_run_id="run-live-budget",
+            research_design_id="design-4a8eae0f",
+            brief=ResearchBrief("Live", "Market assessment"),
+            design=_live_like_design(),
+            evidence_batch=tuple(_live_like_evidence(
+                run_id="run-live-budget", design_id="design-4a8eae0f",
+            )[:1]),
+        )
+        token = _extension_dispatch.set((ExhaustedService(), "run-live-budget", "analysis"))
+        try:
+            with self.assertRaises(ExtensionBudgetExceeded) as raised:
+                engine.analyze_findings(analysis_input)
+        finally:
+            _extension_dispatch.reset(token)
+        self.assertEqual(
+            str(raised.exception),
+            "authority_extension_analysis_budget_exhausted",
+        )
+        provider.generate.assert_not_called()
+
     def _service(self, engine) -> AnalysisService:
         return AnalysisService(
             analysis_engine=InsightEchoEngine(engine),

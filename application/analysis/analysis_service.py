@@ -36,6 +36,7 @@ from application.analysis.exceptions import (
     FindingEntailmentError,
     InvalidAnalysisProvenanceError,
 )
+from application.authority_extension.selected_workflow import ExtensionBudgetExceeded
 from application.analysis.finding_entailment import (
     AcceptAllFindingEntailmentValidator,
     FindingEntailmentDiagnostics,
@@ -140,6 +141,11 @@ class AnalysisService:
         )
 
         extension_authority = context.read_shared("authority_extension_members")
+        extension_plan = context.read_shared("authority_extension_plan")
+        if eligible_need_ids is None and isinstance(extension_plan, dict):
+            selected_ids = extension_plan.get("selected_information_need_ids")
+            if isinstance(selected_ids, list):
+                eligible_need_ids = tuple(str(item) for item in selected_ids)
         allowed_workflow_run_ids = (workflow_run_id,)
         if isinstance(extension_authority, dict):
             members = extension_authority.get("workflow_run_ids")
@@ -203,6 +209,8 @@ class AnalysisService:
                 candidates = self._analysis_engine.analyze_findings(analysis_input)
             except BudgetExhaustedError as exc:
                 raise AnalysisError(str(exc)) from exc
+            except ExtensionBudgetExceeded:
+                raise
             except AnalysisConfigurationError as exc:
                 if is_budget_exhaustion(exc):
                     raise AnalysisError(str(exc)) from exc
@@ -402,6 +410,8 @@ class AnalysisService:
             insight_candidates = self._analysis_engine.analyze_insights(insight_input)
         except BudgetExhaustedError as exc:
             raise AnalysisError(str(exc)) from exc
+        except ExtensionBudgetExceeded:
+            raise
         except AnalysisConfigurationError as exc:
             if is_budget_exhaustion(exc):
                 raise AnalysisError(str(exc)) from exc
