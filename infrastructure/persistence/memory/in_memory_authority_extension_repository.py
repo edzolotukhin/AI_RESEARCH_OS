@@ -48,3 +48,11 @@ class InMemoryComposedAuthorityRepository:
 
     def get_by_digest(self, composition_digest):
         return next((item for item in self._items.values() if item.composition_digest == composition_digest), None)
+
+    def get_latest_for_parent(self, project_id, parent_source_workflow_run_id):
+        values = [
+            item for item in self._items.values()
+            if item.project_id == project_id
+            and item.parent_source_workflow_run_id == parent_source_workflow_run_id
+        ]
+        return max(values, key=lambda item: (item.created_at, item.composition_id), default=None)

@@ -25,6 +25,7 @@ from application.persistence.exceptions import DuplicateEntityError
 from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
 from domain.workflow_run import WorkflowRun
 from domain.workflow_template import WorkflowTemplate
+from domain.research_brief import ResearchBrief
 from infrastructure.persistence.memory.in_memory_authority_extension_repository import (
     InMemoryAuthorityExtensionRepository,
     InMemoryComposedAuthorityRepository,
@@ -55,8 +56,13 @@ from application.persistence.exceptions import CheckpointPersistenceError
 class _Workflows:
     def __init__(self):
         self.runs = {"parent": WorkflowRun(id="parent", project_id="project", workflow_template_id="desk")}
+        parent_template = WorkflowTemplate(
+            "desk", "Desk parent", [],
+            research_brief_snapshot=ResearchBrief("Parent", "Parent question"),
+            research_design_snapshot=_design(),
+        )
         self.templates = []
-        self.template_by_id = {}
+        self.template_by_id = {parent_template.id: parent_template}
         self.results = {"parent": {}}
         self.versions = {"parent": 0}
 

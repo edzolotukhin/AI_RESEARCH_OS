@@ -307,6 +307,10 @@ class DurableWorkflowService:
             readiness = task_results.get("research_readiness")
             if isinstance(readiness, dict):
                 context.write_shared("research_readiness", readiness)
+        from application.authority_extension import COMPOSED_AUTHORITY_KEY
+        composition = task_results.get(COMPOSED_AUTHORITY_KEY)
+        if isinstance(composition, dict):
+            context.write_shared(COMPOSED_AUTHORITY_KEY, composition)
         from application.methods.quantitative.pin import METHOD_PIN, ANALYSIS_PIN, POST_ANALYSIS_PIN, REVIEW_PIN
         context.execution_metadata[METHOD_PIN] = task_results.get(METHOD_PIN)
         context.execution_metadata[ANALYSIS_PIN] = task_results.get(ANALYSIS_PIN)

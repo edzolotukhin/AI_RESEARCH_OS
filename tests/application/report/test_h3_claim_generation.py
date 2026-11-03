@@ -523,6 +523,11 @@ class H3ClaimGenerationTests(unittest.TestCase):
         sources = InMemorySourceRepository(); sources.create(source)
         evidences = InMemoryEvidenceRepository(); evidences.create(evidence)
         findings = InMemoryFindingRepository(); findings.create(finding)
+        findings.create(replace(
+            finding, id="historical-finding", workflow_run_id="source-run",
+            information_need_refs=(), evidence_refs=("historical-evidence",),
+            deduplication_key="historical-finding",
+        ))
         insights = InMemoryInsightRepository(); reports = InMemoryReportRepository()
         claims = InMemoryReportClaimRepository(reports)
         template = WorkflowTemplateBuilder(id="template", name="T").add_task(
@@ -593,6 +598,13 @@ class H3ClaimGenerationTests(unittest.TestCase):
         context.write_shared(COMPOSED_AUTHORITY_KEY, {
             "composition_id": composition.composition_id,
             "composition_digest": composition.composition_digest,
+        })
+        context.write_shared("research_readiness", {
+            "status": "insufficient",
+            "analysis_ready": True,
+            "complete_design_ready": False,
+            "eligible_information_need_ids": [],
+            "analysis_eligible_information_need_ids": [],
         })
         class Engine:
             method_name = "h3-test"

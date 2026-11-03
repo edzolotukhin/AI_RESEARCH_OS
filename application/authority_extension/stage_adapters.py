@@ -7,6 +7,7 @@ from typing import Any
 
 from application.authority_extension.selected_workflow import (
     AuthorityObservation, ExtensionContractError, ExtensionFinding,
+    _required_periods,
 )
 from application.contracts.base_executor import BaseExecutor
 from application.runtime.task_result_codec import capture_task_result
@@ -243,7 +244,14 @@ class AuthorityExtensionStageExecutor(BaseExecutor):
             assignment = metadata.get("semantic_assignment")
             if not isinstance(assignment, dict):
                 raise ExtensionContractError("extension evidence lacks validated semantic assignment")
-            periods = tuple(sorted(set(re.findall(r"\b20\d{2}\b", str(metadata.get("observation_period", ""))))))
+            period_reference = str(metadata.get("observation_period", "")).strip()
+            normalized_reference = " ".join(period_reference.casefold().split())
+            normalized_excerpt = " ".join(value.source_excerpt.casefold().split())
+            periods = (
+                _required_periods(period_reference)
+                if normalized_reference and normalized_reference in normalized_excerpt
+                else ()
+            )
             aspects = tuple(str(item) for item in assignment.get("required_aspect_refs", ()) if str(item))
             aspect_text = " ".join(aspects).casefold()
             if any(token in aspect_text for token in ("real_volume", "real volume", "constant_price", "constant price")):

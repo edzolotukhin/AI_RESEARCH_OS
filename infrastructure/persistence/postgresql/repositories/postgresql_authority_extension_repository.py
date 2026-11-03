@@ -99,3 +99,19 @@ class PostgreSQLComposedAuthorityRepository:
         with self._session_factory.session() as session:
             model = session.scalar(select(ComposedAuthorityModel).where(ComposedAuthorityModel.composition_digest == composition_digest))
             return self.get_by_id(model.composition_id) if model else None
+    def get_latest_for_parent(self, project_id, parent_source_workflow_run_id):
+        with self._session_factory.session() as session:
+            model = session.scalar(
+                select(ComposedAuthorityModel)
+                .where(
+                    ComposedAuthorityModel.project_id == project_id,
+                    ComposedAuthorityModel.parent_source_workflow_run_id
+                    == parent_source_workflow_run_id,
+                )
+                .order_by(
+                    ComposedAuthorityModel.created_at.desc(),
+                    ComposedAuthorityModel.composition_id.desc(),
+                )
+                .limit(1)
+            )
+            return self.get_by_id(model.composition_id) if model else None

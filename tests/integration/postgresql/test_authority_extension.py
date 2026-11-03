@@ -30,6 +30,7 @@ from domain.factories.task_factory import TaskFactory
 from domain.factories.workflow_run_factory import WorkflowRunFactory
 from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
 from domain.project import Project
+from domain.research_brief import ResearchBrief
 from domain.sources.source import Source
 from domain.workflow_template import WorkflowTemplate
 from runtime.workflow_context import WorkflowContext
@@ -56,6 +57,17 @@ class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
             for run_id, project_id in (("parent", "project"), ("extension", "project"),
                                        ("wrong-design", "project"), ("foreign", "foreign-project")):
                 connection.execute(text("INSERT INTO workflow_runs (id,project_id,workflow_template_id,status,dependency_graph,task_results,version) VALUES (:id,:project_id,'template','completed',CAST('{}' AS jsonb),CAST('{}' AS jsonb),0)"), {"id": run_id, "project_id": project_id})
+        PostgreSQLWorkflowTemplateRepository(self.session_factory).save_snapshot(
+            WorkflowTemplate(
+                "template", "Parent template", [],
+                research_brief_snapshot=ResearchBrief(
+                    title="Authority extension fixture",
+                    business_question="Close selected authority gaps",
+                    timeframe="2021–2022",
+                ),
+            ),
+            project_id="project",
+        )
 
     def test_extension_and_composition_round_trip_and_idempotency(self):
         extensions = PostgreSQLAuthorityExtensionRepository(self.session_factory)

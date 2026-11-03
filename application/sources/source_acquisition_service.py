@@ -199,6 +199,13 @@ class SourceAcquisitionService:
         workflow_run_id = context.workflow_run.id
         brief = context.project.research_brief
         queries = self._query_builder.build_queries(design, brief=brief)
+        extension_plan = context.read_shared("authority_extension_plan")
+        minimum_sources_per_need = (
+            2
+            if isinstance(extension_plan, dict)
+            and extension_plan.get("selected_information_need_ids")
+            else 1
+        )
 
         portfolio_queries = [
             arm_query
@@ -242,6 +249,7 @@ class SourceAcquisitionService:
             groups=eligible,
             started_at=started,
             selection_decisions=selection_decisions,
+            minimum_sources_per_need=minimum_sources_per_need,
         )
 
         elapsed = time.monotonic() - started
@@ -662,6 +670,7 @@ class SourceAcquisitionService:
         max_source_groups: int | None = None,
         selection_decisions: list[dict[str, Any]] | None = None,
         excluded_content: set[tuple[str, str]] | None = None,
+        minimum_sources_per_need: int = 1,
     ) -> tuple[
         list[str],
         int,
@@ -689,6 +698,7 @@ class SourceAcquisitionService:
         coverage_complete_early_stop = False
         covered_needs: set[str] = set()
         covered_questions: set[str] = set()
+        source_authority_by_need: dict[str, set[str]] = {}
         source_group_limit = max_source_groups or self._budget.max_sources_per_run
         decisions = list(selection_decisions or [])
 
@@ -843,11 +853,22 @@ class SourceAcquisitionService:
                     covered_needs,
                     covered_questions,
                 )
+                if is_successful_acquisition(resolved.retrieval_status):
+                    authority_identity = identity or resolved.id
+                    for item in group.items:
+                        source_authority_by_need.setdefault(
+                            item.query.information_need_id, set(),
+                        ).add(authority_identity)
             if (
                 self._coverage_target_satisfied(
                     design,
                     covered_needs,
                     covered_questions,
+                )
+                and all(
+                    len(source_authority_by_need.get(need.id, ()))
+                    >= minimum_sources_per_need
+                    for need in design.information_needs
                 )
                 and distinct_acquired >= self._budget.min_successful_sources
             ):

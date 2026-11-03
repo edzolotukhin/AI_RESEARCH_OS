@@ -15,6 +15,7 @@ from application.replay.desk_downstream_replay import (
     update_replay_stage,
 )
 from application.report.contract_selection import DESK_REPORT_CONTRACT_PIN, H3_REPORT_CONTRACT
+from application.authority_extension import COMPOSED_AUTHORITY_KEY, build_composition
 from domain.workflow_status import WorkflowStatus
 
 
@@ -114,6 +115,40 @@ def _fixture():
 
 
 class DeskDownstreamReplayTests(unittest.TestCase):
+    def test_latest_composed_authority_is_pinned_into_new_h3_replay(self):
+        service, project, source, _, durable, *_ = _fixture()
+        service.desk_report_contract_version = H3_REPORT_CONTRACT
+        older = build_composition(
+            composition_id="composition-old", project_id=project.id,
+            research_design_id="design-1",
+            parent_source_workflow_run_id=source.id,
+            member_workflow_run_ids=(source.id, "extension-old"),
+            selected_information_need_ids=("in-1",),
+            created_at="2026-01-01T00:00:00+00:00",
+        )
+        latest = build_composition(
+            composition_id="composition-latest", project_id=project.id,
+            research_design_id="design-1",
+            parent_source_workflow_run_id=source.id,
+            member_workflow_run_ids=(source.id, "extension-latest"),
+            selected_information_need_ids=("in-1",),
+            created_at="2026-01-02T00:00:00+00:00",
+        )
+
+        class Compositions:
+            def get_latest_for_parent(self, project_id, parent_id):
+                self.request = (project_id, parent_id)
+                return max((older, latest), key=lambda item: item.created_at)
+
+        service.composed_authorities = Compositions()
+        service.start(project_id=project.id, source_run_id=source.id, owner_id="owner-1")
+
+        initial = durable.calls[0][2]
+        self.assertEqual(initial[COMPOSED_AUTHORITY_KEY], {
+            "composition_id": latest.composition_id,
+            "composition_digest": latest.composition_digest,
+        })
+
     def test_login_redirect_recognizes_replay_as_post_only_project_action(self):
         match = _POST_ACTION_SAFE_PROJECT_RETURN.fullmatch(
             "/ui/projects/project-1/methods/DESK/source-run/finalization-replay"

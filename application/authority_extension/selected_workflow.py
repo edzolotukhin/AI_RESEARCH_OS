@@ -238,7 +238,7 @@ def _state_from_dict(payload: dict[str, Any]) -> ExtensionState:
 
 
 def extension_template(
-    *, design: ResearchDesign, template_id: str = EXTENSION_TEMPLATE_ID,
+    *, design: ResearchDesign, research_brief, template_id: str = EXTENSION_TEMPLATE_ID,
 ) -> WorkflowTemplate:
     definitions: list[TaskDefinition] = []
     for index, stage in enumerate(EXTENSION_STAGES):
@@ -250,7 +250,8 @@ def extension_template(
         ))
     return WorkflowTemplate(
         id=template_id, name="Bounded selected authority extension",
-        task_definitions=definitions, research_design_snapshot=design,
+        task_definitions=definitions, research_brief_snapshot=research_brief,
+        research_design_snapshot=design,
     )
 
 
@@ -377,12 +378,16 @@ class SelectedAuthorityExtensionService:
         parent = self.workflows.get_workflow_run(parent_workflow_run_id)
         if parent.project_id != project_id:
             raise ExtensionContractError("parent workflow is outside project")
+        parent_template = self.workflows.get_template(parent.workflow_template_id)
+        if parent_template.research_brief_snapshot is None:
+            raise ExtensionContractError("parent workflow has no immutable research brief")
         gaps = derive_gap_contract(design, selected_information_need_ids)
         payload = [gap.to_dict() for gap in gaps]
         gap_contract_digest = canonical_gap_digest(payload)
         run_id = str(uuid4())
         template = extension_template(
             design=selected_design(design, (gap.information_need_id for gap in gaps)),
+            research_brief=parent_template.research_brief_snapshot,
             template_id=extension_template_id(
                 project_id=project_id,
                 parent_workflow_run_id=parent_workflow_run_id,

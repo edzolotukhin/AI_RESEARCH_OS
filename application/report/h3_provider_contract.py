@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
-from typing import Any, Mapping, Protocol
+from dataclasses import dataclass, field
+from typing import Any, Callable, Mapping, Protocol
 
 
 class H3StructuralClaimProvider(Protocol):
@@ -27,11 +27,16 @@ class H3ProviderBudgetExceeded(RuntimeError):
 class H3ProviderBudget:
     limit: int = 7
     used: int = 0
+    _on_change: Callable[["H3ProviderBudget"], None] | None = field(
+        default=None, repr=False, compare=False,
+    )
 
     def consume(self) -> None:
         if self.used >= self.limit:
             raise H3ProviderBudgetExceeded("h3_provider_budget_exhausted")
         self.used += 1
+        if self._on_change is not None:
+            self._on_change(self)
 
 
 _CURRENT_BUDGET: ContextVar[H3ProviderBudget | None] = ContextVar(
@@ -55,8 +60,20 @@ def debit_h3_provider_call() -> None:
 
 
 def budget_for_context(context) -> H3ProviderBudget:
-    budget = context.read_shared("h3_provider_budget")
-    if not isinstance(budget, H3ProviderBudget):
-        budget = H3ProviderBudget()
-        context.write_shared("h3_provider_budget", budget)
+    key = "h3_provider_budget"
+    budget = context.services.get(key)
+    if isinstance(budget, H3ProviderBudget):
+        return budget
+    snapshot = context.read_shared(key)
+    limit = snapshot.get("limit", 7) if isinstance(snapshot, dict) else 7
+    used = snapshot.get("used", 0) if isinstance(snapshot, dict) else 0
+    if type(limit) is not int or type(used) is not int or limit <= 0 or not 0 <= used <= limit:
+        raise H3ProviderBudgetExceeded("h3_provider_budget_state_invalid")
+
+    def persist(value: H3ProviderBudget) -> None:
+        context.write_shared(key, {"limit": value.limit, "used": value.used})
+
+    budget = H3ProviderBudget(limit=limit, used=used, _on_change=persist)
+    context.services[key] = budget
+    persist(budget)
     return budget

@@ -64,6 +64,7 @@ def _shared_value(task_results, key):
 class DeskDownstreamReplayService:
     def __init__(self, *, projects, workflows, durable_workflows, evidence,
                  findings, insights, activation_sessions=None,
+                 composed_authorities=None,
                  desk_report_contract_version="desk_report_claim_v1") -> None:
         self.projects = projects
         self.workflows = workflows
@@ -72,6 +73,7 @@ class DeskDownstreamReplayService:
         self.findings = findings
         self.insights = insights
         self.activation_sessions = activation_sessions
+        self.composed_authorities = composed_authorities
         from application.report.contract_selection import validate_desk_report_contract
         self.desk_report_contract_version = validate_desk_report_contract(
             desk_report_contract_version,
@@ -188,6 +190,24 @@ class DeskDownstreamReplayService:
             {REPLAY_KEY: lineage, "research_readiness": readiness},
             self.desk_report_contract_version,
         )
+        if self.composed_authorities is not None:
+            composition = self.composed_authorities.get_latest_for_parent(
+                project.id, source.id,
+            )
+            if composition is not None:
+                if (
+                    composition.project_id != project.id
+                    or composition.research_design_id != design.id
+                    or composition.parent_source_workflow_run_id != source.id
+                ):
+                    raise DeskDownstreamReplayError(
+                        "composed_authority_lineage_mismatch"
+                    )
+                from application.authority_extension import COMPOSED_AUTHORITY_KEY
+                initial[COMPOSED_AUTHORITY_KEY] = {
+                    "composition_id": composition.composition_id,
+                    "composition_digest": composition.composition_digest,
+                }
         if PIN in task_results:
             initial[PIN] = task_results[PIN]
         return self.durable_workflows.submit_research(

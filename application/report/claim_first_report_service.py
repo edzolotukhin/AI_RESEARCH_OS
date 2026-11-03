@@ -108,7 +108,14 @@ class ClaimFirstReportService(ReportService):
             composition.member_workflow_run_ids if composition is not None else (source_run,)
         )
         coverage = coverage_snapshot_from_payload(context.read_shared(SHARED_STATE_KEY))
-        limited = coverage is not None and not coverage.complete_design_ready
+        # A composed authority supersedes the parent run's historical readiness
+        # snapshot.  H3 derives a fresh, fail-closed coverage plan from the
+        # composition's Findings and Evidence below.
+        limited = (
+            composition is None
+            and coverage is not None
+            and not coverage.complete_design_ready
+        )
         findings = [item for run_id in authority_runs for item in self._finding_repository.list_for_project(project_id, workflow_run_id=run_id)]
         insights = [item for run_id in authority_runs for item in self._insight_repository.list_for_project(project_id, workflow_run_id=run_id)]
         if not findings:
@@ -302,6 +309,14 @@ class ClaimFirstReportService(ReportService):
             evidence_by_id=evidence_by_id,
             insights=insights,
         )
+        coverage_finding_ids = {
+            finding_id
+            for slot in coverage_plan.coverable_slots
+            for finding_id in slot.finding_ids
+        }
+        generation_findings = tuple(
+            finding for finding in findings if finding.id in coverage_finding_ids
+        )
         if not callable(self._h3_candidate_provider):
             result = generate_h3_structural_claims(
                 project_id=context.project.id, source_workflow_run_id=source_run,
@@ -324,7 +339,8 @@ class ClaimFirstReportService(ReportService):
             result = generate_h3_structural_claims(
                 project_id=context.project.id, source_workflow_run_id=source_run,
                 report_workflow_run_id=report_run_id, design=design,
-                findings=findings, insights=insights, evidence_by_id=evidence_by_id,
+                findings=generation_findings, insights=insights,
+                evidence_by_id=evidence_by_id,
                 citation_id_by_source=source_to_citation,
                 candidate_provider=self._h3_candidate_provider,
                 correction_provider=self._h3_correction_provider,
