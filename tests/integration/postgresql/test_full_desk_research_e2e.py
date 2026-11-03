@@ -610,7 +610,7 @@ class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
         drain_background_runs(container, worker_id="extension-worker")
         extension = container.authority_extension_service.extensions.get_by_id(extension.extension_id)
         state = container.authority_extension_service._state(extension.extension_workflow_run_id)
-        self.assertEqual("succeeded", extension.status.value)
+        self.assertEqual("insufficient", extension.status.value)
         self.assertGreaterEqual(len(provider.calls), 3)
         self.assertLessEqual(len(provider.calls), 7)
         self.assertTrue(any(NEEDS[0] in prompt.user for prompt in provider.calls))
@@ -620,7 +620,10 @@ class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
             for prompt in provider.calls
             for need in re.findall(r"information_needs=\['([^']+)'\]", prompt.user)
         ))
-        self.assertIsNotNone(state.composition_id)
+        outcomes = dict(state.outcomes)
+        self.assertEqual(set(NEEDS), set(outcomes))
+        self.assertTrue(any(value.value == "insufficient" for value in outcomes.values()))
+        self.assertIsNone(state.composition_id)
         self.assertEqual(3, state.budget.analysis_reserved)
         self.assertEqual(len(provider.calls), state.budget.provider_used)
         self.assertGreater(
@@ -649,4 +652,5 @@ class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
             extension.extension_workflow_run_id,
         )
         self.assertEqual(state.budget, restored.budget)
-        self.assertEqual(state.composition_id, restored.composition_id)
+        self.assertIsNone(restored.composition_id)
+        self.assertEqual(outcomes, dict(restored.outcomes))
