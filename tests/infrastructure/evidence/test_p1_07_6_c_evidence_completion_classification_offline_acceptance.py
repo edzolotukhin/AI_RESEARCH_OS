@@ -198,7 +198,6 @@ def _completion_fields(shape: dict) -> dict:
             "completion_max_output_tokens",
             "completion_configured_reasoning_effort",
             "response_text_length",
-            "response_preview",
             "response_preview_truncated",
         )
     }
@@ -690,10 +689,7 @@ class ProviderNeutralityAndPrivacyTests(unittest.TestCase):
         assert shape is not None
         payload = shape.to_dict()
         self.assertTrue(payload["response_preview_truncated"])
-        self.assertLessEqual(
-            len(payload["response_preview"]),
-            DEFAULT_RESPONSE_PREVIEW_MAX_LENGTH + 1,
-        )
+        self.assertNotIn("response_preview", payload)
         self.assertGreater(payload["response_text_length"], DEFAULT_RESPONSE_PREVIEW_MAX_LENGTH)
 
 

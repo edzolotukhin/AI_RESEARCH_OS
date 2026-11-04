@@ -337,7 +337,6 @@ class BackwardCompatibilityTests(unittest.TestCase):
         for key in (
             "provider_response_received",
             "response_text_length",
-            "response_preview",
             "response_preview_truncated",
             "json_container_count",
             "container_root_types",

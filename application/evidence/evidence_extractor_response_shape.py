@@ -95,7 +95,6 @@ class ResponseShapeDiagnostics:
         payload: dict[str, Any] = {
             "provider_response_received": self.provider_response_received,
             "response_text_length": self.response_text_length,
-            "response_preview": self.response_preview,
             "response_preview_truncated": self.response_preview_truncated,
             "json_container_count": self.json_container_count,
             "container_root_types": list(self.container_root_types),
@@ -114,8 +113,7 @@ class ResponseShapeDiagnostics:
         }
         if self.parsed_root_type is not None:
             payload["parsed_root_type"] = self.parsed_root_type
-        if self.parsed_root_keys:
-            payload["parsed_root_keys"] = list(self.parsed_root_keys)
+        # Provider-controlled object keys are intentionally not durable.
         if self.items_value_type is not None:
             payload["items_value_type"] = self.items_value_type
         if self.items_count_pre_filter is not None:

@@ -14,7 +14,9 @@ from domain.planning.research_design import InformationNeed, ResearchDesign, Res
 from domain.research_brief import ResearchBrief
 
 from application.analysis.analysis_service import AnalysisService
+from application.analysis.deduplication import compute_finding_deduplication_key
 from application.analysis.diagnostics import (
+    REJECTION_CATEGORY_EXTENSION_INFORMATION_NEED_OWNERSHIP,
     REJECTION_CATEGORY_INVALID_EVIDENCE_REF,
 )
 from application.analysis.exceptions import AnalysisError, AnalysisConfigurationError
@@ -34,6 +36,7 @@ from infrastructure.persistence.memory.in_memory_finding_repository import (
 from infrastructure.persistence.memory.in_memory_insight_repository import (
     InMemoryInsightRepository,
 )
+from domain.findings.finding import Finding
 
 
 def _live_like_design() -> ResearchDesign:
@@ -145,6 +148,233 @@ class InsightEchoEngine:
 
 
 class AnalysisLiveShapeRegressionTests(unittest.TestCase):
+    def _extension_ownership_fixture(self, candidates):
+        design = ResearchDesign(
+            id="design-extension-ownership",
+            research_questions=(ResearchQuestion("rq-1", "Question"),),
+            information_needs=(
+                InformationNeed("in-1", "rq-1", "Need one"),
+                InformationNeed("in-2", "rq-1", "Need two"),
+            ),
+        )
+        run_id = "run-extension-ownership"
+        context = _analysis_context(run_id=run_id, design=design)
+        evidence_repo = InMemoryEvidenceRepository()
+        for index, need_id in enumerate(("in-1", "in-2"), start=1):
+            evidence_repo.create(Evidence(
+                id=f"ev-{index}", project_id="project-live", source_id=f"source-{index}",
+                source_content_checksum=f"checksum-{index}", workflow_run_id=run_id,
+                research_design_id=design.id, statement=f"Fact {index}",
+                source_excerpt=f"Fact {index}", created_at="2026-08-04T00:00:00+00:00",
+                research_question_refs=("rq-1",), information_need_refs=(need_id,),
+                deduplication_key=f"ev-{index}",
+            ))
+
+        class OwnershipEngine:
+            method_name = "test"
+
+            def analyze_findings(self, analysis_input):
+                return list(candidates)
+
+            def analyze_insights(self, analysis_input):
+                return [InsightCandidate(
+                    statement="Insight", implication="Implication",
+                    finding_refs=tuple(item.id for item in analysis_input.persisted_findings),
+                )]
+
+        finding_repo = InMemoryFindingRepository()
+        service = AnalysisService(
+            analysis_engine=OwnershipEngine(), evidence_repository=evidence_repo,
+            finding_repository=finding_repo,
+            insight_repository=InMemoryInsightRepository(),
+            max_evidence_per_batch=20, max_chars_per_batch=12000,
+        )
+        return service, finding_repo, context
+
+    def test_extension_single_need_finding_persists(self) -> None:
+        candidate = FindingCandidate(
+            statement="Single need", rationale="Supported", evidence_refs=("ev-1",),
+            information_need_refs=("in-1",),
+        )
+        service, findings, context = self._extension_ownership_fixture((candidate,))
+        context.write_shared("authority_extension_plan", {
+            "selected_information_need_ids": ["in-1", "in-2"],
+        })
+        with patch(
+            "application.analysis.analysis_service.qualifying_evidence",
+            side_effect=lambda **kwargs: tuple(kwargs["evidence"]),
+        ):
+            summary = service.analyze_for_context(context)
+        self.assertEqual(len(summary.finding_ids), 1)
+        self.assertEqual(
+            findings.list_for_project("project-live", workflow_run_id=context.workflow_run.id)[0].information_need_refs,
+            ("in-1",),
+        )
+
+    def test_extension_multi_need_finding_is_rejected_before_persistence(self) -> None:
+        candidate = FindingCandidate(
+            statement="Multi need", rationale="Unsupported ownership",
+            evidence_refs=("ev-1", "ev-2"),
+            information_need_refs=("in-1", "in-2"),
+        )
+        service, findings, context = self._extension_ownership_fixture((candidate,))
+        context.write_shared("authority_extension_plan", {
+            "selected_information_need_ids": ["in-1", "in-2"],
+        })
+        with patch(
+            "application.analysis.analysis_service.qualifying_evidence",
+            side_effect=lambda **kwargs: tuple(kwargs["evidence"]),
+        ):
+            with self.assertRaises(AnalysisError) as raised:
+                service.analyze_for_context(context)
+        self.assertIn(
+            REJECTION_CATEGORY_EXTENSION_INFORMATION_NEED_OWNERSHIP,
+            str(raised.exception),
+        )
+        self.assertEqual(findings.list_for_project("project-live"), [])
+
+    def test_ordinary_desk_multi_need_finding_remains_permitted(self) -> None:
+        candidate = FindingCandidate(
+            statement="Multi need", rationale="Ordinary Desk synthesis",
+            evidence_refs=("ev-1", "ev-2"),
+            information_need_refs=("in-1", "in-2"),
+        )
+        service, findings, context = self._extension_ownership_fixture((candidate,))
+        with patch(
+            "application.analysis.analysis_service.qualifying_evidence",
+            side_effect=lambda **kwargs: tuple(kwargs["evidence"]),
+        ):
+            summary = service.analyze_for_context(context)
+        self.assertEqual(len(summary.finding_ids), 1)
+        self.assertEqual(len(findings.list_for_project("project-live")), 1)
+
+    def test_extension_partial_success_persists_only_single_need_finding(self) -> None:
+        candidates = (
+            FindingCandidate(
+                statement="Invalid multi need", rationale="Rejected",
+                evidence_refs=("ev-1", "ev-2"),
+                information_need_refs=("in-1", "in-2"),
+            ),
+            FindingCandidate(
+                statement="Valid single need", rationale="Accepted",
+                evidence_refs=("ev-1",), information_need_refs=("in-1",),
+            ),
+        )
+        service, findings, context = self._extension_ownership_fixture(candidates)
+        context.write_shared("authority_extension_plan", {
+            "selected_information_need_ids": ["in-1", "in-2"],
+        })
+        with patch(
+            "application.analysis.analysis_service.qualifying_evidence",
+            side_effect=lambda **kwargs: tuple(kwargs["evidence"]),
+        ):
+            summary = service.analyze_for_context(context)
+        persisted = findings.list_for_project("project-live", workflow_run_id=context.workflow_run.id)
+        self.assertEqual([item.statement for item in persisted], ["Valid single need"])
+        self.assertEqual(
+            summary.rejection_counts,
+            {REJECTION_CATEGORY_EXTENSION_INFORMATION_NEED_OWNERSHIP: 1},
+        )
+
+    def test_extension_dedup_rejects_historical_multi_need_finding(self) -> None:
+        candidate = FindingCandidate(
+            statement="Historical collision", rationale="candidate",
+            evidence_refs=("ev-1",), information_need_refs=("in-1",),
+        )
+        service, findings, context = self._extension_ownership_fixture((candidate,))
+        key = compute_finding_deduplication_key(
+            workflow_run_id=context.workflow_run.id,
+            statement=candidate.statement, evidence_refs=candidate.evidence_refs,
+        )
+        findings.create(Finding(
+            id="historical-invalid", project_id="project-live",
+            workflow_run_id=context.workflow_run.id,
+            research_design_id="design-extension-ownership",
+            research_question_refs=("rq-1",), information_need_refs=("in-1", "in-2"),
+            statement=candidate.statement, rationale="historical",
+            evidence_refs=candidate.evidence_refs, finding_type=FindingType.SYNTHESIS,
+            confidence=0.8, analysis_method="historical", deduplication_key=key,
+            created_at="2026-08-04T00:00:00+00:00", metadata={},
+        ))
+        with self.assertRaises(AnalysisError):
+            service._persist_finding(
+                candidate=candidate, project_id="project-live",
+                workflow_run_id=context.workflow_run.id,
+                research_design_id="design-extension-ownership",
+                require_single_information_need=True,
+            )
+        self.assertEqual(findings.get_by_id("historical-invalid").information_need_refs, ("in-1", "in-2"))
+
+    def test_extension_dedup_recovery_returns_compatible_concurrent_record(self) -> None:
+        candidate = FindingCandidate(
+            statement="Concurrent collision", rationale="candidate",
+            evidence_refs=("ev-1",), information_need_refs=("in-1",),
+        )
+        service, findings, context = self._extension_ownership_fixture((candidate,))
+        original_create = findings.create
+        inserted = {"done": False}
+
+        def concurrent_create(finding):
+            if not inserted["done"]:
+                inserted["done"] = True
+                original_create(finding)
+                from application.analysis.exceptions import DuplicateFindingError
+                raise DuplicateFindingError("concurrent insert")
+            return original_create(finding)
+
+        findings.create = concurrent_create
+        persisted_id = service._persist_finding(
+            candidate=candidate, project_id="project-live",
+            workflow_run_id=context.workflow_run.id,
+            research_design_id="design-extension-ownership",
+            require_single_information_need=True,
+        )
+        self.assertEqual(
+            persisted_id,
+            findings.list_for_project("project-live", workflow_run_id=context.workflow_run.id)[0].id,
+        )
+        self.assertEqual(len(findings.list_for_project("project-live")), 1)
+
+    def test_extension_dedup_recovery_rejects_incompatible_concurrent_record(self) -> None:
+        candidate = FindingCandidate(
+            statement="Concurrent invalid collision", rationale="candidate",
+            evidence_refs=("ev-1",), information_need_refs=("in-1",),
+        )
+        service, findings, context = self._extension_ownership_fixture((candidate,))
+        original_create = findings.create
+        inserted = {"done": False}
+
+        def concurrent_invalid_create(finding):
+            if not inserted["done"]:
+                inserted["done"] = True
+                invalid = Finding(
+                    id="concurrent-invalid", project_id=finding.project_id,
+                    workflow_run_id=finding.workflow_run_id,
+                    research_design_id=finding.research_design_id,
+                    research_question_refs=("rq-1",), information_need_refs=("in-1", "in-2"),
+                    statement=finding.statement, rationale="historical",
+                    evidence_refs=finding.evidence_refs, finding_type=FindingType.SYNTHESIS,
+                    confidence=0.8, analysis_method="historical",
+                    deduplication_key=finding.deduplication_key,
+                    created_at="2026-08-04T00:00:00+00:00", metadata={},
+                )
+                original_create(invalid)
+                from application.analysis.exceptions import DuplicateFindingError
+                raise DuplicateFindingError("concurrent insert")
+            return original_create(finding)
+
+        findings.create = concurrent_invalid_create
+        with self.assertRaises(AnalysisError):
+            service._persist_finding(
+                candidate=candidate, project_id="project-live",
+                workflow_run_id=context.workflow_run.id,
+                research_design_id="design-extension-ownership",
+                require_single_information_need=True,
+            )
+        persisted = findings.get_by_id("concurrent-invalid")
+        self.assertIsNotNone(persisted)
+        self.assertEqual(persisted.information_need_refs, ("in-1", "in-2"))
+
     def test_extension_analysis_filters_composed_evidence_to_selected_needs(self) -> None:
         question = ResearchQuestion("rq-selected", "Selected question")
         design = ResearchDesign(

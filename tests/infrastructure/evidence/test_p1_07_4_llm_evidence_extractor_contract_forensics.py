@@ -405,6 +405,17 @@ class ExtractorCounterSemanticsForensicsTests(unittest.TestCase):
             diagnostics.work_items[0].inner_chunks[0].exception_message,
             "LLM evidence payload must be a JSON object",
         )
+        self.assertEqual(diagnostics.inner_calls_exception, 1)
+        self.assertEqual(
+            diagnostics.extractor_exceptions,
+            {"EvidenceResponseOutcomeError": 1},
+        )
+        self.assertEqual(
+            diagnostics.work_items[0].inner_chunks[0].failure_category,
+            "invalid_response",
+        )
+        persisted = diagnostics.to_dict()["work_items"][0]["inner_chunks"][0]
+        self.assertNotIn("exception_message", persisted)
         self.assertEqual(diagnostics.work_items[0].extractor_status, "no_candidates")
 
 

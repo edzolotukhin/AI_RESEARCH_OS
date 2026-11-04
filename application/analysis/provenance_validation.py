@@ -10,6 +10,7 @@ from application.analysis.diagnostics import (
     REJECTION_CATEGORY_CROSS_RUN_REF,
     REJECTION_CATEGORY_INVALID_CONFIDENCE,
     REJECTION_CATEGORY_INVALID_EVIDENCE_REF,
+    REJECTION_CATEGORY_EXTENSION_INFORMATION_NEED_OWNERSHIP,
     REJECTION_CATEGORY_MISSING_STATEMENT,
     REJECTION_CATEGORY_MISSING_SUPPORT,
 )
@@ -40,6 +41,7 @@ def validate_finding_candidate(
     eligible_information_need_ids: tuple[str, ...] | None = None,
     supported_aspects_by_information_need: dict[str, tuple[str, ...]] | None = None,
     allowed_workflow_run_ids: tuple[str, ...] | None = None,
+    require_single_information_need: bool = False,
 ) -> FindingCandidate:
     if not candidate.statement.strip():
         raise InvalidAnalysisProvenanceError(
@@ -98,6 +100,11 @@ def validate_finding_candidate(
         raise InvalidAnalysisProvenanceError(
             "Finding has no eligible InformationNeed support",
             category=REJECTION_CATEGORY_INVALID_EVIDENCE_REF,
+        )
+    if require_single_information_need and len(need_refs) != 1:
+        raise InvalidAnalysisProvenanceError(
+            "Authority Extension Finding must own exactly one selected InformationNeed",
+            category=REJECTION_CATEGORY_EXTENSION_INFORMATION_NEED_OWNERSHIP,
         )
     need_to_rq = {need.id: need.research_question_id for need in design.information_needs}
     question_refs = (
