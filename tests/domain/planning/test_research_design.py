@@ -5,9 +5,11 @@ from __future__ import annotations
 import unittest
 
 from domain.planning.research_design import (
+    EvidenceCoverageContract,
     InformationNeed,
     ResearchDesign,
     ResearchQuestion,
+    TemporalGranularity,
 )
 
 from tests.fixtures.planner_responses import VALID_RESEARCH_DESIGN_RESPONSE
@@ -39,6 +41,42 @@ class ResearchDesignModelTests(unittest.TestCase):
         )
         self.assertEqual(need.research_question_id, "rq-awareness")
         self.assertIn("official statistics", need.preferred_source_types)
+
+    def test_explicit_evidence_coverage_round_trip(self) -> None:
+        need = InformationNeed(
+            id="in-quarterly",
+            research_question_id="rq-awareness",
+            description="Quarterly retail trend",
+            evidence_coverage=EvidenceCoverageContract(
+                temporal_granularity=TemporalGranularity.QUARTERLY,
+                required_periods=("2025-Q1", "2025-Q2"),
+                required_observations=("turnover",),
+                required_metric="retail turnover",
+                required_authority_kinds=("official_retail",),
+                minimum_independent_sources=2,
+                geography="UA",
+                eligible_source_types=("official_statistics",),
+                prohibited_source_patterns=("cpi_only",),
+            ),
+        )
+        restored = InformationNeed.from_dict(need.to_dict())
+        self.assertEqual(restored, need)
+
+    def test_legacy_information_need_has_no_invented_granularity(self) -> None:
+        need = InformationNeed.from_dict({
+            "id": "legacy",
+            "research_question_id": "rq-awareness",
+            "description": "Quarterly trend mentioned in prose",
+            "timeframe": "2021-2026",
+        })
+        self.assertIsNone(need.evidence_coverage)
+
+    def test_quarterly_contract_rejects_non_quarter_periods(self) -> None:
+        with self.assertRaisesRegex(ValueError, "YYYY-QN"):
+            EvidenceCoverageContract(
+                temporal_granularity=TemporalGranularity.QUARTERLY,
+                required_periods=("2025",),
+            )
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from application.authority_extension.selected_workflow import (
     ExtensionBudgetExceeded,
     ExtensionContractError,
     ExtensionFinding,
+    ExternalAttempt,
     GapOutcome,
     InMemoryExtensionStateStore,
     SelectedAuthorityExtensionService,
@@ -22,7 +23,13 @@ from application.authority_extension.selected_workflow import (
 )
 from application.authority_extension.identity import canonical_gap_digest
 from application.persistence.exceptions import DuplicateEntityError
-from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
+from domain.planning.research_design import (
+    EvidenceCoverageContract,
+    InformationNeed,
+    ResearchDesign,
+    ResearchQuestion,
+    TemporalGranularity,
+)
 from domain.workflow_run import WorkflowRun
 from domain.workflow_template import WorkflowTemplate
 from domain.research_brief import ResearchBrief
@@ -170,6 +177,40 @@ class SelectedAuthorityExtensionTests(unittest.TestCase):
         self.assertEqual(again.extension_id, self.extension.extension_id)
         self.assertEqual(len(self.workflows.runs), 2)
 
+    def test_real_adjustment_accepts_either_authority_kind(self):
+        design = ResearchDesign(
+            "authority-alternatives", (ResearchQuestion("rq", "Retail"),),
+            (InformationNeed(
+                "real", "rq", "Real retail adjustment",
+                evidence_coverage=EvidenceCoverageContract(
+                    required_authority_kinds=("retail_real_volume", "retail_deflator"),
+                    minimum_independent_sources=1,
+                ),
+            ),),
+        )
+        gap = derive_gap_contract(design, ("real",))[0]
+        for kind in ("retail_real_volume", "retail_deflator"):
+            self.assertEqual(
+                qualify_gap(gap, [self._observation("real", "source", kind=kind)]),
+                GapOutcome.SATISFIED,
+            )
+
+    def test_explicit_authority_groups_require_all_groups(self):
+        design = ResearchDesign(
+            "authority-groups", (ResearchQuestion("rq", "Retail"),),
+            (InformationNeed(
+                "real", "rq", "Real retail adjustment",
+                evidence_coverage=EvidenceCoverageContract(
+                    required_authority_kind_groups=(("retail_real_volume",), ("retail_deflator",)),
+                    minimum_independent_sources=1,
+                ),
+            ),),
+        )
+        gap = derive_gap_contract(design, ("real",))[0]
+        self.assertEqual(
+            qualify_gap(gap, [self._observation("real", "source", kind="retail_real_volume")]),
+            GapOutcome.INSUFFICIENT,
+        )
     def test_second_attempt_gets_distinct_immutable_template_and_run(self):
         self.service.fail_technical(
             self.extension.extension_workflow_run_id, "first attempt failed",
@@ -371,6 +412,18 @@ class SelectedAuthorityExtensionTests(unittest.TestCase):
         restored = WorkflowExtensionStateStore(workflows).load(extension.extension_workflow_run_id)
         self.assertEqual(restored.budget.search_used, 2)
 
+    def test_external_completion_preserves_state_updates_made_while_pending(self):
+        run_id = self.extension.extension_workflow_run_id
+        _, attempt = self.states.reserve_external_attempt(run_id, stage="search")
+        observation = self._observation("in1", "source-a")
+        self.service.record_observations(run_id, (observation,))
+        self.states.complete_external_attempt(
+            run_id, attempt.attempt_id, status="completed",
+        )
+        state = self.states.load(run_id)
+        self.assertEqual(tuple(item.evidence_id for item in state.observations), (observation.evidence_id,))
+        self.assertEqual(state.external_attempts[0].status, "completed")
+
     def test_cpi_and_nominal_plus_cpi_do_not_satisfy_real_adjustment(self):
         gap = derive_gap_contract(_design(), ("in2_real_adjustment",))[0]
         cpi = [self._observation("in2_real_adjustment", "a", kind="cpi"),
@@ -405,6 +458,87 @@ class SelectedAuthorityExtensionTests(unittest.TestCase):
     def test_conflict_is_separate_outcome(self):
         gap = derive_gap_contract(_design(), ("in1",))[0]
         self.assertEqual(qualify_gap(gap, [self._observation("in1", "a", conflicting=True)]), GapOutcome.CONFLICTING)
+
+    def test_explicit_quarterly_contract_is_not_derived_from_free_text(self):
+        design = ResearchDesign(
+            "explicit-design",
+            (ResearchQuestion("rq", "Trend"),),
+            (InformationNeed(
+                "in-quarterly",
+                "rq",
+                "Trend description",
+                evidence_coverage=EvidenceCoverageContract(
+                    temporal_granularity=TemporalGranularity.QUARTERLY,
+                    required_periods=("2025-Q1", "2025-Q2"),
+                    required_observations=("turnover",),
+                    minimum_independent_sources=2,
+                ),
+            ),),
+        )
+        gap = derive_gap_contract(design, ("in-quarterly",))[0]
+        self.assertEqual(gap.temporal_granularity, "quarterly")
+        self.assertEqual(gap.required_periods, ("2025-Q1", "2025-Q2"))
+        legacy = derive_gap_contract(_design(), ("in3",))[0]
+        self.assertEqual(legacy.temporal_granularity, "unspecified")
+
+    def test_analysis_gate_rejects_insufficient_and_accepts_readiness_proof(self):
+        run_id = self.extension.extension_workflow_run_id
+        self.service.reserve_analysis_budget(run_id)
+        allowed, reason = self.service.analysis_gate(run_id)
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "insufficient_evidence")
+        self.service.record_observations(run_id, self._sufficient())
+        allowed, reason = self.service.analysis_gate(run_id)
+        self.assertTrue(allowed)
+        self.assertEqual(reason, "sufficient")
+
+    def test_ambiguous_external_attempt_is_not_automatically_repeated(self):
+        run_id = self.extension.extension_workflow_run_id
+        state = self.states.load(run_id)
+        self.states.save(replace(
+            state,
+            external_attempts=(ExternalAttempt("provider-1", "evidence"),),
+        ))
+        calls = []
+        with self.assertRaisesRegex(
+            ExtensionContractError,
+            "ambiguous_external_attempt",
+        ):
+            self.service.dispatch_provider(
+                run_id,
+                lambda: calls.append(1),
+                stage="evidence",
+            )
+        self.assertEqual(calls, [])
+
+    def test_mixed_failure_is_not_analysis_authorization(self):
+        run_id = self.extension.extension_workflow_run_id
+        self.service.reserve_analysis_budget(run_id)
+        self.service.record_remediation_terminal_reason(run_id, "mixed_failure")
+        calls = []
+
+        class Analysis:
+            def run(self, context):
+                calls.append(context.workflow_run.id)
+                return context
+
+        context = WorkflowContext(
+            self.workflows.runs[run_id],
+            Project("project", "P"),
+            self.workflows.templates[0],
+        )
+        AuthorityExtensionStageExecutor(
+            "extension_analysis",
+            self.service,
+            Analysis(),
+            InMemoryEvidenceRepository(),
+            None,
+        ).run(context)
+        self.assertEqual(calls, [])
+        self.assertEqual(
+            context.read_shared("authority_extension_analysis_gate")["reason"],
+            "mixed_failure",
+        )
 
     def test_scope_cross_project_design_member_and_unrelated_rejected(self):
         cases = [

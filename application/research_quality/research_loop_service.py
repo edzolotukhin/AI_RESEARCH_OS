@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Callable, Sequence
 
 from application.execution.budget_utils import is_sufficiency_graceful_budget_stop
 from application.execution.exceptions import BudgetExhaustedError
@@ -70,6 +71,11 @@ class ResearchLoopService:
         evidence_repository: EvidenceRepository,
         source_repository: SourceRepository,
         gate: ResearchReadinessGate | None = None,
+        evidence_scope: Callable[[WorkflowContext], Sequence] | None = None,
+        source_scope: Callable[[WorkflowContext], Sequence] | None = None,
+        progress_evaluator: Callable[
+            [ResearchReadinessResult, ResearchReadinessResult, str], bool
+        ] | None = None,
     ) -> None:
         self._runner = runner
         self._bounds = bounds
@@ -77,6 +83,32 @@ class ResearchLoopService:
         self._evidence_repository = evidence_repository
         self._source_repository = source_repository
         self._gate = gate or ResearchReadinessGate()
+        self._evidence_scope = evidence_scope
+        self._source_scope = source_scope
+        self._progress_evaluator = progress_evaluator or need_readiness_improved
+
+    def scoped_copy(
+        self,
+        *,
+        evaluator: ResearchSufficiencyEvaluator,
+        evidence_scope: Callable[[WorkflowContext], Sequence],
+        source_scope: Callable[[WorkflowContext], Sequence],
+        progress_evaluator: Callable[
+            [ResearchReadinessResult, ResearchReadinessResult, str], bool
+        ] | None = None,
+    ) -> "ResearchLoopService":
+        """Reuse the production runner/bounds with an explicit authority scope."""
+        return ResearchLoopService(
+            runner=self._runner,
+            bounds=self._bounds,
+            evaluator=evaluator,
+            evidence_repository=self._evidence_repository,
+            source_repository=self._source_repository,
+            gate=self._gate,
+            evidence_scope=evidence_scope,
+            source_scope=source_scope,
+            progress_evaluator=progress_evaluator,
+        )
 
     def run_bounded_loop(
         self,
@@ -252,7 +284,7 @@ class ResearchLoopService:
                         loop_state=loop_state,
                         reason=exc.reason,
                     )
-                    gap_improved = need_readiness_improved(
+                    gap_improved = self._progress_evaluator(
                         previous,
                         result,
                         need_id,
@@ -327,7 +359,11 @@ class ResearchLoopService:
                     loop_state.pending_attempt = 0
                     return self._finalize(context, result, loop_state)
 
-                gap_improved = not cross_only and need_readiness_improved(previous, result, need_id)
+                gap_improved = not cross_only and self._progress_evaluator(
+                    previous,
+                    result,
+                    need_id,
+                )
                 if gap_improved:
                     round_had_improvement = True
                 else:
@@ -451,10 +487,7 @@ class ResearchLoopService:
         context: WorkflowContext,
         design: ResearchDesign,
     ) -> ResearchReadinessResult:
-        evidence = self._evidence_repository.list_for_project(
-            context.project.id,
-            workflow_run_id=context.workflow_run.id,
-        )
+        evidence = self._raw_evidence(context)
         evidence = qualifying_evidence(
             design=design, evidence=evidence,
             source_repository=self._source_repository,
@@ -497,14 +530,15 @@ class ResearchLoopService:
     ) -> tuple[tuple[str, ...], tuple[str, ...]]:
         project_id = context.project.id
         workflow_run_id = context.workflow_run.id
-        sources = self._source_repository.list_for_project(
-            project_id,
-            workflow_run_id=workflow_run_id,
+        sources = (
+            tuple(self._source_scope(context))
+            if self._source_scope is not None
+            else self._source_repository.list_for_project(
+                project_id,
+                workflow_run_id=workflow_run_id,
+            )
         )
-        evidence = self._evidence_repository.list_for_project(
-            project_id,
-            workflow_run_id=workflow_run_id,
-        )
+        evidence = self._raw_evidence(context)
         return (
             tuple(sorted(source.id for source in sources)),
             tuple(sorted(item.id for item in evidence)),
@@ -514,8 +548,7 @@ class ResearchLoopService:
         return qualifying_evidence(
             design=design,
             source_repository=self._source_repository,
-            evidence=self._evidence_repository.list_for_project(
-                context.project.id, workflow_run_id=context.workflow_run.id),
+            evidence=self._raw_evidence(context),
             brief=(context.workflow_template.research_brief_snapshot
                    if context.workflow_template else None),
         )
@@ -531,9 +564,7 @@ class ResearchLoopService:
         acquisition and candidate provenance are deliberately not counted as
         Evidence. Recompute after each bounded attempt so feedback is current.
         """
-        raw = self._evidence_repository.list_for_project(
-            context.project.id, workflow_run_id=context.workflow_run.id,
-        )
+        raw = self._raw_evidence(context)
         qualified = qualifying_evidence(
             design=design,
             source_repository=self._source_repository,
@@ -545,6 +576,14 @@ class ResearchLoopService:
         )
         return evidence_priority_by_need(
             design=design, raw=raw, qualifying=qualified,
+        )
+
+    def _raw_evidence(self, context: WorkflowContext):
+        if self._evidence_scope is not None:
+            return tuple(self._evidence_scope(context))
+        return self._evidence_repository.list_for_project(
+            context.project.id,
+            workflow_run_id=context.workflow_run.id,
         )
 
     @staticmethod

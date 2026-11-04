@@ -4,6 +4,7 @@ import hashlib
 import re
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
+from threading import RLock
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -11,7 +12,7 @@ from typing import Any, Callable, Iterable, Protocol
 from uuid import uuid4
 
 from application.authority_extension.identity import build_composition, canonical_gap_digest
-from domain.planning.research_design import ResearchDesign
+from domain.planning.research_design import ResearchDesign, TemporalGranularity
 from domain.research_authority import AuthorityExtensionStatus, ResearchAuthorityExtension
 from domain.task_definition import TaskDefinition
 from domain.value_objects.executor_type import ExecutorType
@@ -54,7 +55,12 @@ class AuthorityGap:
     minimum_independent_sources: int = 1
     quantitative: bool = True
     required_authority_kinds: tuple[str, ...] = ()
+    required_authority_kind_groups: tuple[tuple[str, ...], ...] = ()
     prohibited_patterns: tuple[str, ...] = ()
+    temporal_granularity: str = TemporalGranularity.UNSPECIFIED.value
+    required_observations: tuple[str, ...] = ()
+    eligible_source_types: tuple[str, ...] = ()
+    metric_required: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -66,7 +72,12 @@ class AuthorityGap:
             "minimum_independent_sources": self.minimum_independent_sources,
             "quantitative": self.quantitative,
             "required_authority_kinds": list(self.required_authority_kinds),
+            "required_authority_kind_groups": [list(group) for group in self.required_authority_kind_groups],
             "prohibited_patterns": list(self.prohibited_patterns),
+            "temporal_granularity": self.temporal_granularity,
+            "required_observations": list(self.required_observations),
+            "eligible_source_types": list(self.eligible_source_types),
+            "metric_required": self.metric_required,
         }
 
 
@@ -84,6 +95,9 @@ class AuthorityObservation:
     research_design_id: str
     project_id: str
     conflicting: bool = False
+    observations: tuple[str, ...] = ()
+    source_type: str = ""
+    source_pattern_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -94,6 +108,15 @@ class ExtensionFinding:
     workflow_run_id: str
     project_id: str
     research_design_id: str
+
+
+@dataclass(frozen=True)
+class ExternalAttempt:
+    attempt_id: str
+    stage: str
+    information_need_id: str = ""
+    status: str = "pending"
+    error_category: str = ""
 
 
 @dataclass(frozen=True)
@@ -150,22 +173,61 @@ class ExtensionState:
     outcomes: tuple[tuple[str, GapOutcome], ...] = ()
     composition_id: str | None = None
     composition_digest: str | None = None
+    external_attempts: tuple[ExternalAttempt, ...] = ()
+    remediation_terminal_reason: str = ""
+    analysis_gate_open: bool = False
 
 
 class ExtensionStateStore(Protocol):
     def load(self, workflow_run_id: str) -> ExtensionState | None: ...
     def save(self, state: ExtensionState) -> None: ...
+    def reserve_external_attempt(self, workflow_run_id: str, *, stage: str,
+                                 information_need_id: str = ""): ...
+    def complete_external_attempt(self, workflow_run_id: str, attempt_id: str, *,
+                                  status: str, error_category: str = ""): ...
+    def atomic_update(self, workflow_run_id: str, updater): ...
 
 
 class InMemoryExtensionStateStore:
     def __init__(self) -> None:
         self._states: dict[str, ExtensionState] = {}
+        self._lock = RLock()
 
     def load(self, workflow_run_id: str) -> ExtensionState | None:
         return self._states.get(workflow_run_id)
 
     def save(self, state: ExtensionState) -> None:
         self._states[state.workflow_run_id] = state
+
+    def reserve_external_attempt(self, workflow_run_id: str, *, stage: str,
+                                 information_need_id: str = ""):
+        with self._lock:
+            state = self.load(workflow_run_id)
+            if state is None:
+                raise ExtensionContractError("authority extension state unavailable")
+            return _reserve_attempt_from_state(
+                self, state, stage=stage, information_need_id=information_need_id,
+            )
+
+    def complete_external_attempt(self, workflow_run_id: str, attempt_id: str, *,
+                                  status: str, error_category: str = ""):
+        with self._lock:
+            state = self.load(workflow_run_id)
+            if state is None:
+                raise ExtensionContractError("authority extension state unavailable")
+            return _complete_attempt_from_state(
+                self, state, attempt_id=attempt_id, status=status,
+                error_category=error_category,
+            )
+
+    def atomic_update(self, workflow_run_id: str, updater):
+        with self._lock:
+            state = self.load(workflow_run_id)
+            if state is None:
+                raise ExtensionContractError("authority extension state unavailable")
+            updated = updater(state)
+            self.save(updated)
+            return updated
 
 
 class WorkflowExtensionStateStore:
@@ -220,6 +282,144 @@ class WorkflowExtensionStateStore:
         version = self._workflows.get_workflow_run_version(state.workflow_run_id)
         self._workflows.save_workflow_run(run, expected_version=version, task_results=results)
 
+    def reserve_external_attempt(self, workflow_run_id: str, *, stage: str,
+                                 information_need_id: str = ""):
+        atomic = getattr(self._workflows, "atomic_update_task_results", None)
+        if callable(atomic):
+            def updater(results):
+                payload = results.get(self.KEY)
+                if not isinstance(payload, dict):
+                    raise ExtensionContractError("authority extension state unavailable")
+                state = _state_from_dict(payload)
+                updated, value = _reserve_attempt_from_state(
+                    None, state, stage=stage, information_need_id=information_need_id,
+                )
+                next_results = dict(results)
+                next_results[self.KEY] = _state_to_dict(updated)
+                return next_results, (updated, value)
+            result = atomic(workflow_run_id, updater)
+            self._sync_runtime_state(result[0])
+            return result
+        state = self.load(workflow_run_id)
+        if state is None:
+            raise ExtensionContractError("authority extension state unavailable")
+        return _reserve_attempt_from_state(
+            self, state, stage=stage, information_need_id=information_need_id,
+        )
+
+    def complete_external_attempt(self, workflow_run_id: str, attempt_id: str, *,
+                                  status: str, error_category: str = ""):
+        atomic = getattr(self._workflows, "atomic_update_task_results", None)
+        if callable(atomic):
+            def updater(results):
+                payload = results.get(self.KEY)
+                if not isinstance(payload, dict):
+                    raise ExtensionContractError("authority extension state unavailable")
+                state = _state_from_dict(payload)
+                updated = _complete_attempt_from_state(
+                    None, state, attempt_id=attempt_id, status=status,
+                    error_category=error_category,
+                )
+                next_results = dict(results)
+                next_results[self.KEY] = _state_to_dict(updated)
+                return next_results, updated
+            result = atomic(workflow_run_id, updater)
+            self._sync_runtime_state(result)
+            return result
+        state = self.load(workflow_run_id)
+        if state is None:
+            raise ExtensionContractError("authority extension state unavailable")
+        return _complete_attempt_from_state(
+            self, state, attempt_id=attempt_id, status=status,
+            error_category=error_category,
+        )
+
+    def atomic_update(self, workflow_run_id: str, updater):
+        atomic = getattr(self._workflows, "atomic_update_task_results", None)
+        if not callable(atomic):
+            state = self.load(workflow_run_id)
+            if state is None:
+                raise ExtensionContractError("authority extension state unavailable")
+            updated = updater(state)
+            self.save(updated)
+            return updated
+        def apply(results):
+            payload = results.get(self.KEY)
+            if not isinstance(payload, dict):
+                raise ExtensionContractError("authority extension state unavailable")
+            updated = updater(_state_from_dict(payload))
+            next_results = dict(results)
+            next_results[self.KEY] = _state_to_dict(updated)
+            return next_results, updated
+        result = atomic(workflow_run_id, apply)
+        self._sync_runtime_state(result)
+        return result
+
+    def _sync_runtime_state(self, state: ExtensionState) -> None:
+        context = self._runtime_context.get()
+        if context is None:
+            return
+        payload = _state_to_dict(state)
+        context.write_shared(self.KEY, payload)
+        from application.runtime.checkpoint_context import CHECKPOINT_SERVICE_KEY
+        checkpoint = context.services.get(CHECKPOINT_SERVICE_KEY)
+        task_results = getattr(checkpoint, "_task_results", None)
+        if isinstance(task_results, dict):
+            # The atomic database update is already committed. Keep the
+            # active persister's in-memory merge base current without issuing
+            # a second stale whole-document write.
+            task_results[self.KEY] = payload
+
+
+def _reserve_attempt_from_state(store, state: ExtensionState, *, stage: str,
+                                information_need_id: str):
+    SelectedAuthorityExtensionService._reject_ambiguous_attempt(state)
+    if stage == "search":
+        budget = state.budget.consume_search()
+        number = state.budget.search_used + 1
+    elif stage in {"evidence", "analysis"}:
+        budget = state.budget.consume_provider_for_stage(stage)
+        number = state.budget.provider_used + 1
+    else:
+        budget = state.budget.consume_provider()
+        number = state.budget.provider_used + 1
+    attempt = ExternalAttempt(
+        attempt_id=f"{stage}-{number}", stage=stage,
+        information_need_id=information_need_id,
+    )
+    updated = replace(
+        state, budget=budget,
+        external_attempts=(*state.external_attempts, attempt),
+    )
+    if store is not None:
+        store.save(updated)
+    return updated, attempt
+
+
+def _complete_attempt_from_state(
+    store,
+    state: ExtensionState,
+    *,
+    attempt_id: str,
+    status: str,
+    error_category: str,
+):
+    if status not in {"completed", "failed"}:
+        raise ExtensionContractError("invalid external attempt completion status")
+    if not any(item.attempt_id == attempt_id for item in state.external_attempts):
+        raise ExtensionContractError("external attempt not found")
+    updated = replace(
+        state,
+        external_attempts=tuple(
+            replace(item, status=status, error_category=error_category)
+            if item.attempt_id == attempt_id else item
+            for item in state.external_attempts
+        ),
+    )
+    if store is not None:
+        store.save(updated)
+    return updated
+
 
 def _state_to_dict(state: ExtensionState) -> dict[str, Any]:
     return {
@@ -238,6 +438,9 @@ def _state_to_dict(state: ExtensionState) -> dict[str, Any]:
         "outcomes": [[key, value.value] for key, value in state.outcomes],
         "composition_id": state.composition_id,
         "composition_digest": state.composition_digest,
+        "external_attempts": [item.__dict__ for item in state.external_attempts],
+        "remediation_terminal_reason": state.remediation_terminal_reason,
+        "analysis_gate_open": state.analysis_gate_open,
     }
 
 
@@ -254,19 +457,34 @@ def _state_from_dict(payload: dict[str, Any]) -> ExtensionState:
             minimum_independent_sources=int(item["minimum_independent_sources"]),
             quantitative=bool(item["quantitative"]),
             required_authority_kinds=tuple(item["required_authority_kinds"]),
+            required_authority_kind_groups=tuple(
+                tuple(group) for group in item.get("required_authority_kind_groups", ())
+            ),
             prohibited_patterns=tuple(item["prohibited_patterns"]),
+            temporal_granularity=str(
+                item.get("temporal_granularity", TemporalGranularity.UNSPECIFIED.value)
+            ),
+            required_observations=tuple(item.get("required_observations", ())),
+            eligible_source_types=tuple(item.get("eligible_source_types", ())),
+            metric_required=bool(item.get("metric_required", False)),
         ) for item in payload["gaps"]),
         budget=BudgetState(**payload["budget"]),
         observations=tuple(AuthorityObservation(**{
             **item, "information_need_ids": tuple(item["information_need_ids"]),
             "research_question_ids": tuple(item["research_question_ids"]),
             "periods": tuple(item["periods"]),
+            "observations": tuple(item.get("observations", ())),
         }) for item in payload["observations"]),
         findings=tuple(ExtensionFinding(**{
             **item, "evidence_ids": tuple(item["evidence_ids"]),
         }) for item in payload["findings"]),
         outcomes=tuple((str(item[0]), GapOutcome(item[1])) for item in payload["outcomes"]),
         composition_id=payload.get("composition_id"), composition_digest=payload.get("composition_digest"),
+        external_attempts=tuple(
+            ExternalAttempt(**item) for item in payload.get("external_attempts", ())
+        ),
+        remediation_terminal_reason=str(payload.get("remediation_terminal_reason", "")),
+        analysis_gate_open=bool(payload.get("analysis_gate_open", False)),
     )
 
 
@@ -299,31 +517,104 @@ def derive_gap_contract(
     gaps: list[AuthorityGap] = []
     for need_id in selected:
         need = by_id[need_id]
+        coverage = need.evidence_coverage
+        expectation = need.evidence_expectation
         text = f"{need.id} {need.description}".casefold()
         real_retail = "real_adjustment" in text or "real-volume" in text or "constant-price" in text
         gaps.append(AuthorityGap(
             information_need_id=need.id,
             research_question_id=need.research_question_id,
-            metric=need.description,
-            geography=need.geography,
-            required_periods=_required_periods(need.timeframe),
-            minimum_independent_sources=2,
+            metric=(coverage.required_metric if coverage and coverage.required_metric else need.description),
+            geography=(
+                coverage.geography
+                if coverage and coverage.geography
+                else (
+                    str(expectation.geography or "")
+                    if expectation is not None and expectation.geography
+                    else need.geography
+                )
+            ),
+            required_periods=(
+                coverage.required_periods
+                if coverage is not None
+                else _required_periods(
+                    str(expectation.timeframe or "")
+                    if expectation is not None and expectation.timeframe
+                    else need.timeframe
+                )
+            ),
+            minimum_independent_sources=(
+                coverage.minimum_independent_sources
+                if coverage is not None
+                else (
+                    expectation.minimum_independent_sources
+                    if expectation is not None
+                    and expectation.minimum_independent_sources is not None
+                    else 2
+                )
+            ),
             quantitative=True,
-            required_authority_kinds=("retail_real_volume", "retail_deflator") if real_retail else (),
-            prohibited_patterns=("cpi_only", "nominal_plus_cpi") if real_retail else (),
+            required_authority_kinds=(
+                coverage.required_authority_kinds
+                if coverage is not None
+                else (("retail_real_volume", "retail_deflator") if real_retail else ())
+            ),
+            required_authority_kind_groups=(
+                coverage.required_authority_kind_groups
+                or ((coverage.required_authority_kinds,) if coverage is not None and coverage.required_authority_kinds else ())
+                if coverage is not None
+                else ()
+            ),
+            prohibited_patterns=(
+                coverage.prohibited_source_patterns
+                if coverage is not None
+                else (("cpi_only", "nominal_plus_cpi") if real_retail else ())
+            ),
+            temporal_granularity=(
+                coverage.temporal_granularity.value
+                if coverage is not None
+                else TemporalGranularity.UNSPECIFIED.value
+            ),
+            required_observations=(
+                coverage.required_observations if coverage is not None else ()
+            ),
+            eligible_source_types=(
+                coverage.eligible_source_types
+                if coverage is not None
+                else ()
+            ),
+            metric_required=bool(
+                coverage is not None and coverage.required_metric
+            ),
         ))
     return tuple(gaps)
 
 
 def _required_periods(value: str) -> tuple[str, ...]:
     years: set[str] = set()
+    quarters = {
+        f"{year}-Q{quarter}"
+        for year, quarter in re.findall(
+            r"\b(20\d{2})[-\s]?Q([1-4])\b",
+            value,
+            flags=re.IGNORECASE,
+        )
+    }
+    quarters.update(
+        f"{year}-Q{quarter}"
+        for quarter, year in re.findall(
+            r"\bQ([1-4])\s+(20\d{2})\b",
+            value,
+            flags=re.IGNORECASE,
+        )
+    )
     normalized = value.replace("–", "-").replace("—", "-")
     for start, end in re.findall(r"\b(20\d{2})\s*-\s*(20\d{2})\b", normalized):
         first, last = int(start), int(end)
         if first <= last and last - first <= 20:
             years.update(str(year) for year in range(first, last + 1))
     years.update(re.findall(r"\b20\d{2}\b", normalized))
-    return tuple(sorted(years))
+    return tuple(sorted((*years, *quarters)))
 
 
 def selected_design(design: ResearchDesign, selected_ids: Iterable[str]) -> ResearchDesign:
@@ -340,13 +631,16 @@ def selected_design(design: ResearchDesign, selected_ids: Iterable[str]) -> Rese
 
 
 def qualify_gap(gap: AuthorityGap, observations: Iterable[AuthorityObservation]) -> GapOutcome:
-    relevant = [item for item in observations if gap.information_need_id in item.information_need_ids]
+    relevant = _relevant_observations(gap, observations)
     if any(item.conflicting for item in relevant):
         return GapOutcome.CONFLICTING
     if not relevant:
         return GapOutcome.INSUFFICIENT
-    if gap.required_authority_kinds and not any(
-        item.authority_kind in gap.required_authority_kinds for item in relevant
+    groups = gap.required_authority_kind_groups or ((gap.required_authority_kinds,) if gap.required_authority_kinds else ())
+    if any(not any(item.authority_kind in group for item in relevant) for group in groups):
+        return GapOutcome.INSUFFICIENT
+    if gap.metric_required and not any(
+        gap.metric.casefold() in item.metric.casefold() for item in relevant
     ):
         return GapOutcome.INSUFFICIENT
     if gap.geography and any(item.geography != gap.geography for item in relevant):
@@ -354,10 +648,66 @@ def qualify_gap(gap: AuthorityGap, observations: Iterable[AuthorityObservation])
     periods = {period for item in relevant for period in item.periods}
     if gap.required_periods and not set(gap.required_periods).issubset(periods):
         return GapOutcome.INSUFFICIENT
+    observation_keys = {key for item in relevant for key in item.observations}
+    if gap.required_observations and not set(gap.required_observations).issubset(
+        observation_keys
+    ):
+        return GapOutcome.INSUFFICIENT
     identities = {item.source_identity for item in relevant}
     if len(identities) < gap.minimum_independent_sources:
         return GapOutcome.INSUFFICIENT
     return GapOutcome.SATISFIED
+
+
+def gap_missing_dimensions(
+    gap: AuthorityGap,
+    observations: Iterable[AuthorityObservation],
+) -> tuple[str, ...]:
+    relevant = _relevant_observations(gap, observations)
+    missing: list[str] = []
+    if any(item.conflicting for item in relevant):
+        missing.append("conflicting_evidence")
+    if not relevant:
+        missing.append("evidence")
+    periods = {period for item in relevant for period in item.periods}
+    missing.extend(f"period:{item}" for item in gap.required_periods if item not in periods)
+    observed = {key for item in relevant for key in item.observations}
+    missing.extend(
+        f"observation:{item}"
+        for item in gap.required_observations
+        if item not in observed
+    )
+    identities = {item.source_identity for item in relevant}
+    source_shortfall = max(0, gap.minimum_independent_sources - len(identities))
+    if source_shortfall:
+        missing.append(f"independent_sources:{source_shortfall}")
+    groups = gap.required_authority_kind_groups or ((gap.required_authority_kinds,) if gap.required_authority_kinds else ())
+    for group in groups:
+        if not any(item.authority_kind in group for item in relevant):
+            missing.append("authority:" + "|".join(group))
+    if gap.metric_required and not any(
+        gap.metric.casefold() in item.metric.casefold() for item in relevant
+    ):
+        missing.append(f"metric:{gap.metric}")
+    if gap.geography and any(item.geography != gap.geography for item in relevant):
+        missing.append(f"geography:{gap.geography}")
+    if gap.eligible_source_types and not any(
+        item.source_type in gap.eligible_source_types for item in relevant
+    ):
+        missing.extend(f"source_type:{item}" for item in gap.eligible_source_types)
+    return tuple(dict.fromkeys(missing))
+
+
+def _relevant_observations(
+    gap: AuthorityGap,
+    observations: Iterable[AuthorityObservation],
+) -> list[AuthorityObservation]:
+    return [
+        item for item in observations
+        if gap.information_need_id in item.information_need_ids
+        and (not gap.eligible_source_types or item.source_type in gap.eligible_source_types)
+        and not any(pattern.casefold() in item.source_pattern_text.casefold() for pattern in gap.prohibited_patterns)
+    ]
 
 
 def _stable_id(prefix: str, *parts: str) -> str:
@@ -397,31 +747,18 @@ class SelectedAuthorityExtensionService:
         return scope(context) if callable(scope) else nullcontext()
 
     def reserve_analysis_budget(self, workflow_run_id: str) -> ExtensionState:
-        state = self._state(workflow_run_id)
-        required_questions = {
-            gap.research_question_id for gap in state.gaps
-        }
-        # Reserve one finding call per selected research question, with a
-        # bounded second finding batch for a broad single-question selection.
-        # This covers the P5 shape without making a global four-call
-        # reservation for every extension. Insight and entailment each need
-        # one additional call.
-        finding_batches = max(1, len(required_questions))
-        if (
-            len(required_questions) == 1
-            and len(state.gaps) >= 3
-        ):
-            finding_batches = min(
-                MAX_CONSERVATIVE_ANALYSIS_FINDING_BATCHES,
-                finding_batches + 1,
-            )
-        required = finding_batches + 2
-        updated = replace(
-            state,
-            budget=state.budget.reserve_analysis(required),
-        )
-        self.states.save(updated)
-        return updated
+        def update(state):
+            required_questions = {gap.research_question_id for gap in state.gaps}
+            # Reserve one finding call per selected research question, with a
+            # bounded second finding batch for a broad single-question selection.
+            # This covers the P5 shape without making a global four-call
+            # reservation for every extension. Insight and entailment each need
+            # one additional call.
+            finding_batches = max(1, len(required_questions))
+            if len(required_questions) == 1 and len(state.gaps) >= 3:
+                finding_batches = min(MAX_CONSERVATIVE_ANALYSIS_FINDING_BATCHES, finding_batches + 1)
+            return replace(state, budget=state.budget.reserve_analysis(finding_batches + 2))
+        return self.states.atomic_update(workflow_run_id, update)
 
     def start(self, *, project_id: str, parent_workflow_run_id: str,
               design: ResearchDesign, selected_information_need_ids: Iterable[str],
@@ -511,9 +848,22 @@ class SelectedAuthorityExtensionService:
                 raise ExtensionContractError("search expands selected information-need scope")
             if dict(state.outcomes).get(information_need_id) == GapOutcome.SATISFIED:
                 return None
-        next_state = replace(state, budget=state.budget.consume_search())
-        self.states.save(next_state)  # persist before dispatch
-        return operation()
+        next_state, attempt = self.states.reserve_external_attempt(
+            workflow_run_id, stage="search",
+            information_need_id=information_need_id or "",
+        )
+        try:
+            result = operation()
+        except Exception as exc:
+            self._complete_external_attempt(
+                workflow_run_id,
+                attempt.attempt_id,
+                status="failed",
+                error_category=type(exc).__name__,
+            )
+            raise
+        self._complete_external_attempt(workflow_run_id, attempt.attempt_id)
+        return result
 
     def unresolved_information_need_ids(self, workflow_run_id: str) -> tuple[str, ...]:
         state = self._state(workflow_run_id)
@@ -523,41 +873,99 @@ class SelectedAuthorityExtensionService:
     def dispatch_provider(
         self, workflow_run_id: str, operation: Callable[[], Any], *, stage: str | None = None,
     ) -> Any:
-        state = self._state(workflow_run_id)
-        budget = (
-            state.budget.consume_provider_for_stage(stage)
-            if stage in {"evidence", "analysis"}
-            else state.budget.consume_provider()
+        next_state, attempt = self.states.reserve_external_attempt(
+            workflow_run_id, stage=stage or "provider",
         )
-        next_state = replace(state, budget=budget)
-        self.states.save(next_state)  # persist before dispatch
-        return operation()
+        try:
+            result = operation()
+        except Exception as exc:
+            self._complete_external_attempt(
+                workflow_run_id,
+                attempt.attempt_id,
+                status="failed",
+                error_category=type(exc).__name__,
+            )
+            raise
+        self._complete_external_attempt(workflow_run_id, attempt.attempt_id)
+        return result
+
+    @staticmethod
+    def _reject_ambiguous_attempt(state: ExtensionState) -> None:
+        if any(item.status == "pending" for item in state.external_attempts):
+            raise ExtensionContractError(
+                "authority_extension_ambiguous_external_attempt"
+            )
+
+    def _complete_external_attempt(
+        self,
+        workflow_run_id: str,
+        attempt_id: str,
+        *,
+        status: str = "completed",
+        error_category: str = "",
+    ) -> None:
+        self.states.complete_external_attempt(
+            workflow_run_id,
+            attempt_id,
+            status=status,
+            error_category=error_category,
+        )
+
+    def record_remediation_terminal_reason(
+        self,
+        workflow_run_id: str,
+        reason: str,
+    ) -> ExtensionState:
+        return self.states.atomic_update(
+            workflow_run_id,
+            lambda state: replace(state, remediation_terminal_reason=str(reason)),
+        )
+
+    def analysis_gate(self, workflow_run_id: str) -> tuple[bool, str]:
+        def update(latest):
+            outcomes = self._evaluate_outcomes(latest)
+            allowed = (
+                not any(item.status == "pending" for item in latest.external_attempts)
+                and not any(value != GapOutcome.SATISFIED for _, value in outcomes)
+                and latest.budget.analysis_reserved > 0
+                and latest.budget.analysis_used < latest.budget.analysis_reserved
+            )
+            return replace(latest, outcomes=outcomes, analysis_gate_open=allowed)
+        updated = self.states.atomic_update(workflow_run_id, update)
+        if any(item.status == "pending" for item in updated.external_attempts):
+            return False, "ambiguous_external_attempt"
+        if any(value != GapOutcome.SATISFIED for _, value in updated.outcomes):
+            return False, updated.remediation_terminal_reason or "insufficient_evidence"
+        if updated.budget.analysis_reserved <= 0:
+            return False, "analysis_budget_not_reserved"
+        if updated.budget.analysis_used >= updated.budget.analysis_reserved:
+            return False, "analysis_budget_exhausted"
+        return True, "sufficient"
 
     def record_observations(self, workflow_run_id: str,
                             observations: Iterable[AuthorityObservation]) -> ExtensionState:
-        state = self._state(workflow_run_id)
-        selected = {gap.information_need_id for gap in state.gaps}
-        by_id = {item.evidence_id: item for item in state.observations}
-        extension = self.extensions.get_by_id(state.extension_id)
-        assert extension is not None
-        for item in observations:
-            if item.project_id != extension.project_id or item.research_design_id != extension.research_design_id:
-                raise ExtensionContractError("cross-project or cross-design evidence")
-            if item.workflow_run_id not in {extension.parent_source_workflow_run_id, workflow_run_id}:
-                raise ExtensionContractError("evidence is not an authority member")
-            if not item.information_need_ids or not set(item.information_need_ids).issubset(selected):
-                raise ExtensionContractError("evidence expands selected information-need scope")
-            by_id.setdefault(item.evidence_id, item)
-        updated = replace(state, observations=tuple(sorted(by_id.values(), key=lambda value: value.evidence_id)))
-        self.states.save(updated)
-        return updated
+        incoming = tuple(observations)
+        def update(state):
+            selected = {gap.information_need_id for gap in state.gaps}
+            by_id = {item.evidence_id: item for item in state.observations}
+            extension = self.extensions.get_by_id(state.extension_id)
+            assert extension is not None
+            for item in incoming:
+                if item.project_id != extension.project_id or item.research_design_id != extension.research_design_id:
+                    raise ExtensionContractError("cross-project or cross-design evidence")
+                if item.workflow_run_id not in {extension.parent_source_workflow_run_id, workflow_run_id}:
+                    raise ExtensionContractError("evidence is not an authority member")
+                if not item.information_need_ids or not set(item.information_need_ids).issubset(selected):
+                    raise ExtensionContractError("evidence expands selected information-need scope")
+                by_id.setdefault(item.evidence_id, item)
+            return replace(state, observations=tuple(sorted(by_id.values(), key=lambda value: value.evidence_id)))
+        return self.states.atomic_update(workflow_run_id, update)
 
     def evaluate(self, workflow_run_id: str) -> ExtensionState:
-        state = self._state(workflow_run_id)
-        outcomes = self._evaluate_outcomes(state)
-        updated = replace(state, outcomes=outcomes)
-        self.states.save(updated)
-        return updated
+        return self.states.atomic_update(
+            workflow_run_id,
+            lambda state: replace(state, outcomes=self._evaluate_outcomes(state)),
+        )
 
     @staticmethod
     def _evaluate_outcomes(
@@ -570,23 +978,23 @@ class SelectedAuthorityExtensionService:
 
     def record_findings(self, workflow_run_id: str,
                         findings: Iterable[ExtensionFinding]) -> ExtensionState:
-        state = self._state(workflow_run_id)
-        extension = self.extensions.get_by_id(state.extension_id)
-        assert extension is not None
-        selected = {gap.information_need_id for gap in state.gaps}
-        evidence_ids = {item.evidence_id for item in state.observations}
-        by_id = {item.finding_id: item for item in state.findings}
-        for item in findings:
-            if (item.project_id, item.research_design_id, item.workflow_run_id) != (
-                extension.project_id, extension.research_design_id, workflow_run_id,
-            ):
-                raise ExtensionContractError("finding ownership mismatch")
-            if item.information_need_id not in selected or not item.evidence_ids or not set(item.evidence_ids).issubset(evidence_ids):
-                raise ExtensionContractError("finding authority is outside selected composition")
-            by_id.setdefault(item.finding_id, item)
-        updated = replace(state, findings=tuple(sorted(by_id.values(), key=lambda value: value.finding_id)))
-        self.states.save(updated)
-        return updated
+        incoming = tuple(findings)
+        def update(state):
+            extension = self.extensions.get_by_id(state.extension_id)
+            assert extension is not None
+            selected = {gap.information_need_id for gap in state.gaps}
+            evidence_ids = {item.evidence_id for item in state.observations}
+            by_id = {item.finding_id: item for item in state.findings}
+            for item in incoming:
+                if (item.project_id, item.research_design_id, item.workflow_run_id) != (
+                    extension.project_id, extension.research_design_id, workflow_run_id,
+                ):
+                    raise ExtensionContractError("finding ownership mismatch")
+                if item.information_need_id not in selected or not item.evidence_ids or not set(item.evidence_ids).issubset(evidence_ids):
+                    raise ExtensionContractError("finding authority is outside selected composition")
+                by_id.setdefault(item.finding_id, item)
+            return replace(state, findings=tuple(sorted(by_id.values(), key=lambda value: value.finding_id)))
+        return self.states.atomic_update(workflow_run_id, update)
 
     def finalize(self, workflow_run_id: str, *, created_at: str) -> ExtensionState:
         state = self.evaluate(workflow_run_id)
