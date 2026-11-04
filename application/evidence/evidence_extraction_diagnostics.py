@@ -45,7 +45,34 @@ class EvidenceWorkItemFailureCategory(str, Enum):
     GROUNDING_REJECTION = "grounding_rejection"
     PROVENANCE_REJECTION = "provenance_rejection"
     BUDGET_STOP = "budget_stop"
+    BUDGET_EXHAUSTED = "budget_exhausted"
     UNKNOWN_FAILURE = "unknown_failure"
+
+
+SUPPORTED_FAILURE_PHASES = frozenset({
+    "before_dispatch", "after_dispatch", "unknown",
+})
+MAX_OPERATION_ID_LENGTH = 128
+
+
+def _safe_category(value: object) -> str:
+    if isinstance(value, str) and value in {
+        item.value for item in EvidenceWorkItemFailureCategory
+    }:
+        return value
+    return EvidenceWorkItemFailureCategory.UNKNOWN_FAILURE.value
+
+
+def _safe_phase(value: object) -> str:
+    if isinstance(value, str) and value in SUPPORTED_FAILURE_PHASES:
+        return value
+    return "unknown"
+
+
+def _safe_operation_id(value: object) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    return value[:MAX_OPERATION_ID_LENGTH]
 
 
 @dataclass
@@ -60,6 +87,9 @@ class InnerChunkObservation:
     raw_candidate_count: int = 0
     response_shape: ResponseShapeDiagnostics | None = None
     failure_category: str | None = None
+    failure_phase: str | None = None
+    retry_ambiguous: bool = False
+    operation_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -73,7 +103,15 @@ class InnerChunkObservation:
         if self.exception_class is not None:
             payload["exception_class"] = self.exception_class
         if self.failure_category is not None:
-            payload["failure_category"] = self.failure_category
+            payload["failure_category"] = _safe_category(self.failure_category)
+        if self.failure_phase is not None:
+            payload["failure_phase"] = _safe_phase(self.failure_phase)
+        if self.retry_ambiguous:
+            payload["retry_ambiguous"] = True
+        if self.operation_id is not None:
+            safe_operation_id = _safe_operation_id(self.operation_id)
+            if safe_operation_id is not None:
+                payload["operation_id"] = safe_operation_id
         if self.response_shape is not None:
             payload["response_shape"] = self.response_shape.to_dict()
         return payload
@@ -135,6 +173,9 @@ class WorkItemTrace:
     source_outcome_before: dict[str, Any] = field(default_factory=dict)
     source_outcome_after: dict[str, Any] = field(default_factory=dict)
     failure_categories: list[str] = field(default_factory=list)
+    failure_phase: str | None = None
+    retry_ambiguous: bool = False
+    operation_id: str | None = None
 
     def record_failure_category(self, category: str) -> None:
         if category not in self.failure_categories:
@@ -182,6 +223,14 @@ class WorkItemTrace:
                 categories.append(item.failure_category)
         if categories:
             payload["failure_categories"] = categories
+        if self.failure_phase is not None:
+            payload["failure_phase"] = _safe_phase(self.failure_phase)
+        if self.retry_ambiguous:
+            payload["retry_ambiguous"] = True
+        if self.operation_id is not None:
+            safe_operation_id = _safe_operation_id(self.operation_id)
+            if safe_operation_id is not None:
+                payload["operation_id"] = safe_operation_id
         if self.grounding_search_start is not None:
             payload["grounding_search_start"] = self.grounding_search_start
         if self.grounding_search_end is not None:
@@ -487,6 +536,11 @@ def classify_inner_chunk_failure(
 
 
 def classify_extraction_exception(exc: BaseException) -> str:
+    explicit = getattr(exc, "failure_category", None)
+    if isinstance(explicit, str) and explicit in {
+        item.value for item in EvidenceWorkItemFailureCategory
+    }:
+        return explicit
     classification = getattr(exc, "classification", None)
     known_invalid = {
         "empty_provider_output", "incomplete_provider_output", "invalid_json",

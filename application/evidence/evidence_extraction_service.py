@@ -847,6 +847,9 @@ class EvidenceExtractionService:
                 trace.extractor_status = "exception"
                 trace.exception_class = type(exc).__name__
                 trace.exception_message = str(exc)
+                trace.failure_phase = getattr(exc, "failure_phase", "unknown")
+                trace.retry_ambiguous = bool(getattr(exc, "retry_ambiguous", False))
+                trace.operation_id = getattr(exc, "operation_id", None)
                 trace.record_failure_category(classify_extraction_exception(exc))
             if diagnostics is not None:
                 diagnostics.extractor_failures += 1

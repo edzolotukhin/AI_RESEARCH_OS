@@ -35,7 +35,11 @@ class ExtensionContractError(ValueError):
 
 
 class ExtensionBudgetExceeded(ExtensionContractError):
-    pass
+    """Fail-closed extension budget rejection before external dispatch."""
+
+    failure_category = "budget_exhausted"
+    failure_phase = "before_dispatch"
+    retry_ambiguous = False
 
 
 class GapOutcome(StrEnum):
