@@ -44,9 +44,11 @@ from application.evidence.evidence_extraction_diagnostics import (
     CandidateOutcome,
     CandidateRejectionReason,
     EvidenceExtractionDiagnostics,
+    EvidenceWorkItemFailureCategory,
     WorkItemTrace,
     activate_diagnostics,
     classify_grounding_failure,
+    classify_extraction_exception,
     classify_provenance_rejection,
     deactivate_diagnostics,
     reset_active_work_item,
@@ -580,6 +582,9 @@ class EvidenceExtractionService:
                 trace.extractor_status = "budget_stop"
                 trace.exception_class = type(exc).__name__
                 trace.exception_message = str(exc)
+                trace.record_failure_category(
+                    EvidenceWorkItemFailureCategory.BUDGET_STOP.value,
+                )
                 diagnostics.record_exception(exc)
                 break
             finally:
@@ -830,6 +835,9 @@ class EvidenceExtractionService:
                     trace.extractor_status = "budget_stop"
                     trace.exception_class = type(exc).__name__
                     trace.exception_message = str(exc)
+                    trace.record_failure_category(
+                        EvidenceWorkItemFailureCategory.BUDGET_STOP.value,
+                    )
                 if diagnostics is not None:
                     diagnostics.record_exception(exc)
                 return evidence_ids, extracted, failures, extracted == 0
@@ -839,6 +847,7 @@ class EvidenceExtractionService:
                 trace.extractor_status = "exception"
                 trace.exception_class = type(exc).__name__
                 trace.exception_message = str(exc)
+                trace.record_failure_category(classify_extraction_exception(exc))
             if diagnostics is not None:
                 diagnostics.extractor_failures += 1
                 diagnostics.record_exception(exc)
@@ -852,6 +861,10 @@ class EvidenceExtractionService:
         if not candidates:
             if trace is not None:
                 trace.extractor_status = "no_candidates"
+                if self._trace_is_valid_empty(trace) and not trace.failure_categories:
+                    trace.record_failure_category(
+                        EvidenceWorkItemFailureCategory.VALID_EMPTY_RESPONSE.value,
+                    )
             return evidence_ids, extracted, failures, True
 
         if trace is not None:
@@ -865,6 +878,9 @@ class EvidenceExtractionService:
                 if diagnostics is not None:
                     diagnostics.rejected_empty_or_invalid_candidate += 1
                 if trace is not None:
+                    trace.record_failure_category(
+                        EvidenceWorkItemFailureCategory.INVALID_RESPONSE.value,
+                    )
                     trace.candidate_outcomes.append(
                         CandidateOutcome(
                             candidate_index=candidate_index,
@@ -908,6 +924,9 @@ class EvidenceExtractionService:
                     if diagnostics is not None:
                         diagnostics.rejected_provenance += 1
                 if trace is not None:
+                    trace.record_failure_category(
+                        EvidenceWorkItemFailureCategory.PROVENANCE_REJECTION.value,
+                    )
                     trace.candidate_outcomes.append(
                         CandidateOutcome(
                             candidate_index=candidate_index,
@@ -940,6 +959,9 @@ class EvidenceExtractionService:
                 if diagnostics is not None:
                     diagnostics.rejected_grounding += 1
                 if trace is not None:
+                    trace.record_failure_category(
+                        EvidenceWorkItemFailureCategory.GROUNDING_REJECTION.value,
+                    )
                     trace.candidate_outcomes.append(
                         CandidateOutcome(
                             candidate_index=candidate_index,

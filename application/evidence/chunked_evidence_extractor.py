@@ -13,6 +13,7 @@ from application.evidence.content_chunking import (
 from application.evidence.run_scoped_provenance import RunScopedSourceContext
 from application.evidence.evidence_extractor_response_shape import consume_response_shape
 from application.evidence.evidence_extraction_diagnostics import (
+    classify_inner_chunk_failure,
     InnerChunkObservation,
     record_inner_chunk_observation,
 )
@@ -89,6 +90,10 @@ class ChunkedEvidenceExtractor:
                             extractor_status=inner_status,
                             exception_class=type(exc).__name__,
                             exception_message=str(exc),
+                            failure_category=classify_inner_chunk_failure(
+                                extractor_status=inner_status,
+                                response_shape=None,
+                            ),
                         ),
                     )
                     return candidates
@@ -108,6 +113,10 @@ class ChunkedEvidenceExtractor:
                         exception_class=inner_exception_class,
                         exception_message=inner_exception_message,
                         response_shape=response_shape,
+                        failure_category=classify_inner_chunk_failure(
+                            extractor_status=inner_status,
+                            response_shape=response_shape,
+                        ),
                     ),
                 )
                 continue
@@ -121,6 +130,10 @@ class ChunkedEvidenceExtractor:
                     extractor_status=inner_status,
                     raw_candidate_count=inner_candidate_count,
                     response_shape=response_shape,
+                    failure_category=classify_inner_chunk_failure(
+                        extractor_status=inner_status,
+                        response_shape=response_shape,
+                    ),
                 ),
             )
             for candidate in chunk_candidates:

@@ -15,6 +15,7 @@ from domain.sources.source import Source
 from domain.value_objects.task_status import TaskStatus
 
 from application.evidence.evidence_extraction_service import EvidenceExtractionService
+from application.evidence.evidence_extraction_diagnostics import classify_extraction_exception
 from application.evidence.evidence_result_codec import extract_evidence_extraction
 from application.evidence.exceptions import EvidenceExtractionError
 from application.evidence.evidence_failure_diagnostics_persistence import (
@@ -33,6 +34,31 @@ from infrastructure.persistence.memory.in_memory_evidence_repository import (
 from infrastructure.persistence.memory.in_memory_source_repository import (
     InMemorySourceRepository,
 )
+
+
+class _ClassifiedFailure(Exception):
+    def __init__(self, classification):
+        super().__init__("bounded test failure")
+        self.classification = classification
+
+
+class ExceptionClassificationTests(unittest.TestCase):
+    def test_classification_is_bounded_and_type_checked(self) -> None:
+        cases = (
+            ("invalid_json", "invalid_response"),
+            ("schema_contract_mismatch", "invalid_response"),
+            ("unknown_string", "unknown_failure"),
+            ([], "unknown_failure"),
+            ({"classification": "invalid_json"}, "unknown_failure"),
+            (object(), "unknown_failure"),
+            ("", "unknown_failure"),
+        )
+        for classification, expected in cases:
+            with self.subTest(classification=repr(classification)):
+                self.assertEqual(
+                    classify_extraction_exception(_ClassifiedFailure(classification)),
+                    expected,
+                )
 from runtime.workflow_context import WorkflowContext
 from domain.factories.workflow_run_factory import WorkflowRunFactory
 from domain.factories.task_factory import TaskFactory
@@ -218,6 +244,7 @@ class FailurePathDiagnosticsPersistenceTests(unittest.TestCase):
         diagnostics = payload["diagnostics"]
         self.assertEqual(diagnostics["failure_classification"], "no_candidates")
         self.assertEqual(diagnostics["persisted_evidence"], 0)
+        self.assertNotIn("failure_categories", diagnostics["work_items"][0])
         self.assertTrue(has_evidence_failure_diagnostics(context))
 
     def test_extractor_exception_diagnostics_survive_failure(self) -> None:
@@ -227,6 +254,11 @@ class FailurePathDiagnosticsPersistenceTests(unittest.TestCase):
         diagnostics = context.shared_state["evidence_extraction"]["diagnostics"]
         self.assertEqual(diagnostics["extractor_exceptions"].get("TypeError"), 1)
         self.assertEqual(diagnostics["work_items"][0]["exception_class"], "TypeError")
+        self.assertEqual(
+            diagnostics["work_items"][0]["failure_categories"],
+            ["unknown_failure"],
+        )
+        self.assertNotIn("exception_message", diagnostics["work_items"][0])
 
     def test_grounding_rejected_all_diagnostics_survive_failure(self) -> None:
         executor, context = self._executor_with_sources(_UngroundedExtractor())
@@ -235,6 +267,10 @@ class FailurePathDiagnosticsPersistenceTests(unittest.TestCase):
         diagnostics = context.shared_state["evidence_extraction"]["diagnostics"]
         self.assertEqual(diagnostics["failure_classification"], "grounding_rejected_all")
         self.assertEqual(diagnostics["rejected_grounding"], 1)
+        self.assertIn(
+            "grounding_rejection",
+            diagnostics["work_items"][0]["failure_categories"],
+        )
 
     def test_provenance_rejected_all_diagnostics_survive_failure(self) -> None:
         executor, context = self._executor_with_sources(_BadProvenanceExtractor())
@@ -242,6 +278,10 @@ class FailurePathDiagnosticsPersistenceTests(unittest.TestCase):
             executor.run(context)
         diagnostics = context.shared_state["evidence_extraction"]["diagnostics"]
         self.assertEqual(diagnostics["failure_classification"], "invalid_need_refs_all")
+        self.assertIn(
+            "provenance_rejection",
+            diagnostics["work_items"][0]["failure_categories"],
+        )
 
     def test_mixed_failure_diagnostics_survive_when_not_allow_empty(self) -> None:
         context = _context()

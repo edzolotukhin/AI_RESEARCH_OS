@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -26,6 +26,7 @@ from application.analysis.diagnostics import (
     AnalysisFailureDiagnostics,
     classify_provenance_rejection,
     format_zero_findings_message,
+    REJECTION_CATEGORY_INCOMPATIBLE_PERSISTED_FINDING,
 )
 from application.analysis.evidence_batching import batch_evidence_by_question
 from application.analysis.exceptions import (
@@ -80,6 +81,7 @@ class AnalysisSummary:
     insight_candidates_rejected: int
     batch_failures: int
     entailment_diagnostics: FindingEntailmentDiagnostics | None = None
+    rejection_counts: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -92,6 +94,8 @@ class AnalysisSummary:
         }
         if self.entailment_diagnostics is not None:
             payload["entailment"] = self.entailment_diagnostics.to_dict()
+        if self.rejection_counts:
+            payload["rejection_counts"] = dict(self.rejection_counts)
         return payload
 
 
@@ -142,6 +146,7 @@ class AnalysisService:
 
         extension_authority = context.read_shared("authority_extension_members")
         extension_plan = context.read_shared("authority_extension_plan")
+        require_single_information_need = isinstance(extension_plan, dict)
         if eligible_need_ids is None and isinstance(extension_plan, dict):
             selected_ids = extension_plan.get("selected_information_need_ids")
             if isinstance(selected_ids, list):
@@ -290,6 +295,7 @@ class AnalysisService:
                             if coverage is not None else None
                         ),
                         allowed_workflow_run_ids=allowed_workflow_run_ids,
+                        require_single_information_need=require_single_information_need,
                     )
                 except InvalidAnalysisProvenanceError as exc:
                     finding_candidates_rejected += 1
@@ -360,6 +366,7 @@ class AnalysisService:
                 project_id=project_id,
                 workflow_run_id=workflow_run_id,
                 research_design_id=research_design_id,
+                require_single_information_need=require_single_information_need,
             )
             if finding_id not in finding_ids:
                 finding_ids.append(finding_id)
@@ -462,6 +469,7 @@ class AnalysisService:
             insight_candidates_rejected=insight_candidates_rejected,
             batch_failures=batch_failures,
             entailment_diagnostics=entailment_diagnostics,
+            rejection_counts=_aggregate_rejection_counts(batch_diagnostics),
         )
 
     def _run_entailment_gate(
@@ -589,7 +597,14 @@ class AnalysisService:
         project_id: str,
         workflow_run_id: str,
         research_design_id: str,
+        require_single_information_need: bool = False,
     ) -> str:
+        candidate_needs = tuple(candidate.information_need_refs)
+        if require_single_information_need and len(candidate_needs) != 1:
+            raise InvalidAnalysisProvenanceError(
+                "Extension Finding must own exactly one Information Need",
+                category=REJECTION_CATEGORY_INCOMPATIBLE_PERSISTED_FINDING,
+            )
         deduplication_key = compute_finding_deduplication_key(
             workflow_run_id=workflow_run_id,
             statement=candidate.statement,
@@ -600,7 +615,14 @@ class AnalysisService:
             deduplication_key,
         )
         if existing is not None:
-            return existing.id
+            return self._validate_persisted_finding_for_reuse(
+                existing=existing,
+                candidate=candidate,
+                project_id=project_id,
+                workflow_run_id=workflow_run_id,
+                research_design_id=research_design_id,
+                require_single_information_need=require_single_information_need,
+            )
 
         finding_type = candidate.finding_type
         if finding_type not in {member.value for member in FindingType}:
@@ -634,11 +656,39 @@ class AnalysisService:
                     deduplication_key,
                 )
                 if existing is not None:
-                    return existing.id
+                    return self._validate_persisted_finding_for_reuse(
+                        existing=existing,
+                        candidate=candidate,
+                        project_id=project_id,
+                        workflow_run_id=workflow_run_id,
+                        research_design_id=research_design_id,
+                        require_single_information_need=require_single_information_need,
+                    )
 
         raise AnalysisError(
             f"Failed to resolve concurrent finding persistence for run {workflow_run_id}",
         )
+
+    @staticmethod
+    def _validate_persisted_finding_for_reuse(
+        *, existing, candidate, project_id: str, workflow_run_id: str,
+        research_design_id: str, require_single_information_need: bool,
+    ) -> str:
+        compatible = (
+            existing.project_id == project_id
+            and existing.workflow_run_id == workflow_run_id
+            and existing.research_design_id == research_design_id
+            and tuple(existing.information_need_refs) == tuple(candidate.information_need_refs)
+            and tuple(existing.evidence_refs) == tuple(candidate.evidence_refs)
+        )
+        if require_single_information_need and len(existing.information_need_refs) != 1:
+            compatible = False
+        if not compatible:
+            raise InvalidAnalysisProvenanceError(
+                "Deduplication resolved to an incompatible persisted Finding",
+                category=REJECTION_CATEGORY_INCOMPATIBLE_PERSISTED_FINDING,
+            )
+        return existing.id
 
     def _persist_insight(
         self,
@@ -690,6 +740,15 @@ class AnalysisService:
         raise AnalysisError(
             f"Failed to resolve concurrent insight persistence for run {workflow_run_id}",
         )
+
+def _aggregate_rejection_counts(
+    batches: list[AnalysisBatchDiagnostics],
+) -> dict[str, int]:
+    totals: dict[str, int] = {}
+    for batch in batches:
+        for category, count in batch.rejection_counts.items():
+            totals[category] = totals.get(category, 0) + count
+    return totals
 
 
 def _evidence_supported_aspects(

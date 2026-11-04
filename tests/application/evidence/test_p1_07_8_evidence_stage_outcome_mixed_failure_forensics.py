@@ -341,7 +341,7 @@ class LiveShapedSnapshotTests(unittest.TestCase):
             1,
         )
 
-    def test_case_e_incomplete_plus_persisted_is_success(self) -> None:
+    def test_case_e_incomplete_plus_persisted_is_durable_mixed_failure(self) -> None:
         extractor = _chunked_llm(
             [
                 LLMResponse(
@@ -365,7 +365,7 @@ class LiveShapedSnapshotTests(unittest.TestCase):
         diagnostics = summary.diagnostics
         assert diagnostics is not None
         self.assertGreater(summary.evidence_extracted, 0)
-        self.assertEqual(diagnostics.failure_classification, "success")
+        self.assertEqual(diagnostics.failure_classification, "mixed_failure")
         self.assertEqual(diagnostics.extractor_failures, 0)
         self.assertEqual(
             diagnostics.response_classification_counts.get(
@@ -378,7 +378,7 @@ class LiveShapedSnapshotTests(unittest.TestCase):
             1,
         )
 
-    def test_case_f_all_incomplete_is_no_candidates_on_chunked_path(self) -> None:
+    def test_case_f_all_incomplete_is_extractor_failure_on_chunked_path(self) -> None:
         extractor = _chunked_llm(
             [
                 LLMResponse(
@@ -397,7 +397,7 @@ class LiveShapedSnapshotTests(unittest.TestCase):
         diagnostics = summary.diagnostics
         assert diagnostics is not None
         self.assertEqual(summary.evidence_extracted, 0)
-        self.assertEqual(diagnostics.failure_classification, "no_candidates")
+        self.assertEqual(diagnostics.failure_classification, "extractor_failure")
         self.assertEqual(diagnostics.extractor_failures, 0)
         self.assertEqual(
             diagnostics.response_classification_counts.get("incomplete_provider_output"),
@@ -408,6 +408,10 @@ class LiveShapedSnapshotTests(unittest.TestCase):
         self.assertEqual(
             diagnostics.work_items[0].inner_chunks[0].exception_class,
             EvidenceResponseOutcomeError.__name__,
+        )
+        self.assertEqual(
+            diagnostics.work_items[0].inner_chunks[0].failure_category,
+            "invalid_response",
         )
 
     def test_case_g_budget_stop_with_persisted_evidence_is_success(self) -> None:

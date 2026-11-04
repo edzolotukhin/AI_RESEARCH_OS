@@ -38,6 +38,16 @@ class CandidateRejectionReason(str, Enum):
     PERSISTED = "persisted"
 
 
+class EvidenceWorkItemFailureCategory(str, Enum):
+    PROVIDER_EXCEPTION = "provider_exception"
+    INVALID_RESPONSE = "invalid_response"
+    VALID_EMPTY_RESPONSE = "valid_empty_response"
+    GROUNDING_REJECTION = "grounding_rejection"
+    PROVENANCE_REJECTION = "provenance_rejection"
+    BUDGET_STOP = "budget_stop"
+    UNKNOWN_FAILURE = "unknown_failure"
+
+
 @dataclass
 class InnerChunkObservation:
     inner_chunk_index: int
@@ -49,6 +59,7 @@ class InnerChunkObservation:
     exception_message: str | None = None
     raw_candidate_count: int = 0
     response_shape: ResponseShapeDiagnostics | None = None
+    failure_category: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -61,8 +72,8 @@ class InnerChunkObservation:
         }
         if self.exception_class is not None:
             payload["exception_class"] = self.exception_class
-        if self.exception_message is not None:
-            payload["exception_message"] = self.exception_message
+        if self.failure_category is not None:
+            payload["failure_category"] = self.failure_category
         if self.response_shape is not None:
             payload["response_shape"] = self.response_shape.to_dict()
         return payload
@@ -123,6 +134,11 @@ class WorkItemTrace:
     budget_remaining_after: int | None = None
     source_outcome_before: dict[str, Any] = field(default_factory=dict)
     source_outcome_after: dict[str, Any] = field(default_factory=dict)
+    failure_categories: list[str] = field(default_factory=list)
+
+    def record_failure_category(self, category: str) -> None:
+        if category not in self.failure_categories:
+            self.failure_categories.append(category)
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -160,8 +176,12 @@ class WorkItemTrace:
             payload["source_outcome_after"] = dict(self.source_outcome_after)
         if self.exception_class is not None:
             payload["exception_class"] = self.exception_class
-        if self.exception_message is not None:
-            payload["exception_message"] = self.exception_message
+        categories = list(self.failure_categories)
+        for item in self.inner_chunks:
+            if item.failure_category and item.failure_category not in categories:
+                categories.append(item.failure_category)
+        if categories:
+            payload["failure_categories"] = categories
         if self.grounding_search_start is not None:
             payload["grounding_search_start"] = self.grounding_search_start
         if self.grounding_search_end is not None:
@@ -271,7 +291,11 @@ class EvidenceExtractionDiagnostics:
             return self.failure_classification
 
         categories: set[str] = set()
-        if self.extractor_failures > 0 or self.extractor_exceptions:
+        if (
+            self.extractor_failures > 0
+            or self.inner_calls_exception > 0
+            or self.extractor_exceptions
+        ):
             categories.add(EvidenceStageFailureClassification.EXTRACTOR_FAILURE.value)
         if self.raw_candidates == 0 and self.extractor_attempts > 0 and not self.extractor_exceptions:
             categories.add(EvidenceStageFailureClassification.NO_CANDIDATES.value)
@@ -306,6 +330,7 @@ class EvidenceExtractionDiagnostics:
         return any(
             (
                 self.extractor_failures > 0,
+                self.inner_calls_exception > 0,
                 self.rejected_invalid_or_missing_need_ref > 0,
                 self.rejected_provenance > 0,
                 self.rejected_grounding > 0,
@@ -424,6 +449,11 @@ def record_inner_chunk_observation(observation: InnerChunkObservation) -> None:
             )
         if observation.extractor_status == "exception":
             diagnostics.inner_calls_exception += 1
+            if observation.exception_class:
+                diagnostics.extractor_exceptions[observation.exception_class] = (
+                    diagnostics.extractor_exceptions.get(observation.exception_class, 0)
+                    + 1
+                )
         elif observation.extractor_status == "success":
             diagnostics.inner_calls_completed += 1
             if observation.raw_candidate_count > 0:
@@ -432,6 +462,43 @@ def record_inner_chunk_observation(observation: InnerChunkObservation) -> None:
                 diagnostics.inner_calls_zero_candidates += 1
     if work_item is not None:
         work_item.inner_chunks.append(observation)
+        if observation.failure_category:
+            work_item.record_failure_category(observation.failure_category)
+
+
+def classify_inner_chunk_failure(
+    *,
+    extractor_status: str,
+    response_shape: ResponseShapeDiagnostics | None,
+) -> str | None:
+    if extractor_status == "budget_stop":
+        return EvidenceWorkItemFailureCategory.BUDGET_STOP.value
+    if extractor_status == "exception":
+        if response_shape is not None and response_shape.provider_response_received:
+            return EvidenceWorkItemFailureCategory.INVALID_RESPONSE.value
+        return EvidenceWorkItemFailureCategory.PROVIDER_EXCEPTION.value
+    if (
+        extractor_status == "success"
+        and response_shape is not None
+        and response_shape.response_classification == "valid_empty_result"
+    ):
+        return EvidenceWorkItemFailureCategory.VALID_EMPTY_RESPONSE.value
+    return None
+
+
+def classify_extraction_exception(exc: BaseException) -> str:
+    classification = getattr(exc, "classification", None)
+    known_invalid = {
+        "empty_provider_output", "incomplete_provider_output", "invalid_json",
+        "root_type_mismatch", "schema_contract_mismatch",
+    }
+    if isinstance(classification, str) and classification in known_invalid:
+        return EvidenceWorkItemFailureCategory.INVALID_RESPONSE.value
+    if classification not in (None, ""):
+        return EvidenceWorkItemFailureCategory.UNKNOWN_FAILURE.value
+    if type(exc).__name__ in {"EvidenceConfigurationError", "ProviderError"}:
+        return EvidenceWorkItemFailureCategory.PROVIDER_EXCEPTION.value
+    return EvidenceWorkItemFailureCategory.UNKNOWN_FAILURE.value
 
 
 def classify_grounding_failure(

@@ -285,6 +285,10 @@ class AuthorityExtensionStageExecutor(BaseExecutor):
         self.service.record_observations(context.workflow_run.id, observations)
 
     def _capture_findings(self, context: WorkflowContext) -> None:
+        state = self.service._state(context.workflow_run.id)
+        extension = self.service.extensions.get_by_id(state.extension_id)
+        assert extension is not None
+        selected = set(extension.selected_information_need_ids)
         values = self.finding_repository.list_for_project(
             context.project.id, workflow_run_id=context.workflow_run.id,
         )
@@ -292,6 +296,12 @@ class AuthorityExtensionStageExecutor(BaseExecutor):
         for value in values:
             if len(value.information_need_refs) != 1:
                 raise ExtensionContractError("extension finding must own exactly one selected information need")
+            if value.information_need_refs[0] not in selected:
+                raise ExtensionContractError("extension finding owns an unselected information need")
+            if (value.project_id, value.research_design_id, value.workflow_run_id) != (
+                extension.project_id, extension.research_design_id, context.workflow_run.id,
+            ):
+                raise ExtensionContractError("finding ownership mismatch")
             findings.append(ExtensionFinding(
                 finding_id=value.id, information_need_id=value.information_need_refs[0],
                 evidence_ids=tuple(value.evidence_refs), workflow_run_id=value.workflow_run_id,

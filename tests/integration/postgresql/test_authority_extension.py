@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from dataclasses import replace
+from unittest.mock import patch
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
@@ -24,6 +25,15 @@ from application.authority_extension.stage_adapters import (
     _extension_dispatch,
     _extension_runtime_context,
 )
+from application.analysis.analysis_service import AnalysisService
+from application.analysis.deduplication import compute_finding_deduplication_key
+from application.analysis.exceptions import AnalysisError, DuplicateFindingError
+from application.ports.analysis_ports import FindingCandidate, InsightCandidate
+from domain.findings.finding import Finding
+from domain.findings.finding_type import FindingType
+from domain.evidence.evidence import Evidence
+from infrastructure.persistence.memory.in_memory_evidence_repository import InMemoryEvidenceRepository
+from infrastructure.persistence.memory.in_memory_insight_repository import InMemoryInsightRepository
 from application.evidence.evidence_extraction_service import EvidenceExtractionService
 from application.services.workflow_service import WorkflowService
 from domain.factories.task_factory import TaskFactory
@@ -95,6 +105,149 @@ class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
             self.assertEqual(connection.execute(text("SELECT COUNT(*) FROM research_authority_extensions")).scalar_one(), 1)
             self.assertEqual(connection.execute(text("SELECT COUNT(*) FROM composed_research_authorities")).scalar_one(), 1)
             self.assertEqual(connection.execute(text("SELECT COUNT(*) FROM composed_research_authority_members")).scalar_one(), 2)
+
+    def test_multi_need_extension_finding_is_rejected_before_postgresql_persistence(self):
+        design = ResearchDesign(
+            "design",
+            (ResearchQuestion("rq", "Question"),),
+            (
+                InformationNeed("in1", "rq", "Need one"),
+                InformationNeed("in2", "rq", "Need two"),
+            ),
+        )
+        template = WorkflowTemplate(
+            "analysis-template", "Analysis", [],
+            research_brief_snapshot=ResearchBrief("Title", "Question"),
+            research_design_snapshot=design,
+        )
+        run = WorkflowRunFactory(TaskFactory()).create(template=template, run_id="extension")
+        context = WorkflowContext(run, Project("project", "P"), template)
+        context.write_shared("authority_extension_plan", {
+            "selected_information_need_ids": ["in1", "in2"],
+        })
+        evidence = InMemoryEvidenceRepository()
+        for index, need_id in enumerate(("in1", "in2"), start=1):
+            evidence.create(Evidence(
+                id=f"ev-{index}", project_id="project", source_id=f"source-{index}",
+                source_content_checksum=f"checksum-{index}", workflow_run_id="extension",
+                research_design_id="design", statement=f"Fact {index}",
+                source_excerpt=f"Fact {index}", created_at=SYNTHETIC_TIMESTAMP,
+                research_question_refs=("rq",), information_need_refs=(need_id,),
+                deduplication_key=f"ev-{index}",
+            ))
+
+        class InvalidOwnershipEngine:
+            method_name = "test"
+
+            def analyze_findings(self, analysis_input):
+                return [FindingCandidate(
+                    statement="Cross-need synthesis", rationale="Invalid extension owner",
+                    evidence_refs=("ev-1", "ev-2"),
+                    information_need_refs=("in1", "in2"),
+                )]
+
+            def analyze_insights(self, analysis_input):
+                return [InsightCandidate(
+                    statement="Unused", implication="Unused", finding_refs=(),
+                )]
+
+        findings = PostgreSQLFindingRepository(self.session_factory)
+        service = AnalysisService(
+            analysis_engine=InvalidOwnershipEngine(), evidence_repository=evidence,
+            finding_repository=findings,
+            insight_repository=InMemoryInsightRepository(),
+            max_evidence_per_batch=20, max_chars_per_batch=12000,
+        )
+        with patch(
+            "application.analysis.analysis_service.qualifying_evidence",
+            side_effect=lambda **kwargs: tuple(kwargs["evidence"]),
+        ):
+            with self.assertRaises(AnalysisError):
+                service.analyze_for_context(context)
+        self.assertEqual(
+            findings.list_for_project("project", workflow_run_id="extension"),
+            [],
+        )
+
+    def _postgresql_analysis_service(self, finding_repository):
+        return AnalysisService(
+            analysis_engine=object(),
+            evidence_repository=InMemoryEvidenceRepository(),
+            finding_repository=finding_repository,
+            insight_repository=InMemoryInsightRepository(),
+            max_evidence_per_batch=20,
+            max_chars_per_batch=12000,
+        )
+
+    def _finding_for_collision(self, *, finding_id, needs, deduplication_key):
+        return Finding(
+            id=finding_id, project_id="project", workflow_run_id="extension",
+            research_design_id="design", research_question_refs=("rq",),
+            information_need_refs=tuple(needs), statement="collision",
+            rationale="historical", evidence_refs=("ev-1",),
+            finding_type=FindingType.SYNTHESIS, confidence=0.8,
+            analysis_method="test", deduplication_key=deduplication_key,
+            created_at=SYNTHETIC_TIMESTAMP, metadata={},
+        )
+
+    def test_postgresql_dedup_collision_rejects_historical_multi_need_finding(self):
+        repository = PostgreSQLFindingRepository(self.session_factory)
+        candidate = FindingCandidate(
+            statement="collision", rationale="new", evidence_refs=("ev-1",),
+            information_need_refs=("in1",),
+        )
+        key = compute_finding_deduplication_key(
+            workflow_run_id="extension", statement=candidate.statement,
+            evidence_refs=candidate.evidence_refs,
+        )
+        historical = self._finding_for_collision(
+            finding_id="historical-pg-invalid", needs=("in1", "in2"),
+            deduplication_key=key,
+        )
+        repository.create(historical)
+        service = self._postgresql_analysis_service(repository)
+        with self.assertRaises(AnalysisError):
+            service._persist_finding(
+                candidate=candidate, project_id="project",
+                workflow_run_id="extension", research_design_id="design",
+                require_single_information_need=True,
+            )
+        self.assertEqual(repository.get_by_id(historical.id).information_need_refs, ("in1", "in2"))
+
+    def test_postgresql_duplicate_recovery_rejects_incompatible_persisted_finding(self):
+        repository = PostgreSQLFindingRepository(self.session_factory)
+        candidate = FindingCandidate(
+            statement="concurrent collision", rationale="new", evidence_refs=("ev-1",),
+            information_need_refs=("in1",),
+        )
+        key = compute_finding_deduplication_key(
+            workflow_run_id="extension", statement=candidate.statement,
+            evidence_refs=candidate.evidence_refs,
+        )
+        invalid = self._finding_for_collision(
+            finding_id="concurrent-pg-invalid", needs=("in1", "in2"),
+            deduplication_key=key,
+        )
+        original_create = repository.create
+        inserted = {"done": False}
+
+        def concurrent_create(finding):
+            if not inserted["done"]:
+                inserted["done"] = True
+                original_create(invalid)
+                raise DuplicateFindingError("concurrent insert")
+            return original_create(finding)
+
+        repository.create = concurrent_create
+        service = self._postgresql_analysis_service(repository)
+        with self.assertRaises(AnalysisError):
+            service._persist_finding(
+                candidate=candidate, project_id="project",
+                workflow_run_id="extension", research_design_id="design",
+                require_single_information_need=True,
+            )
+        self.assertEqual(repository.get_by_id(invalid.id).information_need_refs, ("in1", "in2"))
+        self.assertEqual(repository.list_for_project("project", workflow_run_id="extension"), [invalid])
 
     def test_second_attempt_uses_distinct_immutable_template_and_survives_reload(self):
         def graph(factory):

@@ -205,7 +205,7 @@ class LlmEvidenceExtractorResponseShapeTests(unittest.TestCase):
             self._extract(json.dumps(payload))
         self.assertEqual(ctx.exception.classification, "schema_contract_mismatch")
         shape = _extract_with_chunked(json.dumps(payload))
-        self.assertIn("evidence", shape["parsed_root_keys"])
+        self.assertNotIn("parsed_root_keys", shape)
         self.assertFalse(shape["expected_items_key_present"])
         self.assertEqual(shape["items_value_type"], "missing")
         self.assertEqual(shape["items_count_post_filter"], 0)
@@ -227,7 +227,7 @@ class LlmEvidenceExtractorResponseShapeTests(unittest.TestCase):
             self._extract(json.dumps(payload))
         self.assertEqual(ctx.exception.classification, "schema_contract_mismatch")
         shape = _extract_with_chunked(json.dumps(payload))
-        self.assertIn("result", shape["parsed_root_keys"])
+        self.assertNotIn("parsed_root_keys", shape)
         self.assertFalse(shape["expected_items_key_present"])
         self.assertEqual(shape["response_classification"], "schema_contract_mismatch")
 
@@ -238,7 +238,8 @@ class LlmEvidenceExtractorResponseShapeTests(unittest.TestCase):
         shape = _extract_with_chunked(json.dumps(payload))
         self.assertEqual(shape["parsed_root_type"], "array")
         self.assertTrue(shape["provider_response_received"])
-        self.assertIn("[", shape["response_preview"])
+        self.assertNotIn("response_preview", shape)
+        self.assertGreater(shape["response_text_length"], 0)
 
     def test_f_root_string_and_null_types(self) -> None:
         with self.assertRaises(ValueError):
@@ -368,7 +369,7 @@ class FailurePathResponseShapePersistenceTests(unittest.TestCase):
         inner = diagnostics["work_items"][0]["inner_chunks"][0]
         self.assertIn("response_shape", inner)
         shape = inner["response_shape"]
-        self.assertIn("evidence", shape["parsed_root_keys"])
+        self.assertNotIn("parsed_root_keys", shape)
         self.assertFalse(shape["expected_items_key_present"])
         self.assertEqual(shape["response_classification"], "schema_contract_mismatch")
         self.assertEqual(inner["extractor_status"], "exception")
