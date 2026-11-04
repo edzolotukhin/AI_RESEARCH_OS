@@ -7,8 +7,8 @@ from typing import Any
 
 from application.authority_extension.selected_workflow import (
     AuthorityObservation, ExtensionContractError, ExtensionFinding,
-    _required_periods,
 )
+from application.authority_extension.remediation import evidence_observation
 from application.contracts.base_executor import BaseExecutor
 from application.runtime.task_result_codec import capture_task_result
 from application.runtime.checkpoint_context import CHECKPOINT_FAILURE_HANDLER_KEY
@@ -165,6 +165,7 @@ class AuthorityExtensionStageExecutor(BaseExecutor):
     delegate: Any | None = None
     evidence_repository: Any | None = None
     finding_repository: Any | None = None
+    remediation_adapter: Any | None = None
 
     def run(self, context: WorkflowContext) -> WorkflowContext:
         run_id = context.workflow_run.id
@@ -207,8 +208,30 @@ class AuthorityExtensionStageExecutor(BaseExecutor):
                 if self.stage == "extension_evidence":
                     self._capture_evidence(context)
             elif self.stage == "extension_readiness":
+                if self.remediation_adapter is not None:
+                    token = _extension_dispatch.set((self.service, run_id, "evidence"))
+                    context_token = _extension_runtime_context.set(context)
+                    try:
+                        context = self.remediation_adapter.run(context)
+                    finally:
+                        _extension_runtime_context.reset(context_token)
+                        _extension_dispatch.reset(token)
+                    self._capture_evidence(context)
                 self.service.evaluate(run_id)
             elif self.stage == "extension_analysis":
+                allowed, reason = self.service.analysis_gate(run_id)
+                if not allowed:
+                    context.write_shared("authority_extension_analysis_gate", {
+                        "allowed": False,
+                        "reason": reason,
+                    })
+                    task = context.current_task
+                    if task is not None:
+                        context.intermediate_results[task.id] = capture_task_result(
+                            context,
+                            task.id,
+                        )
+                    return context
                 if self.delegate is None:
                     raise ExtensionContractError("extension analysis delegate unavailable")
                 token = _extension_dispatch.set((self.service, run_id, "analysis"))
@@ -246,42 +269,9 @@ class AuthorityExtensionStageExecutor(BaseExecutor):
             if not selected.intersection(value.information_need_refs):
                 continue
             metadata = value.metadata if isinstance(value.metadata, dict) else {}
-            assignment = metadata.get("semantic_assignment")
-            if not isinstance(assignment, dict):
+            if not isinstance(metadata.get("semantic_assignment"), dict):
                 raise ExtensionContractError("extension evidence lacks validated semantic assignment")
-            period_reference = str(metadata.get("observation_period", "")).strip()
-            normalized_reference = " ".join(period_reference.casefold().split())
-            normalized_excerpt = " ".join(value.source_excerpt.casefold().split())
-            periods = (
-                _required_periods(period_reference)
-                if normalized_reference and normalized_reference in normalized_excerpt
-                else ()
-            )
-            aspects = tuple(str(item) for item in assignment.get("required_aspect_refs", ()) if str(item))
-            aspect_text = " ".join(aspects).casefold()
-            if any(token in aspect_text for token in ("real_volume", "real volume", "constant_price", "constant price")):
-                authority_kind = "retail_real_volume"
-            elif "deflator" in aspect_text:
-                authority_kind = "retail_deflator"
-            elif "cpi" in aspect_text or "consumer price" in aspect_text:
-                authority_kind = "cpi"
-            else:
-                authority_kind = "nominal"
-            lineage = metadata.get("data_lineage") if isinstance(metadata.get("data_lineage"), dict) else {}
-            source_identity = str(
-                lineage.get("origin_id") or metadata.get("acquired_content_identity") or value.source_id
-            )
-            geography_values = assignment.get("geography_applicability", ())
-            geography = str(geography_values[0]) if isinstance(geography_values, list) and geography_values else ""
-            observations.append(AuthorityObservation(
-                evidence_id=value.id, source_identity=source_identity,
-                information_need_ids=tuple(value.information_need_refs),
-                research_question_ids=tuple(value.research_question_refs),
-                metric=" ".join(aspects) or value.statement, geography=geography,
-                periods=periods, authority_kind=authority_kind,
-                workflow_run_id=value.workflow_run_id, research_design_id=value.research_design_id,
-                project_id=value.project_id, conflicting=bool(metadata.get("conflicting", False)),
-            ))
+            observations.append(evidence_observation(value))
         self.service.record_observations(context.workflow_run.id, observations)
 
     def _capture_findings(self, context: WorkflowContext) -> None:

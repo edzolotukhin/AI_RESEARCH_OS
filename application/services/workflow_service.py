@@ -160,5 +160,11 @@ class WorkflowService:
     def get_task_results(self, run_id: str) -> dict[str, Any]:
         return self._workflow_run_repository.get_task_results(run_id)
 
+    def atomic_update_task_results(self, run_id: str, updater):
+        method = getattr(self._workflow_run_repository, "atomic_update_task_results", None)
+        if not callable(method):
+            raise AttributeError("workflow repository lacks atomic task-result update")
+        return method(run_id, updater)
+
     def get_workflow_run_version(self, run_id: str) -> int:
         return self._workflow_run_repository.get_version(run_id)

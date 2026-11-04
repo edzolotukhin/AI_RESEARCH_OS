@@ -370,12 +370,29 @@ def create_application_container(
         "extension_evidence": agent_executors["evidence"],
         "extension_analysis": agent_executors["analysis"],
     }
+    extension_remediation = None
+    readiness_service = getattr(agent_executors.get("research_quality"), "_service", None)
+    production_loop = getattr(readiness_service, "_loop_service", None)
+    if production_loop is not None:
+        from application.authority_extension.remediation import (
+            AuthorityExtensionRemediationAdapter,
+        )
+
+        extension_remediation = AuthorityExtensionRemediationAdapter(
+            service=authority_extension_service,
+            loop_service=production_loop,
+            evidence_repository=evidence_repository,
+            source_repository=source_repository,
+        )
     for stage, executor_id in zip(EXTENSION_STAGES, EXTENSION_EXECUTORS):
         registry.tools.register(executor_id, AuthorityExtensionStageExecutor(
             stage=stage, service=authority_extension_service,
             delegate=extension_delegates.get(stage),
             evidence_repository=evidence_repository,
             finding_repository=finding_repository,
+            remediation_adapter=(
+                extension_remediation if stage == "extension_readiness" else None
+            ),
         ))
 
     # Always retain support for already-pinned ARK runs, even when activation is

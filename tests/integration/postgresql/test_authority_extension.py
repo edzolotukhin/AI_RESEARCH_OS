@@ -1,23 +1,29 @@
 from __future__ import annotations
 
 import unittest
+import threading
+import time
 from dataclasses import replace
 from unittest.mock import patch
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from application.authority_extension import AuthorityCompositionError, ComposedAuthorityReader, build_composition
+from application.authority_extension.remediation import AuthorityExtensionRemediationAdapter, ExtensionCoverageEvaluator, evidence_observation
 from domain.research_authority import AuthorityExtensionStatus, ResearchAuthorityExtension
 from infrastructure.persistence.postgresql.repositories.postgresql_authority_extension_repository import PostgreSQLAuthorityExtensionRepository, PostgreSQLComposedAuthorityRepository
 from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
 from tests.integration.postgresql.helpers import PostgreSQLIntegrationTestCase, integration_tests_enabled
 from application.authority_extension.identity import canonical_gap_digest
 from application.authority_extension.selected_workflow import (
+    ExtensionContractError,
     SelectedAuthorityExtensionService,
     WorkflowExtensionStateStore,
     derive_gap_contract,
     extension_template_id,
 )
+from application.research_quality.research_loop_service import ResearchLoopService
+from application.research_quality.targeted_research_bounds import TargetedResearchBounds
 from application.persistence.exceptions import DuplicateEntityError
 from application.authority_extension.stage_adapters import (
     AuthorityExtensionStageExecutor,
@@ -38,7 +44,13 @@ from application.evidence.evidence_extraction_service import EvidenceExtractionS
 from application.services.workflow_service import WorkflowService
 from domain.factories.task_factory import TaskFactory
 from domain.factories.workflow_run_factory import WorkflowRunFactory
-from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
+from domain.planning.research_design import (
+    EvidenceCoverageContract,
+    InformationNeed,
+    ResearchDesign,
+    ResearchQuestion,
+    TemporalGranularity,
+)
 from domain.project import Project
 from domain.research_brief import ResearchBrief
 from domain.sources.source import Source
@@ -105,6 +117,218 @@ class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
             self.assertEqual(connection.execute(text("SELECT COUNT(*) FROM research_authority_extensions")).scalar_one(), 1)
             self.assertEqual(connection.execute(text("SELECT COUNT(*) FROM composed_research_authorities")).scalar_one(), 1)
             self.assertEqual(connection.execute(text("SELECT COUNT(*) FROM composed_research_authority_members")).scalar_one(), 2)
+
+    def test_explicit_coverage_and_budget_attempt_ledger_survive_restart(self):
+        design = ResearchDesign(
+            "coverage-design",
+            (ResearchQuestion("rq-coverage", "Coverage"),),
+            (InformationNeed(
+                "in-coverage",
+                "rq-coverage",
+                "Annual turnover",
+                evidence_coverage=EvidenceCoverageContract(
+                    temporal_granularity=TemporalGranularity.ANNUAL,
+                    required_periods=("2021", "2022"),
+                    required_metric="nominal_turnover",
+                    minimum_independent_sources=2,
+                ),
+            ),),
+        )
+        workflows = WorkflowService(
+            workflow_template_repository=PostgreSQLWorkflowTemplateRepository(
+                self.session_factory
+            ),
+            workflow_run_repository=PostgreSQLWorkflowRunRepository(
+                self.session_factory
+            ),
+            workflow_run_factory=WorkflowRunFactory(TaskFactory()),
+        )
+        extensions = PostgreSQLAuthorityExtensionRepository(self.session_factory)
+        service = SelectedAuthorityExtensionService(
+            workflow_service=workflows,
+            extension_repository=extensions,
+            composed_authority_repository=PostgreSQLComposedAuthorityRepository(
+                self.session_factory
+            ),
+            state_store=WorkflowExtensionStateStore(workflows),
+        )
+        extension = service.start(
+            project_id="project",
+            parent_workflow_run_id="parent",
+            design=design,
+            selected_information_need_ids=("in-coverage",),
+            idempotency_key="coverage-restart",
+            confirmed=True,
+        )
+        service.dispatch_search(
+            extension.extension_workflow_run_id,
+            lambda: None,
+            information_need_id="in-coverage",
+        )
+
+        fresh_factory = DatabaseSessionFactory(self.engine)
+        fresh_workflows = WorkflowService(
+            workflow_template_repository=PostgreSQLWorkflowTemplateRepository(
+                fresh_factory
+            ),
+            workflow_run_repository=PostgreSQLWorkflowRunRepository(fresh_factory),
+            workflow_run_factory=WorkflowRunFactory(TaskFactory()),
+        )
+        run = fresh_workflows.get_workflow_run(extension.extension_workflow_run_id)
+        restored_design = fresh_workflows.get_template(
+            run.workflow_template_id
+        ).research_design_snapshot
+        restored_state = WorkflowExtensionStateStore(fresh_workflows).load(run.id)
+        self.assertEqual(
+            restored_design.information_needs[0].evidence_coverage.required_periods,
+            ("2021", "2022"),
+        )
+        self.assertEqual(restored_state.budget.search_used, 1)
+        self.assertEqual(restored_state.external_attempts[0].status, "completed")
+
+    def test_concurrent_postgresql_reservation_allows_one_external_dispatch(self):
+        design = ResearchDesign(
+            "atomic-design", (ResearchQuestion("rq-atomic", "Coverage"),),
+            (InformationNeed("in-atomic", "rq-atomic", "Annual turnover"),),
+        )
+        workflows = WorkflowService(
+            workflow_template_repository=PostgreSQLWorkflowTemplateRepository(self.session_factory),
+            workflow_run_repository=PostgreSQLWorkflowRunRepository(self.session_factory),
+            workflow_run_factory=WorkflowRunFactory(TaskFactory()),
+        )
+        extension = SelectedAuthorityExtensionService(
+            workflow_service=workflows,
+            extension_repository=PostgreSQLAuthorityExtensionRepository(self.session_factory),
+            composed_authority_repository=PostgreSQLComposedAuthorityRepository(self.session_factory),
+            state_store=WorkflowExtensionStateStore(workflows),
+        ).start(
+            project_id="project", parent_workflow_run_id="parent", design=design,
+            selected_information_need_ids=("in-atomic",),
+            idempotency_key="atomic-reservation", confirmed=True,
+        )
+        run_id = extension.extension_workflow_run_id
+        calls: list[int] = []
+        entered = threading.Event()
+        release = threading.Event()
+        outcomes: list[str] = []
+
+        def worker():
+            service = SelectedAuthorityExtensionService(
+                workflow_service=WorkflowService(
+                    workflow_template_repository=PostgreSQLWorkflowTemplateRepository(DatabaseSessionFactory(self.engine)),
+                    workflow_run_repository=PostgreSQLWorkflowRunRepository(DatabaseSessionFactory(self.engine)),
+                    workflow_run_factory=WorkflowRunFactory(TaskFactory()),
+                ),
+                extension_repository=PostgreSQLAuthorityExtensionRepository(DatabaseSessionFactory(self.engine)),
+                composed_authority_repository=PostgreSQLComposedAuthorityRepository(DatabaseSessionFactory(self.engine)),
+                state_store=WorkflowExtensionStateStore(WorkflowService(
+                    workflow_template_repository=PostgreSQLWorkflowTemplateRepository(DatabaseSessionFactory(self.engine)),
+                    workflow_run_repository=PostgreSQLWorkflowRunRepository(DatabaseSessionFactory(self.engine)),
+                    workflow_run_factory=WorkflowRunFactory(TaskFactory()),
+                )),
+            )
+            try:
+                service.dispatch_search(
+                    run_id,
+                    lambda: (calls.append(1), entered.set(), release.wait(5))[0],
+                    information_need_id="in-atomic",
+                )
+                outcomes.append("completed")
+            except Exception as exc:
+                outcomes.append(type(exc).__name__)
+
+        first = threading.Thread(target=worker)
+        second = threading.Thread(target=worker)
+        first.start()
+        self.assertTrue(entered.wait(5))
+        second.start()
+        time.sleep(0.25)
+        release.set()
+        first.join(10)
+        second.join(10)
+        self.assertEqual(calls, [1])
+
+    def test_active_runtime_update_overlaps_atomic_reservation_without_lost_state(self):
+        def graph(factory):
+            workflows = WorkflowService(
+                workflow_template_repository=PostgreSQLWorkflowTemplateRepository(factory),
+                workflow_run_repository=PostgreSQLWorkflowRunRepository(factory),
+                workflow_run_factory=WorkflowRunFactory(TaskFactory()),
+            )
+            extensions = PostgreSQLAuthorityExtensionRepository(factory)
+            return workflows, SelectedAuthorityExtensionService(
+                workflow_service=workflows,
+                extension_repository=extensions,
+                composed_authority_repository=PostgreSQLComposedAuthorityRepository(factory),
+                state_store=WorkflowExtensionStateStore(workflows),
+                capability_check=lambda: True,
+            )
+
+        design = ResearchDesign(
+            "runtime-concurrency-design", (ResearchQuestion("rq", "RQ"),),
+            (InformationNeed("in1", "rq", "Need evidence"),),
+        )
+        workflows_a, service_a = graph(self.session_factory)
+        extension = service_a.start(
+            project_id="project", parent_workflow_run_id="parent", design=design,
+            selected_information_need_ids=("in1",), idempotency_key="runtime-concurrency", confirmed=True,
+        )
+        service_a.activate(extension.extension_id)
+        run = workflows_a.get_workflow_run(extension.extension_workflow_run_id)
+        context = WorkflowContext(run, Project("project", "P"), workflows_a.get_template(run.workflow_template_id))
+        context.services[CHECKPOINT_SERVICE_KEY] = WorkflowRuntimePersister(
+            workflow_service=workflows_a, audit=None, run_id=run.id,
+            initial_version=workflows_a.get_workflow_run_version(run.id),
+            task_results=workflows_a.get_task_results(run.id),
+        )
+        barrier = threading.Barrier(2)
+        original_sync = service_a.states._sync_runtime_state
+
+        def synchronized_sync(state):
+            barrier.wait(timeout=10)
+            original_sync(state)
+
+        service_a.states._sync_runtime_state = synchronized_sync
+        calls = []
+        errors = []
+
+        def runtime_writer():
+            try:
+                with service_a.runtime_state_scope(context):
+                    service_a.record_remediation_terminal_reason(
+                        extension.extension_workflow_run_id, "targeted_gap_complete",
+                    )
+            except Exception as exc:
+                errors.append(exc)
+
+        def atomic_reserver():
+            try:
+                barrier.wait(timeout=10)
+                workflows_b, service_b = graph(DatabaseSessionFactory(self.engine))
+                service_b.dispatch_search(
+                    extension.extension_workflow_run_id,
+                    lambda: calls.append(1),
+                    information_need_id="in1",
+                )
+            except Exception as exc:
+                errors.append(exc)
+
+        first = threading.Thread(target=runtime_writer)
+        second = threading.Thread(target=atomic_reserver)
+        first.start(); second.start(); first.join(15); second.join(15)
+        self.assertEqual(errors, [])
+        self.assertEqual(calls, [1])
+        state = WorkflowExtensionStateStore(
+            WorkflowService(
+                workflow_template_repository=PostgreSQLWorkflowTemplateRepository(DatabaseSessionFactory(self.engine)),
+                workflow_run_repository=PostgreSQLWorkflowRunRepository(DatabaseSessionFactory(self.engine)),
+                workflow_run_factory=WorkflowRunFactory(TaskFactory()),
+            )
+        ).load(extension.extension_workflow_run_id)
+        self.assertEqual(state.remediation_terminal_reason, "targeted_gap_complete")
+        self.assertEqual(state.budget.search_used, 1)
+        self.assertEqual(len(state.external_attempts), 1)
+        self.assertEqual(state.external_attempts[0].status, "completed")
 
     def test_multi_need_extension_finding_is_rejected_before_postgresql_persistence(self):
         design = ResearchDesign(
@@ -539,6 +763,224 @@ class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
         again = service.finalize(run_id, created_at=SYNTHETIC_TIMESTAMP)
         self.assertEqual(again.composition_digest, state.composition_digest)
         self.assertEqual(again.composition_id, state.composition_id)
+
+    def test_parent_only_qualifying_evidence_reaches_analysis_gate_after_reload(self):
+        design = ResearchDesign(
+            "parent-only-design",
+            (ResearchQuestion("rq", "RQ"),),
+            (InformationNeed(
+                "in1", "rq", "Annual turnover", evidence_coverage=EvidenceCoverageContract(
+                    temporal_granularity=TemporalGranularity.ANNUAL,
+                    required_periods=("2021",),
+                    required_metric="nominal_turnover",
+                    minimum_independent_sources=1,
+                    geography="UA",
+                ),
+            ),),
+        )
+        workflows = WorkflowService(
+            workflow_template_repository=PostgreSQLWorkflowTemplateRepository(self.session_factory),
+            workflow_run_repository=PostgreSQLWorkflowRunRepository(self.session_factory),
+            workflow_run_factory=WorkflowRunFactory(TaskFactory()),
+        )
+        extensions = PostgreSQLAuthorityExtensionRepository(self.session_factory)
+        compositions = PostgreSQLComposedAuthorityRepository(self.session_factory)
+        service = SelectedAuthorityExtensionService(
+            workflow_service=workflows,
+            extension_repository=extensions,
+            composed_authority_repository=compositions,
+            state_store=WorkflowExtensionStateStore(workflows),
+            capability_check=lambda: True,
+        )
+        extension = service.start(
+            project_id="project", parent_workflow_run_id="parent", design=design,
+            selected_information_need_ids=("in1",), idempotency_key="parent-only", confirmed=True,
+        )
+        service.activate(extension.extension_id)
+        sources = PostgreSQLSourceRepository(self.session_factory)
+        evidence = PostgreSQLEvidenceRepository(self.session_factory)
+
+        def source(source_id, project_id="project", workflow_id="parent", design_id="parent-only-design"):
+            value = Source(
+                source_id, project_id, f"https://example.test/{source_id}",
+                f"https://example.test/{source_id}", source_id, SYNTHETIC_TIMESTAMP,
+                workflow_run_refs=(workflow_id,), research_design_refs=(design_id,),
+                content_text="2021 annual turnover", content_checksum=f"checksum-{source_id}",
+            )
+            sources.create(value)
+            return value
+
+        def item(evidence_id, source_id, project_id="project", workflow_id="parent", design_id="parent-only-design"):
+            return Evidence(
+                evidence_id, project_id, source_id, f"checksum-{source_id}", workflow_id,
+                design_id, "Nominal turnover was 100 in 2021", "In 2021 annual nominal_turnover was 100 in UA.",
+                SYNTHETIC_TIMESTAMP, information_need_refs=("in1",), research_question_refs=("rq",),
+                metadata={
+                    "semantic_assignment": {"required_aspect_refs": ["nominal_turnover"], "geography_applicability": ["UA"]},
+                    "data_lineage": {"origin_id": source_id}, "observation_period": "2021",
+                    "source_type": "official",
+                },
+                deduplication_key=evidence_id,
+            )
+
+        source("parent-source")
+        parent_evidence = item("parent-evidence", "parent-source")
+        evidence.create(parent_evidence)
+        invalid_values = (
+            ("foreign-evidence", "foreign-source", "foreign-project", "foreign", "parent-only-design"),
+            ("wrong-design-evidence", "wrong-design-source", "project", "wrong-design", "other-design"),
+            ("unrelated-evidence", "unrelated-source", "project", "wrong-design", "parent-only-design"),
+        )
+        for evidence_id, source_id, project_id, workflow_id, design_id in invalid_values:
+            source(source_id, project_id, workflow_id, design_id)
+            evidence.create(item(evidence_id, source_id, project_id, workflow_id, design_id))
+
+        member_ids = ("parent", extension.extension_workflow_run_id)
+        evaluator = ExtensionCoverageEvaluator(
+            project_id="project", research_design_id=design.id, allowed_workflow_run_ids=member_ids,
+        )
+        initial = evaluator.evaluate(design=design, evidence=(parent_evidence,))
+        self.assertTrue(initial.ready_for_analysis)
+        self.assertEqual(initial.research_question_assessments[0].information_need_assessments[0].evidence_count, 1)
+        service.reserve_analysis_budget(extension.extension_workflow_run_id)
+
+        loop = ResearchLoopService(
+            runner=object(), bounds=TargetedResearchBounds(max_gap_rounds_per_run=1),
+            evaluator=object(), evidence_repository=evidence, source_repository=sources,
+        )
+        adapter = AuthorityExtensionRemediationAdapter(
+            service=service, loop_service=loop, evidence_repository=evidence, source_repository=sources,
+        )
+        run = workflows.get_workflow_run(extension.extension_workflow_run_id)
+        context = WorkflowContext(run, Project("project", "P"), workflows.get_template(run.workflow_template_id))
+        AuthorityExtensionStageExecutor(
+            "extension_readiness", service, remediation_adapter=adapter,
+            evidence_repository=evidence, finding_repository=None,
+        ).run(context)
+        state = service._state(extension.extension_workflow_run_id)
+        self.assertEqual(dict(state.outcomes)["in1"].value, "satisfied")
+        self.assertEqual(len(state.observations), 1)
+        allowed, reason = service.analysis_gate(extension.extension_workflow_run_id)
+        self.assertTrue(allowed)
+        self.assertEqual(reason, "sufficient")
+
+        with self.assertRaisesRegex(ExtensionContractError, "cross-project"):
+            service.record_observations(
+                extension.extension_workflow_run_id,
+                (evidence_observation(evidence.get_by_id("foreign-evidence")),),
+            )
+
+        invalid_only = evaluator.evaluate(
+            design=design,
+            evidence=tuple(evidence.get_by_id(value[0]) for value in invalid_values),
+        )
+        self.assertFalse(invalid_only.ready_for_analysis)
+
+        fresh_factory = DatabaseSessionFactory(self.engine)
+        fresh_workflows = WorkflowService(
+            workflow_template_repository=PostgreSQLWorkflowTemplateRepository(fresh_factory),
+            workflow_run_repository=PostgreSQLWorkflowRunRepository(fresh_factory),
+            workflow_run_factory=WorkflowRunFactory(TaskFactory()),
+        )
+        fresh_service = SelectedAuthorityExtensionService(
+            workflow_service=fresh_workflows,
+            extension_repository=PostgreSQLAuthorityExtensionRepository(fresh_factory),
+            composed_authority_repository=PostgreSQLComposedAuthorityRepository(fresh_factory),
+            state_store=WorkflowExtensionStateStore(fresh_workflows), capability_check=lambda: True,
+        )
+        restored = fresh_service._state(extension.extension_workflow_run_id)
+        self.assertEqual(len(restored.observations), 1)
+        self.assertEqual(fresh_service.analysis_gate(extension.extension_workflow_run_id), (True, "sufficient"))
+
+    def test_denied_analysis_finalizes_insufficient_after_repository_reload(self):
+        workflows = WorkflowService(
+            workflow_template_repository=PostgreSQLWorkflowTemplateRepository(self.session_factory),
+            workflow_run_repository=PostgreSQLWorkflowRunRepository(self.session_factory),
+            workflow_run_factory=WorkflowRunFactory(TaskFactory()),
+        )
+        extensions = PostgreSQLAuthorityExtensionRepository(self.session_factory)
+        compositions = PostgreSQLComposedAuthorityRepository(self.session_factory)
+        service = SelectedAuthorityExtensionService(
+            workflow_service=workflows,
+            extension_repository=extensions,
+            composed_authority_repository=compositions,
+            state_store=WorkflowExtensionStateStore(workflows),
+            capability_check=lambda: True,
+        )
+        design = ResearchDesign(
+            "denied-analysis-design",
+            (ResearchQuestion("rq", "RQ"),),
+            (InformationNeed("in1", "rq", "Need evidence"),),
+        )
+        extension = service.start(
+            project_id="project",
+            parent_workflow_run_id="parent",
+            design=design,
+            selected_information_need_ids=("in1",),
+            idempotency_key="denied-analysis",
+            confirmed=True,
+        )
+        service.activate(extension.extension_id)
+        run = workflows.get_workflow_run(extension.extension_workflow_run_id)
+        template = workflows.get_template(run.workflow_template_id)
+        context = WorkflowContext(run, Project("project", "P"), template)
+        context.services[CHECKPOINT_SERVICE_KEY] = WorkflowRuntimePersister(
+            workflow_service=workflows,
+            audit=None,
+            run_id=run.id,
+            initial_version=workflows.get_workflow_run_version(run.id),
+            task_results=workflows.get_task_results(run.id),
+        )
+        called = []
+
+        class MustNotRun:
+            def run(self, value):
+                called.append(value.workflow_run.id)
+                return value
+
+        AuthorityExtensionStageExecutor(
+            "extension_analysis", service, MustNotRun(), None, None,
+        ).run(context)
+        self.assertEqual(called, [])
+        self.assertEqual(
+            context.read_shared("authority_extension_analysis_gate")["reason"],
+            "insufficient_evidence",
+        )
+        AuthorityExtensionStageExecutor(
+            "extension_finalize", service, None, None, None,
+        ).run(context)
+        self.assertEqual(
+            extensions.get_by_id(extension.extension_id).status,
+            AuthorityExtensionStatus.INSUFFICIENT,
+        )
+        self.assertIsNone(service._state(extension.extension_workflow_run_id).composition_id)
+
+        reloaded_workflows = WorkflowService(
+            workflow_template_repository=PostgreSQLWorkflowTemplateRepository(
+                DatabaseSessionFactory(self.engine)
+            ),
+            workflow_run_repository=PostgreSQLWorkflowRunRepository(
+                DatabaseSessionFactory(self.engine)
+            ),
+            workflow_run_factory=WorkflowRunFactory(TaskFactory()),
+        )
+        reloaded_extensions = PostgreSQLAuthorityExtensionRepository(
+            DatabaseSessionFactory(self.engine)
+        )
+        reloaded = SelectedAuthorityExtensionService(
+            workflow_service=reloaded_workflows,
+            extension_repository=reloaded_extensions,
+            composed_authority_repository=PostgreSQLComposedAuthorityRepository(
+                DatabaseSessionFactory(self.engine)
+            ),
+            state_store=WorkflowExtensionStateStore(reloaded_workflows),
+            capability_check=lambda: True,
+        )
+        self.assertEqual(
+            reloaded_extensions.get_by_id(extension.extension_id).status,
+            AuthorityExtensionStatus.INSUFFICIENT,
+        )
+        self.assertIsNone(reloaded._state(extension.extension_workflow_run_id).composition_id)
 
     def test_parent_source_selected_by_extension_is_visible_after_repository_reload(self):
         def graph(factory):

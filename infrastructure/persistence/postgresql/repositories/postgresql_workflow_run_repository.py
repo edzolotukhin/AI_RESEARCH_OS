@@ -160,6 +160,20 @@ class PostgreSQLWorkflowRunRepository:
                 return {}
             return dict(model.task_results or {})
 
+    def atomic_update_task_results(self, run_id: str, updater):
+        """Apply a bounded task-result update while locking the WorkflowRun row."""
+        with self._session_factory.session() as session:
+            model = session.scalar(
+                select(WorkflowRunModel)
+                .where(WorkflowRunModel.id == run_id)
+                .with_for_update()
+            )
+            if model is None:
+                raise EntityNotFoundError(f"WorkflowRun not found: {run_id}")
+            updated, value = updater(dict(model.task_results or {}))
+            model.task_results = updated
+            return value
+
     def get_version(self, run_id: str) -> int:
         with self._session_factory.session() as session:
             model = session.get(WorkflowRunModel, run_id)
