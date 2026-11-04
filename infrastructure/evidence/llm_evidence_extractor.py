@@ -33,6 +33,7 @@ from application.evidence.exceptions import (
     EvidenceConfigurationError,
     EvidenceResponseOutcomeError,
 )
+from application.authority_extension.selected_workflow import ExtensionBudgetExceeded
 from application.execution.exceptions import BudgetExhaustedError
 from application.execution.execution_budget_context import get_execution_budget
 from application.execution.execution_budget_retry import (
@@ -118,8 +119,19 @@ class LlmEvidenceExtractor(EvidenceExtractor):
                     raise
                 except Exception as exc:
                     reset_response_shape()
+                    if isinstance(exc, ExtensionBudgetExceeded):
+                        raise
                     raise EvidenceConfigurationError(
                         "LLM evidence extraction failed",
+                        original_exception_class=type(exc).__name__,
+                        failure_category=getattr(
+                            exc, "failure_category", "provider_exception"
+                        ),
+                        failure_phase=getattr(exc, "failure_phase", "unknown"),
+                        retry_ambiguous=bool(
+                            getattr(exc, "retry_ambiguous", False)
+                        ),
+                        operation_id=getattr(exc, "operation_id", None),
                     ) from exc
                 response_shape = ResponseShapeDiagnostics.from_llm_response(
                     response,

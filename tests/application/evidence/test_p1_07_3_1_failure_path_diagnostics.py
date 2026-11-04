@@ -16,8 +16,13 @@ from domain.value_objects.task_status import TaskStatus
 
 from application.evidence.evidence_extraction_service import EvidenceExtractionService
 from application.evidence.evidence_extraction_diagnostics import classify_extraction_exception
+from application.evidence.evidence_extraction_diagnostics import (
+    InnerChunkObservation,
+    WorkItemTrace,
+)
 from application.evidence.evidence_result_codec import extract_evidence_extraction
 from application.evidence.exceptions import EvidenceExtractionError
+from application.evidence.exceptions import EvidenceConfigurationError
 from application.evidence.evidence_failure_diagnostics_persistence import (
     has_evidence_failure_diagnostics,
 )
@@ -28,6 +33,8 @@ from application.ports.evidence_ports import EvidenceCandidate, EvidenceExtracto
 from infrastructure.evidence.deterministic_evidence_extractor import (
     DeterministicEvidenceExtractor,
 )
+from infrastructure.evidence.llm_evidence_extractor import LlmEvidenceExtractor
+from application.authority_extension.selected_workflow import ExtensionBudgetExceeded
 from infrastructure.persistence.memory.in_memory_evidence_repository import (
     InMemoryEvidenceRepository,
 )
@@ -51,6 +58,7 @@ class ExceptionClassificationTests(unittest.TestCase):
             ([], "unknown_failure"),
             ({"classification": "invalid_json"}, "unknown_failure"),
             (object(), "unknown_failure"),
+            (1, "unknown_failure"),
             ("", "unknown_failure"),
         )
         for classification, expected in cases:
@@ -59,6 +67,104 @@ class ExceptionClassificationTests(unittest.TestCase):
                     classify_extraction_exception(_ClassifiedFailure(classification)),
                     expected,
                 )
+
+    def test_budget_failure_keeps_bounded_phase_and_category(self) -> None:
+        failure = _ClassifiedFailure("budget_exhausted")
+        failure.failure_category = "budget_exhausted"
+        failure.failure_phase = "before_dispatch"
+        failure.retry_ambiguous = False
+        self.assertEqual(
+            classify_extraction_exception(failure),
+            "budget_exhausted",
+        )
+
+    def test_budget_failure_remains_distinct_from_configuration_failure(self) -> None:
+        class FailingClient:
+            def generate(self, prompt, *, options=None):
+                error = ExtensionBudgetExceeded("private budget detail")
+                error.operation_id = "bounded-op-1"
+                raise error
+
+        extractor = LlmEvidenceExtractor(llm_client=FailingClient())
+        with self.assertRaises(ExtensionBudgetExceeded):
+            extractor.extract(
+                source=_source(),
+                design=_design(),
+                run_context=RunScopedSourceContext(
+                    workflow_run_id="run-failure-diagnostics",
+                    research_design_id="design-1",
+                    information_need_ids=("in-1",),
+                    research_question_ids=("rq-1",),
+                    query_ids=("sq-in-1",),
+                ),
+            )
+    def test_safe_failure_metadata_is_bounded_and_message_free(self) -> None:
+        sensitive = "secret-token=do-not-persist"
+        inner = InnerChunkObservation(
+            inner_chunk_index=0,
+            inner_chunk_normalized_start=0,
+            inner_chunk_normalized_end=10,
+            inner_chunk_length=10,
+            extractor_status="exception",
+            exception_class="RuntimeError",
+            exception_message=sensitive,
+            failure_category=["budget_exhausted"],
+            failure_phase={"phase": "after_dispatch"},
+            operation_id="x" * 1000,
+        )
+        trace = WorkItemTrace(
+            queue_index=0,
+            source_id="source-1",
+            source_content_checksum="checksum-a",
+            information_need_ids=("in-1",),
+            outer_chunk_index=0,
+            outer_chunk_normalized_start=0,
+            outer_chunk_normalized_end=10,
+            outer_chunk_length=10,
+            failure_categories=["budget_exhausted"],
+            failure_phase={"bad": True},
+            operation_id=object(),
+            inner_chunks=[inner],
+        )
+        payload = trace.to_dict()
+        encoded = json.dumps(payload)
+        self.assertNotIn(sensitive, encoded)
+        self.assertEqual(payload["failure_phase"], "unknown")
+        self.assertNotIn("operation_id", payload)
+        nested = payload["inner_chunks"][0]
+        self.assertEqual(nested["failure_category"], "unknown_failure")
+        self.assertEqual(nested["failure_phase"], "unknown")
+        self.assertLessEqual(len(nested["operation_id"]), 128)
+
+    def test_llm_extractor_preserves_safe_inner_failure_metadata(self) -> None:
+        class FailingClient:
+            def generate(self, prompt, *, options=None):
+                error = RuntimeError("private provider payload")
+                error.failure_phase = "after_dispatch"
+                error.retry_ambiguous = True
+                error.operation_id = "bounded-op-1"
+                raise error
+
+        extractor = LlmEvidenceExtractor(llm_client=FailingClient())
+        with self.assertRaises(EvidenceConfigurationError) as raised:
+            extractor.extract(
+                source=_source(),
+                design=_design(),
+                run_context=RunScopedSourceContext(
+                    workflow_run_id="run-failure-diagnostics",
+                    research_design_id="design-1",
+                    information_need_ids=("in-1",),
+                    research_question_ids=("rq-1",),
+                    query_ids=("sq-in-1",),
+                ),
+            )
+        error = raised.exception
+        self.assertEqual(error.original_exception_class, "RuntimeError")
+        self.assertEqual(error.failure_category, "provider_exception")
+        self.assertEqual(error.failure_phase, "after_dispatch")
+        self.assertTrue(error.retry_ambiguous)
+        self.assertEqual(error.operation_id, "bounded-op-1")
+        self.assertNotIn("private provider payload", str(error))
 from runtime.workflow_context import WorkflowContext
 from domain.factories.workflow_run_factory import WorkflowRunFactory
 from domain.factories.task_factory import TaskFactory

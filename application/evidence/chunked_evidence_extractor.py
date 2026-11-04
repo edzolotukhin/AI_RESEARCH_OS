@@ -90,7 +90,12 @@ class ChunkedEvidenceExtractor:
                             extractor_status=inner_status,
                             exception_class=type(exc).__name__,
                             exception_message=str(exc),
-                            failure_category=classify_inner_chunk_failure(
+                            failure_phase=getattr(exc, "failure_phase", "unknown"),
+                            retry_ambiguous=bool(getattr(exc, "retry_ambiguous", False)),
+                            operation_id=getattr(exc, "operation_id", None),
+                            failure_category=getattr(
+                                exc, "failure_category", None
+                            ) or classify_inner_chunk_failure(
                                 extractor_status=inner_status,
                                 response_shape=None,
                             ),
@@ -112,8 +117,13 @@ class ChunkedEvidenceExtractor:
                         extractor_status=inner_status,
                         exception_class=inner_exception_class,
                         exception_message=inner_exception_message,
+                        failure_phase=getattr(exc, "failure_phase", "unknown"),
+                        retry_ambiguous=bool(getattr(exc, "retry_ambiguous", False)),
+                        operation_id=getattr(exc, "operation_id", None),
                         response_shape=response_shape,
-                        failure_category=classify_inner_chunk_failure(
+                        failure_category=getattr(
+                            exc, "failure_category", None
+                        ) or classify_inner_chunk_failure(
                             extractor_status=inner_status,
                             response_shape=response_shape,
                         ),

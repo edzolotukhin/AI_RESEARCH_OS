@@ -62,6 +62,12 @@ class OpenAIClient(LLMClient):
         try:
             client = self._get_client()
         except Exception as exc:
+            _annotate_failure(
+                exc,
+                failure_phase="before_dispatch",
+                retry_ambiguous=False,
+                operation_id=call_id,
+            )
             if recorder is not None and call_id is not None:
                 recorder.failed(call_id, exc, after_dispatch=False)
             raise
@@ -107,6 +113,12 @@ class OpenAIClient(LLMClient):
             from infrastructure.llm.kernel_transport import responses_create
             response = responses_create(client, request_kwargs)
         except Exception as exc:
+            _annotate_failure(
+                exc,
+                failure_phase="after_dispatch",
+                retry_ambiguous=True,
+                operation_id=call_id,
+            )
             if recorder is not None and call_id is not None:
                 recorder.failed(call_id, exc, after_dispatch=True)
             raise
@@ -189,3 +201,22 @@ class OpenAIClient(LLMClient):
             self._client = OpenAI(**kwargs)
 
         return self._client
+
+
+def _annotate_failure(
+    exc: BaseException,
+    *,
+    failure_phase: str,
+    retry_ambiguous: bool,
+    operation_id: str | None,
+) -> None:
+    """Attach bounded diagnostics without changing the original exception."""
+    for name, value in (
+        ("failure_phase", failure_phase),
+        ("retry_ambiguous", retry_ambiguous),
+        ("operation_id", operation_id),
+    ):
+        try:
+            setattr(exc, name, value)
+        except Exception:
+            pass
