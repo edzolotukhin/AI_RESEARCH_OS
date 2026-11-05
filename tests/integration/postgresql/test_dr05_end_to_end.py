@@ -9,6 +9,8 @@ from application.exceptions.capability_not_implemented_error import (
     CapabilityNotImplementedError,
 )
 from application.executors.stage_executors import UnimplementedCapabilityExecutor
+from application.query.research_run_result import ResearchRunOutcome
+from application.research_quality.readiness_result_codec import extract_research_product_outcome
 
 from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
 from tests.api.helpers import (
@@ -105,6 +107,60 @@ class Dr05EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
                 self.assertTrue(any(item["id"] == finding_id for item in findings))
         for item in evidence:
             self.assertTrue(any(source["id"] == item["source_id"] for source in sources))
+
+    def test_real_report_executor_failure_persists_failed_outcome_after_reload(self) -> None:
+        class RaisingReportEngine:
+            method_name = "deterministic-raising"
+
+            def generate_sections(self, report_input):
+                raise RuntimeError("synthetic report generation failure")
+
+        mock_llm = create_brief_aligned_llm_mock()
+        container = create_application_container(
+            config=postgresql_application_config(
+                deterministic_stage_executors=False,
+                search_provider="deterministic",
+                evidence_extractor="deterministic",
+                analysis_engine="deterministic",
+            ),
+            overrides=dated_desk_overrides(
+                llm_client=mock_llm,
+                report_engine=RaisingReportEngine(),
+            ),
+        )
+        bootstrap_test_api_key(container)
+        self.addCleanup(container.shutdown)
+        raw_client, _, context = open_test_client(container)
+        self.addCleanup(lambda: close_test_client(context, container))
+        client = AuthenticatedTestClient(raw_client, auth_headers(
+            container._test_api_key_plaintext,
+        ))
+
+        project_id = client.post("/projects", json={"name": "DR-05 real failure"}).json()["id"]
+        run_id = activate_approved_desk_project(container, project_id, BRIEF).id
+        with self.assertRaises(RuntimeError):
+            drain_background_runs(container)
+
+        terminal = client.get(f"/workflow-runs/{run_id}").json()
+        self.assertEqual(terminal["status"], "failed")
+        self.assertGreater(terminal["finding_count"], 0)
+        self.assertGreater(terminal["evidence_count"], 0)
+        task_results = container.workflow_service.get_task_results(run_id)
+        persisted = extract_research_product_outcome(task_results)
+        self.assertIsNotNone(persisted)
+        self.assertEqual(persisted["outcome"], "FAILED")
+
+        fresh = create_application_container(
+            config=postgresql_application_config(
+                deterministic_stage_executors=False,
+                search_provider="deterministic",
+                evidence_extractor="deterministic",
+                analysis_engine="deterministic",
+            ),
+        )
+        self.addCleanup(fresh.shutdown)
+        reloaded = fresh.research_run_result_query_service.get_for_run(run_id)
+        self.assertEqual(reloaded.outcome, ResearchRunOutcome.FAILED)
 
 
 if __name__ == "__main__":
