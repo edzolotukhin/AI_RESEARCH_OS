@@ -137,6 +137,24 @@ class TwoRunReviewIsolationPostgreSQLTests(PostgreSQLIntegrationTestCase):
             finalization_a,
         )
         jobs = container.project_deliverables_service.presentation_jobs.list_recent()
+        print(
+            "P8_PRESENTATION_JOBS",
+            [
+                {
+                    "id": job.id,
+                    "run_id": job.run_id,
+                    "status_snapshot": job.status_snapshot,
+                    "report_revision": job.report_revision,
+                    "review_id": job.review_id,
+                    "approval_provenance": job.approved_delivery_provenance is not None,
+                    "classification": (
+                        "approved_finalization" if job.report_revision is not None
+                        else "draft"
+                    ),
+                }
+                for job in jobs
+            ],
+        )
         run_a_jobs = [job for job in jobs if job.run_id == run_a]
         self.assertEqual(len(run_a_jobs), 2)
         self.assertEqual(sum(job.report_revision is not None for job in run_a_jobs), 1)
