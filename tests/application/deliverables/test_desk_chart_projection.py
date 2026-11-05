@@ -60,6 +60,21 @@ class DeskChartProjectionTests(unittest.TestCase):
         finding, evidence, sources = self._records(valid=False)
         self.assertEqual(self._service(finding=finding, evidence=evidence, source=sources)._desk_charts(self._report()), ())
 
+    def test_duplicate_periods_are_rejected_without_category_dimension(self):
+        finding, evidence, sources = self._records()
+        duplicate_period_evidence = tuple(
+            SimpleNamespace(
+                **{**item.__dict__, "metadata": {"chart_observation": {
+                    "metric": "metric", "unit": "units", "period": "2025",
+                    "value": item.metadata["chart_observation"]["value"],
+                }}}
+            ) for item in evidence
+        )
+        self.assertEqual(
+            self._service(finding=finding, evidence=duplicate_period_evidence, source=sources)
+            ._desk_charts(self._report()), ()
+        )
+
     def test_foreign_source_lineage_is_rejected(self):
         finding, evidence, sources = self._records(foreign_source=True)
         self.assertEqual(self._service(finding=finding, evidence=evidence, source=sources)._desk_charts(self._report()), ())

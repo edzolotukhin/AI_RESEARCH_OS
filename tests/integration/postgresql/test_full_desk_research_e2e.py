@@ -447,11 +447,11 @@ class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
         sources = container.source_service._source_repository
         evidences = container.evidence_service._evidence_repository
         findings = container.finding_service._finding_repository
-        for need, value in ((NEEDS[0], 42), (NEEDS[1], 47)):
+        for need, period, value in ((NEEDS[0], "2024", 42), (NEEDS[1], "2025", 47)):
             source_id = f"draft-source-{need}"
             evidence_id = f"draft-evidence-{need}"
             finding_id = f"draft-finding-{need}"
-            text = f"Synthetic {need} observation: {value} units in 2025."
+            text = f"Synthetic {need} observation: {value} units in {period}."
             checksum = sha256(text.encode()).hexdigest()
             sources.create(Source(source_id, PROJECT, f"https://fixture.test/{need}",
                 f"https://fixture.test/{need}", f"Synthetic {need}", TS,
@@ -464,9 +464,9 @@ class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
                 information_need_refs=(need,), source_locator=verify_grounding(
                     source_text=text, excerpt=text).to_dict(),
                 deduplication_key=f"draft-e-{need}", metadata={
-                    "observation_period": "2025",
+                    "observation_period": period,
                     "chart_observation": {"metric": "synthetic retail units", "unit": "units",
-                                           "period": "2025", "value": value},
+                                           "period": period, "value": value},
                 }))
             findings.create(Finding(finding_id, PROJECT, PARENT, design.id,
                 f"Synthetic validated Finding for {need}: {value} units.",
@@ -482,10 +482,10 @@ class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
         report = Report(
             id="desk-partial-draft-report", project_id=PROJECT, workflow_run_id=PARENT,
             research_design_id=design.id, title="Synthetic Desk Partial Report", language="en",
-            sections=(ReportSection("in1", "Nominal turnover", "Validated Finding for IN1: 42 units in 2025. Source S1."),
-                      ReportSection("in2", "Real adjustment", "Validated Finding for IN2: 47 units in 2025. Source S2."),
+            sections=(ReportSection("in1", "Synthetic 2024 observation", "Validated Finding for IN1: 42 units in 2024. Source S1."),
+                      ReportSection("in2", "Synthetic 2025 observation", "Validated Finding for IN2: 47 units in 2025. Source S2."),
                       ReportSection("in3", "Unresolved Information Need", "IN3 remains unresolved; no quarterly conclusion is drawn.")),
-            executive_summary="PARTIAL: IN1 and IN2 are supported by persisted synthetic Evidence; IN3 remains unresolved.",
+            executive_summary="PARTIAL: persisted synthetic Evidence supports a 2024–2025 comparison for IN1 and IN2; IN3 remains unresolved.",
             limitations=("All values are synthetic qualification data.", "Draft requires human approval before client release."),
             created_at=TS, generation_method="provider-free-desk-draft-qualification",
             finding_refs=("draft-finding-in1_nominal_turnover", "draft-finding-in2_real_adjustment"),
@@ -498,24 +498,6 @@ class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
                       "charts": [{"title": "Synthetic retail comparison", "finding_id": "draft-finding-in1_nominal_turnover",
                                   "evidence_ids": ["draft-evidence-in1_nominal_turnover", "draft-evidence-in2_real_adjustment"]}]})
         container.report_query_service._report_repository.create(report)
-        persisted_report = container.report_query_service._report_repository.get_by_id(report.id)
-        persisted_findings = tuple(findings.get_by_id(item) for item in report.finding_refs)
-        persisted_evidence = tuple(evidences.get_by_id(item) for item in report.evidence_refs)
-        print("[desk-chart-diagnostic]", {
-            "metadata_charts": persisted_report.metadata.get("charts") if persisted_report else None,
-            "repositories_configured": all((container.project_deliverables_service.evidence_repository,
-                                             container.project_deliverables_service.finding_repository,
-                                             container.project_deliverables_service.source_repository)),
-            "findings": [{"id": item.id, "lineage": (item.project_id, item.workflow_run_id,
-                         item.research_design_id), "validation": item.metadata.get("validation_status"),
-                         "evidence_refs": item.evidence_refs} if item else None for item in persisted_findings],
-            "evidence": [{"id": item.id, "lineage": (item.project_id, item.workflow_run_id,
-                         item.research_design_id), "source_id": item.source_id,
-                         "observation": item.metadata.get("chart_observation")} if item else None
-                         for item in persisted_evidence],
-            "sources": [{"id": item.id, "project_id": item.project_id} if item else None
-                        for item in (sources.get_by_id(value.source_id) for value in persisted_evidence if value)],
-        })
         result = container.project_deliverables_service.generate_draft_package(project_id=PROJECT, report_id=report.id)
         self.assertEqual(result["status"], "ready_for_review")
         item = container.project_deliverables_service.source(PROJECT, "DESK", report.id, owner_id=project.owner_principal_id)
