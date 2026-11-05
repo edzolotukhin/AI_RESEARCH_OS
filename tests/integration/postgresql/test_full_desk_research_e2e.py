@@ -505,7 +505,15 @@ class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
         self.assertEqual(result["status"], "ready_for_review")
         self.assertIsNotNone(item.presentation_job)
         self.assertEqual(item.presentation_job.state, "ready_for_review")
-        self.assertIsNotNone(item.pdf); self.assertIsNotNone(item.pptx)
+        self.assertIsNone(item.pptx)
+        pdf_record, pdf_bytes = container.project_deliverables_service.store.get(result["pdf_id"])
+        pptx_record, pptx_bytes = container.project_deliverables_service.store.get(result["pptx_id"])
+        self.assertIsNotNone(pdf_record); self.assertIsNotNone(pptx_record)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF-")); self.assertTrue(pptx_bytes.startswith(b"PK\x03\x04"))
+        self.assertTrue(pdf_bytes); self.assertTrue(pptx_bytes)
+        for record in (pdf_record, pptx_record):
+            self.assertEqual((record.project_id, record.run_id, record.source_id),
+                             (PROJECT, PARENT, report.id))
         self.assertEqual(len(item.document.charts), 1)
         self.assertEqual(item.document.charts[0].values, (42, 47))
         self.assertEqual(item.document.charts[0].source_ref,
@@ -513,13 +521,17 @@ class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
         first_ids = (result["pdf_id"], result["pptx_id"])
         second = container.project_deliverables_service.generate_draft_package(project_id=PROJECT, report_id=report.id)
         self.assertEqual(first_ids, (second["pdf_id"], second["pptx_id"]))
+        draft_jobs = [job for job in container.project_deliverables_service.presentation_jobs.list_recent()
+                      if job.project_id == PROJECT and job.run_id == PARENT and job.source_id == report.id]
+        self.assertEqual(len(draft_jobs), 1)
+        self.assertEqual(draft_jobs[0].state, "ready_for_review")
         with self.assertRaises(AccessDeniedError):
-            container.project_deliverables_service.download(PROJECT, "DESK", report.id, item.pdf.id, owner_id=project.owner_principal_id)
+            container.project_deliverables_service.download(PROJECT, "DESK", report.id, pdf_record.id, owner_id=project.owner_principal_id)
         artifact_dir = os.environ.get("P8D4_ARTIFACT_DIR")
         if artifact_dir:
             out = Path(artifact_dir); out.mkdir(parents=True, exist_ok=True)
-            out.joinpath("report.pdf").write_bytes(container.project_deliverables_service.store.get(item.pdf.id)[1])
-            out.joinpath("report.pptx").write_bytes(container.project_deliverables_service.store.get(item.pptx.id)[1])
+            out.joinpath("report.pdf").write_bytes(pdf_bytes)
+            out.joinpath("report.pptx").write_bytes(pptx_bytes)
             out.joinpath("qualification.json").write_text(json.dumps({"outcome": "PARTIAL", "unresolved": [NEEDS[2]], "values": [42, 47]}), encoding="utf-8")
 
     def test_full_provider_free_extension_to_h3_delivery(self):
