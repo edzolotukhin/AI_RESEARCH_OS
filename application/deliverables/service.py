@@ -680,7 +680,14 @@ class ProjectDeliverablesService:
             return False
         try:
             project = self.projects.get_project(job.project_id)
-            draft_job = job.report_revision is None and job.review_id is None and job.approved_delivery_provenance is None
+            # Legacy approved/accepted jobs have no explicit provenance, so
+            # absence of provenance alone cannot identify a draft package.
+            draft_job = (
+                job.report_revision is None
+                and job.review_id is None
+                and job.approved_delivery_provenance is None
+                and job.status_snapshot in {"draft", "Чернетка"}
+            )
             source_item = (self.source(
                 job.project_id, job.method, job.source_id,
                 owner_id=project.owner_principal_id)

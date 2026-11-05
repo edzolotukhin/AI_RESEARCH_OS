@@ -253,6 +253,37 @@ class ResearchReadinessService:
             cache_payload=(cache_payload if isinstance(cache_payload, dict) else None),
         )
 
+        # Reconciliation rebuilds the authoritative assessment from Evidence,
+        # but must retain the already-computed per-IN coverage diagnostics.
+        prior_by_need = {
+            item.information_need_id: item
+            for rq in candidate.research_question_assessments
+            for item in rq.information_need_assessments
+        }
+        reconciled = replace(
+            reconciled,
+            research_question_assessments=tuple(
+                replace(
+                    rq,
+                    information_need_assessments=tuple(
+                        replace(
+                            item,
+                            evidence_status=prior_by_need[item.information_need_id].evidence_status,
+                            search_status=prior_by_need[item.information_need_id].search_status,
+                            missing_dimensions=prior_by_need[item.information_need_id].missing_dimensions,
+                            attempted_strategies=prior_by_need[item.information_need_id].attempted_strategies,
+                            remaining_strategies=prior_by_need[item.information_need_id].remaining_strategies,
+                            stop_reason=prior_by_need[item.information_need_id].stop_reason,
+                            analysis_eligible=prior_by_need[item.information_need_id].analysis_eligible,
+                        )
+                        if item.information_need_id in prior_by_need else item
+                        for item in rq.information_need_assessments
+                    ),
+                )
+                for rq in reconciled.research_question_assessments
+            ),
+        )
+
         termination_reason = candidate.termination_reason
         if reconciled.ready_for_analysis:
             termination_reason = "ready"
