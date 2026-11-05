@@ -151,7 +151,7 @@ class ProjectDeliverablesService:
                 if (evidence is None or evidence_id not in report.evidence_refs or
                         evidence.project_id != report.project_id or evidence.workflow_run_id != report.workflow_run_id or
                         evidence.research_design_id != report.research_design_id or
-                        evidence.source_id not in finding.evidence_refs or
+                        evidence_id not in finding.evidence_refs or
                         not isinstance(observation, dict) or
                         not isinstance(observation.get("value"), (int, float)) or
                         not all(isinstance(observation.get(key), str) and observation[key].strip()
