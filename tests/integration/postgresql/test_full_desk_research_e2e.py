@@ -498,6 +498,24 @@ class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
                       "charts": [{"title": "Synthetic retail comparison", "finding_id": "draft-finding-in1_nominal_turnover",
                                   "evidence_ids": ["draft-evidence-in1_nominal_turnover", "draft-evidence-in2_real_adjustment"]}]})
         container.report_query_service._report_repository.create(report)
+        persisted_report = container.report_query_service._report_repository.get_by_id(report.id)
+        persisted_findings = tuple(findings.get_by_id(item) for item in report.finding_refs)
+        persisted_evidence = tuple(evidences.get_by_id(item) for item in report.evidence_refs)
+        print("[desk-chart-diagnostic]", {
+            "metadata_charts": persisted_report.metadata.get("charts") if persisted_report else None,
+            "repositories_configured": all((container.project_deliverables_service.evidence_repository,
+                                             container.project_deliverables_service.finding_repository,
+                                             container.project_deliverables_service.source_repository)),
+            "findings": [{"id": item.id, "lineage": (item.project_id, item.workflow_run_id,
+                         item.research_design_id), "validation": item.metadata.get("validation_status"),
+                         "evidence_refs": item.evidence_refs} if item else None for item in persisted_findings],
+            "evidence": [{"id": item.id, "lineage": (item.project_id, item.workflow_run_id,
+                         item.research_design_id), "source_id": item.source_id,
+                         "observation": item.metadata.get("chart_observation")} if item else None
+                         for item in persisted_evidence],
+            "sources": [{"id": item.id, "project_id": item.project_id} if item else None
+                        for item in (sources.get_by_id(value.source_id) for value in persisted_evidence if value)],
+        })
         result = container.project_deliverables_service.generate_draft_package(project_id=PROJECT, report_id=report.id)
         self.assertEqual(result["status"], "ready_for_review")
         item = container.project_deliverables_service.source(PROJECT, "DESK", report.id, owner_id=project.owner_principal_id)
