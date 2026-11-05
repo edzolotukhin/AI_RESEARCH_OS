@@ -23,12 +23,22 @@ class P8D3OutcomeIntegrityTests(unittest.TestCase):
             evidence_refs=("e1",), information_need_refs=("in-a",), created_at="now",
         )
 
-    def _derive(self, *, product="COMPLETED", findings=None, evidence=None, blocking=()):
+    def _derive(self, *, product="COMPLETED", findings=None, evidence=None, blocking=(), required=None, assessments=True):
+        required = tuple(required or (("in-a", "in-b") if "in-b" in blocking else ("in-a",)))
+        readiness = {
+            "analysis_eligible_information_need_ids": ["in-a"],
+            "blocking_information_need_ids": list(blocking),
+        }
+        if assessments:
+            readiness["research_question_assessments"] = [{
+                "research_question_id": "rq-1",
+                "information_need_assessments": [
+                    {"information_need_id": need} for need in required
+                ],
+            }]
         return self.service._derive_outcome(
-            workflow_run=self.run, readiness_payload={
-                "analysis_eligible_information_need_ids": ["in-a"],
-                "blocking_information_need_ids": list(blocking),
-            }, reviews=[], latest_review=None, approved_artifact=None, artifacts=[],
+            workflow_run=self.run, readiness_payload=readiness,
+            reviews=[], latest_review=None, approved_artifact=None, artifacts=[],
             product_outcome={"outcome": product}, findings=findings or [],
             evidence=evidence or [],
         )
@@ -47,8 +57,14 @@ class P8D3OutcomeIntegrityTests(unittest.TestCase):
         self.assertEqual(self._derive(product="FAILED", findings=[self.finding], evidence=[self.evidence]), ResearchRunOutcome.FAILED)
 
     def test_partial_and_budget_stop(self):
-        self.assertEqual(self._derive(findings=[self.finding], evidence=[self.evidence], blocking=("in-b",)), ResearchRunOutcome.PARTIAL)
+        self.assertEqual(self._derive(findings=[self.finding], evidence=[self.evidence], blocking=("in-b",), required=("in-a", "in-b")), ResearchRunOutcome.PARTIAL)
         self.assertEqual(self._derive(product="INSUFFICIENT"), ResearchRunOutcome.INSUFFICIENT)
+
+    def test_missing_required_need_assessments_cannot_fabricate_outcome(self):
+        self.assertEqual(
+            self._derive(findings=[self.finding], evidence=[self.evidence], assessments=False),
+            ResearchRunOutcome.INSUFFICIENT,
+        )
 
 
 if __name__ == "__main__":
