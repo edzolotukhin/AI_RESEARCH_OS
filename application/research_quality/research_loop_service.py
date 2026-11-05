@@ -141,6 +141,17 @@ class ResearchLoopService:
                     loop_state.termination_reason = "ready"
                     break
 
+                # A checkpoint may contain a pending id written before an
+                # iteration completed, while the same iteration is already
+                # present in the durable history snapshot. History is the
+                # stronger completion record; do not dispatch that id again.
+                if loop_state.pending_targeted_need_id and any(
+                    loop_state.pending_targeted_need_id in record.targeted_need_ids
+                    for record in (loop_state.history or ())
+                ):
+                    loop_state.pending_targeted_need_id = ""
+                    loop_state.pending_attempt = 0
+
                 source_ids, evidence_ids = self._collect_existing_ids(context)
                 gaps = select_actionable_gaps(
                     result=result,
