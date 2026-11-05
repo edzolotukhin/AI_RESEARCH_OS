@@ -6,9 +6,75 @@ from application.query.research_run_result_query_service import ResearchRunResul
 from domain.evidence.evidence import Evidence
 from domain.findings.finding import Finding
 from domain.workflow_status import WorkflowStatus
+from application.research_quality.readiness_result_codec import extract_research_product_outcome
 
 
 class P8D3OutcomeIntegrityTests(unittest.TestCase):
+    def test_extracts_nested_and_legacy_outcomes(self):
+        nested = {"task-write-report": {"shared_state": {"research_product_outcome": {"outcome": "PARTIAL"}}}}
+        self.assertEqual(extract_research_product_outcome(nested)["outcome"], "PARTIAL")
+        self.assertEqual(extract_research_product_outcome({"research_product_outcome": {"outcome": "COMPLETED"}})["outcome"], "COMPLETED")
+        readiness = {"task": {"shared_state": {"research_readiness": {"research_product_outcome": {"outcome": "INSUFFICIENT"}}}}}
+        self.assertEqual(extract_research_product_outcome(readiness)["outcome"], "INSUFFICIENT")
+
+    def test_rejects_missing_malformed_and_conflicting_outcomes(self):
+        self.assertIsNone(extract_research_product_outcome({"task": {"shared_state": {}}}))
+        with self.assertRaises(ValueError):
+            extract_research_product_outcome({"task": {"shared_state": {"research_product_outcome": "bad"}}})
+        with self.assertRaises(ValueError):
+            extract_research_product_outcome({
+                "a": {"shared_state": {"research_product_outcome": {"outcome": "PARTIAL"}}},
+                "b": {"shared_state": {"research_product_outcome": {"outcome": "COMPLETED"}}},
+            })
+
+    def test_failed_outcome_takes_precedence(self):
+        result = extract_research_product_outcome({
+            "a": {"shared_state": {"research_product_outcome": {"outcome": "COMPLETED"}}},
+            "b": {"shared_state": {"research_product_outcome": {"outcome": "FAILED"}}},
+        })
+        self.assertEqual(result["outcome"], "FAILED")
+
+    def test_rejects_unknown_or_ambiguous_payloads_independent_of_order(self):
+        with self.assertRaises(ValueError):
+            extract_research_product_outcome({"a": {"shared_state": {"research_product_outcome": {"outcome": "UNKNOWN"}}}})
+        duplicate = {"outcome": "PARTIAL", "report_id": "r"}
+        self.assertEqual(extract_research_product_outcome({"a": {"shared_state": {"research_product_outcome": duplicate}}, "b": {"shared_state": {"research_product_outcome": dict(duplicate)}}})["outcome"], "PARTIAL")
+        differing = {"outcome": "PARTIAL", "report_id": "r2"}
+        with self.assertRaises(ValueError):
+            extract_research_product_outcome({"a": {"shared_state": {"research_product_outcome": duplicate}}, "b": {"shared_state": {"research_product_outcome": differing}}})
+        with self.assertRaises(ValueError):
+            extract_research_product_outcome({"a": {"shared_state": {"research_product_outcome": {"outcome": "PARTIAL"}}}, "b": {"shared_state": {"research_product_outcome": {"outcome": "COMPLETED"}}}})
+
+    def test_rejects_conflicting_failed_metadata_and_malformed_in_any_position(self):
+        failed = {"outcome": "FAILED", "reason": "x"}
+        with self.assertRaises(ValueError):
+            extract_research_product_outcome({"a": {"shared_state": {"research_product_outcome": failed}}, "b": {"shared_state": {"research_product_outcome": {"outcome": "FAILED", "reason": "y"}}}})
+        for payloads in (
+            ("bad", {"outcome": "PARTIAL"}),
+            ({"outcome": "PARTIAL"}, "bad"),
+        ):
+            with self.assertRaises(ValueError):
+                extract_research_product_outcome({"a": {"shared_state": {"research_product_outcome": payloads[0]}}, "b": {"shared_state": {"research_product_outcome": payloads[1]}}})
+
+    def test_structural_metadata_equality_supports_nested_values(self):
+        payload = {"outcome": "PARTIAL", "metadata": {"needs": ["in-a"], "coverage": {"period": "2025"}}}
+        same = {"outcome": "PARTIAL", "metadata": {"coverage": {"period": "2025"}, "needs": ["in-a"]}}
+        result = extract_research_product_outcome({
+            "a": {"shared_state": {"research_product_outcome": payload}},
+            "b": {"shared_state": {"research_product_outcome": same}},
+        })
+        self.assertEqual(result, payload)
+        with self.assertRaises(ValueError):
+            extract_research_product_outcome({
+                "a": {"shared_state": {"research_product_outcome": payload}},
+                "b": {"shared_state": {"research_product_outcome": {**same, "metadata": {"needs": ["in-b"]}}}},
+            })
+        failed = {"outcome": "FAILED", "metadata": {"diagnostics": ["x"]}}
+        with self.assertRaises(ValueError):
+            extract_research_product_outcome({
+                "a": {"shared_state": {"research_product_outcome": failed}},
+                "b": {"shared_state": {"research_product_outcome": {"outcome": "FAILED", "metadata": {"diagnostics": ["y"]}}}},
+            })
     def setUp(self):
         self.service = ResearchRunResultQueryService.__new__(ResearchRunResultQueryService)
         self.run = SimpleNamespace(id="run", project_id="project", status=WorkflowStatus.COMPLETED)

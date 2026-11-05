@@ -49,6 +49,7 @@ from application.query.research_run_result import (
     SourceDetailItem,
 )
 from application.research_quality.readiness_result_codec import (
+    extract_research_product_outcome,
     extract_research_readiness,
 )
 from application.research_quality.workflow_task_ids import (
@@ -154,10 +155,7 @@ class ResearchRunResultQueryService:
             latest_review=latest_review,
             approved_artifact=approved_artifact,
             artifacts=artifacts,
-            product_outcome=(
-                task_results.get("research_product_outcome")
-                or (readiness_payload or {}).get("research_product_outcome")
-            ),
+            product_outcome=extract_research_product_outcome(task_results),
             findings=findings,
             evidence=evidence,
         )

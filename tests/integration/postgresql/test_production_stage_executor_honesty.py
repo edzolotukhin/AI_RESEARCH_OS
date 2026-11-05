@@ -71,7 +71,8 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
         self.assertGreater(terminal["artifact_count"], 0)
 
         persisted_results = container.workflow_service.get_task_results(run_id)
-        persisted_outcome = persisted_results["research_product_outcome"]["outcome"]
+        from application.research_quality.readiness_result_codec import extract_research_product_outcome
+        persisted_outcome = extract_research_product_outcome(persisted_results)["outcome"]
         reloaded_result = container.research_run_result_query_service.get_for_run(run_id)
         self.assertEqual(persisted_outcome, "COMPLETED")
         self.assertEqual(reloaded_result.outcome.value, persisted_outcome)
