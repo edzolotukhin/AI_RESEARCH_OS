@@ -394,7 +394,9 @@ class ResearchLoopProgressCheckpointPostgreSQLTests(PostgreSQLIntegrationTestCas
         )
         self.assertEqual(
             _PROVIDER_TARGETS,
-            ["in-1", "in-2", "in-1", "in-2"],
+            # The first in-2 entry is the deterministic crash marker emitted
+            # before the runner raises; it is not a completed provider call.
+            ["in-1", "in-2", "in-2", "in-1", "in-2"],
         )
         self.assertEqual(
             restored_loop["history"][1]["targeted_need_ids"],
