@@ -150,6 +150,14 @@ class ResearchLoopService:
                     existing_source_ids=source_ids,
                     existing_evidence_ids=evidence_ids,
                 )
+                # After a crash, finish the durably checkpointed pending
+                # request before selecting another gap. This prevents a
+                # completed earlier iteration from being dispatched again.
+                if loop_state.pending_targeted_need_id:
+                    gaps = tuple(
+                        gap for gap in gaps
+                        if gap.information_need_id == loop_state.pending_targeted_need_id
+                    )
                 if not gaps:
                     loop_state.termination_reason = "no_actionable_gaps"
                     break
