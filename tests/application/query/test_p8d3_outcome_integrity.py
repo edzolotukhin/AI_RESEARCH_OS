@@ -87,6 +87,7 @@ class P8D3OutcomeIntegrityTests(unittest.TestCase):
             id="f1", project_id="project", workflow_run_id="run",
             research_design_id="design", statement="conclusion", rationale="r",
             evidence_refs=("e1",), information_need_refs=("in-a",), created_at="now",
+            metadata={"validation_status": "validated"},
         )
 
     def _derive(self, *, product="COMPLETED", findings=None, evidence=None, blocking=(), required=None, assessments=True):

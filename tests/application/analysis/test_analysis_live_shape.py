@@ -206,9 +206,24 @@ class AnalysisLiveShapeRegressionTests(unittest.TestCase):
         ):
             summary = service.analyze_for_context(context)
         self.assertEqual(len(summary.finding_ids), 1)
+        persisted = findings.list_for_project("project-live", workflow_run_id=context.workflow_run.id)[0]
+        self.assertEqual(persisted.information_need_refs, ("in-1",))
+        self.assertEqual(persisted.metadata["validation_status"], "validated")
+
+    def test_successful_validation_overrides_candidate_status(self) -> None:
+        candidate = FindingCandidate(
+            statement="Status override", rationale="Supported", evidence_refs=("ev-1",),
+            information_need_refs=("in-1",), metadata={"validation_status": "rejected"},
+        )
+        service, findings, context = self._extension_ownership_fixture((candidate,))
+        with patch(
+            "application.analysis.analysis_service.qualifying_evidence",
+            side_effect=lambda **kwargs: tuple(kwargs["evidence"]),
+        ):
+            service.analyze_for_context(context)
         self.assertEqual(
-            findings.list_for_project("project-live", workflow_run_id=context.workflow_run.id)[0].information_need_refs,
-            ("in-1",),
+            findings.list_for_project("project-live", workflow_run_id=context.workflow_run.id)[0].metadata["validation_status"],
+            "validated",
         )
 
     def test_extension_multi_need_finding_is_rejected_before_persistence(self) -> None:

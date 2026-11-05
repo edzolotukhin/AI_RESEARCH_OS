@@ -48,6 +48,9 @@ class AuthoritativeOutcomeTests(unittest.TestCase):
         self.assertEqual(derive_authoritative_outcome(required_information_need_ids=("in-1",), readiness_payload=self._payload(), findings=(finding,), evidence=evidence, project_id="project", workflow_run_id="run", research_design_id="design")[0], "INSUFFICIENT")
         finding, evidence = _records(valid=False)
         self.assertEqual(derive_authoritative_outcome(required_information_need_ids=("in-1",), readiness_payload=self._payload(), findings=(finding,), evidence=evidence, project_id="project", workflow_run_id="run", research_design_id="design")[0], "INSUFFICIENT")
+        finding, evidence = _records()
+        finding.metadata = {}
+        self.assertEqual(derive_authoritative_outcome(required_information_need_ids=("in-1",), readiness_payload=self._payload(), findings=(finding,), evidence=evidence, project_id="project", workflow_run_id="run", research_design_id="design")[0], "INSUFFICIENT")
 
     def test_missing_readiness_never_fabricates_success(self):
         finding, evidence = _records()

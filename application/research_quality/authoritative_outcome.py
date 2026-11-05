@@ -26,7 +26,7 @@ def derive_authoritative_outcome(
         evidence_refs = tuple(str(item) for item in getattr(finding, "evidence_refs", ()))
         if not refs or not refs <= required or (eligible and not refs <= eligible) or not evidence_refs:
             continue
-        if getattr(finding, "metadata", {}).get("validation_status") not in {None, "validated"}:
+        if getattr(finding, "metadata", {}).get("validation_status") != "validated":
             continue
         cited = [evidence_by_id.get(item) for item in evidence_refs]
         if any(item is None for item in cited):

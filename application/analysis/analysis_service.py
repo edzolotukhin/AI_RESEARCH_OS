@@ -628,6 +628,11 @@ class AnalysisService:
         if finding_type not in {member.value for member in FindingType}:
             finding_type = FindingType.SYNTHESIS.value
 
+        metadata = dict(candidate.metadata or {})
+        # The provenance validator has completed successfully at this point.
+        # Do not allow candidate-controlled metadata to downgrade that fact.
+        metadata["validation_status"] = "validated"
+
         finding = Finding(
             id=str(uuid4()),
             project_id=project_id,
@@ -643,7 +648,7 @@ class AnalysisService:
             analysis_method=getattr(self._analysis_engine, "method_name", "unknown"),
             deduplication_key=deduplication_key,
             created_at=datetime.now(timezone.utc).isoformat(),
-            metadata=dict(candidate.metadata or {}),
+            metadata=metadata,
         )
 
         for _ in range(_MAX_DEDUP_RETRIES):
