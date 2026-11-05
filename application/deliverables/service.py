@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from application.deliverables.contracts import PdfDeliverable, PdfSection, PdfSourceDocument, RENDERER_VERSION
+from application.deliverables.contracts import PdfDeliverable, PdfSection, PdfSourceDocument, PresentationChart, RENDERER_VERSION
 from application.deliverables.presentation_jobs import PresentationJob
 from application.persistence.exceptions import AccessDeniedError, EntityNotFoundError
 from domain.quantitative.report import QuantitativeReportCompositionResult, QuantitativeReportValidationStatus
@@ -107,7 +107,8 @@ class ProjectDeliverablesService:
     def __init__(self, *, projects, workflows, reports, reviews, quantitative_state,
                  qualitative_reports=None,
                  store, renderer, presentation_jobs=None, pptx_renderer=None,
-                 report_claims=None, artifacts=None) -> None:
+                 report_claims=None, artifacts=None, evidence_repository=None,
+                 finding_repository=None, source_repository=None) -> None:
         self.projects = projects
         self.workflows = workflows
         self.reports = reports
@@ -120,6 +121,62 @@ class ProjectDeliverablesService:
         self.pptx_renderer = pptx_renderer
         self.report_claims = report_claims
         self.artifacts = artifacts
+        self.evidence_repository = evidence_repository
+        self.finding_repository = finding_repository
+        self.source_repository = source_repository
+
+    def _desk_charts(self, report):
+        """Project only explicitly structured, validated numeric Evidence."""
+        if not isinstance(report.metadata.get("charts"), (list, tuple)):
+            return ()
+        if not (self.evidence_repository and self.finding_repository and self.source_repository):
+            return ()
+        charts = []
+        for raw in report.metadata["charts"]:
+            if not isinstance(raw, dict):
+                continue
+            finding_id = str(raw.get("finding_id", ""))
+            evidence_ids = tuple(str(value) for value in raw.get("evidence_ids", ()))
+            finding = self.finding_repository.get_by_id(finding_id) if finding_id else None
+            if (finding is None or finding_id not in report.finding_refs or
+                    finding.project_id != report.project_id or finding.workflow_run_id != report.workflow_run_id or
+                    finding.research_design_id != report.research_design_id or
+                    finding.metadata.get("validation_status") != "validated" or not evidence_ids or
+                    not set(evidence_ids).issubset(finding.evidence_refs)):
+                continue
+            observations = []
+            for evidence_id in evidence_ids:
+                evidence = self.evidence_repository.get_by_id(evidence_id)
+                observation = evidence.metadata.get("chart_observation") if evidence else None
+                if (evidence is None or evidence_id not in report.evidence_refs or
+                        evidence.project_id != report.project_id or evidence.workflow_run_id != report.workflow_run_id or
+                        evidence.research_design_id != report.research_design_id or
+                        evidence.source_id not in finding.evidence_refs or
+                        not isinstance(observation, dict) or
+                        not isinstance(observation.get("value"), (int, float)) or
+                        not all(isinstance(observation.get(key), str) and observation[key].strip()
+                                for key in ("metric", "unit", "period"))):
+                    observations = []
+                    break
+                source = self.source_repository.get_by_id(evidence.source_id)
+                if source is None or source.project_id != report.project_id or source.id != evidence.source_id:
+                    observations = []
+                    break
+                observations.append((evidence, observation))
+            if len(observations) < 2:
+                continue
+            metrics = {(item[1]["metric"], item[1]["unit"]) for item in observations}
+            periods = [item[1]["period"] for item in observations]
+            if len(metrics) != 1 or len(set(periods)) != len(periods):
+                continue
+            metric, unit = next(iter(metrics))
+            source_ref = ", ".join(item[0].source_id for item in observations)
+            charts.append(PresentationChart(
+                title=str(raw.get("title") or metric),
+                labels=tuple(periods), values=tuple(item[1]["value"] for item in observations),
+                base=metric, unit=unit, supported=True, source_ref=source_ref,
+            ))
+        return tuple(charts)
 
     def _project(self, project_id: str, owner_id: str):
         try:
@@ -240,6 +297,7 @@ class ProjectDeliverablesService:
                                            authority.coverage_contract_digest if authority else None),
                 approved_delivery_provenance=(editorial.provenance if editorial is not None else None),
                 canonical_delivery=(editorial.document if editorial is not None else None),
+                charts=self._desk_charts(report),
             ))
         return sorted(documents, key=lambda item: (item.created_at or "", item.revision_number or 0, item.source_id), reverse=True)
 

@@ -237,6 +237,9 @@ def create_application_container(
         pptx_renderer=PptxRenderer() if persistence.presentation_jobs is not None else None,
         report_claims=report_claim_repository,
         artifacts=persistence.artifact_repository,
+        evidence_repository=evidence_repository,
+        finding_repository=finding_repository,
+        source_repository=source_repository,
     )
     research_run_result_query_service = ResearchRunResultQueryService(
         workflow_run_repository=workflow_run_repository,

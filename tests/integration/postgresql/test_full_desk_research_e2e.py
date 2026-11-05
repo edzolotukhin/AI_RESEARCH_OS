@@ -7,6 +7,8 @@ import ast
 from dataclasses import replace
 from hashlib import sha256
 import json
+import os
+from pathlib import Path
 import re
 import unittest
 
@@ -23,6 +25,8 @@ from domain.evidence.evidence import Evidence
 from domain.evidence.evidence_type import EvidenceType
 from domain.findings.finding import Finding
 from domain.findings.insight import Insight
+from domain.reports.report import Report
+from domain.reports.report_section import ReportSection
 from domain.planning.evidence_expectation import EvidenceExpectation
 from domain.planning.evidence_nature import EvidenceNature
 from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
@@ -44,6 +48,7 @@ from tests.integration.postgresql.helpers import (
     PostgreSQLIntegrationTestCase, configure_structured_finalization_test_boundary,
     integration_tests_enabled, postgresql_application_config,
 )
+from application.persistence.exceptions import AccessDeniedError
 
 
 TS = "2026-01-01T00:00:00+00:00"
@@ -425,6 +430,95 @@ class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
                 research_question_refs=("rq-retail",), deduplication_key=f"parent-i-{index}",
             ))
         return project
+
+    def test_postgresql_desk_partial_draft_package_is_durable_and_unapproved(self):
+        """Persisted Desk Findings/Evidence drive the real draft package path."""
+        design = _design()
+        container = create_application_container(
+            config=postgresql_application_config(
+                background_execution_mode="external", search_provider="deterministic",
+                evidence_extractor="deterministic", analysis_engine="deterministic",
+                report_engine="deterministic", review_engine="deterministic",
+            ),
+        )
+        self.addCleanup(container.shutdown)
+        container.agency.initialize()
+        project = self._parent(container, design)
+        sources = container.source_service._source_repository
+        evidences = container.evidence_service._evidence_repository
+        findings = container.finding_service._finding_repository
+        for need, value in ((NEEDS[0], 42), (NEEDS[1], 47)):
+            source_id = f"draft-source-{need}"
+            evidence_id = f"draft-evidence-{need}"
+            finding_id = f"draft-finding-{need}"
+            text = f"Synthetic {need} observation: {value} units in 2025."
+            checksum = sha256(text.encode()).hexdigest()
+            sources.create(Source(source_id, PROJECT, f"https://fixture.test/{need}",
+                f"https://fixture.test/{need}", f"Synthetic {need}", TS,
+                retrieval_status=RetrievalStatus.ACQUIRED, content_type="text/plain",
+                content_text=text, content_checksum=checksum,
+                workflow_run_refs=(PARENT,), research_design_refs=(design.id,),
+                research_question_refs=("rq-retail",), information_need_refs=(need,)))
+            evidences.create(Evidence(evidence_id, PROJECT, source_id, checksum, PARENT,
+                design.id, text, text, TS, research_question_refs=("rq-retail",),
+                information_need_refs=(need,), source_locator=verify_grounding(
+                    source_text=text, excerpt=text).to_dict(),
+                deduplication_key=f"draft-e-{need}", metadata={
+                    "observation_period": "2025",
+                    "chart_observation": {"metric": "synthetic retail units", "unit": "units",
+                                           "period": "2025", "value": value},
+                }))
+            findings.create(Finding(finding_id, PROJECT, PARENT, design.id,
+                f"Synthetic validated Finding for {need}: {value} units.",
+                "Grounded by persisted synthetic Evidence.",
+                (("draft-evidence-in1_nominal_turnover", "draft-evidence-in2_real_adjustment")
+                 if need == NEEDS[0] else (evidence_id,)), TS,
+                research_question_refs=("rq-retail",), information_need_refs=(need,),
+                deduplication_key=f"draft-f-{need}", metadata={"validation_status": "validated"}))
+        persisted_evidence = container.evidence_service.list_evidence_for_project(PROJECT, workflow_run_id=PARENT)
+        persisted_findings = container.finding_service.list_findings_for_project(PROJECT, workflow_run_id=PARENT)
+        self.assertTrue({f"draft-evidence-{need}" for need in NEEDS[:2]} <= {item.id for item in persisted_evidence})
+        self.assertTrue({f"draft-finding-{need}" for need in NEEDS[:2]} <= {item.id for item in persisted_findings})
+        report = Report(
+            id="desk-partial-draft-report", project_id=PROJECT, workflow_run_id=PARENT,
+            research_design_id=design.id, title="Synthetic Desk Partial Report", language="en",
+            sections=(ReportSection("in1", "Nominal turnover", "Validated Finding for IN1: 42 units in 2025. Source S1."),
+                      ReportSection("in2", "Real adjustment", "Validated Finding for IN2: 47 units in 2025. Source S2."),
+                      ReportSection("in3", "Unresolved Information Need", "IN3 remains unresolved; no quarterly conclusion is drawn.")),
+            executive_summary="PARTIAL: IN1 and IN2 are supported by persisted synthetic Evidence; IN3 remains unresolved.",
+            limitations=("All values are synthetic qualification data.", "Draft requires human approval before client release."),
+            created_at=TS, generation_method="provider-free-desk-draft-qualification",
+            finding_refs=("draft-finding-in1_nominal_turnover", "draft-finding-in2_real_adjustment"),
+            insight_refs=(), evidence_refs=("draft-evidence-in1_nominal_turnover", "draft-evidence-in2_real_adjustment"),
+            citation_registry={"S1": {"source_id": "draft-source-in1_nominal_turnover", "canonical_url": "https://fixture.test/in1_nominal_turnover"},
+                               "S2": {"source_id": "draft-source-in2_real_adjustment", "canonical_url": "https://fixture.test/in2_real_adjustment"}},
+            revision_number=1, approval_status="draft",
+            metadata={"research_outcome": "PARTIAL", "unresolved_information_need_ids": [NEEDS[2]],
+                      "qualified_finding_ids": ["draft-finding-in1_nominal_turnover", "draft-finding-in2_real_adjustment"],
+                      "charts": [{"title": "Synthetic retail comparison", "finding_id": "draft-finding-in1_nominal_turnover",
+                                  "evidence_ids": ["draft-evidence-in1_nominal_turnover", "draft-evidence-in2_real_adjustment"]}]})
+        container.report_query_service._report_repository.create(report)
+        result = container.project_deliverables_service.generate_draft_package(project_id=PROJECT, report_id=report.id)
+        self.assertEqual(result["status"], "ready_for_review")
+        item = container.project_deliverables_service.source(PROJECT, "DESK", report.id, owner_id=project.owner_principal_id)
+        self.assertEqual(item.document.status, "Чернетка")
+        self.assertEqual(item.finalization_state, "ready_for_review")
+        self.assertIsNotNone(item.pdf); self.assertIsNotNone(item.pptx)
+        self.assertEqual(len(item.document.charts), 1)
+        self.assertEqual(item.document.charts[0].values, (42, 47))
+        self.assertEqual(item.document.charts[0].source_ref,
+                         "draft-source-in1_nominal_turnover, draft-source-in2_real_adjustment")
+        first_ids = (result["pdf_id"], result["pptx_id"])
+        second = container.project_deliverables_service.generate_draft_package(project_id=PROJECT, report_id=report.id)
+        self.assertEqual(first_ids, (second["pdf_id"], second["pptx_id"]))
+        with self.assertRaises(AccessDeniedError):
+            container.project_deliverables_service.download(PROJECT, "DESK", report.id, item.pdf.id, owner_id=project.owner_principal_id)
+        artifact_dir = os.environ.get("P8D4_ARTIFACT_DIR")
+        if artifact_dir:
+            out = Path(artifact_dir); out.mkdir(parents=True, exist_ok=True)
+            out.joinpath("report.pdf").write_bytes(container.project_deliverables_service.store.get(item.pdf.id)[1])
+            out.joinpath("report.pptx").write_bytes(container.project_deliverables_service.store.get(item.pptx.id)[1])
+            out.joinpath("qualification.json").write_text(json.dumps({"outcome": "PARTIAL", "unresolved": [NEEDS[2]], "values": [42, 47]}), encoding="utf-8")
 
     def test_full_provider_free_extension_to_h3_delivery(self):
         design = _design(); search = _Search(); extractor = _EvidenceExtractor(design)

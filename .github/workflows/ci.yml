@@ -220,6 +220,29 @@ jobs:
           python -W error::ResourceWarning -m unittest discover \
             -s tests/integration/postgresql -p "test_*.py" -v
 
+      - name: PostgreSQL Desk draft artifact qualification
+        env:
+          POSTGRESQL_INTEGRATION_TESTS: "1"
+          POSTGRESQL_DISPOSABLE_TEST_DATABASE: "1"
+          CI_POSTGRESQL_TEST_DATABASE: ${{ env.POSTGRES_TEST_DB }}
+          CI_POSTGRESQL_MIGRATION_DATABASE: ${{ env.POSTGRES_MIGRATION_TEST_DB }}
+          DATABASE_URL_TEST: postgresql+psycopg://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_TEST_DB }}
+          DATABASE_URL: postgresql+psycopg://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_TEST_DB }}
+          P8D4_ARTIFACT_DIR: p8d4_desk_artifacts
+          PDF_FONT_PATH: /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+        run: |
+          python -c "from tests.integration.postgresql.helpers import require_integration_tests; require_integration_tests()"
+          python -W error::ResourceWarning -m unittest \
+            tests.integration.postgresql.test_full_desk_research_e2e.FullDeskResearchProviderFreeE2ETests.test_postgresql_desk_partial_draft_package_is_durable_and_unapproved -v
+
+      - name: Upload Desk draft qualification artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p8d4-desk-artifacts
+          path: p8d4_desk_artifacts/
+          if-no-files-found: error
+
       - name: API tests
         run: >-
           python -W error::ResourceWarning -m unittest discover
