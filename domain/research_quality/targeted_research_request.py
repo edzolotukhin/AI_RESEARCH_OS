@@ -24,6 +24,7 @@ class TargetedResearchRequest:
     attempt: int = 1
     existing_source_ids: tuple[str, ...] = ()
     existing_evidence_ids: tuple[str, ...] = ()
+    strategy_id: str = "direct"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workflow_run_id", str(self.workflow_run_id).strip())
@@ -63,6 +64,7 @@ class TargetedResearchRequest:
             "existing_evidence_ids",
             tuple_of_str(self.existing_evidence_ids),
         )
+        object.__setattr__(self, "strategy_id", str(self.strategy_id or "direct").strip())
 
         if not self.workflow_run_id:
             raise ValidationError("workflow_run_id must not be empty")
@@ -89,6 +91,7 @@ class TargetedResearchRequest:
             "attempt": self.attempt,
             "existing_source_ids": list(self.existing_source_ids),
             "existing_evidence_ids": list(self.existing_evidence_ids),
+            "strategy_id": self.strategy_id,
         }
 
     @classmethod
@@ -104,4 +107,5 @@ class TargetedResearchRequest:
             attempt=int(payload.get("attempt", 1)),
             existing_source_ids=tuple_of_str(payload.get("existing_source_ids")),
             existing_evidence_ids=tuple_of_str(payload.get("existing_evidence_ids")),
+            strategy_id=str(payload.get("strategy_id") or "direct"),
         )

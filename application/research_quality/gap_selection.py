@@ -20,6 +20,7 @@ def select_actionable_gaps(
     attempt: int,
     existing_source_ids: tuple[str, ...],
     existing_evidence_ids: tuple[str, ...],
+    strategy_by_need: dict[str, str] | None = None,
 ) -> tuple[TargetedResearchRequest, ...]:
     """Deterministically select actionable blocking gaps for targeted research."""
     known_rq_ids = {question.id for question in design.research_questions}
@@ -60,6 +61,7 @@ def select_actionable_gaps(
                 attempt=attempt,
                 existing_source_ids=existing_source_ids,
                 existing_evidence_ids=existing_evidence_ids,
+                strategy_id=(strategy_by_need or {}).get(assessment.information_need_id, "direct"),
             ),
         )
     return tuple(requests)

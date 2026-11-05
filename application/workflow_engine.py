@@ -86,6 +86,19 @@ class WorkflowEngine:
                         if runtime_checkpoint is not None:
                             runtime_checkpoint.on_task_finished(context, error=None)
                     except Exception as exc:
+                        # Product outcome is separate from WorkflowStatus. Only
+                        # confirmed execution failures are marked FAILED;
+                        # graceful budget stops retain their methodological
+                        # outcome and historical/ambiguous state stays absent.
+                        if exc.__class__.__name__ not in {
+                            "BudgetExhaustedError",
+                            "ExtensionBudgetExceeded",
+                        }:
+                            context.write_shared("research_product_outcome", {
+                                "outcome": "FAILED",
+                                "derivation_version": "p8d3-v1",
+                                "reason": getattr(exc, "code", exc.__class__.__name__),
+                            })
                         if runtime_checkpoint is not None:
                             try:
                                 runtime_checkpoint.on_task_finished(context, error=exc)

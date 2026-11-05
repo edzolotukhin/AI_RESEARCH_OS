@@ -101,6 +101,7 @@ def build_report_executor(
     report_contract_version: str = "desk_report_claim_v1",
     editorial_composer: EditorialComposer | None = None,
     contract_services: dict[str, ReportService] | None = None,
+    draft_generator=None,
 ) -> ReportExecutor:
     service = (
         DeskReportContractRouter(**contract_services)
@@ -122,4 +123,5 @@ def build_report_executor(
     )
     return ReportExecutor(
         report_service=service,
+        draft_generator=draft_generator,
     )

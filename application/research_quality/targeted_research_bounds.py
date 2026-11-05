@@ -11,6 +11,7 @@ class TargetedResearchBounds:
     max_attempts_per_gap: int = 2
     max_queries_per_gap: int = 2
     max_sources_per_gap: int = 3
+    adaptive_strategy_mode: bool = False
 
     @classmethod
     def from_config(cls, config: ApplicationConfig) -> TargetedResearchBounds:
@@ -19,4 +20,5 @@ class TargetedResearchBounds:
             max_attempts_per_gap=config.targeted_max_attempts_per_gap,
             max_queries_per_gap=config.targeted_max_queries_per_gap,
             max_sources_per_gap=config.targeted_max_sources_per_gap,
+            adaptive_strategy_mode=True,
         )

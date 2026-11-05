@@ -46,6 +46,13 @@ class InformationNeedAssessment:
     terminal_evidence_fingerprint: str = ""
     terminal_evidence_count: int | None = None
     supported_aspects: tuple[str, ...] = ()
+    evidence_status: str = "not_evaluated"
+    search_status: str = "unknown"
+    missing_dimensions: tuple[str, ...] = ()
+    attempted_strategies: tuple[str, ...] = ()
+    remaining_strategies: tuple[str, ...] = ()
+    stop_reason: str = ""
+    analysis_eligible: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -86,6 +93,13 @@ class InformationNeedAssessment:
             "supported_aspects",
             tuple_of_str(self.supported_aspects),
         )
+        object.__setattr__(self, "evidence_status", str(self.evidence_status).strip() or "not_evaluated")
+        object.__setattr__(self, "search_status", str(self.search_status).strip() or "unknown")
+        object.__setattr__(self, "missing_dimensions", tuple_of_str(self.missing_dimensions))
+        object.__setattr__(self, "attempted_strategies", tuple_of_str(self.attempted_strategies))
+        object.__setattr__(self, "remaining_strategies", tuple_of_str(self.remaining_strategies))
+        object.__setattr__(self, "stop_reason", str(self.stop_reason))
+        object.__setattr__(self, "analysis_eligible", bool(self.analysis_eligible))
         object.__setattr__(
             self,
             "assessment_evidence_fingerprint",
@@ -180,6 +194,13 @@ class InformationNeedAssessment:
             "terminal_evidence_fingerprint": self.terminal_evidence_fingerprint,
             "terminal_evidence_count": self.terminal_evidence_count,
             "supported_aspects": list(self.supported_aspects),
+            "evidence_status": self.evidence_status,
+            "search_status": self.search_status,
+            "missing_dimensions": list(self.missing_dimensions),
+            "attempted_strategies": list(self.attempted_strategies),
+            "remaining_strategies": list(self.remaining_strategies),
+            "stop_reason": self.stop_reason,
+            "analysis_eligible": self.analysis_eligible,
         }
 
     @classmethod
@@ -231,4 +252,11 @@ class InformationNeedAssessment:
                 else None
             ),
             supported_aspects=tuple_of_str(payload.get("supported_aspects")),
+            evidence_status=str(payload.get("evidence_status", "not_evaluated")),
+            search_status=str(payload.get("search_status", "unknown")),
+            missing_dimensions=tuple_of_str(payload.get("missing_dimensions")),
+            attempted_strategies=tuple_of_str(payload.get("attempted_strategies")),
+            remaining_strategies=tuple_of_str(payload.get("remaining_strategies")),
+            stop_reason=str(payload.get("stop_reason", "")),
+            analysis_eligible=bool(payload.get("analysis_eligible", False)),
         )

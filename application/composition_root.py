@@ -1051,6 +1051,7 @@ def _build_agent_executors(
             report_contract_version=report_contract_version,
             editorial_composer=editorial_composer,
             contract_services={"h2": h2_report_service, "h3": h3_report_service},
+            draft_generator=deliverable_finalizer,
         )
     )
     executors["review"] = (

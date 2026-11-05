@@ -496,6 +496,7 @@ def _build_service(
     runner=None,
     max_rounds: int = 2,
     max_attempts_per_gap: int = 2,
+    adaptive_strategy_mode: bool = False,
 ) -> ResearchReadinessService:
     source_repo = source_repository or InMemorySourceRepository()
     evidence_repo = evidence_repository or InMemoryEvidenceRepository()
@@ -508,6 +509,7 @@ def _build_service(
         max_attempts_per_gap=max_attempts_per_gap,
         max_queries_per_gap=2,
         max_sources_per_gap=3,
+        adaptive_strategy_mode=adaptive_strategy_mode,
     )
     runner = runner or DeterministicTargetedResearchRunner(
         source_repository=source_repo,

@@ -81,8 +81,10 @@ class ReportCatalogItem:
             return "pending"
         if self.presentation_job is None:
             return "pending"
-        if self.presentation_job.state in {"failed", "failed_terminal"}:
+        if self.presentation_job.state in {"failed", "failed_terminal", "draft_failed"}:
             return "finalization_failed"
+        if self.presentation_job.state == "ready_for_review":
+            return "ready_for_review"
         if self.presentation_job.state in {"review_approved", "pdf_generating", "pdf_complete", "pending", "pptx_pending"}:
             return self.presentation_job.state
         if self.presentation_job.state in {"processing", "pptx_processing"}:
@@ -403,6 +405,31 @@ class ProjectDeliverablesService:
         item = self._approved_desk_item(self.source(project_id, method, source_id, owner_id=owner_id))
         return self._generate_item(item)
 
+    def generate_draft_package(self, *, project_id: str, report_id: str) -> dict[str, str]:
+        """Generate a review-only draft without entering the approval path."""
+        project = self.projects.get_project(project_id)
+        item = self.source(project_id, "DESK", report_id, owner_id=project.owner_principal_id)
+        if item.document.status == "Схвалено":
+            raise AccessDeniedError("draft generation requires an unapproved report")
+        pdf = self._generate_item(item)
+        job = self._schedule_presentation_document(item.document, draft=True)
+        if job.state in {"draft_pending", "draft_processing", "draft_failed"}:
+            self.process_next_presentation("draft-generator")
+            job = self.presentation_jobs.find(
+                project_id=project_id, method="DESK", source_id=report_id,
+                source_version=item.document.source_version,
+                template_version=self.pptx_renderer.template_version,
+                renderer_version=self.pptx_renderer.version,
+            ) or job
+        ready = job.state == "ready_for_review" and job.completed_deliverable_id is not None
+        return {
+            "status": "ready_for_review" if ready else "generation_failed" if job.state == "draft_failed" else "generating",
+            "report_id": report_id,
+            "pdf_id": pdf.id,
+            "pptx_job_id": job.id,
+            "pptx_id": job.completed_deliverable_id or "",
+        }
+
     def _generate_item(self, item: ReportCatalogItem) -> PdfDeliverable:
         if item.pdf is not None:
             if (item.document.approved_delivery_provenance is not None
@@ -463,7 +490,8 @@ class ProjectDeliverablesService:
         return self._schedule_presentation_document(item.document)
 
     def _schedule_presentation_document(self, document: PdfSourceDocument,
-                                        authority: DeskFinalizationAuthority | None = None) -> PresentationJob:
+                                        authority: DeskFinalizationAuthority | None = None,
+                                        draft: bool = False) -> PresentationJob:
         job = self.presentation_jobs.schedule(
             project_id=document.project_id, method=document.method, run_id=document.run_id,
             study_id=document.study_id, source_id=document.source_id,
@@ -485,7 +513,8 @@ class ProjectDeliverablesService:
                if authority is not None else
                {"initial_state": "review_approved",
                 "approved_delivery_provenance": document.approved_delivery_provenance}
-               if document.approved_delivery_provenance is not None else {}))
+               if document.approved_delivery_provenance is not None else
+               {"initial_state": "draft_pending"} if draft else {}))
         if job.state in {"failed", "retry_wait"}:
             return self.presentation_jobs.retry(job.id) or job
         return job
@@ -651,9 +680,13 @@ class ProjectDeliverablesService:
             return False
         try:
             project = self.projects.get_project(job.project_id)
-            source_item = self._approved_desk_item(self.source(
+            draft_job = job.report_revision is None and job.review_id is None and job.approved_delivery_provenance is None
+            source_item = (self.source(
                 job.project_id, job.method, job.source_id,
-                owner_id=project.owner_principal_id))
+                owner_id=project.owner_principal_id)
+                if draft_job else self._approved_desk_item(self.source(
+                    job.project_id, job.method, job.source_id,
+                    owner_id=project.owner_principal_id)))
             document = source_item.document
             if (document.run_id, document.study_id, document.source_version,
                 document.status) != (job.run_id, job.study_id, job.source_version,
@@ -729,6 +762,10 @@ class ProjectDeliverablesService:
                         actual=artifact.approved_delivery_provenance,
                     )
             self.presentation_jobs.complete(job.id, worker_id, existing.id)
+            if draft_job:
+                self.presentation_jobs.transition(
+                    job.id, expected=("completed",), state="ready_for_review",
+                )
         except Exception as exc:
             # The failure code is deliberately content-free; the user may retry.
             failure_code = (

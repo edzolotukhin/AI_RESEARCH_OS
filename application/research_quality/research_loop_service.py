@@ -53,6 +53,7 @@ from application.research_quality.status_rank import (
 )
 from application.research_quality.targeted_research_bounds import TargetedResearchBounds
 from application.research_quality.targeted_research_runner import TargetedResearchRunner
+from application.research_quality.adaptive_search_strategy import choose_strategy
 from domain.planning.research_design import ResearchDesign
 from domain.research_quality.research_readiness_result import ResearchReadinessResult
 
@@ -200,6 +201,22 @@ class ResearchLoopService:
 
                 loop_state.scheduler_decisions.append(decision.to_dict())
                 need_id = request.information_need_id
+                prior_strategies = tuple(
+                    record.strategy_id for record in (loop_state.history or [])
+                    if need_id in record.targeted_need_ids
+                )
+                if self._bounds.adaptive_strategy_mode:
+                    strategy_id, remaining_strategies = choose_strategy(
+                        missing_dimensions=(request.missing_aspects + tuple(item.value for item in request.gap_types)),
+                        attempted=prior_strategies,
+                        directives=request.search_directives,
+                    )
+                else:
+                    strategy_id, remaining_strategies = "direct", ()
+                if not strategy_id:
+                    loop_state.termination_reason = "strategies_exhausted"
+                    break
+                request = replace(request, strategy_id=strategy_id)
                 request = replace(
                     request,
                     attempt=loop_state.gap_attempt_counts.get(need_id, 0) + 1,
@@ -349,6 +366,9 @@ class ResearchLoopService:
                                 for item in cache_payload.get("missing_need_ids", [])
                             ),
                             remediation_attempt_diagnostics=attempt_diagnostics,
+                            strategy_id=request.strategy_id,
+                            attempt_outcome=("improved" if gap_improved else "no_progress"),
+                            remaining_strategy_ids=remaining_strategies,
                         )
                     )
                     loop_state.previous_readiness_result = serialize_readiness(
@@ -426,6 +446,9 @@ class ResearchLoopService:
                         str(item) for item in cache_payload.get("missing_need_ids", [])
                     ),
                     remediation_attempt_diagnostics=attempt_diagnostics,
+                    strategy_id=request.strategy_id,
+                    attempt_outcome=("improved" if gap_improved else "no_progress"),
+                    remaining_strategy_ids=remaining_strategies,
                 )
                 loop_state.history.append(record)
                 loop_state.previous_readiness_result = serialize_readiness(
@@ -454,6 +477,16 @@ class ResearchLoopService:
                         reason=sufficiency_stop,
                     )
                     return self._finalize(context, result, loop_state)
+                # A failed strategy attempt is not proof that the strategy
+                # space is exhausted. Continue into the next bounded round
+                # when the durable record advertises another permitted
+                # strategy; budget gates above still fail closed.
+                if self._bounds.adaptive_strategy_mode and any(
+                    record.remaining_strategy_ids
+                    for record in (loop_state.history or [])
+                    if record.round_number == round_number
+                ):
+                    continue
                 loop_state.termination_reason = "no_material_improvement"
                 break
         else:

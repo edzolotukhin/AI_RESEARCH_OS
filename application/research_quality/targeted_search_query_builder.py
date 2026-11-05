@@ -77,6 +77,12 @@ class TargetedSearchQueryBuilder:
             timeframe=timeframe,
             semantic_targets=semantic_targets,
         )
+        if request.strategy_id == "semantic_expansion":
+            base_text = f"{base_text} synonyms alternative terminology transliteration"
+        elif request.strategy_id == "source_diversification":
+            base_text = f"{base_text} official statistics independent source"
+        elif request.strategy_id == "proxy_indicators":
+            base_text = f"{base_text} proxy indicator"
 
         queries: list[SearchQuery] = [
             SearchQuery(
@@ -91,7 +97,7 @@ class TargetedSearchQueryBuilder:
                 max_results=max_results,
                 rationale=(
                     f"Targeted base query for information need {need.id} "
-                    f"(attempt {request.attempt}); "
+                        f"(attempt {request.attempt}, strategy={request.strategy_id}); "
                     f"semantic_target_source={target_source}"
                 ),
                 provider_query_text=(
