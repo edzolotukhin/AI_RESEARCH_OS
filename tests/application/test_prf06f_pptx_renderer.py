@@ -79,13 +79,14 @@ class PptxRendererTests(unittest.TestCase):
             source_version="composition-1", tables=(PdfTable("Підтверджена таблиця",
             ("Група", "Значення"), (("А", "42"), ("Б", "58")), "учасники", "%"),),
             charts=(PresentationChart("Підтверджений графік", ("А", "Б"), (42, 58),
-                                      "учасники", "%"),))
+                                      "учасники", "%", True, "S1"),))
         names, _, text = self.parts(self.renderer.render(document))
         self.assertTrue(any(name.startswith("ppt/charts/chart") and name.endswith(".xml") for name in names))
         self.assertTrue(any(name.startswith("ppt/embeddings/") for name in names))
         self.assertIn("42", text)
         self.assertIn("58", text)
         self.assertIn("учасники", text)
+        self.assertIn("S1", text)
 
     def test_chart_without_base_is_omitted_without_inventing_values(self):
         document = replace(self.document, charts=(PresentationChart(

@@ -35,6 +35,7 @@ class PresentationChart:
     base: str | None
     unit: str | None
     supported: bool = True
+    source_ref: str | None = None
 
 
 @dataclass(frozen=True)
