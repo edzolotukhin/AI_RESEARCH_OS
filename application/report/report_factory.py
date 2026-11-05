@@ -124,4 +124,6 @@ def build_report_executor(
     return ReportExecutor(
         report_service=service,
         draft_generator=draft_generator,
+        finding_repository=finding_repository,
+        evidence_repository=evidence_repository,
     )

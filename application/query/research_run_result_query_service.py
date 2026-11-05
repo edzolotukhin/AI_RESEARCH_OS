@@ -297,11 +297,27 @@ class ResearchRunResultQueryService:
                 continue
             valid_findings.append(finding)
         if explicit in {"COMPLETED", "PARTIAL", "INSUFFICIENT"}:
-            if valid_findings:
-                return (ResearchRunOutcome.COMPLETED
-                        if not (readiness_payload or {}).get("blocking_information_need_ids")
-                        else ResearchRunOutcome.PARTIAL)
-            return ResearchRunOutcome.INSUFFICIENT
+            from application.research_quality.authoritative_outcome import derive_authoritative_outcome
+            assessments = (readiness_payload or {}).get("research_question_assessments", ())
+            required = [
+                item.get("information_need_id")
+                for question in assessments if isinstance(question, dict)
+                for item in question.get("information_need_assessments", ())
+                if isinstance(item, dict)
+            ]
+            design_ids = {
+                item.research_design_id
+                for item in (findings or ()) + (evidence or ())
+                if getattr(item, "research_design_id", None)
+            }
+            resolved, _ = derive_authoritative_outcome(
+                required_information_need_ids=required,
+                readiness_payload=readiness_payload,
+                findings=findings or (), evidence=evidence or (),
+                project_id=workflow_run.project_id, workflow_run_id=workflow_run.id,
+                research_design_id=(next(iter(design_ids)) if len(design_ids) == 1 else ""),
+            )
+            return ResearchRunOutcome(resolved)
         if isinstance(product_outcome, dict):
             value = str(product_outcome.get("outcome") or "")
             try:
