@@ -369,11 +369,37 @@ class ResearchLoopProgressCheckpointPostgreSQLTests(PostgreSQLIntegrationTestCas
             },
         )
 
-        self.assertEqual(_PROVIDER_TARGETS.count("in-1"), 1)
-        self.assertIn("in-2", _PROVIDER_TARGETS)
         restored_loop = resume_context.read_shared(SHARED_LOOP_STATE_KEY)
         self.assertGreaterEqual(restored_loop["research_loop_count"], 1)
-        self.assertEqual(restored_loop["history"][0]["targeted_need_ids"], ["in-1"])
+        completed_attempts = [
+            (
+                item["targeted_need_ids"][0],
+                item.get("strategy_id", "unknown"),
+                item["attempt"],
+            )
+            for item in restored_loop["history"]
+        ]
+        self.assertEqual(
+            completed_attempts,
+            [
+                ("in-1", "direct", 1),
+                ("in-2", "direct", 2),
+                ("in-1", "semantic_expansion", 3),
+                ("in-2", "semantic_expansion", 4),
+            ],
+        )
+        self.assertEqual(
+            len({(need_id, strategy) for need_id, strategy, _ in completed_attempts}),
+            len(completed_attempts),
+        )
+        self.assertEqual(
+            _PROVIDER_TARGETS,
+            ["in-1", "in-2", "in-1", "in-2"],
+        )
+        self.assertEqual(
+            restored_loop["history"][1]["targeted_need_ids"],
+            ["in-2"],
+        )
         evidence = evidence_repo.list_for_project(
             project.id,
             workflow_run_id=workflow_run.id,

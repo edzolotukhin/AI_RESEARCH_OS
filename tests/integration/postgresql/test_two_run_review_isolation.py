@@ -156,10 +156,21 @@ class TwoRunReviewIsolationPostgreSQLTests(PostgreSQLIntegrationTestCase):
             ],
         )
         run_a_jobs = [job for job in jobs if job.run_id == run_a]
-        self.assertEqual(len(run_a_jobs), 2)
-        self.assertEqual(sum(job.report_revision is not None for job in run_a_jobs), 1)
-        self.assertEqual(sum(job.report_revision is None for job in run_a_jobs), 1)
-        self.assertEqual(len([job for job in jobs if job.run_id == run_b]), 0)
+        run_b_jobs = [job for job in jobs if job.run_id == run_b]
+        draft_a = [job for job in run_a_jobs if job.report_revision is None]
+        approved_a_jobs = [job for job in run_a_jobs if job.report_revision is not None]
+        draft_b = [job for job in run_b_jobs if job.report_revision is None]
+        approved_b_jobs = [job for job in run_b_jobs if job.report_revision is not None]
+        self.assertEqual(len(draft_a), 1)
+        self.assertEqual(len(approved_a_jobs), 1)
+        self.assertEqual(len(draft_b), 1)
+        self.assertEqual(len(approved_b_jobs), 0)
+        self.assertIn(draft_a[0].status_snapshot, {"draft", "Чернетка"})
+        self.assertIn(draft_b[0].status_snapshot, {"draft", "Чернетка"})
+        self.assertIsNotNone(approved_a_jobs[0].review_id)
+        self.assertEqual(approved_a_jobs[0].run_id, run_a)
+        self.assertEqual(draft_a[0].run_id, run_a)
+        self.assertEqual(draft_b[0].run_id, run_b)
 
         approved_a = [
             item
