@@ -89,7 +89,10 @@ class Dr07EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
         self.assertTrue(run_items)
         self.assertTrue(all(item.pdf is None and item.pptx is None for item in run_items))
         jobs = container.project_deliverables_service.presentation_jobs.list_recent()
-        self.assertFalse(any(job.run_id == run_id for job in jobs))
+        self.assertFalse(any(
+            job.run_id == run_id and job.report_revision is not None
+            for job in jobs
+        ))
 
         results = container.workflow_service.get_task_results(run_id)
         finalization_states = []

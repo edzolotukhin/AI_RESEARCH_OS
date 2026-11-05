@@ -187,12 +187,14 @@ class PostgreSQLPresentationJobs:
             model = session.get(PresentationJobModel, job_id)
             return bool(model and model.report_revision is None and model.review_id is None
                         and model.authority_digest is None and model.presentation_digest is None
+                        and model.status_snapshot in {"draft", "Чернетка"}
                         and model.state in {"processing", "pptx_processing"})
 
     @staticmethod
     def _failure_state(session, job_id: str) -> str:
         model = session.get(PresentationJobModel, job_id)
-        if model is not None and model.report_revision is None and model.review_id is None:
+        if (model is not None and model.report_revision is None and model.review_id is None
+                and model.status_snapshot in {"draft", "Чернетка"}):
             return "draft_failed"
         if model is not None and model.report_revision is not None:
             return ("failed_terminal"

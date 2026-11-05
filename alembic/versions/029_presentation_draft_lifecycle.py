@@ -27,7 +27,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise RuntimeError(
-        "029_presentation_draft_lifecycle is forward-only; refusing to "
-        "downgrade while draft lifecycle states may be persisted"
+    op.drop_constraint("ck_presentation_job_state", "presentation_jobs", type_="check")
+    op.create_check_constraint(
+        "ck_presentation_job_state",
+        "presentation_jobs",
+        "state IN ('pending','processing','completed','failed','review_approved',"
+        "'pdf_generating','pdf_complete','pptx_pending','pptx_processing',"
+        "'retry_wait','pptx_complete','finalization_complete','failed_terminal')",
     )

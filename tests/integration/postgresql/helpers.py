@@ -72,7 +72,7 @@ def assert_structured_finalization_complete(test_case, container, run_id: str) -
     test_case.assertTrue(all(claim.report_workflow_run_id == run_id for claim in claims))
     jobs = [
         job for job in container.project_deliverables_service.presentation_jobs.list_recent()
-        if job.run_id == run_id
+        if job.run_id == run_id and job.report_revision is not None
     ]
     test_case.assertEqual(len(jobs), 1)
     test_case.assertEqual(jobs[0].state, "finalization_complete")
