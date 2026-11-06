@@ -11,6 +11,7 @@ from application.exceptions.capability_not_implemented_error import (
 from application.executors.stage_executors import UnimplementedCapabilityExecutor
 from application.query.research_run_result import ResearchRunOutcome
 from application.research_quality.readiness_result_codec import extract_research_product_outcome
+from application.report.exceptions import ReportError
 
 from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
 from tests.api.helpers import (
@@ -138,7 +139,7 @@ class Dr05EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
 
         project_id = client.post("/projects", json={"name": "DR-05 real failure"}).json()["id"]
         run_id = activate_approved_desk_project(container, project_id, BRIEF).id
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(ReportError):
             drain_background_runs(container)
 
         terminal = client.get(f"/workflow-runs/{run_id}").json()
