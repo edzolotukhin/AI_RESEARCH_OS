@@ -168,10 +168,27 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
         persisted = extract_research_product_outcome(task_results)
         self.assertIsNotNone(persisted)
         self.assertEqual(persisted["outcome"], "PARTIAL")
-        design = container.research_design_repository.get_for_run(run_id)
+        workflow_run = container.workflow_service.get_workflow_run(run_id)
+        template = container.workflow_service.get_template(
+            workflow_run.workflow_template_id,
+        )
+        design = template.research_design_snapshot
+        self.assertIsNotNone(design)
         required_need_ids = tuple(need.id for need in design.information_needs)
         self.assertEqual(len(required_need_ids), 2)
         self.assertIn(required_need_ids[1], persisted["unresolved_information_need_ids"])
+        evidence = container.evidence_service.list_evidence_for_project(
+            project_id,
+            workflow_run_id=run_id,
+        )
+        findings = container.finding_service.list_findings_for_project(
+            project_id,
+            workflow_run_id=run_id,
+        )
+        self.assertGreater(len(evidence), 0)
+        self.assertGreater(len(findings), 0)
+        self.assertTrue(all(item.research_design_id == design.id for item in evidence))
+        self.assertTrue(all(item.research_design_id == design.id for item in findings))
 
         fresh = create_application_container(
             config=postgresql_application_config(
@@ -183,6 +200,11 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
             ),
         )
         self.addCleanup(fresh.shutdown)
+        fresh_run = fresh.workflow_service.get_workflow_run(run_id)
+        fresh_template = fresh.workflow_service.get_template(
+            fresh_run.workflow_template_id,
+        )
+        self.assertEqual(fresh_template.research_design_snapshot.id, design.id)
         reloaded = fresh.research_run_result_query_service.get_for_run(run_id)
         self.assertEqual(reloaded.outcome, ResearchRunOutcome.PARTIAL)
         self.assertIn(required_need_ids[1], reloaded.blocking_information_need_ids)
