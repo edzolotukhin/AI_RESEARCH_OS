@@ -17,6 +17,90 @@ class P8D3OutcomeIntegrityTests(unittest.TestCase):
         readiness = {"task": {"shared_state": {"research_readiness": {"research_product_outcome": {"outcome": "INSUFFICIENT"}}}}}
         self.assertEqual(extract_research_product_outcome(readiness)["outcome"], "INSUFFICIENT")
 
+    def test_report_outcome_supersedes_provisional_readiness_outcome(self):
+        snapshots = {
+            "task-assess-research-readiness": {
+                "definition_id": "task-assess-research-readiness",
+                "shared_state": {
+                    "research_readiness": {
+                        "research_product_outcome": {"outcome": "INSUFFICIENT"},
+                    },
+                },
+            },
+            "task-write-report": {
+                "definition_id": "task-write-report",
+                "shared_state": {
+                    "research_product_outcome": {
+                        "outcome": "PARTIAL", "report_id": "r1",
+                    },
+                },
+            },
+        }
+        self.assertEqual(extract_research_product_outcome(snapshots)["outcome"], "PARTIAL")
+        snapshots["task-write-report"]["shared_state"]["research_product_outcome"]["outcome"] = "COMPLETED"
+        self.assertEqual(extract_research_product_outcome(snapshots)["outcome"], "COMPLETED")
+
+    def test_report_outcome_does_not_conflict_with_legacy_fallback(self):
+        result = extract_research_product_outcome({
+            "research_product_outcome": {"outcome": "INSUFFICIENT"},
+            "task-write-report": {
+                "definition_id": "task-write-report",
+                "shared_state": {"research_product_outcome": {"outcome": "PARTIAL"}},
+            },
+        })
+        self.assertEqual(result["outcome"], "PARTIAL")
+
+    def test_analysis_snapshot_is_provisional_before_report_stage(self):
+        snapshots = {
+            "task-assess-research-readiness": {
+                "definition_id": "task-assess-research-readiness",
+                "shared_state": {"research_product_outcome": {"outcome": "INSUFFICIENT"}},
+            },
+            "task-analyze": {
+                "definition_id": "task-analyze",
+                "shared_state": {"research_product_outcome": {"outcome": "INSUFFICIENT"}},
+            },
+            "task-write-report": {
+                "definition_id": "task-write-report",
+                "shared_state": {"research_product_outcome": {"outcome": "PARTIAL"}},
+            },
+        }
+        self.assertEqual(extract_research_product_outcome(snapshots)["outcome"], "PARTIAL")
+
+    def test_analysis_snapshot_is_provisional_fallback_without_report(self):
+        result = extract_research_product_outcome({
+            "task-analyze": {
+                "definition_id": "task-analyze",
+                "shared_state": {"research_product_outcome": {"outcome": "INSUFFICIENT"}},
+            },
+        })
+        self.assertEqual(result["outcome"], "INSUFFICIENT")
+
+    def test_report_outcome_is_independent_of_snapshot_order(self):
+        report = {
+            "definition_id": "task-write-report",
+            "shared_state": {"research_product_outcome": {"outcome": "PARTIAL"}},
+        }
+        readiness = {
+            "definition_id": "task-assess-research-readiness",
+            "shared_state": {
+                "research_product_outcome": {"outcome": "INSUFFICIENT"},
+            },
+        }
+        first = extract_research_product_outcome({"readiness": readiness, "report": report})
+        second = extract_research_product_outcome({"report": report, "readiness": readiness})
+        self.assertEqual(first, second)
+        self.assertEqual(first["outcome"], "PARTIAL")
+
+    def test_unknown_task_snapshot_is_not_authoritative(self):
+        with self.assertRaises(ValueError):
+            extract_research_product_outcome({
+                "task-unknown": {
+                    "definition_id": "task-unknown",
+                    "shared_state": {"research_product_outcome": {"outcome": "PARTIAL"}},
+                },
+            })
+
     def test_rejects_missing_malformed_and_conflicting_outcomes(self):
         self.assertIsNone(extract_research_product_outcome({"task": {"shared_state": {}}}))
         with self.assertRaises(ValueError):
@@ -29,8 +113,8 @@ class P8D3OutcomeIntegrityTests(unittest.TestCase):
 
     def test_failed_outcome_takes_precedence(self):
         result = extract_research_product_outcome({
-            "a": {"shared_state": {"research_product_outcome": {"outcome": "COMPLETED"}}},
-            "b": {"shared_state": {"research_product_outcome": {"outcome": "FAILED"}}},
+            "a": {"definition_id": "task-write-report", "shared_state": {"research_product_outcome": {"outcome": "COMPLETED"}}},
+            "b": {"definition_id": "task-write-report", "shared_state": {"research_product_outcome": {"outcome": "FAILED"}}},
         })
         self.assertEqual(result["outcome"], "FAILED")
 
@@ -38,12 +122,12 @@ class P8D3OutcomeIntegrityTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             extract_research_product_outcome({"a": {"shared_state": {"research_product_outcome": {"outcome": "UNKNOWN"}}}})
         duplicate = {"outcome": "PARTIAL", "report_id": "r"}
-        self.assertEqual(extract_research_product_outcome({"a": {"shared_state": {"research_product_outcome": duplicate}}, "b": {"shared_state": {"research_product_outcome": dict(duplicate)}}})["outcome"], "PARTIAL")
+        self.assertEqual(extract_research_product_outcome({"a": {"definition_id": "task-write-report", "shared_state": {"research_product_outcome": duplicate}}, "b": {"definition_id": "task-write-report", "shared_state": {"research_product_outcome": dict(duplicate)}}})["outcome"], "PARTIAL")
         differing = {"outcome": "PARTIAL", "report_id": "r2"}
         with self.assertRaises(ValueError):
-            extract_research_product_outcome({"a": {"shared_state": {"research_product_outcome": duplicate}}, "b": {"shared_state": {"research_product_outcome": differing}}})
+            extract_research_product_outcome({"a": {"definition_id": "task-write-report", "shared_state": {"research_product_outcome": duplicate}}, "b": {"definition_id": "task-write-report", "shared_state": {"research_product_outcome": differing}}})
         with self.assertRaises(ValueError):
-            extract_research_product_outcome({"a": {"shared_state": {"research_product_outcome": {"outcome": "PARTIAL"}}}, "b": {"shared_state": {"research_product_outcome": {"outcome": "COMPLETED"}}}})
+            extract_research_product_outcome({"a": {"definition_id": "task-write-report", "shared_state": {"research_product_outcome": {"outcome": "PARTIAL"}}}, "b": {"definition_id": "task-write-report", "shared_state": {"research_product_outcome": {"outcome": "COMPLETED"}}}})
 
     def test_rejects_conflicting_failed_metadata_and_malformed_in_any_position(self):
         failed = {"outcome": "FAILED", "reason": "x"}
@@ -60,20 +144,20 @@ class P8D3OutcomeIntegrityTests(unittest.TestCase):
         payload = {"outcome": "PARTIAL", "metadata": {"needs": ["in-a"], "coverage": {"period": "2025"}}}
         same = {"outcome": "PARTIAL", "metadata": {"coverage": {"period": "2025"}, "needs": ["in-a"]}}
         result = extract_research_product_outcome({
-            "a": {"shared_state": {"research_product_outcome": payload}},
-            "b": {"shared_state": {"research_product_outcome": same}},
+            "a": {"definition_id": "task-write-report", "shared_state": {"research_product_outcome": payload}},
+            "b": {"definition_id": "task-write-report", "shared_state": {"research_product_outcome": same}},
         })
         self.assertEqual(result, payload)
         with self.assertRaises(ValueError):
             extract_research_product_outcome({
-                "a": {"shared_state": {"research_product_outcome": payload}},
-                "b": {"shared_state": {"research_product_outcome": {**same, "metadata": {"needs": ["in-b"]}}}},
+                "a": {"definition_id": "task-write-report", "shared_state": {"research_product_outcome": payload}},
+                "b": {"definition_id": "task-write-report", "shared_state": {"research_product_outcome": {**same, "metadata": {"needs": ["in-b"]}}}},
             })
         failed = {"outcome": "FAILED", "metadata": {"diagnostics": ["x"]}}
         with self.assertRaises(ValueError):
             extract_research_product_outcome({
-                "a": {"shared_state": {"research_product_outcome": failed}},
-                "b": {"shared_state": {"research_product_outcome": {"outcome": "FAILED", "metadata": {"diagnostics": ["y"]}}}},
+                "a": {"definition_id": "task-write-report", "shared_state": {"research_product_outcome": failed}},
+                "b": {"definition_id": "task-write-report", "shared_state": {"research_product_outcome": {"outcome": "FAILED", "metadata": {"diagnostics": ["y"]}}}},
             })
     def setUp(self):
         self.service = ResearchRunResultQueryService.__new__(ResearchRunResultQueryService)

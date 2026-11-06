@@ -4,9 +4,15 @@ from typing import Any
 
 from application.research_quality.research_loop_state import SHARED_LOOP_STATE_KEY
 from application.research_quality.research_readiness_service import SHARED_STATE_KEY
+from application.research_quality.workflow_task_ids import (
+    DOWNSTREAM_TASK_DEFINITION_IDS,
+    TASK_ASSESS_RESEARCH_READINESS,
+)
 
 _RESEARCH_OUTCOME_KEY = "research_product_outcome"
 _VALID_RESEARCH_OUTCOMES = {"COMPLETED", "PARTIAL", "INSUFFICIENT", "FAILED"}
+_REPORT_TASK_ID = "task-write-report"
+_ANALYSIS_TASK_ID = "task-analyze"
 
 
 def extract_research_readiness(
@@ -41,32 +47,53 @@ def extract_research_product_outcome(
     if not task_results:
         return None
 
-    candidates: list[dict[str, Any]] = []
+    authoritative: list[dict[str, Any]] = []
+    provisional: list[dict[str, Any]] = []
+    legacy: list[dict[str, Any]] = []
 
-    def add_candidate(payload: Any) -> None:
+    def add_candidate(payload: Any, target: list[dict[str, Any]]) -> None:
         if not isinstance(payload, dict):
             raise ValueError("Malformed research_product_outcome payload")
         outcome = payload.get("outcome")
         if not isinstance(outcome, str) or outcome not in _VALID_RESEARCH_OUTCOMES:
             raise ValueError("Invalid research_product_outcome value")
-        candidates.append(payload)
+        target.append(payload)
 
-    legacy = task_results.get(_RESEARCH_OUTCOME_KEY)
-    if legacy is not None:
-        add_candidate(legacy)
+    legacy_payload = task_results.get(_RESEARCH_OUTCOME_KEY)
 
-    for snapshot in task_results.values():
+    for task_key, snapshot in task_results.items():
         if not isinstance(snapshot, dict):
             continue
         shared_state = snapshot.get("shared_state")
         if not isinstance(shared_state, dict):
             continue
+        definition_id = snapshot.get("definition_id")
+        definition = definition_id or task_key
+        is_report_stage = definition == _REPORT_TASK_ID
+        is_provisional_stage = definition in {
+            TASK_ASSESS_RESEARCH_READINESS,
+            _ANALYSIS_TASK_ID,
+        }
+        is_known_downstream = (
+            definition in DOWNSTREAM_TASK_DEFINITION_IDS
+            and not is_provisional_stage
+        )
         if _RESEARCH_OUTCOME_KEY in shared_state:
-            add_candidate(shared_state[_RESEARCH_OUTCOME_KEY])
+            if is_report_stage or is_known_downstream:
+                add_candidate(shared_state[_RESEARCH_OUTCOME_KEY], authoritative)
+            elif not is_provisional_stage:
+                raise ValueError(
+                    "Unclassified task snapshot contains research_product_outcome"
+                )
+            else:
+                add_candidate(shared_state[_RESEARCH_OUTCOME_KEY], provisional)
         readiness = shared_state.get("research_readiness")
         if isinstance(readiness, dict) and _RESEARCH_OUTCOME_KEY in readiness:
-            add_candidate(readiness[_RESEARCH_OUTCOME_KEY])
+            add_candidate(readiness[_RESEARCH_OUTCOME_KEY], provisional)
 
+    if not authoritative and not provisional and legacy_payload is not None:
+        add_candidate(legacy_payload, legacy)
+    candidates = authoritative or provisional or legacy
     if not candidates:
         return None
     outcomes = {item["outcome"] for item in candidates}
