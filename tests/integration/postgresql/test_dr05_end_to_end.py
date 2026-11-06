@@ -112,7 +112,7 @@ class Dr05EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
         class RaisingReportEngine:
             method_name = "deterministic-raising"
 
-            def generate_sections(self, report_input):
+            def generate_claim_candidates(self, request):
                 raise RuntimeError("synthetic report generation failure")
 
         mock_llm = create_brief_aligned_llm_mock()
