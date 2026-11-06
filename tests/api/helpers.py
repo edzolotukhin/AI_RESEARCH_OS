@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from dataclasses import replace
@@ -30,6 +31,14 @@ def build_test_container(
     persistence_backend: str = "memory",
     background_execution_mode: str | None = None,
 ) -> ApplicationContainer:
+    test_database_url = None
+    if persistence_backend == "postgresql":
+        test_database_url = os.environ.get("DATABASE_URL_TEST", "").strip()
+        if not test_database_url:
+            raise RuntimeError(
+                "DATABASE_URL_TEST is required for PostgreSQL test containers; "
+                "DATABASE_URL is never used as a fallback."
+            )
     mock_llm = create_brief_aligned_llm_mock()
 
     if temp_dir is None:
@@ -45,6 +54,7 @@ def build_test_container(
         config=ApplicationConfig(
             projects_root=temp_dir,
             persistence_backend=persistence_backend,
+            database_url=test_database_url,
             background_execution_mode=background_execution_mode,
             deterministic_stage_executors=True,
             search_provider="deterministic",

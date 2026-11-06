@@ -19,6 +19,8 @@ from application.execution.execution_budget_context import (
     ensure_run_budget,
     finalize_run_budget,
 )
+from application.research_quality.authoritative_outcome import derive_authoritative_outcome
+from application.research_quality.workflow_task_ids import DOWNSTREAM_TASK_DEFINITION_IDS
 
 
 class WorkflowEngine:
@@ -33,10 +35,14 @@ class WorkflowEngine:
         scheduler: TaskScheduler,
         task_executor: TaskExecutor,
         completion_policy: WorkflowCompletionPolicy,
+        finding_repository=None,
+        evidence_repository=None,
     ) -> None:
         self._scheduler = scheduler
         self._task_executor = task_executor
         self._completion_policy = completion_policy
+        self._finding_repository = finding_repository
+        self._evidence_repository = evidence_repository
 
     def run(
         self,
@@ -83,6 +89,7 @@ class WorkflowEngine:
                             context,
                             runtime_checkpoint=runtime_checkpoint,
                         )
+                        self._apply_post_analysis_outcome(context, ready_task)
                         if runtime_checkpoint is not None:
                             runtime_checkpoint.on_task_finished(context, error=None)
                     except Exception as exc:
@@ -128,6 +135,43 @@ class WorkflowEngine:
             raise first_execution_error
 
         return context
+
+    def _apply_post_analysis_outcome(self, context, task) -> None:
+        if task.definition_id != "task-analyze":
+            return
+        readiness = context.read_shared("research_readiness")
+        design = getattr(context.workflow_template, "research_design_snapshot", None)
+        if not isinstance(readiness, dict) or design is None:
+            return
+        if self._finding_repository is None or self._evidence_repository is None:
+            return
+        findings = self._finding_repository.list_for_project(
+            context.project.id, workflow_run_id=context.workflow_run.id,
+        )
+        evidence = self._evidence_repository.list_for_project(
+            context.project.id, workflow_run_id=context.workflow_run.id,
+        )
+        outcome, unresolved = derive_authoritative_outcome(
+            required_information_need_ids=(item.id for item in design.information_needs),
+            readiness_payload=readiness,
+            findings=findings,
+            evidence=evidence,
+            project_id=context.project.id,
+            workflow_run_id=context.workflow_run.id,
+            research_design_id=design.id,
+        )
+        if outcome != "INSUFFICIENT":
+            return
+        context.write_shared("research_product_outcome", {
+            "outcome": outcome,
+            "derivation_version": "p8d3-v1",
+            "authoritative_post_analysis": True,
+            "unresolved_information_need_ids": list(unresolved),
+            "reason": "no_defensible_findings",
+        })
+        self._scheduler.skip_definition_ids(
+            context.workflow_run, DOWNSTREAM_TASK_DEFINITION_IDS,
+        )
 
     def execute(
         self,

@@ -450,6 +450,8 @@ def create_application_container(
         scheduler=task_scheduler,
         task_executor=task_executor,
         completion_policy=completion_policy,
+        finding_repository=finding_repository,
+        evidence_repository=evidence_repository,
     )
 
     quantitative_state_repository = (

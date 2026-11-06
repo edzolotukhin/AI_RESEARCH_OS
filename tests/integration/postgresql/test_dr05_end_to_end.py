@@ -160,6 +160,43 @@ class Dr05EndToEndPostgreSQLTests(PostgreSQLIntegrationTestCase):
             ),
         )
         self.addCleanup(fresh.shutdown)
+        fresh_task_results = fresh.workflow_service.get_task_results(run_id)
+        failed_report_snapshots = [
+            snapshot
+            for snapshot in fresh_task_results.values()
+            if isinstance(snapshot, dict)
+            and snapshot.get("definition_id") == "task-write-report"
+        ]
+        self.assertEqual(len(failed_report_snapshots), 1)
+        failed_report = failed_report_snapshots[0]
+        fresh_run = fresh.workflow_service.get_workflow_run(run_id)
+        failed_report_tasks = [
+            task for task in fresh_run.tasks
+            if task.definition_id == "task-write-report"
+        ]
+        self.assertEqual(len(failed_report_tasks), 1)
+        self.assertEqual(failed_report_tasks[0].status.value, "failed")
+        diagnostics = failed_report.get("shared_state", {}).get(
+            "report_generation_diagnostics",
+        )
+        self.assertIsInstance(diagnostics, dict)
+        self.assertTrue(diagnostics)
+        self.assertEqual(diagnostics.get("status"), "failed")
+        self.assertEqual(diagnostics.get("phase"), "claim_first_validation")
+        self.assertEqual(diagnostics.get("category"), "ClaimGenerationError")
+        self.assertIn("version", diagnostics)
+        self.assertIn("workflow_run_id", diagnostics)
+        self.assertEqual(
+            failed_report["shared_state"]["research_product_outcome"]["outcome"],
+            "FAILED",
+        )
+        self.assertEqual(
+            fresh.report_query_service.list_reports_for_project(
+                project_id, workflow_run_id=run_id,
+            ),
+            [],
+        )
+        self.assertEqual(fresh.artifact_service.count_for_run(project_id, run_id), 0)
         reloaded = fresh.research_run_result_query_service.get_for_run(run_id)
         self.assertEqual(reloaded.outcome, ResearchRunOutcome.FAILED)
 

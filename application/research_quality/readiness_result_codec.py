@@ -69,7 +69,13 @@ def extract_research_product_outcome(
             continue
         definition_id = snapshot.get("definition_id")
         definition = definition_id or task_key
+        outcome_payload = shared_state.get(_RESEARCH_OUTCOME_KEY)
         is_report_stage = definition == _REPORT_TASK_ID
+        is_authoritative_post_analysis = (
+            definition == _ANALYSIS_TASK_ID
+            and isinstance(outcome_payload, dict)
+            and outcome_payload.get("authoritative_post_analysis") is True
+        )
         is_provisional_stage = definition in {
             TASK_ASSESS_RESEARCH_READINESS,
             _ANALYSIS_TASK_ID,
@@ -79,7 +85,7 @@ def extract_research_product_outcome(
             and not is_provisional_stage
         )
         if _RESEARCH_OUTCOME_KEY in shared_state:
-            if is_report_stage or is_known_downstream:
+            if is_report_stage or is_known_downstream or is_authoritative_post_analysis:
                 add_candidate(shared_state[_RESEARCH_OUTCOME_KEY], authoritative)
             elif not is_provisional_stage:
                 raise ValueError(

@@ -76,6 +76,54 @@ class P8D3OutcomeIntegrityTests(unittest.TestCase):
         })
         self.assertEqual(result["outcome"], "INSUFFICIENT")
 
+    def test_proven_post_analysis_outcome_supersedes_readiness_metadata(self):
+        result = extract_research_product_outcome({
+            "task-assess-research-readiness": {
+                "definition_id": "task-assess-research-readiness",
+                "shared_state": {
+                    "research_readiness": {
+                        "research_product_outcome": {
+                            "outcome": "INSUFFICIENT",
+                            "derivation_version": "p8d3-v1",
+                            "unresolved_information_need_ids": ["in-1"],
+                        },
+                    },
+                },
+            },
+            "task-analyze": {
+                "definition_id": "task-analyze",
+                "shared_state": {
+                    "research_product_outcome": {
+                        "outcome": "INSUFFICIENT",
+                        "derivation_version": "p8d3-v1",
+                        "authoritative_post_analysis": True,
+                        "unresolved_information_need_ids": ["in-1"],
+                        "reason": "no_defensible_findings",
+                    },
+                },
+            },
+        })
+        self.assertTrue(result["authoritative_post_analysis"])
+
+    def test_inherited_analysis_outcome_remains_provisional(self):
+        result = extract_research_product_outcome({
+            "task-assess-research-readiness": {
+                "definition_id": "task-assess-research-readiness",
+                "shared_state": {
+                    "research_readiness": {
+                        "research_product_outcome": {"outcome": "INSUFFICIENT"},
+                    },
+                },
+            },
+            "task-analyze": {
+                "definition_id": "task-analyze",
+                "shared_state": {
+                    "research_product_outcome": {"outcome": "INSUFFICIENT"},
+                },
+            },
+        })
+        self.assertEqual(result["outcome"], "INSUFFICIENT")
+
     def test_report_outcome_is_independent_of_snapshot_order(self):
         report = {
             "definition_id": "task-write-report",
@@ -196,6 +244,24 @@ class P8D3OutcomeIntegrityTests(unittest.TestCase):
 
     def test_valid_finding_and_evidence_complete(self):
         self.assertEqual(self._derive(findings=[self.finding], evidence=[self.evidence]), ResearchRunOutcome.COMPLETED)
+
+    def test_outcome_derivation_accepts_empty_or_mixed_collection_types(self):
+        self.assertEqual(
+            self._derive(findings=[], evidence=[self.evidence]),
+            ResearchRunOutcome.INSUFFICIENT,
+        )
+        self.assertEqual(
+            self._derive(findings=[self.finding], evidence=[self.evidence]),
+            ResearchRunOutcome.COMPLETED,
+        )
+        self.assertEqual(
+            self._derive(findings=[], evidence=[]),
+            ResearchRunOutcome.INSUFFICIENT,
+        )
+        self.assertEqual(
+            self._derive(findings=None, evidence=None),
+            ResearchRunOutcome.INSUFFICIENT,
+        )
 
     def test_stale_foreign_or_unsupported_finding_is_insufficient(self):
         stale = Evidence(**{**self.evidence.__dict__, "workflow_run_id": "old"})

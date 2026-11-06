@@ -16,13 +16,17 @@ from domain.reviews.review_result import ReviewResult
 from domain.reviews.review_verdict import ReviewVerdict
 from domain.workflow_template import WorkflowTemplate
 from tests.api.helpers import build_test_container, close_test_client, open_test_client
-from tests.integration.postgresql.helpers import integration_tests_enabled
+from tests.integration.postgresql.helpers import (
+    PostgreSQLIntegrationTestCase,
+    integration_tests_enabled,
+)
 from worker.loop import WorkerLoop
 
 
 @unittest.skipUnless(integration_tests_enabled(), "disposable PostgreSQL test database required")
-class PresentationIntegrationTests(unittest.TestCase):
+class PresentationIntegrationTests(PostgreSQLIntegrationTestCase):
     def setUp(self):
+        super().setUp()
         self.container = build_test_container(persistence_backend="postgresql",
                                               background_execution_mode="external")
         self.client, _, context = open_test_client(self.container)

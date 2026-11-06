@@ -29,7 +29,6 @@ function tokenWidth(text) {
 
 function fontFor(text) {
   const width = tokenWidth(text);
-  if (width > TOKEN_UNITS) throw new Error("indivisible PPTX token exceeds readable width");
   return width > NORMAL_UNITS ? TOKEN_FONT : NORMAL_FONT;
 }
 
@@ -61,6 +60,22 @@ function boundaryPositions(text, expression) {
     .filter(position => position > 0 && position < text.length);
 }
 
+// Prefer grapheme clusters so combining marks stay with their base character.
+// The fallback still iterates Unicode code points rather than UTF-16 code units,
+// so it never splits a surrogate pair.
+function codePointPositions(text) {
+  const positions = [];
+  let offset = 0;
+  const segments = typeof Intl.Segmenter === "function"
+    ? Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text), item => item.segment)
+    : Array.from(text);
+  for (const character of segments) {
+    offset += character.length;
+    if (offset < text.length) positions.push(offset);
+  }
+  return positions;
+}
+
 function latestFitting(text, positions) {
   for (let index = positions.length - 1; index >= 0; index--) {
     const position = positions[index];
@@ -85,8 +100,8 @@ export function paginateText(value) {
       boundaryPositions(remaining, /[.!?。！？]+[\])}"'»”’]*[ \t\r\n]+/gu));
     const paragraphs = latestFitting(remaining,
       boundaryPositions(remaining, /\n[ \t]*\n+/gu));
-    const cut = paragraphs >= words / 2 ? paragraphs :
-      sentences >= words / 2 ? sentences : words;
+    const codePoints = latestFitting(remaining, codePointPositions(remaining));
+    const cut = paragraphs || sentences || words || codePoints;
     if (!cut) throw new Error("PPTX text has no safe slide boundary");
     const chunk = remaining.slice(0, cut);
     if (!chunk.trim()) throw new Error("PPTX text would produce empty continuation");

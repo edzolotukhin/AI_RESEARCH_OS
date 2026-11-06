@@ -305,7 +305,7 @@ class ResearchRunResultQueryService:
             ]
             design_ids = {
                 item.research_design_id
-                for item in (findings or ()) + (evidence or ())
+                for item in [*(findings or ()), *(evidence or ())]
                 if getattr(item, "research_design_id", None)
             }
             resolved, _ = derive_authoritative_outcome(

@@ -82,6 +82,7 @@ class AnalysisSummary:
     batch_failures: int
     entailment_diagnostics: FindingEntailmentDiagnostics | None = None
     rejection_counts: dict[str, int] = field(default_factory=dict)
+    methodological_zero_findings: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -96,6 +97,7 @@ class AnalysisSummary:
             payload["entailment"] = self.entailment_diagnostics.to_dict()
         if self.rejection_counts:
             payload["rejection_counts"] = dict(self.rejection_counts)
+        payload["methodological_zero_findings"] = self.methodological_zero_findings
         return payload
 
 
@@ -350,6 +352,24 @@ class AnalysisService:
                 "analysis_zero_findings %s",
                 format_zero_findings_message(failure_diagnostics),
             )
+            completed_without_failure = (
+                bool(evidence_items)
+                and bool(batches)
+                and batch_failures == 0
+                and len(batch_diagnostics) == len(batches)
+                and all(item.failure_category is None for item in batch_diagnostics)
+            )
+            if completed_without_failure:
+                return AnalysisSummary(
+                    finding_ids=(), insight_ids=(),
+                    evidence_batches_processed=len(batches),
+                    finding_candidates_rejected=finding_candidates_rejected,
+                    insight_candidates_rejected=0,
+                    batch_failures=batch_failures,
+                    entailment_diagnostics=entailment_diagnostics,
+                    rejection_counts=_aggregate_rejection_counts(batch_diagnostics),
+                    methodological_zero_findings=True,
+                )
             raise AnalysisError(format_zero_findings_message(failure_diagnostics))
 
         supported_candidates = self._run_entailment_gate(
@@ -389,6 +409,29 @@ class AnalysisService:
                 f"entailment={entailment_diagnostics.to_dict()}"
             )
             logger.error("analysis_zero_supported_findings %s", message)
+            completed_without_failure = (
+                bool(evidence_items)
+                and bool(batches)
+                and batch_failures == 0
+                and len(batch_diagnostics) == len(batches)
+                and all(item.failure_category is None for item in batch_diagnostics)
+                and entailment_diagnostics.entailment_submitted_count == len(provenance_valid)
+                and entailment_diagnostics.entailment_accepted_count == 0
+            )
+            if completed_without_failure:
+                return AnalysisSummary(
+                    finding_ids=(), insight_ids=(),
+                    evidence_batches_processed=len(batches),
+                    finding_candidates_rejected=(
+                        finding_candidates_rejected
+                        + entailment_diagnostics.entailment_submitted_count
+                    ),
+                    insight_candidates_rejected=0,
+                    batch_failures=batch_failures,
+                    entailment_diagnostics=entailment_diagnostics,
+                    rejection_counts=_aggregate_rejection_counts(batch_diagnostics),
+                    methodological_zero_findings=True,
+                )
             raise AnalysisError(message)
 
         persisted_findings = [
