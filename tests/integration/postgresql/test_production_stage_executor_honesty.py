@@ -19,7 +19,10 @@ from tests.api.helpers import (
 )
 from tests.fixtures.research_brief import CANONICAL_BRIEF_REQUEST as BRIEF
 from tests.helpers.brief_aligned_planner_llm import create_brief_aligned_llm_mock
-from tests.helpers.dated_desk_integration_fixture import dated_desk_overrides
+from tests.helpers.dated_desk_integration_fixture import (
+    DatedDeskEvidenceExtractor,
+    dated_desk_overrides,
+)
 from tests.integration.postgresql.helpers import (
     assert_structured_finalization_complete,
     configure_structured_finalization_test_boundary,
@@ -102,6 +105,19 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
         self.assertTrue(all("provider" not in item.get("metadata", {}) for item in sources))
 
     def test_production_runtime_persists_partial_outcome_after_reload(self) -> None:
+        class PartialEvidenceExtractor(DatedDeskEvidenceExtractor):
+            def extract(self, *, source, design, run_context):
+                first_need_id = design.information_needs[0].id
+                return [
+                    candidate
+                    for candidate in super().extract(
+                        source=source,
+                        design=design,
+                        run_context=run_context,
+                    )
+                    if candidate.information_need_refs == (first_need_id,)
+                ]
+
         class PartialAnalysisEngine(DeterministicAnalysisEngine):
             method_name = "deterministic-partial"
 
@@ -124,6 +140,7 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
             ),
             overrides=dated_desk_overrides(
                 llm_client=mock_llm,
+                evidence_extractor=PartialEvidenceExtractor(),
                 analysis_engine=PartialAnalysisEngine(),
             ),
         )
