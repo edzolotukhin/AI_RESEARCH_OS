@@ -5,6 +5,9 @@ from __future__ import annotations
 import unittest
 
 from application.composition_root import create_application_container
+from application.query.research_run_result import ResearchRunOutcome
+from application.research_quality.readiness_result_codec import extract_research_product_outcome
+from infrastructure.analysis.deterministic_analysis_engine import DeterministicAnalysisEngine
 
 from tests.api.auth_helpers import auth_headers, bootstrap_test_api_key
 from tests.api.helpers import (
@@ -88,6 +91,72 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
         sources = client.get(f"/projects/{project_id}/sources").json()["items"]
         self.assertGreater(len(sources), 0)
         self.assertTrue(all("provider" not in item.get("metadata", {}) for item in sources))
+
+    def test_production_runtime_persists_partial_outcome_after_reload(self) -> None:
+        class PartialAnalysisEngine(DeterministicAnalysisEngine):
+            method_name = "deterministic-partial"
+
+            def analyze_findings(self, analysis_input):
+                return [
+                    candidate
+                    for candidate in super().analyze_findings(analysis_input)
+                    if candidate.information_need_refs == ("in1_nominal_turnover",)
+                ]
+
+        mock_llm = create_brief_aligned_llm_mock()
+        container = create_application_container(
+            config=postgresql_application_config(
+                deterministic_stage_executors=False,
+                search_provider="deterministic",
+                evidence_extractor="deterministic",
+                analysis_engine="deterministic",
+                report_engine="deterministic",
+            ),
+            overrides=dated_desk_overrides(
+                llm_client=mock_llm,
+                analysis_engine=PartialAnalysisEngine(),
+            ),
+        )
+        configure_structured_finalization_test_boundary(container)
+        container._test_llm_client = mock_llm
+        bootstrap_test_api_key(container)
+        self.addCleanup(container.shutdown)
+        raw_client, _, context = open_test_client(container)
+        self.addCleanup(lambda: close_test_client(context, container))
+        client = AuthenticatedTestClient(raw_client, auth_headers(
+            container._test_api_key_plaintext,
+        ))
+
+        project_id = client.post("/projects", json={"name": "PG DR partial outcome"}).json()["id"]
+        run_id = activate_approved_desk_project(container, project_id, BRIEF).id
+        drain_background_runs(container)
+
+        terminal = client.get(f"/workflow-runs/{run_id}").json()
+        self.assertTrue(terminal["is_terminal"])
+        self.assertEqual(terminal["status"], "completed")
+        tasks = {task["definition_id"]: task["status"] for task in terminal["tasks"]}
+        self.assertEqual(tasks["task-write-report"], "completed")
+
+        task_results = container.workflow_service.get_task_results(run_id)
+        persisted = extract_research_product_outcome(task_results)
+        self.assertIsNotNone(persisted)
+        self.assertEqual(persisted["outcome"], "PARTIAL")
+        self.assertIn("in2_real_adjustment", persisted["unresolved_information_need_ids"])
+
+        fresh = create_application_container(
+            config=postgresql_application_config(
+                deterministic_stage_executors=False,
+                search_provider="deterministic",
+                evidence_extractor="deterministic",
+                analysis_engine="deterministic",
+                report_engine="deterministic",
+            ),
+        )
+        self.addCleanup(fresh.shutdown)
+        reloaded = fresh.research_run_result_query_service.get_for_run(run_id)
+        self.assertEqual(reloaded.outcome, ResearchRunOutcome.PARTIAL)
+        self.assertIn("in2_real_adjustment", reloaded.blocking_information_need_ids)
+        self.assertNotEqual(reloaded.outcome, ResearchRunOutcome.COMPLETED)
 
 
 if __name__ == "__main__":
