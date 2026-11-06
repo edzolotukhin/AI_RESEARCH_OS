@@ -207,7 +207,10 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
         self.assertEqual(fresh_template.research_design_snapshot.id, design.id)
         reloaded = fresh.research_run_result_query_service.get_for_run(run_id)
         self.assertEqual(reloaded.outcome, ResearchRunOutcome.PARTIAL)
-        self.assertIn(required_need_ids[1], reloaded.blocking_information_need_ids)
+        self.assertIn(
+            required_need_ids[1],
+            reloaded.readiness.blocking_information_need_ids,
+        )
         self.assertNotEqual(reloaded.outcome, ResearchRunOutcome.COMPLETED)
 
 
