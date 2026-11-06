@@ -28,6 +28,15 @@ from tests.integration.postgresql.helpers import (
 )
 
 
+PARTIAL_BRIEF = {
+    **BRIEF,
+    "objectives": [
+        "Evaluate brand awareness.",
+        "Evaluate brand consideration.",
+    ],
+}
+
+
 class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCase):
     def test_production_runtime_completes_desk_research_pipeline(self) -> None:
         mock_llm = create_brief_aligned_llm_mock()
@@ -97,10 +106,11 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
             method_name = "deterministic-partial"
 
             def analyze_findings(self, analysis_input):
+                resolved_need_id = analysis_input.design.information_needs[0].id
                 return [
                     candidate
                     for candidate in super().analyze_findings(analysis_input)
-                    if candidate.information_need_refs == ("in1_nominal_turnover",)
+                    if candidate.information_need_refs == (resolved_need_id,)
                 ]
 
         mock_llm = create_brief_aligned_llm_mock()
@@ -128,7 +138,7 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
         ))
 
         project_id = client.post("/projects", json={"name": "PG DR partial outcome"}).json()["id"]
-        run_id = activate_approved_desk_project(container, project_id, BRIEF).id
+        run_id = activate_approved_desk_project(container, project_id, PARTIAL_BRIEF).id
         drain_background_runs(container)
 
         terminal = client.get(f"/workflow-runs/{run_id}").json()
@@ -141,7 +151,10 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
         persisted = extract_research_product_outcome(task_results)
         self.assertIsNotNone(persisted)
         self.assertEqual(persisted["outcome"], "PARTIAL")
-        self.assertIn("in2_real_adjustment", persisted["unresolved_information_need_ids"])
+        design = container.research_design_repository.get_for_run(run_id)
+        required_need_ids = tuple(need.id for need in design.information_needs)
+        self.assertEqual(len(required_need_ids), 2)
+        self.assertIn(required_need_ids[1], persisted["unresolved_information_need_ids"])
 
         fresh = create_application_container(
             config=postgresql_application_config(
@@ -155,7 +168,7 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
         self.addCleanup(fresh.shutdown)
         reloaded = fresh.research_run_result_query_service.get_for_run(run_id)
         self.assertEqual(reloaded.outcome, ResearchRunOutcome.PARTIAL)
-        self.assertIn("in2_real_adjustment", reloaded.blocking_information_need_ids)
+        self.assertIn(required_need_ids[1], reloaded.blocking_information_need_ids)
         self.assertNotEqual(reloaded.outcome, ResearchRunOutcome.COMPLETED)
 
 
