@@ -4,7 +4,7 @@
 
 Install/use the repository recovery image through `docker-compose.pilot.backup.yml`. Keep the restic credential outside Git, outside the backup repository, and retain a recovery copy away from the pilot host.
 
-Set exact `APP_SHA`, `ALEMBIC_HEAD=029_presentation_draft_lifecycle`, remote `RESTIC_REPOSITORY`, and `RESTIC_PASSWORD_FILE_HOST`. Then run:
+Set exact `APP_SHA`, the actual pre-migration `ALEMBIC_HEAD=028_research_authority_extension`, remote `RESTIC_REPOSITORY`, and `RESTIC_PASSWORD_FILE_HOST`. The migration head in the backup manifest must describe the database being backed up; do not use the future release head for this checkpoint. Then run:
 
 ```text
 docker compose --env-file .env.pilot -f docker-compose.pilot.yml -f docker-compose.pilot.backup.yml --profile operations run --rm recovery create
@@ -14,6 +14,40 @@ docker compose --env-file .env.pilot -f docker-compose.pilot.yml -f docker-compo
 ```
 
 Schedule `create`, then `check`, then `retention` nightly in the server timezone. Alert on nonzero exit or `within_24h_policy=false`. Run and verify an additional snapshot before migrations or destructive maintenance.
+
+The recovery command reads the live PostgreSQL database and both persistent file stores. It does not restart application services, but it creates an ephemeral recovery container, writes staging data and a restic snapshot, runs a bounded integrity check, and updates `backup-status.json`. The database dump and file copies are not one distributed transaction; quiesce research writes when a cross-store consistency checkpoint is required.
+
+Never rely on the Compose fallback for `ALEMBIC_HEAD`; provide it explicitly in the shell environment. Confirm the source database reports `028_research_authority_extension` before creating the pre-migration checkpoint.
+
+## Isolated restore drill
+
+The production backup Compose file is not a restore-drill configuration: it joins `pilot_backend` and mounts production volumes. Use the repository-side `docker-compose.recovery-drill.yml` with `.env.recovery-drill` copied from `.env.recovery-drill.example` as an operator-only environment file. `RESTIC_REPOSITORY` must be a remote repository URI reachable from inside the recovery container; an arbitrary host filesystem path is not valid because this drill deliberately has no host repository bind mount. The drill defines a separate PostgreSQL 16 service, database volume, protected/project/work/runtime volumes, and a project-scoped private network. It has no host ports and no production volume or network references.
+
+Prepare only disposable targets and set:
+
+```text
+APP_SHA=<exact application SHA from the backup manifest>
+ALEMBIC_HEAD=028_research_authority_extension
+RESTORE_CONFIRMATION=DISPOSABLE_EMPTY_TARGET
+```
+
+After a fresh backup and repository integrity check, start the disposable PostgreSQL target and confirm that it is healthy and empty. Then run exactly:
+
+```bash
+docker compose --project-name airos-recovery-drill \
+  --env-file .env.recovery-drill \
+  -f docker-compose.recovery-drill.yml \
+  up -d recovery-postgres
+
+docker compose --project-name airos-recovery-drill \
+  --env-file .env.recovery-drill \
+  -f docker-compose.recovery-drill.yml \
+  run --rm recovery restore <verified-snapshot-id>
+```
+
+Do not combine this restore command with `docker-compose.pilot.yml` or `docker-compose.pilot.backup.yml`. The recovery tool refuses non-empty database/storage targets, verifies the manifest SHA and Alembic head, validates PostgreSQL/protected/project checksums, then restores the dump and files. Keep API and worker stopped during the drill; validate the restored database and revision before any application startup. Cleanup is limited to the disposable Compose project, containers, network and volumes and requires separate authorization.
+
+Required gates are: fresh backup, repository integrity, isolated empty-target restore, revision-028 verification, representative application read checks, and retained evidence. A successful backup alone does not authorize migration 029.
 
 ## Total-host-loss restore
 
