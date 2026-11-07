@@ -206,9 +206,24 @@ class AnalysisLiveShapeRegressionTests(unittest.TestCase):
         ):
             summary = service.analyze_for_context(context)
         self.assertEqual(len(summary.finding_ids), 1)
+        persisted = findings.list_for_project("project-live", workflow_run_id=context.workflow_run.id)[0]
+        self.assertEqual(persisted.information_need_refs, ("in-1",))
+        self.assertEqual(persisted.metadata["validation_status"], "validated")
+
+    def test_successful_validation_overrides_candidate_status(self) -> None:
+        candidate = FindingCandidate(
+            statement="Status override", rationale="Supported", evidence_refs=("ev-1",),
+            information_need_refs=("in-1",), metadata={"validation_status": "rejected"},
+        )
+        service, findings, context = self._extension_ownership_fixture((candidate,))
+        with patch(
+            "application.analysis.analysis_service.qualifying_evidence",
+            side_effect=lambda **kwargs: tuple(kwargs["evidence"]),
+        ):
+            service.analyze_for_context(context)
         self.assertEqual(
-            findings.list_for_project("project-live", workflow_run_id=context.workflow_run.id)[0].information_need_refs,
-            ("in-1",),
+            findings.list_for_project("project-live", workflow_run_id=context.workflow_run.id)[0].metadata["validation_status"],
+            "validated",
         )
 
     def test_extension_multi_need_finding_is_rejected_before_persistence(self) -> None:
@@ -225,12 +240,9 @@ class AnalysisLiveShapeRegressionTests(unittest.TestCase):
             "application.analysis.analysis_service.qualifying_evidence",
             side_effect=lambda **kwargs: tuple(kwargs["evidence"]),
         ):
-            with self.assertRaises(AnalysisError) as raised:
-                service.analyze_for_context(context)
-        self.assertIn(
-            REJECTION_CATEGORY_EXTENSION_INFORMATION_NEED_OWNERSHIP,
-            str(raised.exception),
-        )
+            summary = service.analyze_for_context(context)
+        self.assertTrue(summary.methodological_zero_findings)
+        self.assertGreaterEqual(summary.finding_candidates_rejected, 1)
         self.assertEqual(findings.list_for_project("project-live"), [])
 
     def test_ordinary_desk_multi_need_finding_remains_permitted(self) -> None:
@@ -427,8 +439,9 @@ class AnalysisLiveShapeRegressionTests(unittest.TestCase):
             "application.analysis.analysis_service.qualifying_evidence",
             side_effect=lambda **kwargs: tuple(kwargs["evidence"]),
         ):
-            with self.assertRaises(AnalysisError):
-                service.analyze_for_context(context)
+            summary = service.analyze_for_context(context)
+        self.assertEqual(summary.finding_ids, ())
+        self.assertTrue(summary.methodological_zero_findings)
         self.assertEqual(engine.batch_ids, [("parent-selected", "extension-selected")])
 
     def test_extension_budget_exhaustion_is_not_masked_by_llm_engine(self) -> None:
@@ -547,15 +560,13 @@ class AnalysisLiveShapeRegressionTests(unittest.TestCase):
             max_evidence_per_batch=3,
             max_chars_per_batch=12000,
         )
-        with self.assertRaises(AnalysisError) as ctx:
-            from tests.helpers.citation_fixtures import sources_for
-            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
-            service.analyze_for_context(
-                _analysis_context(run_id=run_id, design=design),
-            )
-        message = str(ctx.exception)
-        self.assertIn("total_engine_dropped=", message)
-        self.assertIn("batch_count=1", message)
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
+        summary = service.analyze_for_context(
+            _analysis_context(run_id=run_id, design=design),
+        )
+        self.assertTrue(summary.methodological_zero_findings)
+        self.assertEqual(summary.finding_ids, ())
 
     def test_one_bad_batch_does_not_suppress_valid_findings_from_another(self) -> None:
         design = _live_like_design()
@@ -658,17 +669,15 @@ class AnalysisLiveShapeRegressionTests(unittest.TestCase):
             max_evidence_per_batch=10,
             max_chars_per_batch=12000,
         )
-        with self.assertRaises(AnalysisError) as ctx:
-            from tests.helpers.citation_fixtures import sources_for
-            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
-            service.analyze_for_context(
-                _analysis_context(run_id=run_id, design=design),
-            )
-        message = str(ctx.exception)
-        self.assertIn("No valid findings produced", message)
-        self.assertIn("evidence_count=2", message)
-        self.assertIn("total_rejected=", message)
-        self.assertIn(REJECTION_CATEGORY_INVALID_EVIDENCE_REF, message)
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
+        summary = service.analyze_for_context(
+            _analysis_context(run_id=run_id, design=design),
+        )
+        self.assertEqual(summary.finding_ids, ())
+        self.assertEqual(summary.insight_ids, ())
+        self.assertTrue(summary.methodological_zero_findings)
+        self.assertGreater(summary.finding_candidates_rejected, 0)
 
     def test_llm_configuration_error_is_counted_as_batch_failure(self) -> None:
         design = _live_like_design()

@@ -101,7 +101,12 @@ function makePresentation(doc) {
       { x: 1, y: 1.55, w: 11, h: 4.85, chartColors: ["296579"],
         showLegend: false, showValue: true, catAxisLabelFontFace: FONT,
         valAxisLabelFontFace: FONT });
-    slide.addText(`База: ${chart.base} · Одиниця: ${chart.unit}`,
+    const attribution = [
+      `База: ${chart.base}`,
+      `Одиниця: ${chart.unit}`,
+      chart.source_ref && `Джерело: ${chart.source_ref}`,
+    ].filter(Boolean).join(" · ");
+    slide.addText(attribution,
       { x: 0.8, y: 6.55, w: 11.7, h: 0.3, fontFace: FONT,
         fontSize: 11, color: "556579", margin: 0 });
   }

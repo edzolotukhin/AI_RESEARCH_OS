@@ -244,6 +244,22 @@ class ResearchLoopProgressCheckpointPostgreSQLTests(PostgreSQLIntegrationTestCas
         }
         self.assertTrue(is_progress_checkpoint(task_results[readiness_task.id]))
         loop_state = task_results[readiness_task.id]["shared_state"][SHARED_LOOP_STATE_KEY]
+        print(
+            "P8_CHECKPOINT_BEFORE_RESTART",
+            {
+                "pending_information_need": loop_state.get("pending_targeted_need_id"),
+                "pending_attempt": loop_state.get("pending_attempt"),
+                "history": [
+                    {
+                        "targeted_need_ids": item.get("targeted_need_ids", []),
+                        "attempt": item.get("attempt"),
+                        "strategy_id": item.get("strategy_id", "unknown"),
+                    }
+                    for item in loop_state.get("history", [])
+                ],
+                "provider_targets": list(_PROVIDER_TARGETS),
+            },
+        )
         self.assertEqual(loop_state["research_loop_count"], 1)
         self.assertEqual(len(loop_state["history"]), 1)
         self.assertEqual(
@@ -285,6 +301,23 @@ class ResearchLoopProgressCheckpointPostgreSQLTests(PostgreSQLIntegrationTestCas
             resume_context,
             container.workflow_service.get_task_results(workflow_run.id),
         )
+        restored_before_resume = resume_context.read_shared(SHARED_LOOP_STATE_KEY)
+        print(
+            "P8_CHECKPOINT_AFTER_RELOAD",
+            {
+                "pending_information_need": restored_before_resume.get("pending_targeted_need_id"),
+                "pending_attempt": restored_before_resume.get("pending_attempt"),
+                "history": [
+                    {
+                        "targeted_need_ids": item.get("targeted_need_ids", []),
+                        "attempt": item.get("attempt"),
+                        "strategy_id": item.get("strategy_id", "unknown"),
+                    }
+                    for item in restored_before_resume.get("history", [])
+                ],
+                "provider_targets": list(_PROVIDER_TARGETS),
+            },
+        )
         readiness_reloaded.start()
         resume_persister = WorkflowRuntimePersister(
             workflow_service=container.workflow_service,
@@ -315,12 +348,60 @@ class ResearchLoopProgressCheckpointPostgreSQLTests(PostgreSQLIntegrationTestCas
         ResearchReadinessExecutor(research_readiness_service=resumed_service).run(
             resume_context,
         )
+        restored_after_resume = resume_context.read_shared(SHARED_LOOP_STATE_KEY)
+        print(
+            "P8_CHECKPOINT_AFTER_RECOVERY",
+            {
+                "pending_information_need": restored_after_resume.get("pending_targeted_need_id"),
+                "history": [
+                    {
+                        "targeted_need_ids": item.get("targeted_need_ids", []),
+                        "attempt": item.get("attempt"),
+                        "strategy_id": item.get("strategy_id", "unknown"),
+                    }
+                    for item in restored_after_resume.get("history", [])
+                ],
+                "selected_need_ids": [
+                    decision.get("selected_need_id")
+                    for decision in restored_after_resume.get("scheduler_decisions", [])
+                ],
+                "provider_targets": list(_PROVIDER_TARGETS),
+            },
+        )
 
-        self.assertEqual(_PROVIDER_TARGETS.count("in-1"), 1)
-        self.assertIn("in-2", _PROVIDER_TARGETS)
         restored_loop = resume_context.read_shared(SHARED_LOOP_STATE_KEY)
         self.assertGreaterEqual(restored_loop["research_loop_count"], 1)
-        self.assertEqual(restored_loop["history"][0]["targeted_need_ids"], ["in-1"])
+        completed_attempts = [
+            (
+                item["targeted_need_ids"][0],
+                item.get("strategy_id", "unknown"),
+                item["attempt"],
+            )
+            for item in restored_loop["history"]
+        ]
+        self.assertEqual(
+            completed_attempts,
+            [
+                ("in-1", "direct", 1),
+                ("in-2", "direct", 2),
+                ("in-1", "semantic_expansion", 3),
+                ("in-2", "semantic_expansion", 4),
+            ],
+        )
+        self.assertEqual(
+            len({(need_id, strategy) for need_id, strategy, _ in completed_attempts}),
+            len(completed_attempts),
+        )
+        self.assertEqual(
+            _PROVIDER_TARGETS,
+            # The first in-2 entry is the deterministic crash marker emitted
+            # before the runner raises; it is not a completed provider call.
+            ["in-1", "in-2", "in-2", "in-1", "in-2"],
+        )
+        self.assertEqual(
+            restored_loop["history"][1]["targeted_need_ids"],
+            ["in-2"],
+        )
         evidence = evidence_repo.list_for_project(
             project.id,
             workflow_run_id=workflow_run.id,

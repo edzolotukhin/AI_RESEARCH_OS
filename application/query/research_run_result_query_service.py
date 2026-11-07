@@ -49,6 +49,7 @@ from application.query.research_run_result import (
     SourceDetailItem,
 )
 from application.research_quality.readiness_result_codec import (
+    extract_research_product_outcome,
     extract_research_readiness,
 )
 from application.research_quality.workflow_task_ids import (
@@ -154,6 +155,9 @@ class ResearchRunResultQueryService:
             latest_review=latest_review,
             approved_artifact=approved_artifact,
             artifacts=artifacts,
+            product_outcome=extract_research_product_outcome(task_results),
+            findings=findings,
+            evidence=evidence,
         )
 
         limitations = self._project_limitations(
@@ -261,7 +265,63 @@ class ResearchRunResultQueryService:
         latest_review: ReviewResult | None,
         approved_artifact: ArtifactRecord | None,
         artifacts: list[ArtifactRecord],
+        product_outcome: Any = None,
+        findings: list[Finding] | None = None,
+        evidence: list[Evidence] | None = None,
     ) -> ResearchRunOutcome:
+        explicit = (
+            str(product_outcome.get("outcome"))
+            if isinstance(product_outcome, dict) and product_outcome.get("outcome")
+            else ""
+        )
+        if explicit == "FAILED":
+            return ResearchRunOutcome.FAILED
+        eligible = set(
+            (readiness_payload or {}).get("analysis_eligible_information_need_ids", [])
+        )
+        evidence_by_id = {item.id: item for item in (evidence or [])}
+        valid_findings = []
+        for finding in findings or []:
+            if finding.project_id != workflow_run.project_id or finding.workflow_run_id != workflow_run.id:
+                continue
+            if not finding.information_need_refs or (eligible and not set(finding.information_need_refs) <= eligible):
+                continue
+            cited = [evidence_by_id.get(ref) for ref in finding.evidence_refs]
+            if not cited or any(item is None for item in cited):
+                continue
+            if any(item.project_id != workflow_run.project_id or item.workflow_run_id != workflow_run.id
+                   or not set(finding.information_need_refs).intersection(item.information_need_refs)
+                   for item in cited):
+                continue
+            valid_findings.append(finding)
+        if explicit in {"COMPLETED", "PARTIAL", "INSUFFICIENT"}:
+            from application.research_quality.authoritative_outcome import derive_authoritative_outcome
+            assessments = (readiness_payload or {}).get("research_question_assessments", ())
+            required = [
+                item.get("information_need_id")
+                for question in assessments if isinstance(question, dict)
+                for item in question.get("information_need_assessments", ())
+                if isinstance(item, dict)
+            ]
+            design_ids = {
+                item.research_design_id
+                for item in [*(findings or ()), *(evidence or ())]
+                if getattr(item, "research_design_id", None)
+            }
+            resolved, _ = derive_authoritative_outcome(
+                required_information_need_ids=required,
+                readiness_payload=readiness_payload,
+                findings=findings or (), evidence=evidence or (),
+                project_id=workflow_run.project_id, workflow_run_id=workflow_run.id,
+                research_design_id=(next(iter(design_ids)) if len(design_ids) == 1 else ""),
+            )
+            return ResearchRunOutcome(resolved)
+        if isinstance(product_outcome, dict):
+            value = str(product_outcome.get("outcome") or "")
+            try:
+                return ResearchRunOutcome(value)
+            except ValueError:
+                pass
         if approved_artifact is not None:
             supporting = self._supporting_approve_review(
                 reviews,

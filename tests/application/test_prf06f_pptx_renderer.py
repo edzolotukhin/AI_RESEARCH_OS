@@ -74,18 +74,66 @@ class PptxRendererTests(unittest.TestCase):
         self.assertIn("продовження", text)
         self.assertFalse(any("vbaProject.bin" in name for name in names))
 
+    def test_long_indivisible_tokens_are_split_without_loss(self):
+        values = (
+            "A" * 240,
+            "https://example.test/" + "path-segment-" * 40,
+            "identifier_" + "9" * 220,
+            "УкраїнськийКомбінованийТекст" * 30,
+        )
+        for value in values:
+            document = replace(
+                self.document,
+                sections=(PdfSection("Довгий токен", (value,), ()),),
+            )
+            data = self.renderer.render(document)
+            names, slides, text = self.parts(data)
+            self.assertTrue(slides)
+            slide_text = self.slide_text(data)
+            reconstructed = "".join(
+                shapes[2]
+                for shapes in slide_text
+                if len(shapes) >= 3
+                and shapes[0].startswith("Довгий токен")
+            )
+            self.assertEqual(reconstructed, value)
+            self.assertIn("Довгий токен", text)
+            self.assertIn("ppt/presentation.xml", names)
+
+    def test_long_token_does_not_create_empty_continuation_slides(self):
+        value = "X" * 1_500
+        data = self.renderer.render(replace(
+            self.document,
+            sections=(PdfSection("Без пробелов", (value,), ()),),
+        ))
+        slides = self.slide_text(data)
+        self.assertTrue(slides)
+        self.assertTrue(all(any(shape.strip() for shape in slide) for slide in slides))
+
+    def test_quantitative_long_token_uses_the_same_safe_renderer(self):
+        document = replace(
+            self.document,
+            method="QUANTITATIVE",
+            sections=(PdfSection("Quantitative", ("Q" * 260,), ()),),
+        )
+        data = self.renderer.render(document)
+        _, slides, text = self.parts(data)
+        self.assertTrue(slides)
+        self.assertIn("Q" * 260, text)
+
     def test_quantitative_native_table_and_supported_chart(self):
         document = replace(self.document, method="QUANTITATIVE", status="Прийнято",
             source_version="composition-1", tables=(PdfTable("Підтверджена таблиця",
             ("Група", "Значення"), (("А", "42"), ("Б", "58")), "учасники", "%"),),
             charts=(PresentationChart("Підтверджений графік", ("А", "Б"), (42, 58),
-                                      "учасники", "%"),))
+                                      "учасники", "%", True, "S1"),))
         names, _, text = self.parts(self.renderer.render(document))
         self.assertTrue(any(name.startswith("ppt/charts/chart") and name.endswith(".xml") for name in names))
         self.assertTrue(any(name.startswith("ppt/embeddings/") for name in names))
         self.assertIn("42", text)
         self.assertIn("58", text)
         self.assertIn("учасники", text)
+        self.assertIn("S1", text)
 
     def test_chart_without_base_is_omitted_without_inventing_values(self):
         document = replace(self.document, charts=(PresentationChart(
@@ -149,12 +197,14 @@ class PptxRendererTests(unittest.TestCase):
         self.assertEqual(self.content_tokens(source), self.content_tokens(" ".join(bodies)))
         self.assertTrue(any("X" * 90 in body for body in bodies))
 
-    def test_indivisible_overflow_fails_closed_without_truncation(self):
+    def test_indivisible_overflow_is_split_without_truncation(self):
         document = replace(self.document, sections=(
             PdfSection("Токен", ("X" * 110,), ()),
         ))
-        with self.assertRaises(PptxRenderError):
-            self.renderer.render(document)
+        names, slides, text = self.parts(self.renderer.render(document))
+        self.assertTrue(slides)
+        self.assertIn("X" * 110, text)
+        self.assertIn("ppt/presentation.xml", names)
 
     def test_ordered_source_content_registry_and_limitations_fidelity(self):
         long_heading = "Довгий заголовок українського синтетичного розділу " * 2

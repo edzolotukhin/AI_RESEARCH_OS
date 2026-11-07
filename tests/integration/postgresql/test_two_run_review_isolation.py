@@ -137,8 +137,40 @@ class TwoRunReviewIsolationPostgreSQLTests(PostgreSQLIntegrationTestCase):
             finalization_a,
         )
         jobs = container.project_deliverables_service.presentation_jobs.list_recent()
-        self.assertEqual(len([job for job in jobs if job.run_id == run_a]), 1)
-        self.assertEqual(len([job for job in jobs if job.run_id == run_b]), 0)
+        print(
+            "P8_PRESENTATION_JOBS",
+            [
+                {
+                    "id": job.id,
+                    "run_id": job.run_id,
+                    "status_snapshot": job.status_snapshot,
+                    "report_revision": job.report_revision,
+                    "review_id": job.review_id,
+                    "approval_provenance": job.approved_delivery_provenance is not None,
+                    "classification": (
+                        "approved_finalization" if job.report_revision is not None
+                        else "draft"
+                    ),
+                }
+                for job in jobs
+            ],
+        )
+        run_a_jobs = [job for job in jobs if job.run_id == run_a]
+        run_b_jobs = [job for job in jobs if job.run_id == run_b]
+        draft_a = [job for job in run_a_jobs if job.report_revision is None]
+        approved_a_jobs = [job for job in run_a_jobs if job.report_revision is not None]
+        draft_b = [job for job in run_b_jobs if job.report_revision is None]
+        approved_b_jobs = [job for job in run_b_jobs if job.report_revision is not None]
+        self.assertEqual(len(draft_a), 1)
+        self.assertEqual(len(approved_a_jobs), 1)
+        self.assertEqual(len(draft_b), 1)
+        self.assertEqual(len(approved_b_jobs), 0)
+        self.assertIn(draft_a[0].status_snapshot, {"draft", "Чернетка"})
+        self.assertIn(draft_b[0].status_snapshot, {"draft", "Чернетка"})
+        self.assertIsNotNone(approved_a_jobs[0].review_id)
+        self.assertEqual(approved_a_jobs[0].run_id, run_a)
+        self.assertEqual(draft_a[0].run_id, run_a)
+        self.assertEqual(draft_b[0].run_id, run_b)
 
         approved_a = [
             item

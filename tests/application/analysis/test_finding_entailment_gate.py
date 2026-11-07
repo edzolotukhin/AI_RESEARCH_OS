@@ -312,10 +312,12 @@ class FindingEntailmentGateTests(unittest.TestCase):
                 status_by_id={"fc-0001": FindingEntailmentStatus.UNSUPPORTED},
             ),
         )
-        with self.assertRaises(AnalysisError):
-            from tests.helpers.citation_fixtures import sources_for
-            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
-            service.analyze_for_context(context)
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
+        summary = service.analyze_for_context(context)
+        self.assertTrue(summary.methodological_zero_findings)
+        self.assertEqual(summary.finding_ids, ())
+        self.assertEqual(summary.entailment_diagnostics.entailment_accepted_count, 0)
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
         self.assertEqual(insight_repo.list_for_project("p1", workflow_run_id=run_id), [])
 
@@ -348,10 +350,12 @@ class FindingEntailmentGateTests(unittest.TestCase):
                 status_by_id={"fc-0001": FindingEntailmentStatus.CONTRADICTED},
             ),
         )
-        with self.assertRaises(AnalysisError):
-            from tests.helpers.citation_fixtures import sources_for
-            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
-            service.analyze_for_context(context)
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
+        summary = service.analyze_for_context(context)
+        self.assertTrue(summary.methodological_zero_findings)
+        self.assertEqual(summary.finding_ids, ())
+        self.assertEqual(summary.entailment_diagnostics.entailment_accepted_count, 0)
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
 
     def test_case_05_unrelated_valid_refs_rejected(self) -> None:
@@ -383,10 +387,12 @@ class FindingEntailmentGateTests(unittest.TestCase):
                 status_by_id={"fc-0001": FindingEntailmentStatus.UNSUPPORTED},
             ),
         )
-        with self.assertRaises(AnalysisError):
-            from tests.helpers.citation_fixtures import sources_for
-            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
-            service.analyze_for_context(context)
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
+        summary = service.analyze_for_context(context)
+        self.assertTrue(summary.methodological_zero_findings)
+        self.assertEqual(summary.finding_ids, ())
+        self.assertEqual(summary.entailment_diagnostics.entailment_accepted_count, 0)
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
 
     def test_case_06_insufficient_support_rejected(self) -> None:
@@ -420,10 +426,12 @@ class FindingEntailmentGateTests(unittest.TestCase):
                 status_by_id={"fc-0001": FindingEntailmentStatus.INSUFFICIENT_EVIDENCE},
             ),
         )
-        with self.assertRaises(AnalysisError):
-            from tests.helpers.citation_fixtures import sources_for
-            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
-            service.analyze_for_context(context)
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
+        summary = service.analyze_for_context(context)
+        self.assertTrue(summary.methodological_zero_findings)
+        self.assertEqual(summary.finding_ids, ())
+        self.assertEqual(summary.entailment_diagnostics.entailment_accepted_count, 0)
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
 
     def test_case_07_conflicting_evidence_not_supported(self) -> None:
@@ -462,10 +470,12 @@ class FindingEntailmentGateTests(unittest.TestCase):
                 status_by_id={"fc-0001": FindingEntailmentStatus.CONTRADICTED},
             ),
         )
-        with self.assertRaises(AnalysisError):
-            from tests.helpers.citation_fixtures import sources_for
-            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
-            service.analyze_for_context(context)
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
+        summary = service.analyze_for_context(context)
+        self.assertTrue(summary.methodological_zero_findings)
+        self.assertEqual(summary.finding_ids, ())
+        self.assertEqual(summary.entailment_diagnostics.entailment_accepted_count, 0)
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
 
     def test_case_08_partial_rejected(self) -> None:
@@ -497,10 +507,12 @@ class FindingEntailmentGateTests(unittest.TestCase):
                 status_by_id={"fc-0001": FindingEntailmentStatus.PARTIAL},
             ),
         )
-        with self.assertRaises(AnalysisError):
-            from tests.helpers.citation_fixtures import sources_for
-            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
-            service.analyze_for_context(context)
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
+        summary = service.analyze_for_context(context)
+        self.assertTrue(summary.methodological_zero_findings)
+        self.assertEqual(summary.finding_ids, ())
+        self.assertEqual(summary.entailment_diagnostics.entailment_accepted_count, 0)
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
 
     def test_case_09_missing_evidence_ref_provenance_before_semantic(self) -> None:
@@ -531,10 +543,12 @@ class FindingEntailmentGateTests(unittest.TestCase):
             evidence_repo=evidence_repo,
             validator=validator,
         )
-        with self.assertRaises(AnalysisError):
-            from tests.helpers.citation_fixtures import sources_for
-            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
-            service.analyze_for_context(context)
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
+        summary = service.analyze_for_context(context)
+        self.assertTrue(summary.methodological_zero_findings)
+        self.assertEqual(summary.finding_ids, ())
+        self.assertEqual(summary.finding_candidates_rejected, 1)
         self.assertEqual(validator.calls, [])
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
 
@@ -566,10 +580,12 @@ class FindingEntailmentGateTests(unittest.TestCase):
             evidence_repo=evidence_repo,
             validator=validator,
         )
-        with self.assertRaises(AnalysisError):
-            from tests.helpers.citation_fixtures import sources_for
-            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
-            service.analyze_for_context(context)
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
+        summary = service.analyze_for_context(context)
+        self.assertTrue(summary.methodological_zero_findings)
+        self.assertEqual(summary.finding_ids, ())
+        self.assertEqual(summary.finding_candidates_rejected, 1)
         self.assertEqual(validator.calls, [])
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
 
@@ -892,11 +908,12 @@ class FindingEntailmentGateTests(unittest.TestCase):
                 status_by_id={"fc-0001": FindingEntailmentStatus.UNSUPPORTED},
             ),
         )
-        with self.assertRaises(AnalysisError) as ctx:
-            from tests.helpers.citation_fixtures import sources_for
-            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
-            service.analyze_for_context(context)
-        self.assertIn("entailment", str(ctx.exception))
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
+        summary = service.analyze_for_context(context)
+        self.assertTrue(summary.methodological_zero_findings)
+        self.assertEqual(summary.finding_ids, ())
+        self.assertEqual(summary.entailment_diagnostics.entailment_accepted_count, 0)
         self.assertEqual(finding_repo.list_for_project("p1", workflow_run_id=run_id), [])
         self.assertEqual(insight_repo.list_for_project("p1", workflow_run_id=run_id), [])
 
@@ -932,10 +949,11 @@ class FindingEntailmentGateTests(unittest.TestCase):
             validator=validator,
         )
         # Truncated SUPPORTED is coerced to INSUFFICIENT → no persist.
-        with self.assertRaises(AnalysisError):
-            from tests.helpers.citation_fixtures import sources_for
-            service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
-            service.analyze_for_context(context)
+        from tests.helpers.citation_fixtures import sources_for
+        service._source_repository = sources_for(list(service._evidence_repository._evidence.values()))
+        summary = service.analyze_for_context(context)
+        self.assertTrue(summary.methodological_zero_findings)
+        self.assertEqual(summary.finding_ids, ())
         projection = validator.calls[0][0]
         self.assertTrue(projection.truncated)
         self.assertLessEqual(len(projection.statement), MAX_FINDING_STATEMENT_CHARS)

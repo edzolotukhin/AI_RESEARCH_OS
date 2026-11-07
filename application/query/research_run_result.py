@@ -21,6 +21,10 @@ class ResearchRunOutcome(str, Enum):
     NOT_READY = "NOT_READY"
     QUALITY_REJECTED = "QUALITY_REJECTED"
     EXECUTION_FAILED = "EXECUTION_FAILED"
+    COMPLETED = "COMPLETED"
+    PARTIAL = "PARTIAL"
+    INSUFFICIENT = "INSUFFICIENT"
+    FAILED = "FAILED"
 
 
 class ResearchRunResultProjectionError(ValueError):

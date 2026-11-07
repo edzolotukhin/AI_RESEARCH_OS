@@ -229,6 +229,7 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
 REPORT_FAILURE_DIAGNOSTIC_KEYS = (
     "report_repair_diagnostics",
     "report_generation_diagnostics",
+    "research_product_outcome",
     "review_diagnostics",
     "desk_deliverable_finalization",
     "desk_downstream_replay_v1",

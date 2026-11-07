@@ -62,8 +62,9 @@ class DatedDeskEvidenceExtractor(DeterministicEvidenceExtractor):
 
 
 def dated_desk_overrides(**kwargs) -> ApplicationOverrides:
+    evidence_extractor = kwargs.pop("evidence_extractor", None)
     return ApplicationOverrides(
         source_retriever=DatedDeskSourceRetriever(),
-        evidence_extractor=DatedDeskEvidenceExtractor(),
+        evidence_extractor=evidence_extractor or DatedDeskEvidenceExtractor(),
         **kwargs,
     )

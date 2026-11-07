@@ -237,6 +237,9 @@ def create_application_container(
         pptx_renderer=PptxRenderer() if persistence.presentation_jobs is not None else None,
         report_claims=report_claim_repository,
         artifacts=persistence.artifact_repository,
+        evidence_repository=evidence_repository,
+        finding_repository=finding_repository,
+        source_repository=source_repository,
     )
     research_run_result_query_service = ResearchRunResultQueryService(
         workflow_run_repository=workflow_run_repository,
@@ -447,6 +450,8 @@ def create_application_container(
         scheduler=task_scheduler,
         task_executor=task_executor,
         completion_policy=completion_policy,
+        finding_repository=finding_repository,
+        evidence_repository=evidence_repository,
     )
 
     quantitative_state_repository = (
@@ -1051,6 +1056,7 @@ def _build_agent_executors(
             report_contract_version=report_contract_version,
             editorial_composer=editorial_composer,
             contract_services={"h2": h2_report_service, "h3": h3_report_service},
+            draft_generator=deliverable_finalizer,
         )
     )
     executors["review"] = (

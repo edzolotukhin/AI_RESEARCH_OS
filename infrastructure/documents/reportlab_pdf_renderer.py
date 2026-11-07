@@ -24,6 +24,8 @@ class ReportLabPdfRenderer:
         from reportlab.lib.styles import ParagraphStyle
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
+        from reportlab.graphics.charts.barcharts import VerticalBarChart
+        from reportlab.graphics.shapes import Drawing, String
         from reportlab.platypus import LongTable, Paragraph, SimpleDocTemplate, TableStyle
         values = [document.title, document.status, document.summary or "",
                   *document.limitations, *document.unavailable]
@@ -88,6 +90,28 @@ class ReportLabPdfRenderer:
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ]))
             story.append(grid)
+        for chart in document.charts:
+            if (not chart.supported or not chart.base or not chart.unit or
+                    not chart.labels or len(chart.labels) != len(chart.values) or
+                    any(not isinstance(value, (int, float)) for value in chart.values)):
+                continue
+            add(chart.title, heading)
+            add(f"База: {chart.base} · Одиниця: {chart.unit}", small)
+            drawing = Drawing(485, 230)
+            bars = VerticalBarChart()
+            bars.x = 50; bars.y = 35; bars.height = 165; bars.width = 405
+            bars.data = [list(chart.values)]
+            bars.categoryAxis.categoryNames = list(chart.labels)
+            bars.valueAxis.valueMin = 0
+            bars.valueAxis.valueMax = max(max(chart.values) * 1.2, 1)
+            bars.bars[0].fillColor = colors.HexColor("#296579")
+            drawing.add(bars)
+            drawing.add(String(50, 12, f"Значення: {', '.join(str(value) for value in chart.values)}",
+                              fontName="PRF06E-DejaVu", fontSize=8, fillColor=colors.HexColor("#1b2b3d")))
+            if chart.source_ref:
+                drawing.add(String(50, 0, f"Джерело: {chart.source_ref}",
+                                  fontName="PRF06E-DejaVu", fontSize=8, fillColor=colors.HexColor("#0b5a8a")))
+            story.append(drawing)
         if document.citation_registry:
             add("Реєстр джерел", heading)
             for key, value in document.citation_registry:

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from application.deliverables.contracts import PdfDeliverable, PdfSection, PdfSourceDocument, RENDERER_VERSION
+from application.deliverables.contracts import PdfDeliverable, PdfSection, PdfSourceDocument, PresentationChart, RENDERER_VERSION
 from application.deliverables.presentation_jobs import PresentationJob
 from application.persistence.exceptions import AccessDeniedError, EntityNotFoundError
 from domain.quantitative.report import QuantitativeReportCompositionResult, QuantitativeReportValidationStatus
@@ -81,8 +81,10 @@ class ReportCatalogItem:
             return "pending"
         if self.presentation_job is None:
             return "pending"
-        if self.presentation_job.state in {"failed", "failed_terminal"}:
+        if self.presentation_job.state in {"failed", "failed_terminal", "draft_failed"}:
             return "finalization_failed"
+        if self.presentation_job.state == "ready_for_review":
+            return "ready_for_review"
         if self.presentation_job.state in {"review_approved", "pdf_generating", "pdf_complete", "pending", "pptx_pending"}:
             return self.presentation_job.state
         if self.presentation_job.state in {"processing", "pptx_processing"}:
@@ -105,7 +107,8 @@ class ProjectDeliverablesService:
     def __init__(self, *, projects, workflows, reports, reviews, quantitative_state,
                  qualitative_reports=None,
                  store, renderer, presentation_jobs=None, pptx_renderer=None,
-                 report_claims=None, artifacts=None) -> None:
+                 report_claims=None, artifacts=None, evidence_repository=None,
+                 finding_repository=None, source_repository=None) -> None:
         self.projects = projects
         self.workflows = workflows
         self.reports = reports
@@ -118,6 +121,62 @@ class ProjectDeliverablesService:
         self.pptx_renderer = pptx_renderer
         self.report_claims = report_claims
         self.artifacts = artifacts
+        self.evidence_repository = evidence_repository
+        self.finding_repository = finding_repository
+        self.source_repository = source_repository
+
+    def _desk_charts(self, report):
+        """Project only explicitly structured, validated numeric Evidence."""
+        if not isinstance(report.metadata.get("charts"), (list, tuple)):
+            return ()
+        if not (self.evidence_repository and self.finding_repository and self.source_repository):
+            return ()
+        charts = []
+        for raw in report.metadata["charts"]:
+            if not isinstance(raw, dict):
+                continue
+            finding_id = str(raw.get("finding_id", ""))
+            evidence_ids = tuple(str(value) for value in raw.get("evidence_ids", ()))
+            finding = self.finding_repository.get_by_id(finding_id) if finding_id else None
+            if (finding is None or finding_id not in report.finding_refs or
+                    finding.project_id != report.project_id or finding.workflow_run_id != report.workflow_run_id or
+                    finding.research_design_id != report.research_design_id or
+                    finding.metadata.get("validation_status") != "validated" or not evidence_ids or
+                    not set(evidence_ids).issubset(finding.evidence_refs)):
+                continue
+            observations = []
+            for evidence_id in evidence_ids:
+                evidence = self.evidence_repository.get_by_id(evidence_id)
+                observation = evidence.metadata.get("chart_observation") if evidence else None
+                if (evidence is None or evidence_id not in report.evidence_refs or
+                        evidence.project_id != report.project_id or evidence.workflow_run_id != report.workflow_run_id or
+                        evidence.research_design_id != report.research_design_id or
+                        evidence_id not in finding.evidence_refs or
+                        not isinstance(observation, dict) or
+                        not isinstance(observation.get("value"), (int, float)) or
+                        not all(isinstance(observation.get(key), str) and observation[key].strip()
+                                for key in ("metric", "unit", "period"))):
+                    observations = []
+                    break
+                source = self.source_repository.get_by_id(evidence.source_id)
+                if source is None or source.project_id != report.project_id or source.id != evidence.source_id:
+                    observations = []
+                    break
+                observations.append((evidence, observation))
+            if len(observations) < 2:
+                continue
+            metrics = {(item[1]["metric"], item[1]["unit"]) for item in observations}
+            periods = [item[1]["period"] for item in observations]
+            if len(metrics) != 1 or len(set(periods)) != len(periods):
+                continue
+            metric, unit = next(iter(metrics))
+            source_ref = ", ".join(item[0].source_id for item in observations)
+            charts.append(PresentationChart(
+                title=str(raw.get("title") or metric),
+                labels=tuple(periods), values=tuple(item[1]["value"] for item in observations),
+                base=metric, unit=unit, supported=True, source_ref=source_ref,
+            ))
+        return tuple(charts)
 
     def _project(self, project_id: str, owner_id: str):
         try:
@@ -238,6 +297,7 @@ class ProjectDeliverablesService:
                                            authority.coverage_contract_digest if authority else None),
                 approved_delivery_provenance=(editorial.provenance if editorial is not None else None),
                 canonical_delivery=(editorial.document if editorial is not None else None),
+                charts=self._desk_charts(report),
             ))
         return sorted(documents, key=lambda item: (item.created_at or "", item.revision_number or 0, item.source_id), reverse=True)
 
@@ -403,6 +463,31 @@ class ProjectDeliverablesService:
         item = self._approved_desk_item(self.source(project_id, method, source_id, owner_id=owner_id))
         return self._generate_item(item)
 
+    def generate_draft_package(self, *, project_id: str, report_id: str) -> dict[str, str]:
+        """Generate a review-only draft without entering the approval path."""
+        project = self.projects.get_project(project_id)
+        item = self.source(project_id, "DESK", report_id, owner_id=project.owner_principal_id)
+        if item.document.status == "Схвалено":
+            raise AccessDeniedError("draft generation requires an unapproved report")
+        pdf = self._generate_item(item)
+        job = self._schedule_presentation_document(item.document, draft=True)
+        if job.state in {"draft_pending", "draft_processing", "draft_failed"}:
+            self.process_next_presentation("draft-generator")
+            job = self.presentation_jobs.find(
+                project_id=project_id, method="DESK", source_id=report_id,
+                source_version=item.document.source_version,
+                template_version=self.pptx_renderer.template_version,
+                renderer_version=self.pptx_renderer.version,
+            ) or job
+        ready = job.state == "ready_for_review" and job.completed_deliverable_id is not None
+        return {
+            "status": "ready_for_review" if ready else "generation_failed" if job.state == "draft_failed" else "generating",
+            "report_id": report_id,
+            "pdf_id": pdf.id,
+            "pptx_job_id": job.id,
+            "pptx_id": job.completed_deliverable_id or "",
+        }
+
     def _generate_item(self, item: ReportCatalogItem) -> PdfDeliverable:
         if item.pdf is not None:
             if (item.document.approved_delivery_provenance is not None
@@ -463,7 +548,8 @@ class ProjectDeliverablesService:
         return self._schedule_presentation_document(item.document)
 
     def _schedule_presentation_document(self, document: PdfSourceDocument,
-                                        authority: DeskFinalizationAuthority | None = None) -> PresentationJob:
+                                        authority: DeskFinalizationAuthority | None = None,
+                                        draft: bool = False) -> PresentationJob:
         job = self.presentation_jobs.schedule(
             project_id=document.project_id, method=document.method, run_id=document.run_id,
             study_id=document.study_id, source_id=document.source_id,
@@ -485,7 +571,8 @@ class ProjectDeliverablesService:
                if authority is not None else
                {"initial_state": "review_approved",
                 "approved_delivery_provenance": document.approved_delivery_provenance}
-               if document.approved_delivery_provenance is not None else {}))
+               if document.approved_delivery_provenance is not None else
+               {"initial_state": "draft_pending"} if draft else {}))
         if job.state in {"failed", "retry_wait"}:
             return self.presentation_jobs.retry(job.id) or job
         return job
@@ -651,9 +738,20 @@ class ProjectDeliverablesService:
             return False
         try:
             project = self.projects.get_project(job.project_id)
-            source_item = self._approved_desk_item(self.source(
+            # Legacy approved/accepted jobs have no explicit provenance, so
+            # absence of provenance alone cannot identify a draft package.
+            draft_job = (
+                job.report_revision is None
+                and job.review_id is None
+                and job.approved_delivery_provenance is None
+                and job.status_snapshot in {"draft", "Чернетка"}
+            )
+            source_item = (self.source(
                 job.project_id, job.method, job.source_id,
-                owner_id=project.owner_principal_id))
+                owner_id=project.owner_principal_id)
+                if draft_job else self._approved_desk_item(self.source(
+                    job.project_id, job.method, job.source_id,
+                    owner_id=project.owner_principal_id)))
             document = source_item.document
             if (document.run_id, document.study_id, document.source_version,
                 document.status) != (job.run_id, job.study_id, job.source_version,
@@ -729,6 +827,10 @@ class ProjectDeliverablesService:
                         actual=artifact.approved_delivery_provenance,
                     )
             self.presentation_jobs.complete(job.id, worker_id, existing.id)
+            if draft_job:
+                self.presentation_jobs.transition(
+                    job.id, expected=("completed",), state="ready_for_review",
+                )
         except Exception as exc:
             # The failure code is deliberately content-free; the user may retry.
             failure_code = (

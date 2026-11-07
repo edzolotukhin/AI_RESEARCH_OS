@@ -59,6 +59,21 @@ class TaskScheduler:
     Uses WorkflowRun.dependency_graph as the runtime dependency model.
     """
 
+    def skip_definition_ids(
+        self,
+        workflow_run: WorkflowRun,
+        definition_ids: frozenset[str],
+    ) -> tuple[str, ...]:
+        """Apply an explicit controlled-stop skip through the task API."""
+        skipped: list[str] = []
+        for task in workflow_run.tasks:
+            if task.definition_id not in definition_ids:
+                continue
+            if task.status in _ACTIVE_TASK_STATUSES:
+                task.skip()
+                skipped.append(task.id)
+        return tuple(skipped)
+
     def schedule(
         self,
         workflow_run: WorkflowRun,

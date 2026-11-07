@@ -15,7 +15,8 @@ class PresentationJobModel(Base):
         CheckConstraint("state IN ('pending', 'processing', 'completed', 'failed', "
                         "'review_approved', 'pdf_generating', 'pdf_complete', "
                         "'pptx_pending', 'pptx_processing', 'retry_wait', "
-                        "'pptx_complete', 'finalization_complete', 'failed_terminal')",
+                        "'pptx_complete', 'finalization_complete', 'failed_terminal', "
+                        "'draft_pending', 'ready_for_review', 'draft_failed')",
                         name="ck_presentation_job_state"),
         CheckConstraint("attempts >= 0", name="ck_presentation_job_attempts"),
     )

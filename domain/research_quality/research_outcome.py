@@ -8,3 +8,7 @@ class ResearchOutcome(str, Enum):
 
     READY_FOR_ANALYSIS = "ready_for_analysis"
     INSUFFICIENT_RESEARCH = "insufficient_research"
+    COMPLETED = "COMPLETED"
+    PARTIAL = "PARTIAL"
+    INSUFFICIENT = "INSUFFICIENT"
+    FAILED = "FAILED"

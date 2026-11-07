@@ -125,7 +125,7 @@ class PostgreSQLPresentationJobs:
             ).values(state="failed_terminal", claimed_by=None, lease_until=None,
                      failure_code="lease_exhausted", updated_at=now))
             model = session.scalars(select(PresentationJobModel).where(or_(
-                PresentationJobModel.state.in_(("pending", "review_approved", "pdf_generating",
+                PresentationJobModel.state.in_(("pending", "draft_pending", "review_approved", "pdf_generating",
                                                  "pdf_complete", "pptx_pending", "retry_wait")),
                 (PresentationJobModel.state.in_(("processing", "pptx_processing"))) &
                 (PresentationJobModel.lease_until < now) &
@@ -149,7 +149,8 @@ class PostgreSQLPresentationJobs:
                 PresentationJobModel.state.in_(("processing", "pptx_processing")),
                 PresentationJobModel.claimed_by == worker_id,
                 PresentationJobModel.lease_until > datetime.now(timezone.utc),
-            ).values(state=("finalization_complete" if self._is_structured(job_id) else "completed"), completed_deliverable_id=deliverable_id,
+            ).values(state=("finalization_complete" if self._is_structured(job_id) else
+                            "ready_for_review" if self._is_draft(job_id) else "completed"), completed_deliverable_id=deliverable_id,
                      claimed_by=None, lease_until=None, failure_code=None,
                      updated_at=datetime.now(timezone.utc)))
             return result.rowcount == 1
@@ -181,9 +182,20 @@ class PostgreSQLPresentationJobs:
             model = session.get(PresentationJobModel, job_id)
             return bool(model and model.report_revision is not None)
 
+    def _is_draft(self, job_id: str) -> bool:
+        with self._sessions.session() as session:
+            model = session.get(PresentationJobModel, job_id)
+            return bool(model and model.report_revision is None and model.review_id is None
+                        and model.authority_digest is None and model.presentation_digest is None
+                        and model.status_snapshot in {"draft", "Чернетка"}
+                        and model.state in {"processing", "pptx_processing"})
+
     @staticmethod
     def _failure_state(session, job_id: str) -> str:
         model = session.get(PresentationJobModel, job_id)
+        if (model is not None and model.report_revision is None and model.review_id is None
+                and model.status_snapshot in {"draft", "Чернетка"}):
+            return "draft_failed"
         if model is not None and model.report_revision is not None:
             return ("failed_terminal"
                     if model.attempts >= MAX_PPTX_ATTEMPTS else "retry_wait")

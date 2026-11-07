@@ -7,7 +7,7 @@ from dataclasses import replace
 import os
 import unittest
 
-from application.deliverables.contracts import PdfSection, PdfSourceDocument, PdfTable
+from application.deliverables.contracts import PdfSection, PdfSourceDocument, PdfTable, PresentationChart
 from infrastructure.documents.reportlab_pdf_renderer import ReportLabPdfRenderer
 
 
@@ -28,6 +28,7 @@ class PdfRendererTests(unittest.TestCase):
             limitations=("Обмеження: синтетичні дані не є результатом дослідження.",),
             citation_registry=(("S1", "https://example.invalid/source"),),
             links=("https://example.invalid/source",),
+            charts=(PresentationChart("Порівняння", ("2024", "2025"), (42, 47), "synthetic units", "units", True, "S1"),),
             tables=(PdfTable("Синтетична таблиця", ("Категорія", "Значення"),
                              tuple((f"К-{index}", str(index)) for index in range(70)),
                              base="40 учасників", unit="шт."),),
@@ -42,7 +43,8 @@ class PdfRendererTests(unittest.TestCase):
         self.assertGreater(len(reader.pages), 1)
         text = "\n".join(page.extract_text() for page in reader.pages)
         for value in ("Чернетка", "synthetic-report-v1", "Перший розділ", "Довгий український абзац",
-                      "Обмеження", "S1", "https://example.invalid/source", "40", "шт.", "К-69"):
+                      "Обмеження", "S1", "https://example.invalid/source", "Порівняння",
+                      "2024", "2025", "42", "47", "synthetic units", "40", "шт.", "К-69"):
             self.assertIn(value, text)
         self.assertTrue(any(
             "DejaVuSans" in str(font.get_object().get("/BaseFont", "")) and

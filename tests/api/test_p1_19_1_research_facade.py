@@ -658,7 +658,7 @@ class ResearchFacadeApiTests(ApiTestCase):
         if result.status_code == 200:
             self.assertIn(
                 result.json()["outcome"],
-                {"APPROVED", "NOT_READY", "QUALITY_REJECTED", "EXECUTION_FAILED"},
+                {"APPROVED", "NOT_READY", "INSUFFICIENT", "QUALITY_REJECTED", "EXECUTION_FAILED"},
             )
         else:
             self.assertEqual(

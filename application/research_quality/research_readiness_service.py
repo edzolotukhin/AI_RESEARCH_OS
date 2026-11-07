@@ -153,6 +153,11 @@ class ResearchReadinessService:
                 result = replace(result, termination_reason="max_research_rounds")
 
         result = self._finalize_terminal_readiness(context, result)
+        result = self._attach_per_information_need_coverage(
+            context,
+            result,
+            loop_state,
+        )
 
         if not result.ready_for_analysis and not result.targeted_research_required:
             if not result.termination_reason:
@@ -163,6 +168,63 @@ class ResearchReadinessService:
         loop_state = self._resolve_loop_state(context, loop_state)
         self._persist(context, result, loop_state)
         return result
+
+    @staticmethod
+    def _attach_per_information_need_coverage(
+        context: WorkflowContext,
+        result: ResearchReadinessResult,
+        loop_state: ResearchLoopState | None,
+    ) -> ResearchReadinessResult:
+        """Persist an independent, conservative coverage view for each IN.
+
+        Strategy identifiers are never inferred from query counts or free text.
+        Historical state without strategy metadata remains explicitly unknown.
+        """
+        state = loop_state or ResearchReadinessService._restore_loop_state(context)
+        history = tuple(state.history or ())
+        reason = state.termination_reason or result.termination_reason
+        reason_lower = reason.casefold()
+        if "budget" in reason_lower:
+            search_status = "budget_exhausted"
+        elif "technical" in reason_lower or "failed" in reason_lower:
+            search_status = "technically_interrupted"
+        elif not history:
+            search_status = "unknown"
+        else:
+            search_status = "in_progress"
+
+        assessments = []
+        for research_question in result.research_question_assessments:
+            needs = []
+            for assessment in research_question.information_need_assessments:
+                need_id = assessment.information_need_id
+                sufficient = assessment.status.value == "sufficient" and assessment.assessment_current
+                dimensions = tuple(dict.fromkeys((*assessment.missing_aspects, *(item.value for item in assessment.gap_types))))
+                needs.append(replace(
+                    assessment,
+                    evidence_status=("sufficient" if sufficient else "insufficient"),
+                    # Evidence sufficiency does not prove strategy coverage.
+                    search_status=search_status,
+                    missing_dimensions=dimensions,
+                    # Existing history has targeted INs, not strategy IDs.
+                    attempted_strategies=tuple(dict.fromkeys(
+                        record.strategy_id for record in history
+                        if need_id in record.targeted_need_ids
+                        and record.strategy_id not in {"", "unknown"}
+                    )),
+                    remaining_strategies=tuple(dict.fromkeys(
+                        strategy for record in history
+                        if need_id in record.targeted_need_ids
+                        for strategy in record.remaining_strategy_ids
+                    )) or (("unknown",) if not history else ()),
+                    stop_reason=reason,
+                    analysis_eligible=sufficient,
+                ))
+            assessments.append(replace(
+                research_question,
+                information_need_assessments=tuple(needs),
+            ))
+        return replace(result, research_question_assessments=tuple(assessments))
 
     def _finalize_terminal_readiness(
         self,
@@ -189,6 +251,37 @@ class ResearchReadinessService:
             ),
             previous=candidate,
             cache_payload=(cache_payload if isinstance(cache_payload, dict) else None),
+        )
+
+        # Reconciliation rebuilds the authoritative assessment from Evidence,
+        # but must retain the already-computed per-IN coverage diagnostics.
+        prior_by_need = {
+            item.information_need_id: item
+            for rq in candidate.research_question_assessments
+            for item in rq.information_need_assessments
+        }
+        reconciled = replace(
+            reconciled,
+            research_question_assessments=tuple(
+                replace(
+                    rq,
+                    information_need_assessments=tuple(
+                        replace(
+                            item,
+                            evidence_status=prior_by_need[item.information_need_id].evidence_status,
+                            search_status=prior_by_need[item.information_need_id].search_status,
+                            missing_dimensions=prior_by_need[item.information_need_id].missing_dimensions,
+                            attempted_strategies=prior_by_need[item.information_need_id].attempted_strategies,
+                            remaining_strategies=prior_by_need[item.information_need_id].remaining_strategies,
+                            stop_reason=prior_by_need[item.information_need_id].stop_reason,
+                            analysis_eligible=prior_by_need[item.information_need_id].analysis_eligible,
+                        )
+                        if item.information_need_id in prior_by_need else item
+                        for item in rq.information_need_assessments
+                    ),
+                )
+                for rq in reconciled.research_question_assessments
+            ),
         )
 
         termination_reason = candidate.termination_reason
@@ -283,6 +376,14 @@ class ResearchReadinessService:
         outcome = self._gate.research_outcome(result)
         payload = result.to_dict()
         payload["research_outcome"] = outcome.value
+        if not result.ready_for_analysis:
+            payload["research_product_outcome"] = {
+                "outcome": "INSUFFICIENT",
+                "derivation_version": "p8d3-v1",
+                "unresolved_information_need_ids": list(
+                    result.blocking_information_need_ids
+                ),
+            }
         if loop_state is not None:
             payload["research_loop_count"] = loop_state.research_loop_count
             payload["research_loop_history"] = [
