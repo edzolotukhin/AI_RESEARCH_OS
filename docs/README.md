@@ -5,6 +5,7 @@
 Start here:
 
 - [architecture.md](architecture.md) — documentation index
+- [desk-production-readiness.md](desk-production-readiness.md) — current Desk implementation, traceability, and production-readiness gaps
 - [../architecture/overview.md](../architecture/overview.md) — layers and runtime flow
 - [adr/README.md](adr/README.md) — Architecture Decision Records
 
