@@ -49,6 +49,17 @@ def test_restore_compose_has_no_host_ports_or_production_status_mount() -> None:
     assert "RESTORE_CONFIRMATION" in str(config["services"]["recovery"]["environment"])
 
 
+def test_restore_compose_propagates_existing_s3_authentication_inputs() -> None:
+    environment = _compose()["services"]["recovery"]["environment"]
+    assert environment["AWS_ACCESS_KEY_ID"] == "${AWS_ACCESS_KEY_ID:-}"
+    assert environment["AWS_SECRET_ACCESS_KEY"] == "${AWS_SECRET_ACCESS_KEY:-}"
+    assert environment["RESTIC_REST_USERNAME"] == "${RESTIC_REST_USERNAME:-}"
+    assert environment["RESTIC_REST_PASSWORD"] == "${RESTIC_REST_PASSWORD:-}"
+    text = COMPOSE.read_text(encoding="utf-8")
+    assert "AWS_ACCESS_KEY_ID: CHANGE_ME" not in text
+    assert "AWS_SECRET_ACCESS_KEY: CHANGE_ME" not in text
+
+
 def test_example_requires_explicit_identity_and_disposable_confirmation() -> None:
     text = EXAMPLE.read_text(encoding="utf-8")
     for key in ("APP_SHA=", "ALEMBIC_HEAD=", "RESTIC_REPOSITORY=", "RESTIC_PASSWORD_FILE_HOST=", "RESTORE_CONFIRMATION="):
