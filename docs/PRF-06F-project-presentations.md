@@ -1,4 +1,8 @@
-# PRF-06F Project presentations
+# PRF-06F Project presentations (historical milestone)
+
+> Current cross-cutting Desk status is maintained in
+> [`docs/desk-production-readiness.md`](desk-production-readiness.md). This
+> milestone record intentionally retains its original qualification context.
 
 ## Qualification gate
 

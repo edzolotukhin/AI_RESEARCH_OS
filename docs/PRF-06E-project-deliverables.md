@@ -1,4 +1,8 @@
-# PRF-06E Project Deliverables handoff
+# PRF-06E Project Deliverables handoff (historical milestone)
+
+> Current cross-cutting Desk status is maintained in
+> [`docs/desk-production-readiness.md`](desk-production-readiness.md). This
+> milestone record intentionally retains its original migration references.
 
 ## Source and status
 
