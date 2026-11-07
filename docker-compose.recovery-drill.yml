@@ -1,0 +1,51 @@
+services:
+  recovery-postgres:
+    image: postgres:16-alpine
+    restart: "no"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set isolated restore database}
+      POSTGRES_USER: ${POSTGRES_USER:?set isolated restore user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set isolated restore password}
+    volumes:
+      - airos_recovery_drill_postgres_data:/var/lib/postgresql/data
+    networks: [airos_recovery_drill_private]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  recovery:
+    build:
+      context: .
+      dockerfile: deploy/pilot/backup.Dockerfile
+    restart: "no"
+    depends_on:
+      recovery-postgres: {condition: service_healthy}
+    networks: [airos_recovery_drill_private]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:?set isolated restore user}:${POSTGRES_PASSWORD:?set isolated restore password}@recovery-postgres:5432/${POSTGRES_DB:?set isolated restore database}
+      APP_SHA: ${APP_SHA:?set exact application SHA}
+      ALEMBIC_HEAD: ${ALEMBIC_HEAD:?set expected Alembic head}
+      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:?set read-only restic repository}
+      RESTIC_PASSWORD_FILE: /run/secrets/restic_password
+      BACKUP_WORK_ROOT: /work
+      QUANTITATIVE_PROTECTED_STORAGE_ROOT: /var/lib/ai_research_os/quantitative-protected
+      PROJECTS_ROOT: /var/lib/ai_research_os/projects
+      RESTORE_CONFIRMATION: ${RESTORE_CONFIRMATION:?set explicit disposable confirmation}
+    volumes:
+      - airos_recovery_drill_protected_data:/var/lib/ai_research_os/quantitative-protected
+      - airos_recovery_drill_project_data:/var/lib/ai_research_os/projects
+      - airos_recovery_drill_work:/work
+      - airos_recovery_drill_runtime_status:/var/run/ai_research_os
+      - ${RESTIC_PASSWORD_FILE_HOST:?set host path to recovery credential}:/run/secrets/restic_password:ro
+
+volumes:
+  airos_recovery_drill_postgres_data:
+  airos_recovery_drill_protected_data:
+  airos_recovery_drill_project_data:
+  airos_recovery_drill_work:
+  airos_recovery_drill_runtime_status:
+
+networks:
+  airos_recovery_drill_private:
