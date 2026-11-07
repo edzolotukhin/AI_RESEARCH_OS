@@ -386,8 +386,9 @@ class PostgreSQLAuthorityExtensionTests(PostgreSQLIntegrationTestCase):
             "application.analysis.analysis_service.qualifying_evidence",
             side_effect=lambda **kwargs: tuple(kwargs["evidence"]),
         ):
-            with self.assertRaises(AnalysisError):
-                service.analyze_for_context(context)
+            summary = service.analyze_for_context(context)
+        self.assertTrue(summary.methodological_zero_findings)
+        self.assertGreaterEqual(summary.finding_candidates_rejected, 1)
         self.assertEqual(
             findings.list_for_project("project", workflow_run_id="extension"),
             [],
