@@ -261,4 +261,3 @@ class Q2ImportedQuantitativeE2ETests(PostgreSQLIntegrationTestCase):
             expected_type=QuantitativeReportCompositionResult,
         )
         self.assertIsNotNone(composition.accepted_report)
-
