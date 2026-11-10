@@ -12,6 +12,7 @@ from application.evidence.grounding import verify_grounding
 from domain.evidence.evidence import Evidence
 from domain.findings.finding import Finding
 from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
+from domain.research_brief import ResearchBrief
 from domain.sources.source import Source
 from infrastructure.persistence.memory.in_memory_source_repository import InMemorySourceRepository
 
@@ -156,6 +157,42 @@ class AnalysisCoverageServiceTests(unittest.TestCase):
                 brief=None, source_repository=self.sources,
                 required_information_need_ids=("in-1", "unknown-in"),
             )
+
+    def test_one_finding_can_cover_multiple_needs_with_distinct_evidence(self) -> None:
+        finding = Finding(
+            id="finding-both", project_id="project-1", workflow_run_id="run-1",
+            research_design_id="design-1", statement="Combined finding", rationale="Supported",
+            evidence_refs=("evidence-1", "evidence-2"), created_at="2026-01-01T00:00:00Z",
+            research_question_refs=("rq-1", "rq-2"), information_need_refs=("in-1", "in-2"),
+        )
+
+        result = self.assess((finding,))
+
+        self.assertEqual(result.covered_information_need_ids, ("in-1", "in-2"))
+        self.assertTrue(result.fully_covered)
+
+    def test_partially_invalid_evidence_refs_invalidate_the_finding(self) -> None:
+        finding = self._finding(1, "in-1", "evidence-1")
+        finding.evidence_refs = ("evidence-1", "missing-evidence")
+
+        result = self.assess((finding,))
+
+        self.assertNotIn("in-1", result.covered_information_need_ids)
+        self.assertIn("evidence-1", result.evidence_without_finding)
+
+    def test_temporally_excluded_evidence_does_not_cover(self) -> None:
+        old = self.evidence[1]
+        old.metadata = {"observation_period": "2024"}
+
+        result = assess_analysis_coverage(
+            project_id="project-1", design=self.design,
+            findings=(self._finding(2, "in-2", old.id),), evidence=(old,),
+            brief=ResearchBrief(title="T", business_question="Q", timeframe="2025"),
+            source_repository=self.sources,
+        )
+
+        self.assertNotIn("in-2", result.covered_information_need_ids)
+        self.assertEqual(result.evidence_without_finding, ())
 
 
 if __name__ == "__main__":
