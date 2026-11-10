@@ -4,6 +4,7 @@ import unittest
 from dataclasses import replace
 
 from application.authority_extension.selected_workflow import (
+    EXISTING_QUALIFYING_EVIDENCE_ONLY,
     EXTENSION_STAGES,
     PROVIDER_BUDGET_MAX,
     SEARCH_BUDGET_MAX,
@@ -176,6 +177,32 @@ class SelectedAuthorityExtensionTests(unittest.TestCase):
         )
         self.assertEqual(again.extension_id, self.extension.extension_id)
         self.assertEqual(len(self.workflows.runs), 2)
+
+    def test_existing_qualifying_evidence_mode_skips_acquisition_stages(self):
+        extension = self.service.start(
+            project_id="project", parent_workflow_run_id="parent", design=_design(),
+            selected_information_need_ids=("in1",),
+            idempotency_key="existing-only", confirmed=True,
+            execution_mode=EXISTING_QUALIFYING_EVIDENCE_ONLY,
+        )
+        self.service.activate(extension.extension_id)
+        run = self.workflows.get_workflow_run(extension.extension_workflow_run_id)
+        context = WorkflowContext(run, Project("project", "P"), self.workflows.get_template(run.workflow_template_id))
+        evidence = InMemoryEvidenceRepository()
+        findings = object()
+
+        for stage in ("extension_plan", "extension_search", "extension_evidence", "extension_readiness"):
+            AuthorityExtensionStageExecutor(
+                stage, self.service, evidence_repository=evidence, finding_repository=findings,
+            ).run(context)
+
+        state = self.states.load(extension.extension_workflow_run_id)
+        self.assertIsNotNone(state)
+        self.assertEqual(state.execution_mode, EXISTING_QUALIFYING_EVIDENCE_ONLY)
+        self.assertEqual(state.external_attempts, ())
+        self.assertEqual(state.observations, ())
+        self.assertFalse(state.analysis_gate_open)
+        self.assertEqual(state.coverage_diagnostics, (("in1", "insufficient"),))
 
     def test_real_adjustment_accepts_either_authority_kind(self):
         design = ResearchDesign(
