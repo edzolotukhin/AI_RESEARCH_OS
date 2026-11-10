@@ -72,6 +72,7 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
                 evidence_extractor="deterministic",
                 analysis_engine="deterministic",
                 report_engine="deterministic",
+                desk_report_contract_version="desk_h3_structural_claim_v1",
             ),
             overrides=dated_desk_overrides(
                 llm_client=mock_llm,
@@ -121,7 +122,7 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
         self.assertFalse(analysis_coverage["fully_covered"])
         self.assertEqual(
             set(analysis_coverage["missing_information_need_ids"]),
-            required_need_ids - {template.research_design_snapshot.information_needs[0].id},
+            required_need_ids,
         )
         evidence = container.evidence_service.list_evidence_for_project(project_id, workflow_run_id=run_id)
         findings = container.finding_service.list_findings_for_project(project_id, workflow_run_id=run_id)
@@ -155,6 +156,7 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
                 evidence_extractor="deterministic",
                 analysis_engine="deterministic",
                 report_engine="deterministic",
+                desk_report_contract_version="desk_h3_structural_claim_v1",
             ),
         )
         self.addCleanup(fresh.shutdown)
@@ -201,6 +203,13 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
         self.assertEqual(
             set(persisted_outcome["unresolved_information_need_ids"]),
             required_need_ids,
+        )
+        before_worker_reload = fresh.workflow_service.get_task_results(run_id)
+        drain_background_runs(fresh)
+        self.assertEqual(
+            fresh.workflow_service.get_task_results(run_id),
+            before_worker_reload,
+            "Terminal run was redispatched after fresh worker reload",
         )
 
     def test_production_runtime_completes_desk_research_pipeline(self) -> None:

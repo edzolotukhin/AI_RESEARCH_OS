@@ -206,7 +206,18 @@ class WorkflowEngine:
             H3_REPORT_CONTRACT,
         )
 
-        return context.read_shared(DESK_REPORT_CONTRACT_PIN) == H3_REPORT_CONTRACT
+        pin = context.read_shared(DESK_REPORT_CONTRACT_PIN)
+        if pin is not None:
+            return pin == H3_REPORT_CONTRACT
+        template = context.workflow_template
+        if template is None:
+            return False
+        definition_ids = {item.id for item in template.task_definitions}
+        return {
+            "task-review-report-1",
+            "task-revise-report",
+            "task-review-report-2",
+        }.issubset(definition_ids)
 
     def execute(
         self,
