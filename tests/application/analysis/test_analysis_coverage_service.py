@@ -8,6 +8,7 @@ from application.analysis.analysis_coverage_service import (
     UnknownInformationNeedError,
     assess_analysis_coverage,
 )
+from application.research_quality.authoritative_outcome import derive_authoritative_outcome
 from application.evidence.grounding import verify_grounding
 from domain.evidence.evidence import Evidence
 from domain.findings.finding import Finding
@@ -193,6 +194,28 @@ class AnalysisCoverageServiceTests(unittest.TestCase):
 
         self.assertNotIn("in-2", result.covered_information_need_ids)
         self.assertEqual(result.evidence_without_finding, ())
+
+    def test_coverage_and_authority_resolver_keep_missing_need_unresolved(self) -> None:
+        finding = self._finding(2, "in-2", "evidence-2")
+        excluded = self.evidence[1]
+        excluded.metadata = {"observation_period": "2024"}
+        result = assess_analysis_coverage(
+            project_id="project-1", design=self.design,
+            findings=(finding,), evidence=(excluded,),
+            brief=ResearchBrief(title="T", business_question="Q", timeframe="2025"),
+            source_repository=self.sources,
+        )
+        outcome, unresolved = derive_authoritative_outcome(
+            required_information_need_ids=result.required_information_need_ids,
+            readiness_payload={
+                "analysis_eligible_information_need_ids": result.required_information_need_ids,
+            },
+            findings=(finding,), evidence=(excluded,), project_id="project-1",
+            workflow_run_id="run-1", research_design_id=self.design.id,
+            coverage_missing_information_need_ids=result.missing_information_need_ids,
+        )
+        self.assertEqual(outcome, "INSUFFICIENT")
+        self.assertIn("in-2", unresolved)
 
 
 if __name__ == "__main__":

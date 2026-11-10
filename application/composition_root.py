@@ -452,6 +452,7 @@ def create_application_container(
         completion_policy=completion_policy,
         finding_repository=finding_repository,
         evidence_repository=evidence_repository,
+        source_repository=source_repository,
     )
 
     quantitative_state_repository = (

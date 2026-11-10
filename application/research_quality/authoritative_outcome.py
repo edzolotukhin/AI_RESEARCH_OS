@@ -9,6 +9,7 @@ def derive_authoritative_outcome(
     *, required_information_need_ids: Iterable[str], readiness_payload: dict | None,
     findings: Iterable, evidence: Iterable, project_id: str, workflow_run_id: str,
     research_design_id: str, technical_failure: bool = False,
+    coverage_missing_information_need_ids: Iterable[str] = (),
 ) -> tuple[str, tuple[str, ...]]:
     required = {str(item) for item in required_information_need_ids if str(item)}
     if technical_failure:
@@ -34,8 +35,16 @@ def derive_authoritative_outcome(
         if any((item.project_id, item.workflow_run_id, item.research_design_id) != (project_id, workflow_run_id, research_design_id) or not refs.intersection(getattr(item, "information_need_refs", ())) for item in cited):
             continue
         resolved.update(refs)
+    resolved.difference_update(
+        str(item) for item in coverage_missing_information_need_ids
+        if str(item) in required
+    )
     unresolved = required - resolved
     unresolved.update(blocking - resolved)
+    unresolved.update(
+        str(item) for item in coverage_missing_information_need_ids
+        if str(item) in required
+    )
     if not resolved:
         return "INSUFFICIENT", tuple(sorted(unresolved))
     if unresolved:
