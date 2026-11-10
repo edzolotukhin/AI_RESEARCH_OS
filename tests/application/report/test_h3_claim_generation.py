@@ -149,6 +149,10 @@ class H3ClaimGenerationTests(unittest.TestCase):
         self.assertEqual(result.provider_attempt_count, 0)
         self.assertEqual(result.coverage_outcome, H3CoverageOutcome.REPORT_INSUFFICIENT_COVERAGE)
         self.assertEqual(result.coverage_diagnostics[0]["reason_code"], "required_information_need_unfillable")
+        self.assertNotIn(
+            "provider_coverage_omission",
+            {item["reason_code"] for item in result.coverage_diagnostics},
+        )
 
     def test_coverable_provider_omission_is_typed_after_provider(self):
         fixture = _Fixture(two=True)
@@ -170,6 +174,30 @@ class H3ClaimGenerationTests(unittest.TestCase):
         self.assertEqual(result.provider_attempt_count, 1)
         self.assertEqual(result.coverage_outcome, H3CoverageOutcome.REPORT_INSUFFICIENT_COVERAGE)
         self.assertEqual(result.coverage_diagnostics[0]["reason_code"], "provider_coverage_omission")
+
+    def test_technical_provider_failure_has_no_coverage_omission(self):
+        fixture = _Fixture(two=True)
+        plan = build_h3_coverage_plan(
+            design=fixture.design,
+            required_information_need_ids=("in-1", "in-2"),
+            findings=tuple(fixture.findings),
+            evidence_by_id={item.id: item for item in fixture.evidence},
+            insights=(),
+        )
+
+        def failing_provider(_request):
+            raise RuntimeError("provider unavailable")
+
+        result = self.generate(
+            fixture, provider=failing_provider, required_rqs=("rq-1", "rq-2"),
+            required_ins=("in-1", "in-2"), coverage_plan=plan,
+        )
+
+        self.assertEqual(result.coverage_outcome, H3CoverageOutcome.TECHNICAL_ERROR)
+        self.assertNotIn(
+            "provider_coverage_omission",
+            {item["reason_code"] for item in result.coverage_diagnostics},
+        )
 
     def test_valid_structural_claim_decimal_percent_period_citation(self):
         result = self.generate()
