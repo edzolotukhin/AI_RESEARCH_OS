@@ -149,6 +149,10 @@ class H3ClaimGenerationTests(unittest.TestCase):
         self.assertEqual(result.provider_attempt_count, 0)
         self.assertEqual(result.coverage_outcome, H3CoverageOutcome.REPORT_INSUFFICIENT_COVERAGE)
         self.assertEqual(result.coverage_diagnostics[0]["reason_code"], "required_information_need_unfillable")
+        self.assertNotIn(
+            "provider_coverage_omission",
+            {item["reason_code"] for item in result.coverage_diagnostics},
+        )
 
     def test_coverable_provider_omission_is_typed_after_provider(self):
         fixture = _Fixture(two=True)
