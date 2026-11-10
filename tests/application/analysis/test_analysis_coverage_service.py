@@ -5,6 +5,7 @@ from hashlib import sha256
 
 from application.analysis.analysis_coverage_service import (
     ANALYSIS_COVERAGE_DIAGNOSTIC_VERSION,
+    UnknownInformationNeedError,
     assess_analysis_coverage,
 )
 from application.evidence.grounding import verify_grounding
@@ -59,6 +60,7 @@ class AnalysisCoverageServiceTests(unittest.TestCase):
 
     def assess(self, findings, evidence=None):
         return assess_analysis_coverage(
+            project_id="project-1",
             design=self.design, findings=findings,
             evidence=self.evidence if evidence is None else evidence,
             brief=None, source_repository=self.sources,
@@ -113,6 +115,47 @@ class AnalysisCoverageServiceTests(unittest.TestCase):
 
         self.assertNotIn("in-2", result.covered_information_need_ids)
         self.assertNotIn(invalid.id, result.evidence_without_finding)
+
+    def test_foreign_project_finding_and_evidence_cannot_cover(self) -> None:
+        foreign_source = Source(
+            id="foreign-source", project_id="project-2", url="https://foreign.test",
+            canonical_url="https://foreign.test", title="Foreign", retrieved_at="2026-01-01T00:00:00Z",
+            content_text="Foreign evidence.",
+            content_checksum=sha256(b"Foreign evidence.").hexdigest(),
+        )
+        self.sources.create(foreign_source)
+        foreign = self._evidence(3, "rq-2", "in-2")
+        foreign.project_id = "project-2"
+        foreign.source_id = foreign_source.id
+        foreign.source_content_checksum = foreign_source.content_checksum
+        foreign.source_excerpt = foreign_source.content_text
+        foreign.source_locator = verify_grounding(
+            source_text=foreign_source.content_text, excerpt=foreign_source.content_text,
+        ).to_dict()
+        finding = self._finding(2, "in-2", foreign.id)
+        finding.project_id = "project-2"
+
+        result = self.assess((finding,), (foreign,))
+
+        self.assertEqual(result.covered_information_need_ids, ())
+        self.assertEqual(result.evidence_without_finding, ())
+
+    def test_foreign_design_evidence_cannot_cover(self) -> None:
+        foreign = self.evidence[1]
+        foreign.research_design_id = "foreign-design"
+
+        result = self.assess((self._finding(2, "in-2", foreign.id),), (foreign,))
+
+        self.assertNotIn("in-2", result.covered_information_need_ids)
+        self.assertEqual(result.evidence_without_finding, ())
+
+    def test_unknown_required_information_need_is_rejected(self) -> None:
+        with self.assertRaises(UnknownInformationNeedError):
+            assess_analysis_coverage(
+                project_id="project-1", design=self.design, findings=(), evidence=self.evidence,
+                brief=None, source_repository=self.sources,
+                required_information_need_ids=("in-1", "unknown-in"),
+            )
 
 
 if __name__ == "__main__":

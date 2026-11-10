@@ -649,7 +649,7 @@ def _result(
     missing_rqs = tuple(sorted(set(required_rqs) - covered_rqs))
     missing_ins = tuple(sorted(set(required_ins) - covered_ins))
     diagnostics_for_coverage = list(coverage_diagnostics)
-    if coverage_plan is not None and attempts > 0:
+    if coverage_plan is not None and attempts > 0 and not technical:
         coverable = {item.information_need_id for item in coverage_plan.coverable_slots}
         diagnostics_for_coverage.extend({
             "information_need_id": item,

@@ -21,6 +21,10 @@ from domain.planning.research_design import ResearchDesign
 ANALYSIS_COVERAGE_DIAGNOSTIC_VERSION = "analysis_coverage_v1"
 
 
+class UnknownInformationNeedError(ValueError):
+    """Raised when a caller supplies an IN outside the immutable design."""
+
+
 @dataclass(frozen=True)
 class AnalysisCoverageResult:
     required_information_need_ids: tuple[str, ...]
@@ -43,6 +47,7 @@ class AnalysisCoverageResult:
 
 def assess_analysis_coverage(
     *,
+    project_id: str,
     design: ResearchDesign,
     findings: Sequence[Finding],
     evidence: Sequence[Evidence],
@@ -64,7 +69,12 @@ def assess_analysis_coverage(
         if required_information_need_ids is None
         else {str(item) for item in required_information_need_ids}
     )
-    required = tuple(sorted(requested & design_need_ids))
+    unknown = tuple(sorted(requested - design_need_ids))
+    if unknown:
+        raise UnknownInformationNeedError(
+            f"Required Information Needs are outside the Research Design: {unknown}"
+        )
+    required = tuple(sorted(requested))
 
     qualified = qualifying_evidence(
         design=design,
@@ -75,18 +85,18 @@ def assess_analysis_coverage(
     evidence_by_id = {
         item.id: item
         for item in qualified
-        if item.research_design_id == design.id
+        if item.project_id == project_id and item.research_design_id == design.id
     }
 
     covered: set[str] = set()
     for finding in findings:
-        if finding.research_design_id != design.id or not finding.evidence_refs:
+        if finding.project_id != project_id or finding.research_design_id != design.id or not finding.evidence_refs:
             continue
         cited = tuple(evidence_by_id.get(item) for item in finding.evidence_refs)
         if any(item is None for item in cited):
             continue
         resolved = tuple(item for item in cited if item is not None)
-        if any(item.project_id != finding.project_id for item in resolved):
+        if any(item.project_id != project_id for item in resolved):
             continue
         for need_id in set(finding.information_need_refs) & set(required):
             if any(need_id in item.information_need_refs for item in resolved):
