@@ -396,6 +396,14 @@ class Pf02MethodSelectionDesignGateTests(ApiTestCase):
         page = self.client.get(f"/ui/projects/{project_id}")
         self.assertIn("Запустити нове дослідження", page.text)
         self.assertIn("Попередній запуск буде збережено", page.text)
+        self.assertIn(f'href="/ui/research/{run.id}/overview"', page.text)
+        self.assertNotIn(
+            f'href="/ui/projects/{project_id}/methods/DESK/retry"', page.text
+        )
+        self.assertIn(
+            f'<form method="post" action="/ui/projects/{project_id}/methods/DESK/retry">',
+            page.text,
+        )
         response = self.client.post(
             f"/ui/projects/{project_id}/methods/DESK/retry",
             follow_redirects=False,
