@@ -21,6 +21,7 @@ from application.execution.execution_budget_context import (
 )
 from application.research_quality.authoritative_outcome import derive_authoritative_outcome
 from application.research_quality.workflow_task_ids import DOWNSTREAM_TASK_DEFINITION_IDS
+from application.analysis.analysis_coverage_service import assess_analysis_coverage
 
 
 class WorkflowEngine:
@@ -37,12 +38,14 @@ class WorkflowEngine:
         completion_policy: WorkflowCompletionPolicy,
         finding_repository=None,
         evidence_repository=None,
+        source_repository=None,
     ) -> None:
         self._scheduler = scheduler
         self._task_executor = task_executor
         self._completion_policy = completion_policy
         self._finding_repository = finding_repository
         self._evidence_repository = evidence_repository
+        self._source_repository = source_repository
 
     def run(
         self,
@@ -139,9 +142,8 @@ class WorkflowEngine:
     def _apply_post_analysis_outcome(self, context, task) -> None:
         if task.definition_id != "task-analyze":
             return
-        readiness = context.read_shared("research_readiness")
         design = getattr(context.workflow_template, "research_design_snapshot", None)
-        if not isinstance(readiness, dict) or design is None:
+        if design is None or not self._is_h3_workflow(context):
             return
         if self._finding_repository is None or self._evidence_repository is None:
             return
@@ -151,6 +153,31 @@ class WorkflowEngine:
         evidence = self._evidence_repository.list_for_project(
             context.project.id, workflow_run_id=context.workflow_run.id,
         )
+        brief = getattr(context.workflow_template, "research_brief_snapshot", None)
+        coverage = assess_analysis_coverage(
+            project_id=context.project.id,
+            design=design,
+            findings=findings,
+            evidence=evidence,
+            brief=brief,
+            source_repository=self._source_repository,
+        )
+        context.write_shared("analysis_coverage", coverage.to_dict())
+        if not coverage.fully_covered:
+            context.write_shared("research_product_outcome", {
+                "outcome": "INSUFFICIENT",
+                "derivation_version": "p8d3-v1",
+                "authoritative_post_analysis": True,
+                "unresolved_information_need_ids": list(coverage.missing_information_need_ids),
+                "reason": "analysis_coverage_incomplete",
+            })
+            self._scheduler.skip_definition_ids(
+                context.workflow_run, DOWNSTREAM_TASK_DEFINITION_IDS,
+            )
+            return
+        readiness = context.read_shared("research_readiness")
+        if not isinstance(readiness, dict):
+            return
         outcome, unresolved = derive_authoritative_outcome(
             required_information_need_ids=(item.id for item in design.information_needs),
             readiness_payload=readiness,
@@ -172,6 +199,18 @@ class WorkflowEngine:
         self._scheduler.skip_definition_ids(
             context.workflow_run, DOWNSTREAM_TASK_DEFINITION_IDS,
         )
+
+    @staticmethod
+    def _is_h3_workflow(context: WorkflowContext) -> bool:
+        template = context.workflow_template
+        if template is None:
+            return False
+        definition_ids = {item.id for item in template.task_definitions}
+        return {
+            "task-review-report-1",
+            "task-revise-report",
+            "task-review-report-2",
+        }.issubset(definition_ids)
 
     def execute(
         self,
