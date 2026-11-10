@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import unittest
 from contextlib import nullcontext
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ from application.replay.desk_downstream_replay import (
     update_replay_stage,
 )
 from application.report.contract_selection import DESK_REPORT_CONTRACT_PIN, H3_REPORT_CONTRACT
+from application.evidence.grounding import excerpt_hash
 from application.authority_extension import COMPOSED_AUTHORITY_KEY, build_composition
 from domain.workflow_status import WorkflowStatus
 
@@ -51,6 +53,8 @@ class _Repository:
     def __init__(self, values): self.values = list(values)
     def list_for_project(self, project_id, *, workflow_run_id):
         return [x for x in self.values if x.project_id == project_id and x.workflow_run_id == workflow_run_id]
+    def get_by_id(self, item_id):
+        return next((x for x in self.values if x.id == item_id), None)
 
 
 class _Durable:
@@ -83,15 +87,20 @@ def _fixture():
         id="design-1",
         research_subject=SimpleNamespace(subject_id="subject-1"),
         research_questions=[SimpleNamespace(id="rq-1")],
-        information_needs=[SimpleNamespace(id="in-1")],
+        information_needs=[SimpleNamespace(id="in-1", research_question_id="rq-1")],
     )
     template = SimpleNamespace(
         research_design_snapshot=design,
-        research_brief_snapshot=SimpleNamespace(language="uk"),
+        research_brief_snapshot=SimpleNamespace(language="uk", timeframe="2021-2026"),
     )
     evidence = SimpleNamespace(
         id="evidence-1", project_id=project.id, workflow_run_id=source.id,
-        research_design_id=design.id,
+        research_design_id=design.id, source_id="source-1",
+        source_excerpt="Retail turnover increased.",
+        source_content_checksum=hashlib.sha256("Retail turnover increased.".encode()).hexdigest(),
+        source_locator={"normalized_start": 0, "normalized_end": 26,
+                        "excerpt_hash": excerpt_hash("Retail turnover increased.")},
+        information_need_refs=("in-1",),
     )
     finding = SimpleNamespace(
         id="finding-1", project_id=project.id, workflow_run_id=source.id,
@@ -105,10 +114,16 @@ def _fixture():
     )
     workflows = _Workflows(source, template)
     durable = _Durable()
+    source_record = SimpleNamespace(
+        id="source-1", project_id=project.id,
+        content_text="Retail turnover increased.",
+        content_checksum=evidence.source_content_checksum,
+    )
     service = DeskDownstreamReplayService(
         projects=_Projects(project), workflows=workflows, durable_workflows=durable,
         evidence=_Repository([evidence]), findings=_Repository([finding]),
         insights=_Repository([insight]),
+        sources=_Repository([source_record]),
         activation_sessions=SimpleNamespace(activation=lambda _project_id: nullcontext()),
     )
     return service, project, source, workflows, durable, evidence, finding, insight
@@ -116,7 +131,7 @@ def _fixture():
 
 class DeskDownstreamReplayTests(unittest.TestCase):
     def test_latest_composed_authority_is_pinned_into_new_h3_replay(self):
-        service, project, source, _, durable, *_ = _fixture()
+        service, project, source, workflows, durable, *_ = _fixture()
         service.desk_report_contract_version = H3_REPORT_CONTRACT
         older = build_composition(
             composition_id="composition-old", project_id=project.id,
@@ -134,6 +149,11 @@ class DeskDownstreamReplayTests(unittest.TestCase):
             selected_information_need_ids=("in-1",),
             created_at="2026-01-02T00:00:00+00:00",
         )
+        workflows.runs.append(SimpleNamespace(
+            id="extension-latest", project_id=project.id,
+            workflow_template_id="source-template", status=WorkflowStatus.COMPLETED,
+            is_terminal=True,
+        ))
 
         class Compositions:
             def get_latest_for_parent(self, project_id, parent_id):
@@ -148,6 +168,58 @@ class DeskDownstreamReplayTests(unittest.TestCase):
             "composition_id": latest.composition_id,
             "composition_digest": latest.composition_digest,
         })
+
+    def test_changed_composition_identity_creates_distinct_replay_attempt(self):
+        service, project, source, workflows, durable, *_ = _fixture()
+        first = build_composition(
+            composition_id="composition-first", project_id=project.id,
+            research_design_id="design-1", parent_source_workflow_run_id=source.id,
+            member_workflow_run_ids=(source.id, "extension-first"),
+            selected_information_need_ids=("in-1",), created_at="2026-01-01T00:00:00+00:00",
+        )
+        second = build_composition(
+            composition_id="composition-second", project_id=project.id,
+            research_design_id="design-1", parent_source_workflow_run_id=source.id,
+            member_workflow_run_ids=(source.id, "extension-second"),
+            selected_information_need_ids=("in-1",), created_at="2026-01-02T00:00:00+00:00",
+        )
+        for member_id in ("extension-first", "extension-second"):
+            workflows.runs.append(SimpleNamespace(
+                id=member_id, project_id=project.id, workflow_template_id="source-template",
+                status=WorkflowStatus.COMPLETED, is_terminal=True,
+            ))
+
+        class Compositions:
+            current = first
+            def get_latest_for_parent(self, project_id, parent_id):
+                return self.current
+
+        compositions = Compositions()
+        service.composed_authorities = compositions
+        service.start(project_id=project.id, source_run_id=source.id, owner_id="owner-1")
+        first_identity = durable.calls[0][2][REPLAY_KEY]["replay_identity"]
+        compositions.current = second
+        service.start(project_id=project.id, source_run_id=source.id, owner_id="owner-1")
+        second_identity = durable.calls[1][2][REPLAY_KEY]["replay_identity"]
+        self.assertNotEqual(first_identity, second_identity)
+        self.assertEqual(2, len(durable.calls))
+
+    def test_non_qualifying_composed_evidence_is_rejected_before_replay_creation(self):
+        service, project, source, workflows, durable, evidence, *_ = _fixture()
+        evidence.source_content_checksum = "foreign-checksum"
+        composition = build_composition(
+            composition_id="composition-invalid", project_id=project.id,
+            research_design_id="design-1", parent_source_workflow_run_id=source.id,
+            member_workflow_run_ids=(source.id,), selected_information_need_ids=("in-1",),
+            created_at="2026-01-01T00:00:00+00:00",
+        )
+        class Compositions:
+            def get_latest_for_parent(self, project_id, parent_id):
+                return composition
+        service.composed_authorities = Compositions()
+        with self.assertRaisesRegex(DeskDownstreamReplayError, "insufficient_coverage"):
+            service.start(project_id=project.id, source_run_id=source.id, owner_id="owner-1")
+        self.assertEqual([], durable.calls)
 
     def test_login_redirect_recognizes_replay_as_post_only_project_action(self):
         match = _POST_ACTION_SAFE_PROJECT_RETURN.fullmatch(

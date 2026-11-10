@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import hashlib
+import json
 from contextlib import nullcontext
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -10,10 +12,13 @@ from application.persistence.exceptions import AccessDeniedError, EntityNotFound
 from domain.task_definition import TaskDefinition
 from domain.workflow_status import WorkflowStatus
 from domain.workflow_template import WorkflowTemplate
+from application.evidence.temporal_scope import qualifying_evidence
+from application.report.h3_coverage_plan import build_h3_coverage_plan
 
 
 REPLAY_KEY = "desk_downstream_replay_v1"
 REPLAY_TEMPLATE_PREFIX = "desk-downstream-replay-v1:"
+REPLAY_IDENTITY_VERSION = "desk_downstream_replay_identity_v2"
 
 
 class DeskDownstreamReplayError(ValueError):
@@ -65,6 +70,7 @@ class DeskDownstreamReplayService:
     def __init__(self, *, projects, workflows, durable_workflows, evidence,
                  findings, insights, activation_sessions=None,
                  composed_authorities=None,
+                 sources=None,
                  desk_report_contract_version="desk_report_claim_v1") -> None:
         self.projects = projects
         self.workflows = workflows
@@ -74,6 +80,7 @@ class DeskDownstreamReplayService:
         self.insights = insights
         self.activation_sessions = activation_sessions
         self.composed_authorities = composed_authorities
+        self.sources = sources
         from application.report.contract_selection import validate_desk_report_contract
         self.desk_report_contract_version = validate_desk_report_contract(
             desk_report_contract_version,
@@ -139,9 +146,24 @@ class DeskDownstreamReplayService:
             self._validate_source(project, source_id)
         )
 
+        composition, replay_identity = self._composition_preflight(
+            project=project, source=source, design=design,
+            brief=source_template.research_brief_snapshot,
+        )
+
         for run in self.workflows.list_workflow_runs_for_project(project.id):
             state = self.workflows.get_task_results(run.id).get(REPLAY_KEY)
-            if isinstance(state, dict) and state.get("source_workflow_run_id") == source.id:
+            if not isinstance(state, dict):
+                continue
+            same_identity = (
+                replay_identity is not None
+                and state.get("replay_identity") == replay_identity
+            )
+            legacy_source_match = (
+                replay_identity is None
+                and state.get("source_workflow_run_id") == source.id
+            )
+            if same_identity or legacy_source_match:
                 if not run.is_terminal:
                     return run
                 if run.status == WorkflowStatus.COMPLETED:
@@ -176,6 +198,8 @@ class DeskDownstreamReplayService:
             "project_id": project.id,
             "source_workflow_run_id": source.id,
             "replay_attempt_id": attempt_id,
+            "replay_identity_version": REPLAY_IDENTITY_VERSION if replay_identity else None,
+            "replay_identity": replay_identity,
             "research_design_id": design.id,
             "research_subject_id": design.research_subject.subject_id,
             "runtime_sha": os.environ.get("APP_SHA"),
@@ -190,28 +214,115 @@ class DeskDownstreamReplayService:
             {REPLAY_KEY: lineage, "research_readiness": readiness},
             self.desk_report_contract_version,
         )
-        if self.composed_authorities is not None:
-            composition = self.composed_authorities.get_latest_for_parent(
-                project.id, source.id,
-            )
-            if composition is not None:
-                if (
-                    composition.project_id != project.id
-                    or composition.research_design_id != design.id
-                    or composition.parent_source_workflow_run_id != source.id
-                ):
-                    raise DeskDownstreamReplayError(
-                        "composed_authority_lineage_mismatch"
-                    )
-                from application.authority_extension import COMPOSED_AUTHORITY_KEY
-                initial[COMPOSED_AUTHORITY_KEY] = {
-                    "composition_id": composition.composition_id,
-                    "composition_digest": composition.composition_digest,
-                }
+        if composition is not None:
+            from application.authority_extension import COMPOSED_AUTHORITY_KEY
+            initial[COMPOSED_AUTHORITY_KEY] = {
+                "composition_id": composition.composition_id,
+                "composition_digest": composition.composition_digest,
+            }
         if PIN in task_results:
             initial[PIN] = task_results[PIN]
         return self.durable_workflows.submit_research(
             project, template, initial_task_results=initial).workflow_run
+
+    def _composition_preflight(self, *, project, source, design, brief):
+        if self.composed_authorities is None:
+            return None, None
+        composition = self.composed_authorities.get_latest_for_parent(
+            project.id, source.id,
+        )
+        if composition is None:
+            return None, None
+        if (
+            composition.project_id != project.id
+            or composition.research_design_id != design.id
+            or composition.parent_source_workflow_run_id != source.id
+        ):
+            raise DeskDownstreamReplayError("composed_authority_lineage_mismatch")
+        members = tuple(composition.member_workflow_run_ids)
+        if not members or source.id not in members:
+            raise DeskDownstreamReplayError("composed_authority_membership_invalid")
+        for member_id in members:
+            member = self.workflows.get_workflow_run(member_id)
+            if member.project_id != project.id:
+                raise DeskDownstreamReplayError("composed_authority_foreign_member")
+            member_template = self.workflows.get_template(member.workflow_template_id)
+            member_design = member_template.research_design_snapshot
+            if member_design is None or member_design.id != design.id:
+                raise DeskDownstreamReplayError("composed_authority_member_design_mismatch")
+
+        evidence = [
+            item for member_id in members
+            for item in self.evidence.list_for_project(project.id, workflow_run_id=member_id)
+        ]
+        findings = [
+            item for member_id in members
+            for item in self.findings.list_for_project(project.id, workflow_run_id=member_id)
+        ]
+        insights = [
+            item for member_id in members
+            for item in self.insights.list_for_project(project.id, workflow_run_id=member_id)
+        ]
+        needs = {item.id for item in design.information_needs}
+        evidence_by_id = {item.id: item for item in evidence}
+        finding_ids = {item.id for item in findings}
+        if any(
+            item.project_id != project.id
+            or item.research_design_id != design.id
+            or item.workflow_run_id not in members
+            for item in (*evidence, *findings, *insights)
+        ):
+            raise DeskDownstreamReplayError("composed_authority_member_lineage_invalid")
+        if any(
+            not item.evidence_refs
+            or not set(item.evidence_refs) <= set(evidence_by_id)
+            or not set(item.information_need_refs) <= needs
+            for item in findings
+        ):
+            raise DeskDownstreamReplayError("composed_authority_finding_provenance_invalid")
+        if any(
+            not item.finding_refs or not set(item.finding_refs) <= finding_ids
+            for item in insights
+        ):
+            raise DeskDownstreamReplayError("composed_authority_insight_provenance_invalid")
+        if self.sources is None:
+            raise DeskDownstreamReplayError("composed_authority_source_repository_missing")
+        qualifying = qualifying_evidence(
+            design=design, evidence=evidence, brief=brief,
+            source_repository=self.sources,
+        )
+        qualifying_by_id = {item.id: item for item in qualifying}
+        findings = [
+            item for item in findings
+            if item.evidence_refs
+            and set(item.evidence_refs) <= set(qualifying_by_id)
+        ]
+        plan = build_h3_coverage_plan(
+            design=design,
+            required_information_need_ids=tuple(sorted(needs)),
+            findings=tuple(findings),
+            evidence_by_id=qualifying_by_id,
+            insights=tuple(insights),
+        )
+        if not plan.is_fully_fillable:
+            raise DeskDownstreamReplayError(
+                "composed_authority_insufficient_coverage:"
+                + ",".join(item.information_need_id for item in plan.unfillable_required_information_needs)
+            )
+        payload = {
+            "version": REPLAY_IDENTITY_VERSION,
+            "project_id": project.id,
+            "parent_workflow_run_id": source.id,
+            "research_design_id": design.id,
+            "composition_id": composition.composition_id,
+            "composition_digest": composition.composition_digest,
+            "member_workflow_run_ids": sorted(members),
+            "report_contract_version": self.desk_report_contract_version,
+        }
+        identity = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        return composition, identity
 
     def _validate_source(self, project, source_id):
         source = self.workflows.get_workflow_run(source_id)
