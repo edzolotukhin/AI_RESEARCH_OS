@@ -163,21 +163,7 @@ class WorkflowEngine:
             source_repository=self._source_repository,
         )
         context.write_shared("analysis_coverage", coverage.to_dict())
-        if not coverage.fully_covered:
-            context.write_shared("research_product_outcome", {
-                "outcome": "INSUFFICIENT",
-                "derivation_version": "p8d3-v1",
-                "authoritative_post_analysis": True,
-                "unresolved_information_need_ids": list(coverage.missing_information_need_ids),
-                "reason": "analysis_coverage_incomplete",
-            })
-            self._scheduler.skip_definition_ids(
-                context.workflow_run, DOWNSTREAM_TASK_DEFINITION_IDS,
-            )
-            return
         readiness = context.read_shared("research_readiness")
-        if not isinstance(readiness, dict):
-            return
         outcome, unresolved = derive_authoritative_outcome(
             required_information_need_ids=(item.id for item in design.information_needs),
             readiness_payload=readiness,
@@ -186,7 +172,20 @@ class WorkflowEngine:
             project_id=context.project.id,
             workflow_run_id=context.workflow_run.id,
             research_design_id=design.id,
+            coverage_missing_information_need_ids=coverage.missing_information_need_ids,
         )
+        if not coverage.fully_covered:
+            context.write_shared("research_product_outcome", {
+                "outcome": outcome,
+                "derivation_version": "p8d3-v1",
+                "authoritative_post_analysis": True,
+                "unresolved_information_need_ids": list(unresolved),
+                "reason": "analysis_coverage_incomplete",
+            })
+            self._scheduler.skip_definition_ids(
+                context.workflow_run, DOWNSTREAM_TASK_DEFINITION_IDS,
+            )
+            return
         if outcome != "INSUFFICIENT":
             return
         context.write_shared("research_product_outcome", {

@@ -89,8 +89,12 @@ class AnalysisCoverageGateTests(unittest.TestCase):
             workflow_template=_h3_template(),
             workflow_run=run,
         )
+        resolver_result = (
+            ("INSUFFICIENT", ("in-2",))
+            if not coverage.fully_covered else ("COMPLETED", ())
+        )
         with patch("application.workflow_engine.assess_analysis_coverage", return_value=coverage), \
-             patch("application.workflow_engine.derive_authoritative_outcome", return_value=("COMPLETED", ())):
+             patch("application.workflow_engine.derive_authoritative_outcome", return_value=resolver_result):
             result = engine.run(context)
         return result, recorder
 
