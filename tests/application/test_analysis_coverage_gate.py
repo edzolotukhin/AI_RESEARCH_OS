@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from application.analysis.analysis_coverage_service import AnalysisCoverageResult
+from application.report.contract_selection import DESK_REPORT_CONTRACT_PIN, H3_REPORT_CONTRACT
 from application.runtime.task_result_codec import capture_task_result, restore_runtime_state
 from application.runtime.workflow_completion_policy import WorkflowCompletionPolicy
 from application.task_executor import TaskExecutor
@@ -35,6 +36,8 @@ def _h3_template() -> WorkflowTemplate:
 class _AnalysisExecutor:
     def run(self, context: WorkflowContext) -> WorkflowContext:
         context.write_shared("research_readiness", {"ready_for_analysis": True})
+        if context.workflow_template is not None and context.workflow_template.name == "H3":
+            context.write_shared(DESK_REPORT_CONTRACT_PIN, H3_REPORT_CONTRACT)
         return context
 
 
@@ -89,6 +92,7 @@ class AnalysisCoverageGateTests(unittest.TestCase):
             workflow_template=_h3_template(),
             workflow_run=run,
         )
+        context.write_shared(DESK_REPORT_CONTRACT_PIN, H3_REPORT_CONTRACT)
         resolver_result = (
             ("INSUFFICIENT", ("in-2",))
             if not coverage.fully_covered else ("COMPLETED", ())
@@ -187,6 +191,7 @@ class AnalysisCoverageGateTests(unittest.TestCase):
             workflow_template=_h3_template(),
             workflow_run=run,
         )
+        context.write_shared(DESK_REPORT_CONTRACT_PIN, H3_REPORT_CONTRACT)
         with patch("application.workflow_engine.assess_analysis_coverage") as assess:
             with self.assertRaises(RuntimeError):
                 engine.run(context)

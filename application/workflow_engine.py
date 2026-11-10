@@ -201,15 +201,12 @@ class WorkflowEngine:
 
     @staticmethod
     def _is_h3_workflow(context: WorkflowContext) -> bool:
-        template = context.workflow_template
-        if template is None:
-            return False
-        definition_ids = {item.id for item in template.task_definitions}
-        return {
-            "task-review-report-1",
-            "task-revise-report",
-            "task-review-report-2",
-        }.issubset(definition_ids)
+        from application.report.contract_selection import (
+            DESK_REPORT_CONTRACT_PIN,
+            H3_REPORT_CONTRACT,
+        )
+
+        return context.read_shared(DESK_REPORT_CONTRACT_PIN) == H3_REPORT_CONTRACT
 
     def execute(
         self,

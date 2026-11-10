@@ -107,12 +107,17 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
         task_results = container.workflow_service.get_task_results(run_id)
         readiness = extract_research_readiness(task_results)
         persisted_outcome = extract_research_product_outcome(task_results)
-        analysis_coverage = next(
+        coverage_snapshots = [
             snapshot["shared_state"]["analysis_coverage"]
             for snapshot in task_results.values()
             if isinstance(snapshot, dict)
             and "analysis_coverage" in snapshot.get("shared_state", {})
+        ]
+        self.assertTrue(
+            coverage_snapshots,
+            f"Persisted analysis_coverage missing; task result keys={tuple(task_results)}",
         )
+        analysis_coverage = coverage_snapshots[0]
         self.assertFalse(analysis_coverage["fully_covered"])
         self.assertEqual(
             set(analysis_coverage["missing_information_need_ids"]),
@@ -169,12 +174,17 @@ class ProductionStageExecutorHonestyPostgreSQLTests(PostgreSQLIntegrationTestCas
                 self.assertEqual(fresh_tasks[definition_id], "skipped")
         fresh_persisted = extract_research_product_outcome(fresh_task_results)
         self.assertEqual(fresh_persisted["outcome"], "INSUFFICIENT")
-        fresh_analysis_coverage = next(
+        fresh_coverage_snapshots = [
             snapshot["shared_state"]["analysis_coverage"]
             for snapshot in fresh_task_results.values()
             if isinstance(snapshot, dict)
             and "analysis_coverage" in snapshot.get("shared_state", {})
+        ]
+        self.assertTrue(
+            fresh_coverage_snapshots,
+            f"Fresh-container analysis_coverage missing; task result keys={tuple(fresh_task_results)}",
         )
+        fresh_analysis_coverage = fresh_coverage_snapshots[0]
         self.assertEqual(fresh_analysis_coverage, analysis_coverage)
         self.assertEqual(
             set(fresh_persisted["unresolved_information_need_ids"]),
