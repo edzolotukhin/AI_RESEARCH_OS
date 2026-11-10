@@ -16,7 +16,7 @@
         {% if view is defined and view.project_id is defined %}
         <span>ПРОЄКТ</span>
         <a class="{{ 'active' if request.url.path == '/ui/projects/' ~ view.project_id else '' }}" href="/ui/projects/{{ view.project_id }}">Огляд</a>
-        {% for method in view.methods|default(()) %}{% if method.primary_action is defined %}<a href="{{ method.primary_action.href }}">{{ method.name }}</a>{% elif method.href is defined and method.href %}<a href="{{ method.href }}">{{ method.name }}</a>{% endif %}{% endfor %}
+        {% for method in view.methods|default(()) %}{% if method.primary_action is defined %}<a href="{{ method.open_action.href if method.open_action else method.primary_action.href }}">{{ method.name }}</a>{% elif method.href is defined and method.href %}<a href="{{ method.href }}">{{ method.name }}</a>{% endif %}{% endfor %}
         <a class="{{ 'active' if '/outputs' in request.url.path else '' }}" href="/ui/projects/{{ view.project_id }}/outputs">Результати</a>
         <a href="/ui/projects/{{ view.project_id }}/outputs#activity">Активність</a>
         {% if view.can_manage_access|default(false) %}<a href="/ui/projects/{{ view.project_id }}/members">Доступ до проєкту</a>{% endif %}
