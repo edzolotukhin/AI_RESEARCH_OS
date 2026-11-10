@@ -841,6 +841,7 @@ def create_application_container(
         evidence=evidence_repository, findings=finding_repository,
         insights=insight_repository, activation_sessions=persistence.activation_sessions,
         composed_authorities=persistence.composed_authority_repository,
+        sources=source_repository,
         desk_report_contract_version=config.desk_report_contract_version,
     )
 

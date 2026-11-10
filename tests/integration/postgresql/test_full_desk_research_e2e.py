@@ -19,7 +19,8 @@ from application.ports.evidence_ports import EvidenceCandidate
 from application.ports.source_ports import SearchProvider, SourceRetriever
 from application.report.h3_coverage_plan import build_h3_coverage_plan
 from application.report.typed_rendering import H3_CONTRACT_VERSION
-from application.authority_extension import COMPOSED_AUTHORITY_KEY
+from application.authority_extension import COMPOSED_AUTHORITY_KEY, build_composition
+from application.replay.desk_downstream_replay import DeskDownstreamReplayError
 from application.evidence.grounding import verify_grounding
 from domain.evidence.evidence import Evidence
 from domain.evidence.evidence_type import EvidenceType
@@ -533,6 +534,35 @@ class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
             out.joinpath("report.pdf").write_bytes(pdf_bytes)
             out.joinpath("report.pptx").write_bytes(pptx_bytes)
             out.joinpath("qualification.json").write_text(json.dumps({"outcome": "PARTIAL", "unresolved": [NEEDS[2]], "values": [42, 47]}), encoding="utf-8")
+
+    def test_incomplete_composed_authority_is_rejected_before_replay(self):
+        design = _design()
+        container = create_application_container(
+            config=postgresql_application_config(
+                background_execution_mode="external",
+                search_provider="deterministic", evidence_extractor="deterministic",
+                analysis_engine="deterministic", report_engine="deterministic",
+                review_engine="deterministic", desk_report_contract_version=H3_CONTRACT_VERSION,
+            ),
+        )
+        self.addCleanup(container.shutdown)
+        container.agency.initialize()
+        project = self._parent(container, design)
+        composition = build_composition(
+            composition_id="incomplete-composition", project_id=PROJECT,
+            research_design_id=design.id, parent_source_workflow_run_id=PARENT,
+            member_workflow_run_ids=(PARENT,), selected_information_need_ids=NEEDS,
+            created_at=TS,
+        )
+        container.authority_extension_service.compositions.create_or_get(composition)
+        with self.assertRaisesRegex(DeskDownstreamReplayError, "insufficient_coverage"):
+            container.desk_downstream_replay_service.start(
+                project_id=PROJECT, source_run_id=PARENT, owner_id="owner",
+            )
+        self.assertEqual(
+            [PARENT],
+            [run.id for run in container.workflow_service.list_workflow_runs_for_project(PROJECT)],
+        )
 
     def test_full_provider_free_extension_to_h3_delivery(self):
         design = _design(); search = _Search(); extractor = _EvidenceExtractor(design)
