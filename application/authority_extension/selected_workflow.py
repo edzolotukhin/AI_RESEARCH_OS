@@ -13,7 +13,11 @@ from uuid import uuid4
 
 from application.authority_extension.identity import build_composition, canonical_gap_digest
 from domain.planning.research_design import ResearchDesign, TemporalGranularity
-from domain.research_authority import AuthorityExtensionStatus, ResearchAuthorityExtension
+from domain.research_authority import (
+    AuthorityExtensionExecutionMode,
+    AuthorityExtensionStatus,
+    ResearchAuthorityExtension,
+)
 from domain.task_definition import TaskDefinition
 from domain.value_objects.executor_type import ExecutorType
 from domain.workflow_template import WorkflowTemplate
@@ -28,6 +32,7 @@ EXTENSION_EXECUTORS = tuple(f"authority-{stage.replace('_', '-')}" for stage in 
 SEARCH_BUDGET_MAX = 12
 PROVIDER_BUDGET_MAX = 7
 MAX_CONSERVATIVE_ANALYSIS_FINDING_BATCHES = 2
+EXISTING_QUALIFYING_EVIDENCE_ONLY = AuthorityExtensionExecutionMode.EXISTING_QUALIFYING_EVIDENCE_ONLY.value
 
 
 class ExtensionContractError(ValueError):
@@ -180,6 +185,8 @@ class ExtensionState:
     external_attempts: tuple[ExternalAttempt, ...] = ()
     remediation_terminal_reason: str = ""
     analysis_gate_open: bool = False
+    execution_mode: str = AuthorityExtensionExecutionMode.BOUNDED_RESEARCH.value
+    coverage_diagnostics: tuple[tuple[str, str], ...] = ()
 
 
 class ExtensionStateStore(Protocol):
@@ -445,6 +452,8 @@ def _state_to_dict(state: ExtensionState) -> dict[str, Any]:
         "external_attempts": [item.__dict__ for item in state.external_attempts],
         "remediation_terminal_reason": state.remediation_terminal_reason,
         "analysis_gate_open": state.analysis_gate_open,
+        "execution_mode": state.execution_mode,
+        "coverage_diagnostics": [list(item) for item in state.coverage_diagnostics],
     }
 
 
@@ -489,6 +498,12 @@ def _state_from_dict(payload: dict[str, Any]) -> ExtensionState:
         ),
         remediation_terminal_reason=str(payload.get("remediation_terminal_reason", "")),
         analysis_gate_open=bool(payload.get("analysis_gate_open", False)),
+        execution_mode=str(payload.get("execution_mode", AuthorityExtensionExecutionMode.BOUNDED_RESEARCH.value)),
+        coverage_diagnostics=tuple(
+            (str(item[0]), str(item[1]))
+            for item in payload.get("coverage_diagnostics", ())
+            if isinstance(item, (list, tuple)) and len(item) == 2
+        ),
     )
 
 
@@ -766,13 +781,25 @@ class SelectedAuthorityExtensionService:
 
     def start(self, *, project_id: str, parent_workflow_run_id: str,
               design: ResearchDesign, selected_information_need_ids: Iterable[str],
-              idempotency_key: str, confirmed: bool) -> ResearchAuthorityExtension:
+              idempotency_key: str, confirmed: bool,
+              execution_mode: str = AuthorityExtensionExecutionMode.BOUNDED_RESEARCH.value) -> ResearchAuthorityExtension:
         if not confirmed:
             raise ExtensionContractError("explicit confirmation is required")
+        try:
+            mode = AuthorityExtensionExecutionMode(execution_mode)
+        except ValueError as exc:
+            raise ExtensionContractError("unsupported authority extension execution mode") from exc
         existing = self.extensions.get_by_idempotency_key(project_id, idempotency_key)
         if existing is not None:
+            existing_state = self.states.load(existing.extension_workflow_run_id)
+            existing_mode = (
+                existing_state.execution_mode
+                if existing_state is not None
+                else AuthorityExtensionExecutionMode.BOUNDED_RESEARCH.value
+            )
             if (existing.parent_source_workflow_run_id != parent_workflow_run_id or
                     existing.research_design_id != design.id or
+                existing_mode != mode.value or
                     existing.selected_information_need_ids != tuple(sorted(set(selected_information_need_ids)))):
                 raise ExtensionContractError("idempotency key payload conflict")
             return existing
@@ -812,6 +839,7 @@ class SelectedAuthorityExtensionService:
             selected_information_need_ids=tuple(gap.information_need_id for gap in gaps),
             gap_contract_digest=gap_contract_digest,
             idempotency_key=idempotency_key, created_at=datetime.now(UTC).isoformat(),
+            execution_mode=mode,
         )
         try:
             stored = self.extensions.create_or_get(extension)
@@ -823,7 +851,10 @@ class SelectedAuthorityExtensionService:
             # PAUSED run owns no artifacts and is safe to compensate.
             self.workflows.delete_workflow_run(run_id)
             return stored
-        self.states.save(ExtensionState(stored.extension_id, stored.extension_workflow_run_id, gaps))
+        self.states.save(ExtensionState(
+            stored.extension_id, stored.extension_workflow_run_id, gaps,
+            execution_mode=stored.execution_mode.value,
+        ))
         return stored
 
     def activate(self, extension_id: str) -> ResearchAuthorityExtension:
@@ -934,7 +965,14 @@ class SelectedAuthorityExtensionService:
                 and latest.budget.analysis_reserved > 0
                 and latest.budget.analysis_used < latest.budget.analysis_reserved
             )
-            return replace(latest, outcomes=outcomes, analysis_gate_open=allowed)
+            return replace(
+                latest,
+                outcomes=outcomes,
+                analysis_gate_open=allowed,
+                coverage_diagnostics=tuple(
+                    (need_id, outcome.value) for need_id, outcome in outcomes
+                ),
+            )
         updated = self.states.atomic_update(workflow_run_id, update)
         if any(item.status == "pending" for item in updated.external_attempts):
             return False, "ambiguous_external_attempt"
@@ -968,7 +1006,14 @@ class SelectedAuthorityExtensionService:
     def evaluate(self, workflow_run_id: str) -> ExtensionState:
         return self.states.atomic_update(
             workflow_run_id,
-            lambda state: replace(state, outcomes=self._evaluate_outcomes(state)),
+            lambda state: replace(
+                state,
+                outcomes=self._evaluate_outcomes(state),
+                coverage_diagnostics=tuple(
+                    (need_id, outcome.value)
+                    for need_id, outcome in self._evaluate_outcomes(state)
+                ),
+            ),
         )
 
     @staticmethod

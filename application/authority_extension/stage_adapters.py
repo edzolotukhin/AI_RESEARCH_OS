@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from application.authority_extension.selected_workflow import (
-    AuthorityObservation, ExtensionContractError, ExtensionFinding,
+    EXISTING_QUALIFYING_EVIDENCE_ONLY, AuthorityObservation, ExtensionContractError, ExtensionFinding,
 )
 from application.authority_extension.remediation import evidence_observation
 from application.contracts.base_executor import BaseExecutor
@@ -180,6 +180,7 @@ class AuthorityExtensionStageExecutor(BaseExecutor):
 
     def _run_in_scope(self, context: WorkflowContext) -> WorkflowContext:
         run_id = context.workflow_run.id
+        execution_mode = self.service._state(run_id).execution_mode
         try:
             if self.stage == "extension_plan":
                 state = self.service._state(run_id)
@@ -195,6 +196,10 @@ class AuthorityExtensionStageExecutor(BaseExecutor):
                         extension.extension_workflow_run_id,
                     ],
                 })
+            elif self.stage in {"extension_search", "extension_evidence"} and execution_mode == EXISTING_QUALIFYING_EVIDENCE_ONLY:
+                # Existing-evidence mode deliberately consumes only persisted parent
+                # authority; acquisition and extraction are not entered.
+                pass
             elif self.stage in {"extension_search", "extension_evidence"}:
                 if self.delegate is None:
                     raise ExtensionContractError("extension stage delegate unavailable")
@@ -208,7 +213,9 @@ class AuthorityExtensionStageExecutor(BaseExecutor):
                 if self.stage == "extension_evidence":
                     self._capture_evidence(context)
             elif self.stage == "extension_readiness":
-                if self.remediation_adapter is not None:
+                if execution_mode == EXISTING_QUALIFYING_EVIDENCE_ONLY:
+                    self._capture_evidence(context)
+                elif self.remediation_adapter is not None:
                     token = _extension_dispatch.set((self.service, run_id, "evidence"))
                     context_token = _extension_runtime_context.set(context)
                     try:

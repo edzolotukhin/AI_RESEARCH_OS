@@ -1,3 +1,13 @@
-from .extension import AuthorityExtensionStatus, ComposedResearchAuthority, ResearchAuthorityExtension
+from .extension import (
+    AuthorityExtensionExecutionMode,
+    AuthorityExtensionStatus,
+    ComposedResearchAuthority,
+    ResearchAuthorityExtension,
+)
 
-__all__ = ["AuthorityExtensionStatus", "ComposedResearchAuthority", "ResearchAuthorityExtension"]
+__all__ = [
+    "AuthorityExtensionExecutionMode",
+    "AuthorityExtensionStatus",
+    "ComposedResearchAuthority",
+    "ResearchAuthorityExtension",
+]

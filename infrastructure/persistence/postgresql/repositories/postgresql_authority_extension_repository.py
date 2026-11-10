@@ -6,7 +6,19 @@ from infrastructure.persistence.postgresql.models.workflow_run_model import Work
 
 
 def _extension(model):
-    return ResearchAuthorityExtension(model.extension_id, model.project_id, model.research_design_id, model.parent_source_workflow_run_id, model.extension_workflow_run_id, tuple(model.selected_information_need_ids), model.gap_contract_digest, model.idempotency_key, model.created_at, model.status, model.terminal_reason)
+    return ResearchAuthorityExtension(
+        extension_id=model.extension_id,
+        project_id=model.project_id,
+        research_design_id=model.research_design_id,
+        parent_source_workflow_run_id=model.parent_source_workflow_run_id,
+        extension_workflow_run_id=model.extension_workflow_run_id,
+        selected_information_need_ids=tuple(model.selected_information_need_ids),
+        gap_contract_digest=model.gap_contract_digest,
+        idempotency_key=model.idempotency_key,
+        created_at=model.created_at,
+        status=model.status,
+        terminal_reason=model.terminal_reason,
+    )
 
 
 class PostgreSQLAuthorityExtensionRepository:
@@ -15,7 +27,11 @@ class PostgreSQLAuthorityExtensionRepository:
         with self._session_factory.session() as session:
             existing = session.scalar(select(AuthorityExtensionModel).where(AuthorityExtensionModel.project_id == extension.project_id, AuthorityExtensionModel.idempotency_key == extension.idempotency_key))
             if existing: return _extension(existing)
-            session.add(AuthorityExtensionModel(**extension.to_dict()))
+            payload = extension.to_dict()
+            # Execution mode is durable in the workflow extension state. Keep
+            # the pre-existing authority table schema migration-free.
+            payload.pop("execution_mode", None)
+            session.add(AuthorityExtensionModel(**payload))
             return extension
     def get_by_id(self, extension_id):
         with self._session_factory.session() as session:

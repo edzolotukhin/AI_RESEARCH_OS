@@ -17,6 +17,11 @@ class AuthorityExtensionStatus(StrEnum):
     FAILED = "failed"
 
 
+class AuthorityExtensionExecutionMode(StrEnum):
+    BOUNDED_RESEARCH = "BOUNDED_RESEARCH"
+    EXISTING_QUALIFYING_EVIDENCE_ONLY = "EXISTING_QUALIFYING_EVIDENCE_ONLY"
+
+
 @dataclass(frozen=True)
 class ResearchAuthorityExtension:
     extension_id: str
@@ -30,6 +35,7 @@ class ResearchAuthorityExtension:
     created_at: str
     status: AuthorityExtensionStatus = AuthorityExtensionStatus.CREATED
     terminal_reason: str | None = None
+    execution_mode: AuthorityExtensionExecutionMode = AuthorityExtensionExecutionMode.BOUNDED_RESEARCH
 
     def __post_init__(self) -> None:
         for name in ("extension_id", "project_id", "research_design_id", "parent_source_workflow_run_id", "extension_workflow_run_id", "gap_contract_digest", "idempotency_key", "created_at"):
@@ -43,10 +49,11 @@ class ResearchAuthorityExtension:
         object.__setattr__(self, "selected_information_need_ids", needs)
         if self.parent_source_workflow_run_id == self.extension_workflow_run_id:
             raise ValidationError("extension workflow must differ from parent source workflow")
+        object.__setattr__(self, "execution_mode", AuthorityExtensionExecutionMode(self.execution_mode))
         object.__setattr__(self, "status", AuthorityExtensionStatus(self.status))
 
     def to_dict(self) -> dict[str, Any]:
-        return {"extension_id": self.extension_id, "project_id": self.project_id, "research_design_id": self.research_design_id, "parent_source_workflow_run_id": self.parent_source_workflow_run_id, "extension_workflow_run_id": self.extension_workflow_run_id, "selected_information_need_ids": list(self.selected_information_need_ids), "gap_contract_digest": self.gap_contract_digest, "idempotency_key": self.idempotency_key, "created_at": self.created_at, "status": self.status.value, "terminal_reason": self.terminal_reason}
+        return {"extension_id": self.extension_id, "project_id": self.project_id, "research_design_id": self.research_design_id, "parent_source_workflow_run_id": self.parent_source_workflow_run_id, "extension_workflow_run_id": self.extension_workflow_run_id, "selected_information_need_ids": list(self.selected_information_need_ids), "gap_contract_digest": self.gap_contract_digest, "idempotency_key": self.idempotency_key, "created_at": self.created_at, "execution_mode": self.execution_mode.value, "status": self.status.value, "terminal_reason": self.terminal_reason}
 
 
 @dataclass(frozen=True)
