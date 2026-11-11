@@ -102,6 +102,7 @@ def extract_xlsx_text(
         "workbook_truncated": False,
         "sheets_skipped_for_bounds": 0,
         "rows_skipped_for_bounds": 0,
+        "structured_rows": [],
     }
 
     if not data:
@@ -183,6 +184,7 @@ def _render_workbook(
         meta["rows_processed"] += sheet_stats["rows_processed"]
         meta["cells_processed"] += sheet_stats["cells_processed"]
         meta["rows_skipped_for_bounds"] += sheet_stats["rows_skipped_for_bounds"]
+        meta["structured_rows"].extend(sheet_stats.get("structured_rows", []))
         if sheet_stats["truncated"]:
             meta["workbook_truncated"] = True
 
@@ -230,6 +232,7 @@ def _render_sheet(
         "cells_processed": 0,
         "rows_skipped_for_bounds": 0,
         "truncated": False,
+        "structured_rows": [],
     }
 
     merge_map = _build_merge_map(sheet)
@@ -268,6 +271,19 @@ def _render_sheet(
 
         stats["rows_processed"] += 1
         stats["cells_processed"] += len(nonempty)
+        structured = {
+            "sheet": sheet_name,
+            "row": row_idx,
+            "cells": [
+                {"column": col, "header": headers[col - 1] if col - 1 < len(headers) else f"col_{col}", "value": value}
+                for col, value in nonempty
+            ],
+        }
+        for cell in structured["cells"]:
+            if isinstance(cell["value"], str) and re.fullmatch(r"(?:19|20)\d{2}", cell["value"]):
+                structured["period"] = int(cell["value"])
+                break
+        stats["structured_rows"].append(structured)
 
         if table_mode and row_idx > header_end and any(headers):
             parts = [f'Sheet="{sheet_name}"']

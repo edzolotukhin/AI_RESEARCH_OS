@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from urllib.parse import urlsplit
 
 import httpx
@@ -20,6 +21,7 @@ from infrastructure.retrieval.xlsx_text_extractor import (
     is_xlsx_content_type,
     looks_like_xlsx_url,
 )
+from infrastructure.retrieval.link_discovery import discover_links
 
 
 RETRIEVAL_FAILURE_CATEGORIES = {
@@ -130,7 +132,36 @@ class HttpSourceRetriever(SourceRetriever):
                 content_type=content_type,
             )
 
-        if self._should_extract_xlsx(content_type=content_type, url=final_url):
+        navigation = _navigation_metadata(candidate)
+        if content_type.startswith("text/html") and navigation["enabled"] and navigation["depth"] < navigation["max_depth"]:
+            terms = tuple(navigation["terms"])
+            links = discover_links(text_body := response.text, base_url=final_url, terms=terms)
+            visited = set(navigation["visited"])
+            visited.add(final_url)
+            for link in links[: navigation["max_links"]]:
+                if link.url in visited:
+                    continue
+                next_metadata = dict(candidate.metadata)
+                next_metadata.update({
+                    "navigation_enabled": "1",
+                    "navigation_depth": str(navigation["depth"] + 1),
+                    "navigation_max_depth": str(navigation["max_depth"]),
+                    "navigation_max_links": str(navigation["max_links"]),
+                    "navigation_terms": "|".join(terms),
+                    "navigation_visited": "|".join((*visited, final_url, link.url)),
+                })
+                terminal = self.retrieve(replace(candidate, url=link.url, metadata=next_metadata))
+                if terminal.retrieval_status in {RetrievalStatus.ACQUIRED, RetrievalStatus.TRUNCATED} and terminal.content_text:
+                    metadata = dict(terminal.metadata)
+                    chain = metadata.get("navigation_chain")
+                    if not isinstance(chain, list):
+                        chain = [*navigation["visited"], final_url, link.url]
+                    metadata["navigation_chain"] = list(dict.fromkeys(chain))
+                    metadata.setdefault("navigation_selected_link", {"url": link.url, "text": link.text, "hint": link.resource_hint})
+                    terminal.metadata = metadata
+                    return terminal
+
+        if self._should_extract_xlsx(content_type=content_type, url=final_url, body=body):
             return self._acquire_xlsx(
                 candidate=candidate,
                 retrieved_at=now,
@@ -230,7 +261,7 @@ class HttpSourceRetriever(SourceRetriever):
             metadata=metadata,
         )
 
-    def _should_extract_xlsx(self, *, content_type: str, url: str) -> bool:
+    def _should_extract_xlsx(self, *, content_type: str, url: str, body: bytes = b"") -> bool:
         if is_xlsx_content_type(content_type):
             return True
         # Defensive fallback: .xlsx URL with ambiguous/octet-stream MIME.
@@ -244,6 +275,10 @@ class HttpSourceRetriever(SourceRetriever):
             }
             or is_xlsx_content_type(content_type)
         ):
+            return True
+        if body[:2] == b"PK" and content_type in {
+            "application/octet-stream", "binary/octet-stream", "application/zip", ""
+        }:
             return True
         return False
 
@@ -401,3 +436,21 @@ def _utc_now_iso() -> str:
 
 def _content_checksum(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _navigation_metadata(candidate: SourceCandidate) -> dict[str, object]:
+    metadata = candidate.metadata or {}
+    enabled = str(metadata.get("navigation_enabled", "0")).casefold() in {"1", "true", "yes"}
+    def integer(name: str, default: int) -> int:
+        try:
+            return max(0, int(metadata.get(name, default)))
+        except (TypeError, ValueError):
+            return default
+    return {
+        "enabled": enabled,
+        "depth": integer("navigation_depth", 0),
+        "max_depth": min(3, integer("navigation_max_depth", 3)),
+        "max_links": min(10, integer("navigation_max_links", 5)),
+        "terms": tuple(item for item in str(metadata.get("navigation_terms", "")).split("|") if item),
+        "visited": tuple(item for item in str(metadata.get("navigation_visited", "")).split("|") if item),
+    }
