@@ -1126,6 +1126,17 @@ class EvidenceExtractionService:
         if existing is not None:
             return existing.id, True
 
+        source_locator = locator.to_dict()
+        structured_sheet = candidate.metadata.get("sheet")
+        structured_row = candidate.metadata.get("row")
+        structured_cells = candidate.metadata.get("cells")
+        if structured_sheet is not None and structured_row is not None and isinstance(structured_cells, list):
+            source_locator.update({
+                "sheet": structured_sheet,
+                "row": structured_row,
+                "columns": [cell.get("column") for cell in structured_cells if isinstance(cell, dict)],
+            })
+
         evidence = Evidence(
             id=str(uuid4()),
             project_id=project_id,
@@ -1138,7 +1149,7 @@ class EvidenceExtractionService:
             evidence_type=EvidenceType(candidate.evidence_type),
             statement=candidate.statement,
             source_excerpt=candidate.source_excerpt,
-            source_locator=locator.to_dict(),
+            source_locator=source_locator,
             extraction_method=getattr(self._evidence_extractor, "method_name", "unknown"),
             confidence=candidate.confidence,
             quality_signals={

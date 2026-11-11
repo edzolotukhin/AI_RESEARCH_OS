@@ -40,7 +40,7 @@ class DeterministicEvidenceExtractor(EvidenceExtractor):
                     continue
                 period = int(row["period"])
                 values = " | ".join(f"{cell.get('header')}={cell.get('value')}" for cell in cells if isinstance(cell, dict))
-                excerpt = f"Sheet=\"{row.get('sheet')}\" " + " | ".join(
+                excerpt = f"Sheet=\"{row.get('sheet')}\" | " + " | ".join(
                     f"{cell.get('header')}={cell.get('value')}"
                     for cell in cells if isinstance(cell, dict)
                 )
