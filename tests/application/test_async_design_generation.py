@@ -157,6 +157,7 @@ class AsyncDesignGenerationTests(unittest.TestCase):
             workflow_template=WorkflowTemplate(
                 id=f"project-design:{project.id}:{fingerprint}",
                 name="Project design generation",
+                research_brief_snapshot=project.research_brief,
             ),
         )
 
@@ -183,6 +184,17 @@ class AsyncDesignGenerationTests(unittest.TestCase):
         )
         context = executor.run(context)
         self.assertEqual(context.read_shared("design_generation")["design_id"], "design-1")
+
+    def test_changed_brief_is_rejected_against_immutable_template_snapshot(self):
+        project = self._project()
+        executor, context = self._executor(
+            project,
+            planner=SimpleNamespace(run=lambda context: self.fail("planner must not run")),
+            projects=SimpleNamespace(),
+        )
+        project.research_brief = ResearchBrief(title="Changed", business_question="Q")
+        with self.assertRaisesRegex(ValueError, "Бриф змінився"):
+            executor.run(context)
 
     def test_unresolved_design_same_fingerprint_is_explicitly_regenerated(self):
         project = self._project()
