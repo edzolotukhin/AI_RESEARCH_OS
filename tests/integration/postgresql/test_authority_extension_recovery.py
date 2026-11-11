@@ -3,6 +3,7 @@ from __future__ import annotations
 import concurrent.futures
 import unittest
 from datetime import datetime, timedelta, timezone
+from contextlib import contextmanager
 
 from sqlalchemy import select, update
 
@@ -54,6 +55,15 @@ class AuthorityExtensionRecoveryPostgreSQLTests(PostgreSQLIntegrationTestCase):
 
     def _repo(self):
         return PostgreSQLAuthorityExtensionRepository(DatabaseSessionFactory(self.engine))
+
+    def _args(self, **overrides):
+        values = {
+            "project_id": "project", "extension_id": "extension",
+            "expected_workflow_run_id": "extension-run",
+            "failure_class": "RuntimeError", "reason": "test", "dry_run": False,
+        }
+        values.update(overrides)
+        return values
 
     def test_apply_and_fresh_reload(self):
         result = self._repo().reconcile_failed_active(
@@ -111,4 +121,80 @@ class AuthorityExtensionRecoveryPostgreSQLTests(PostgreSQLIntegrationTestCase):
         )
         self.assertEqual(refused["code"], "active_execution_lease")
         self.assertEqual(self._repo().get_by_id("extension").status.value, "active")
+
+    def test_rollback_after_status_update_leaves_no_partial_rows(self):
+        base = DatabaseSessionFactory(self.engine)
+
+        class FailingFactory:
+            def __init__(self, delegate):
+                self.delegate = delegate
+                self.failed = False
+
+            @contextmanager
+            def session(self):
+                session = self.delegate._session_factory()
+                try:
+                    yield session
+                    if not self.failed:
+                        self.failed = True
+                        raise RuntimeError("injected post-update failure")
+                    session.commit()
+                except Exception:
+                    session.rollback()
+                    raise
+                finally:
+                    session.close()
+
+        failing = FailingFactory(base)
+        with self.assertRaisesRegex(RuntimeError, "injected"):
+            PostgreSQLAuthorityExtensionRepository(failing).reconcile_failed_active(**self._args())
+        with self.engine.connect() as connection:
+            status = connection.exec_driver_sql(
+                "SELECT status FROM research_authority_extensions WHERE extension_id='extension'"
+            ).scalar_one()
+            audit = connection.exec_driver_sql(
+                "SELECT count(*) FROM execution_log_entries WHERE event_type='authority_extension_reconciled'"
+            ).scalar_one()
+        self.assertEqual(status, "active")
+        self.assertEqual(audit, 0)
+        self.assertEqual(self._repo().reconcile_failed_active(**self._args())["code"], "reconciled")
+
+    def test_foreign_project_and_wrong_linkage_are_rejected(self):
+        self.assertEqual(
+            self._repo().reconcile_failed_active(**self._args(project_id="foreign-project"))["code"],
+            "project_mismatch",
+        )
+        self.assertEqual(
+            self._repo().reconcile_failed_active(**self._args(expected_workflow_run_id="parent"))["code"],
+            "workflow_linkage_mismatch",
+        )
+        self.assertEqual(self._repo().get_by_id("extension").status.value, "active")
+        with self.engine.connect() as connection:
+            self.assertEqual(connection.exec_driver_sql(
+                "SELECT count(*) FROM execution_log_entries WHERE event_type='authority_extension_reconciled'"
+            ).scalar_one(), 0)
+
+    def test_nonterminal_task_is_rejected_and_terminal_tasks_are_allowed(self):
+        with self.engine.begin() as connection:
+            connection.exec_driver_sql(
+                "UPDATE workflow_tasks SET status='running' WHERE workflow_run_id='extension-run'"
+            )
+        self.assertEqual(self._repo().reconcile_failed_active(**self._args())["code"], "nonterminal_task")
+        self.assertEqual(self._repo().get_by_id("extension").status.value, "active")
+        with self.engine.begin() as connection:
+            connection.exec_driver_sql(
+                "UPDATE workflow_tasks SET status='skipped' WHERE workflow_run_id='extension-run'"
+            )
+        self.assertEqual(self._repo().reconcile_failed_active(**self._args())["code"], "reconciled")
+
+    def test_terminal_failed_workflow_cannot_be_claimed_by_worker(self):
+        from infrastructure.persistence.postgresql.repositories.postgresql_workflow_run_execution_repository import (
+            PostgreSQLWorkflowRunExecutionRepository,
+        )
+        execution = PostgreSQLWorkflowRunExecutionRepository(DatabaseSessionFactory(self.engine))
+        self.assertIsNone(execution.try_claim_run(
+            "extension-run", worker_id="worker", lease_until=datetime.now(timezone.utc) + timedelta(minutes=5),
+            now=datetime.now(timezone.utc),
+        ))
+        self.assertEqual(self._repo().reconcile_failed_active(**self._args())["code"], "reconciled")
 
