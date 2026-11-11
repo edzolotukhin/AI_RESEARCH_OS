@@ -50,6 +50,37 @@ class AsyncDesignGenerationTests(unittest.TestCase):
             research_brief=ResearchBrief(title="T", business_question="Q"),
         )
 
+    def test_design_template_id_is_bounded_and_deterministic(self):
+        project_id = "18effb16-cc82-4c9d-92eb-d2da3312e5a6"
+        fingerprint = "f" * 64
+        first = ProjectPlanningService.design_template_id(project_id, fingerprint)
+        second = ProjectPlanningService.design_template_id(project_id, fingerprint)
+        self.assertEqual(first, second)
+        self.assertLessEqual(len(first), 64)
+        self.assertNotEqual(
+            first,
+            ProjectPlanningService.design_template_id("another-project", fingerprint),
+        )
+        self.assertNotEqual(
+            first,
+            ProjectPlanningService.design_template_id(project_id, "e" * 64),
+        )
+
+    def test_new_bounded_template_id_is_reused_for_active_generation(self):
+        project = self._project()
+        service = self._service(None)
+        fingerprint = service.input_fingerprint(project.research_brief, ("DESK",))
+        active = SimpleNamespace(
+            id="active",
+            workflow_template_id=service.design_template_id(project.id, fingerprint),
+            is_terminal=False,
+            status=WorkflowStatus.RUNNING,
+        )
+        durable = _Durable()
+        result = self._service(durable, [active]).schedule_design_generation(project)
+        self.assertIs(result, active)
+        self.assertEqual(durable.calls, [])
+
     def test_post_path_only_submits_durable_task(self):
         durable = _Durable()
         result = self._service(durable).schedule_design_generation(self._project())

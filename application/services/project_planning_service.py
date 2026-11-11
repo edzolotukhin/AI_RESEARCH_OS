@@ -166,7 +166,7 @@ class ProjectPlanningService:
         resolution = self.resolve_design_generation(project)
         if resolution.state == "active" and resolution.current_attempt is not None:
             return resolution.current_attempt
-        template_id = f"project-design:{project.id}:{fingerprint}"
+        template_id = self.design_template_id(project.id, fingerprint)
         template = WorkflowTemplate(
             id=template_id,
             name="Project design generation",
@@ -210,9 +210,13 @@ class ProjectPlanningService:
             == WorkflowKind.PROJECT_DESIGN
         ]
         attempts.sort(key=cls._design_attempt_order_key)
+        expected_template_id = cls.design_template_id(project.id, input_fingerprint)
         matching = [
             run for run in attempts
-            if cls._design_attempt_fingerprint(run) == input_fingerprint
+            if (
+                str(run.workflow_template_id) == expected_template_id
+                or cls._design_attempt_fingerprint(run) == input_fingerprint
+            )
         ]
         current = matching[-1] if matching else None
         historical = tuple(run for run in attempts if run is not current)
@@ -548,6 +552,12 @@ class ProjectPlanningService:
         except (EntityNotFoundError, AttributeError):
             return WorkflowKind.UNKNOWN
         return classify_workflow_template(template)
+
+    @staticmethod
+    def design_template_id(project_id: str, input_fingerprint: str) -> str:
+        """Return a stable workflow-template identity within VARCHAR(64)."""
+        source = f"project-design:{project_id}:{input_fingerprint}"
+        return f"project-design:{hashlib.sha256(source.encode('utf-8')).hexdigest()[:49]}"
 
     @staticmethod
     def _design_attempt_fingerprint(run) -> str:
