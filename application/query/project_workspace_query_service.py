@@ -9,6 +9,7 @@ from application.quantitative.workflow import build_quantitative_workflow_templa
 from domain.value_objects.task_status import TaskStatus
 from domain.research_method import DESK, QUANTITATIVE, QUALITATIVE
 from application.qualitative.service import QUAL_TEMPLATE
+from application.workflow_kind import WorkflowKind, classify_workflow_template
 
 
 class ProjectWorkspaceQueryService:
@@ -51,7 +52,12 @@ class ProjectWorkspaceQueryService:
             if snapshots:
                 quant_study = max(snapshots, key=lambda item: item.revision)
                 quant_run = run
-            elif run.workflow_template_id not in {quant_template_id, QUAL_TEMPLATE}:
+            elif (
+                run.workflow_template_id not in {quant_template_id, QUAL_TEMPLATE}
+                and classify_workflow_template(
+                    self.workflows.get_template(run.workflow_template_id)
+                ) != WorkflowKind.PROJECT_DESIGN
+            ):
                 desk_runs.append(run)
         ordered_desk_runs = self.planning._order_desk_attempts(
             desk_runs, project_id,

@@ -200,6 +200,31 @@ class Pf02MethodSelectionDesignGateTests(ApiTestCase):
             self.container.project_service.get_project(project_id).current_research_design
         )
 
+    def test_completed_design_run_does_not_appear_as_completed_desk_research(self):
+        project_id = self.create(("DESK",))
+        self.save_brief(project_id)
+        self.client.post(
+            f"/ui/projects/{project_id}/design/generate",
+            follow_redirects=False,
+        )
+        drain_background_runs(self.container)
+
+        page = self.client.get(f"/ui/projects/{project_id}")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Очікує затвердження дизайну", page.text)
+        self.assertNotIn("Запустити нове дослідження", page.text)
+        self.assertNotIn("/methods/DESK/retry", page.text)
+
+        project = self.container.project_service.get_project(project_id)
+        self.container.project_planning_service.approve_design(
+            project, actor_id=self.owner_id,
+            expected_design_id=project.current_research_design.id,
+        )
+        page = self.client.get(f"/ui/projects/{project_id}")
+        self.assertIn("Готове до запуску", page.text)
+        self.assertIn(f"/methods/DESK/activate", page.text)
+        self.assertNotIn("Завершено", page.text)
+
     def test_project_planning_passes_each_selected_method_shape(self):
         for methods in (("QUANTITATIVE",), ("DESK",), ("DESK", "QUANTITATIVE")):
             with self.subTest(methods=methods):
