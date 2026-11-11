@@ -1,8 +1,11 @@
+from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from domain.research_authority import ComposedResearchAuthority, ResearchAuthorityExtension
 from infrastructure.persistence.postgresql.models.authority_extension_model import AuthorityExtensionModel, ComposedAuthorityModel, ComposedAuthorityMemberModel
 from infrastructure.persistence.postgresql.models.workflow_run_model import WorkflowRunModel
+from infrastructure.persistence.postgresql.models.task_model import WorkflowTaskModel
+from infrastructure.persistence.postgresql.models.execution_log_model import ExecutionLogEntryModel
 
 
 def _extension(model):
@@ -62,6 +65,91 @@ class PostgreSQLAuthorityExtensionRepository:
                 raise ValueError("authority extension immutable identity mismatch")
             model.status = extension.status.value
             model.terminal_reason = extension.terminal_reason
+
+    def reconcile_failed_active(
+        self, *, project_id: str, extension_id: str,
+        expected_workflow_run_id: str, failure_class: str,
+        reason: str, dry_run: bool,
+    ) -> dict:
+        """Conditionally reconcile one stale extension in one transaction.
+
+        The workflow row is always locked before the extension row.  The same
+        checks are repeated under lock for apply, so the operator command never
+        relies on a stale preflight read.
+        """
+        now = datetime.now(timezone.utc)
+        with self._session_factory.session() as session:
+            workflow = session.scalar(
+                select(WorkflowRunModel).where(
+                    WorkflowRunModel.id == expected_workflow_run_id,
+                ).with_for_update()
+            )
+            if workflow is None:
+                return {"ok": False, "code": "workflow_not_found"}
+            extension = session.scalar(
+                select(AuthorityExtensionModel).where(
+                    AuthorityExtensionModel.extension_id == extension_id,
+                ).with_for_update()
+            )
+            if extension is None:
+                return {"ok": False, "code": "extension_not_found"}
+            if extension.project_id != project_id:
+                return {"ok": False, "code": "project_mismatch"}
+            if extension.extension_workflow_run_id != expected_workflow_run_id:
+                return {"ok": False, "code": "workflow_linkage_mismatch"}
+            if workflow.project_id != project_id:
+                return {"ok": False, "code": "workflow_project_mismatch"}
+            task_statuses = list(session.scalars(select(WorkflowTaskModel.status).where(
+                WorkflowTaskModel.workflow_run_id == expected_workflow_run_id,
+            )).all())
+            terminal = {"completed", "failed", "skipped", "cancelled", "paused"}
+            if workflow.status != "failed":
+                return {"ok": False, "code": "workflow_not_failed", "status": workflow.status}
+            if any(status not in terminal for status in task_statuses):
+                return {"ok": False, "code": "nonterminal_task"}
+            if workflow.claimed_by and (
+                workflow.lease_expires_at is None or workflow.lease_expires_at > now
+            ):
+                return {"ok": False, "code": "active_execution_lease"}
+            if extension.status == "technical_error":
+                return {"ok": True, "code": "already_reconciled", "status": extension.status}
+            if extension.status != "active":
+                return {"ok": False, "code": "extension_not_active", "status": extension.status}
+            result = {
+                "ok": True, "code": "dry_run" if dry_run else "reconciled",
+                "extension_id": extension_id,
+                "workflow_run_id": expected_workflow_run_id,
+                "previous_status": extension.status,
+                "new_status": "technical_error",
+                "failure_class": str(failure_class)[:120],
+                "reason": str(reason)[:256],
+                "timestamp": now.isoformat(),
+            }
+            if dry_run:
+                return result
+            extension.status = "technical_error"
+            extension.terminal_reason = (
+                f"{str(failure_class)[:80]}: {str(reason)[:170]}"
+            )[:256]
+            event_id = f"{expected_workflow_run_id}:authority_extension_reconciled"
+            existing = session.scalar(select(ExecutionLogEntryModel).where(
+                ExecutionLogEntryModel.event_id == event_id,
+            ))
+            if existing is None:
+                session.add(ExecutionLogEntryModel(
+                    event_id=event_id, run_id=expected_workflow_run_id,
+                    task_id=None, event_type="authority_extension_reconciled",
+                    timestamp=now.isoformat(), payload={
+                        "extension_id": extension_id,
+                        "workflow_id": expected_workflow_run_id,
+                        "previous_status": "active",
+                        "new_status": "technical_error",
+                        "failure_class": str(failure_class)[:120],
+                        "reconciliation_reason": str(reason)[:256],
+                        "operator_action": "authority_extension_reconciliation",
+                    },
+                ))
+            return result
 
 
 class PostgreSQLComposedAuthorityRepository:

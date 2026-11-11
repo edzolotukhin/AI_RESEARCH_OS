@@ -1080,6 +1080,18 @@ class SelectedAuthorityExtensionService:
         self.extensions.save(replace(extension, status=AuthorityExtensionStatus.TECHNICAL_ERROR,
                                      terminal_reason=reason[:256]))
 
+    def reconcile_failed_extension(
+        self, *, project_id: str, extension_id: str,
+        expected_workflow_run_id: str, failure_class: str,
+        reason: str, dry_run: bool,
+    ) -> dict:
+        """Operator-only conditional recovery; never dispatches a workflow."""
+        return self.extensions.reconcile_failed_active(
+            project_id=project_id, extension_id=extension_id,
+            expected_workflow_run_id=expected_workflow_run_id,
+            failure_class=failure_class, reason=reason, dry_run=dry_run,
+        )
+
     def _state(self, workflow_run_id: str) -> ExtensionState:
         state = self.states.load(workflow_run_id)
         if state is None:
