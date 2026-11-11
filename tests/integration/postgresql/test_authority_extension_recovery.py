@@ -158,7 +158,6 @@ class AuthorityExtensionRecoveryPostgreSQLTests(PostgreSQLIntegrationTestCase):
         self.assertEqual(status, "active")
         self.assertEqual(audit, 0)
         self.assertEqual(self._repo().reconcile_failed_active(**self._args())["code"], "reconciled")
-
     def test_foreign_project_and_wrong_linkage_are_rejected(self):
         self.assertEqual(
             self._repo().reconcile_failed_active(**self._args(project_id="foreign-project"))["code"],
@@ -197,4 +196,3 @@ class AuthorityExtensionRecoveryPostgreSQLTests(PostgreSQLIntegrationTestCase):
             now=datetime.now(timezone.utc),
         ))
         self.assertEqual(self._repo().reconcile_failed_active(**self._args())["code"], "reconciled")
-
