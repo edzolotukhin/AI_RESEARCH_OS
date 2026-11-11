@@ -32,7 +32,17 @@ class DesignGenerationExecutor(BaseExecutor):
     def run(self, context):
         project = context.project
         methods = canonicalize_research_methods(project.selected_methods or ("DESK",))
-        expected_fingerprint = context.workflow_template.id.rsplit(":", 1)[-1]
+        template_brief = getattr(
+            context.workflow_template, "research_brief_snapshot", None
+        )
+        if template_brief is not None:
+            expected_fingerprint = ProjectPlanningService.input_fingerprint(
+                template_brief, methods,
+            )
+        else:
+            # Legacy in-memory/template snapshots encoded the full fingerprint
+            # in the historical project-design template ID.
+            expected_fingerprint = context.workflow_template.id.rsplit(":", 1)[-1]
         diagnostic = {
             "version": 1,
             "status": "running",

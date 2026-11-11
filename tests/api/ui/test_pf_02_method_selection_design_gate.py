@@ -92,7 +92,11 @@ class Pf02MethodSelectionDesignGateTests(ApiTestCase):
         fingerprint = self.container.project_planning_service.input_fingerprint(
             project.research_brief, methods
         )
-        current_template_id = f"project-design:{project_id}:{fingerprint}"
+        current_template_id = (
+            self.container.project_planning_service.design_template_id(
+                project_id, fingerprint,
+            )
+        )
         current_design_runs = [
             run
             for run in self.container.workflow_service.list_workflow_runs_for_project(
