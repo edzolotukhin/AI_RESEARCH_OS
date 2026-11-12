@@ -52,7 +52,9 @@ class Uat04aBoundedNavigationPostgreSQLTests(PostgreSQLIntegrationTestCase):
             if request.url.path == "/landing":
                 return httpx.Response(200, text='<a href="/resource">resource</a>', headers={"content-type": "text/html"})
             if request.url.path == "/resource":
-                return httpx.Response(200, text='<a href="/population.xlsx">xlsx</a>', headers={"content-type": "text/html"})
+                return httpx.Response(200, text='<h1>Population.xlsx</h1><p>Format: XLSX</p><a href="/download/123">Завантажити</a>', headers={"content-type": "text/html"})
+            if request.url.path == "/download/123":
+                return httpx.Response(200, content=workbook, headers={"content-type": "application/octet-stream"})
             return httpx.Response(200, content=workbook, headers={"content-type": "application/octet-stream"})
 
         project = Project(
@@ -92,8 +94,9 @@ class Uat04aBoundedNavigationPostgreSQLTests(PostgreSQLIntegrationTestCase):
         source = source_repository.get_by_id(acquired.source_ids[0])
         assert source is not None
         self.assertEqual(source.metadata["navigation_chain"], [
-            "https://example.org/landing", "https://example.org/resource", "https://example.org/population.xlsx",
+            "https://example.org/landing", "https://example.org/resource", "https://example.org/download/123",
         ])
+        assert source.metadata["navigation_diagnostics"]["selected_link"] == "https://example.org/download/123"
         self.assertEqual(len(source.metadata.get("structured_rows", [])), 4, source.metadata)
         self.assertIn('Sheet="Population"', source.content_text)
         self.assertIn('Year=2019', source.content_text)
