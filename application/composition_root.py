@@ -1085,6 +1085,7 @@ def _build_agent_executors(
     from application.executors.revision_executor import RevisionExecutor
     executors["revision"] = RevisionExecutor(
         revision_service=getattr(overrides, "h3_revision_service", None) or h3_report_service,
+        review_repository=review_repository,
     )
     from application.executors.finalization_executor import FinalizationExecutor
     executors["finalization"] = FinalizationExecutor(deliverable_finalizer)

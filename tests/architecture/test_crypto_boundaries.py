@@ -9,10 +9,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 class CryptoBoundaryTests(unittest.TestCase):
 
-    def test_application_does_not_import_hashlib_hmac_or_secrets(self) -> None:
+    def test_api_key_boundary_does_not_import_hashlib_hmac_or_secrets(self) -> None:
+        # ADR-014 governs API-key material, not non-secret content/identity
+        # digests. UX-01A separately specifies password crypto in identity.py.
         forbidden = {"hashlib", "hmac", "secrets"}
         violations: list[str] = []
-        for path in (REPO_ROOT / "application").rglob("*.py"):
+        paths = list((REPO_ROOT / "application" / "security").rglob("*.py"))
+        paths += list((REPO_ROOT / "application" / "services").glob("*authentication*.py"))
+        for path in paths:
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):

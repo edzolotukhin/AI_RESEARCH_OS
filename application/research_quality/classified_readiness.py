@@ -19,6 +19,7 @@ def acquired_view(design):
 def output_obligations(design):
     return tuple({"version":"output-obligation-v1","information_need_id":n.id,"research_question_id":n.research_question_id,
         "description":n.description,"dependency_information_need_ids":list(n.depends_on_information_need_ids),
+        **({"output_format": n.output_format} if n.output_format else {}),
         "status":"deferred","verification_stage":"report_finalization","satisfied":False}
         for n in design.information_needs if n.kind==Kind.OUTPUT)
 

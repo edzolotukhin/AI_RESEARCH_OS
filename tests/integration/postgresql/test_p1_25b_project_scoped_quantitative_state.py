@@ -1,4 +1,5 @@
 from __future__ import annotations
+from unittest.mock import patch
 
 from alembic import command
 from alembic.config import Config
@@ -95,6 +96,14 @@ class P125BProjectScopedQuantitativeStateTests(PostgreSQLIntegrationTestCase):
 
 
 class P125BMigrationPreservationTests(PostgreSQLIntegrationTestCase):
+    def setUp(self):
+        super().setUp()
+        # Never depend on another test having leaked DATABASE_URL into the
+        # process. The parent harness has already verified this disposable DB.
+        context = patch.dict("os.environ", {"DATABASE_URL": self.engine.url.render_as_string(hide_password=False)})
+        context.start()
+        self.addCleanup(context.stop)
+
     def test_downgrade_fails_closed_when_cross_project_duplicates_exist(self):
         with self.engine.begin() as connection:
             connection.execute(

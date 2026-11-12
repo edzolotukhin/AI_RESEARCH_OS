@@ -273,6 +273,27 @@ class ProjectDeliverablesService:
                      if editorial is not None else tuple(
                          str(value.get("canonical_url")) for value in report.citation_registry.values()
                          if isinstance(value, dict) and isinstance(value.get("canonical_url"), str)))
+            tables = ()
+            charts = self._desk_charts(report)
+            # The frozen Design, not optional Report metadata, decides whether
+            # OUTPUT verification is mandatory. Missing metadata cannot bypass it.
+            design = None
+            try:
+                run = self.workflows.get_workflow_run(report.workflow_run_id)
+                design = self.workflows.get_template(run.workflow_template_id).research_design_snapshot
+            except (AttributeError, EntityNotFoundError):
+                pass  # Historical reports without a snapshot retain legacy reads.
+            from domain.planning.research_design import ResearchDesign
+            from domain.planning.derivation import InformationNeedKind
+            has_outputs = isinstance(design, ResearchDesign) and any(n.kind == InformationNeedKind.OUTPUT for n in design.information_needs)
+            if has_outputs or report.metadata.get("output_obligations"):
+                from application.deliverables.output_requirements import verified_output_materials
+                if not isinstance(design, ResearchDesign):
+                    raise AccessDeniedError("Immutable output Design is unavailable")
+                claims = tuple(self.report_claims.list_for_report(report.id, report.revision_number))
+                tables, charts, materials = verified_output_materials(design=design, claims=claims, report=report)
+                if materials != report.metadata.get("output_materials"):
+                    raise AccessDeniedError("Output materials differ from immutable Design/claims")
             documents.append(PdfSourceDocument(
                 project_id=project_id, method="DESK", run_id=report.workflow_run_id,
                 study_id=None, source_id=report.id,
@@ -297,7 +318,7 @@ class ProjectDeliverablesService:
                                            authority.coverage_contract_digest if authority else None),
                 approved_delivery_provenance=(editorial.provenance if editorial is not None else None),
                 canonical_delivery=(editorial.document if editorial is not None else None),
-                charts=self._desk_charts(report),
+                tables=tables, charts=charts,
             ))
         return sorted(documents, key=lambda item: (item.created_at or "", item.revision_number or 0, item.source_id), reverse=True)
 

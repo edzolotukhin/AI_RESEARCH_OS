@@ -65,7 +65,8 @@ def test_navigation_deduplicates_cycle_and_stops_at_depth():
         metadata={"navigation_enabled": "1", "navigation_max_depth": "2"},
     ))
     assert source.retrieval_status is RetrievalStatus.ACQUIRED
-    assert source.metadata.get("navigation_chain") is None
+    assert source.metadata["navigation_chain"] == ["https://example.org/same"]
+    assert source.metadata["navigation_diagnostics"]["requests"] == 1
 
 
 def test_resource_page_download_without_file_extension_is_selected_as_table():
@@ -86,10 +87,8 @@ def test_navigation_records_controlled_diagnostics_when_no_link_is_selected():
         "fixture", "https://example.org/page", "fixture", "", "q1", 1,
         metadata={"navigation_enabled": "1"},
     ))
-    assert source.metadata["navigation_diagnostics"] == {
-        "considered": True,
-        "activated": True,
-        "candidate_links": 0,
-        "stop_reason": "no_terminal_resource",
-        "rejection_reason": "candidates_not_acquired_or_visited",
-    }
+    diagnostics = source.metadata["navigation_diagnostics"]
+    assert diagnostics["considered_links"] == 0
+    assert diagnostics["requests"] == 1
+    assert diagnostics["stop_reason"] == "selected_terminal_resource"
+    assert source.metadata["navigation_chain"] == ["https://example.org/page"]

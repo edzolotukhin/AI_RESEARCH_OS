@@ -47,6 +47,16 @@ from tests.fixtures.research_brief import sample_research_brief
 from tests.helpers.brief_aligned_planner_llm import create_brief_aligned_llm_mock
 
 
+def legacy_executor(executor):
+    from application.methods.executor import MethodExecutor
+    from application.methods.desk.executor import VersionedDeskExecutor
+    if isinstance(executor, MethodExecutor):
+        executor = executor.delegate
+    if isinstance(executor, VersionedDeskExecutor):
+        executor = executor.legacy
+    return executor
+
+
 class StageExecutorHonestyTests(unittest.TestCase):
     def test_unimplemented_capability_executor_raises(self) -> None:
         executor = UnimplementedCapabilityExecutor(
@@ -91,11 +101,11 @@ class StageExecutorHonestyTests(unittest.TestCase):
                 ),
             )
             registry = container.agency._agent_loader._executors
-            self.assertIsInstance(registry["search"], SearchExecutor)
-            self.assertIsInstance(registry["evidence"], EvidenceExecutor)
-            self.assertIsInstance(registry["analysis"], AnalysisExecutor)
-            self.assertIsInstance(registry["report"], ReportExecutor)
-            self.assertIsInstance(registry["review"], ReviewExecutor)
+            self.assertIsInstance(legacy_executor(registry["search"]), SearchExecutor)
+            self.assertIsInstance(legacy_executor(registry["evidence"]), EvidenceExecutor)
+            self.assertIsInstance(legacy_executor(registry["analysis"]), AnalysisExecutor)
+            self.assertIsInstance(legacy_executor(registry["report"]), ReportExecutor)
+            self.assertIsInstance(legacy_executor(registry["review"]), ReviewExecutor)
 
     def test_deterministic_stage_executors_only_when_explicitly_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -109,7 +119,7 @@ class StageExecutorHonestyTests(unittest.TestCase):
                 ),
             )
             registry = container.agency._agent_loader._executors
-            self.assertIsInstance(registry["search"], DeterministicStageExecutor)
+            self.assertIsInstance(legacy_executor(registry["search"]), DeterministicStageExecutor)
 
     def test_production_pipeline_fails_on_first_unimplemented_stage(self) -> None:
         template = (

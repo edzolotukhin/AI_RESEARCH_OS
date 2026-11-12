@@ -1,6 +1,7 @@
 """LIVE ACCEPTANCE 02 regression tests for budget exhaustion and fail-fast."""
 
 from __future__ import annotations
+from hashlib import sha256
 
 import json
 import unittest
@@ -666,7 +667,7 @@ class EvidenceStageCapWorkflowTests(unittest.TestCase):
                     retrieved_at=now,
                     retrieval_status=RetrievalStatus.ACQUIRED,
                     content_text=f"Acquired market report body text {index}.",
-                    content_checksum=f"checksum-{index}",
+                    content_checksum=sha256(f"Acquired market report body text {index}.".encode()).hexdigest(),
                     workflow_run_refs=(workflow_run.id,),
                     research_design_refs=(design.id,),
                     information_need_refs=("in-1",),
@@ -854,7 +855,7 @@ class DownstreamReserveWorkflowTests(unittest.TestCase):
                     retrieved_at=now,
                     retrieval_status=RetrievalStatus.ACQUIRED,
                     content_text=f"Acquired market report body text {index}.",
-                    content_checksum=f"checksum-{index}",
+                    content_checksum=sha256(f"Acquired market report body text {index}.".encode()).hexdigest(),
                     workflow_run_refs=(workflow_run.id,),
                     research_design_refs=(design.id,),
                     information_need_refs=("in-1",),
@@ -878,7 +879,13 @@ class DownstreamReserveWorkflowTests(unittest.TestCase):
             evidence_repository=evidence_repo,
             source_repository=source_repo,
         )
-        evaluator = StubSufficiencyEvaluator(_ready_result())
+        from dataclasses import replace
+        ready = _ready_result()
+        ready = replace(ready, research_question_assessments=tuple(
+            replace(rq, research_question_id="RQ1", information_need_assessments=tuple(
+                replace(need, research_question_id="RQ1") for need in rq.information_need_assessments))
+            for rq in ready.research_question_assessments))
+        evaluator = StubSufficiencyEvaluator(ready)
         readiness_ran = {"value": False}
 
         class _RecordingReadinessExecutor:
@@ -975,7 +982,12 @@ class DownstreamReserveWorkflowTests(unittest.TestCase):
                 }
                 if "in-2" in covered:
                     return _ready_result()
-                return _missing_result()
+                from dataclasses import replace
+                missing = _missing_result()
+                return replace(missing, research_question_assessments=tuple(
+                    replace(rq, research_question_id="RQ1", information_need_assessments=tuple(
+                        replace(need, research_question_id="RQ1") for need in rq.information_need_assessments))
+                    for rq in missing.research_question_assessments), blocking_research_question_ids=("RQ1",))
 
         class _BudgetedCallExtractor(EvidenceExtractor):
             method_name = "budgeted"
@@ -1089,7 +1101,7 @@ class DownstreamReserveWorkflowTests(unittest.TestCase):
                     retrieved_at=now,
                     retrieval_status=RetrievalStatus.ACQUIRED,
                     content_text=f"Acquired market report body text {index}.",
-                    content_checksum=f"checksum-{index}",
+                    content_checksum=sha256(f"Acquired market report body text {index}.".encode()).hexdigest(),
                     workflow_run_refs=(workflow_run.id,),
                     research_design_refs=(design.id,),
                     information_need_refs=("in-1",),

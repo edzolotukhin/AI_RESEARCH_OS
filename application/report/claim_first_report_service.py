@@ -347,6 +347,7 @@ class ClaimFirstReportService(ReportService):
                 project_id=context.project.id, source_workflow_run_id=source_run,
                 report_workflow_run_id=report_run_id, design=design,
                 findings=generation_findings, insights=insights,
+                source_repository=self._source_repository, brief=brief,
                 evidence_by_id=evidence_by_id,
                 citation_id_by_source=source_to_citation,
                 candidate_provider=self._h3_candidate_provider,
@@ -424,6 +425,19 @@ class ClaimFirstReportService(ReportService):
             citation_registry=citation_registry, deduplication_key=dedup, revision_number=revision,
             approval_status="draft", metadata=metadata,
         )
+        if report.metadata.get("output_obligations"):
+            from application.deliverables.output_requirements import verified_output_materials
+            try:
+                _, _, materials = verified_output_materials(design=design, claims=result.claims, report=report)
+            except ValueError as exc:
+                raise ReportError(str(exc)) from exc
+            metadata = dict(report.metadata)
+            metadata["output_materials"] = materials
+            metadata["output_obligations"] = {**metadata["output_obligations"], "verification_state": "verified",
+                "requirements": [{**need, "satisfied": True, "status": "verified"}
+                    for need in metadata["output_obligations"]["requirements"]]}
+            report = replace(report, metadata=metadata)
+            context.write_shared("report_output_obligations", metadata["output_obligations"])
         if self._h3_editorial_provider is not None:
             coverage_digest = canonical_digest(contract.to_metadata())
             try:

@@ -149,8 +149,11 @@ class InformationNeed:
     kind: InformationNeedKind = InformationNeedKind.ACQUIRED
     depends_on_information_need_ids: tuple[str, ...] = ()
     derivation: DerivationContract | None = None
+    output_format: str = ""
 
     def __post_init__(self):
+        if self.output_format and (self.kind != InformationNeedKind.OUTPUT or self.output_format not in {"table", "chart"}):
+            raise ValueError("Explicit output format must be table or chart on OUTPUT")
         object.__setattr__(self,"kind",InformationNeedKind(self.kind))
         object.__setattr__(self,"depends_on_information_need_ids",tuple(self.depends_on_information_need_ids))
         if len(set(self.depends_on_information_need_ids))!=len(self.depends_on_information_need_ids):
@@ -183,6 +186,8 @@ class InformationNeed:
             payload["depends_on_information_need_ids"]=list(self.depends_on_information_need_ids)
         if self.derivation is not None:
             payload["derivation"]=self.derivation.to_dict()
+        if self.output_format:
+            payload["output_format"] = self.output_format
         return payload
 
     @classmethod
@@ -214,6 +219,7 @@ class InformationNeed:
             kind=InformationNeedKind(payload.get("kind","ACQUIRED")),
             depends_on_information_need_ids=tuple(payload.get("depends_on_information_need_ids",())),
             derivation=DerivationContract.from_dict(payload["derivation"]) if payload.get("derivation") is not None else None,
+            output_format=str(payload.get("output_format", "")),
         )
 
 

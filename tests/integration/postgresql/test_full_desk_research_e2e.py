@@ -616,7 +616,9 @@ class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
             extension.extension_workflow_run_id, project_id=PROJECT,
         )
         self.assertTrue(extension_sources)
-        self.assertFalse(any("/parent" in item.canonical_url for item in extension_sources))
+        # Capability-aware REFETCH can revisit a parent URL, but must create a
+        # new immutable revision rather than borrowing/mutating parent records.
+        self.assertTrue({item.id for item in extension_sources}.isdisjoint({item["id"] for item in before_sources}))
 
         extension_evidence = container.evidence_service.list_evidence_for_project(
             PROJECT, workflow_run_id=extension.extension_workflow_run_id,

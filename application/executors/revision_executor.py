@@ -12,8 +12,9 @@ class RevisionUnavailableError(RuntimeError):
 class RevisionExecutor(BaseExecutor):
     """Durable H3 revision boundary; the real adapter is supplied in J2."""
 
-    def __init__(self, revision_service=None) -> None:
+    def __init__(self, revision_service=None, review_repository=None) -> None:
         self._revision_service = revision_service
+        self._review_repository = review_repository
 
     def run(self, context):
         if context.read_shared(DESK_REPORT_CONTRACT_PIN) != H3_REPORT_CONTRACT:
@@ -23,7 +24,17 @@ class RevisionExecutor(BaseExecutor):
             raise RevisionUnavailableError("h3_revision_requires_review_1_revise")
         if self._revision_service is None:
             raise RevisionUnavailableError("h3_revision_implementation_unavailable")
-        result = self._revision_service.revise_for_context(context)
+        if self._review_repository is None:
+            result = self._revision_service.revise_for_context(context)
+        else:
+            persisted = self._review_repository.get_by_id(str(review.get("review_id") or ""))
+            if (persisted is None or persisted.project_id != context.project.id
+                    or persisted.workflow_run_id != context.workflow_run.id
+                    or persisted.report_id != review.get("report_id")
+                    or persisted.research_design_id != context.workflow_template.research_design_snapshot.id
+                    or persisted.review_attempt != 1 or persisted.verdict.value != "revise"):
+                raise RevisionUnavailableError("h3_revision_requires_exact_persisted_review")
+            result = self._revision_service.revise_for_context(context, review_result=persisted)
         if not isinstance(result, dict) or int(result.get("revision_count", 0)) != 1:
             raise RevisionUnavailableError("h3_revision_result_invalid")
         context.write_shared("h3_revision", dict(result))
