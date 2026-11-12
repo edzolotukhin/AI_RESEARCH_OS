@@ -135,6 +135,13 @@ class PostgreSQLSourceRepository(SourceRepository):
     def resolve_terminal_identity(self, project_id, terminal_url):
         return terminal_resource_key(project_id, terminal_url)
 
+    def find_latest_for_landing(self, project_id, landing_url):
+        with self._session_factory.session() as session:
+            row = session.scalars(select(SourceModel).join(SourceAcquisitionPathModel, SourceAcquisitionPathModel.source_id == SourceModel.id).where(SourceModel.project_id == project_id, SourceAcquisitionPathModel.project_id == project_id, SourceAcquisitionPathModel.landing_url == landing_url).order_by(SourceAcquisitionPathModel.created_at.desc(), SourceAcquisitionPathModel.id.desc())).first()
+            if row is not None:
+                return source_from_model(row)
+        return self.get_by_canonical_url_for_project(project_id, landing_url)
+
     def find_latest_content_revision(self, project_id, resource_key):
         with self._session_factory.session() as session:
             row = session.scalars(select(SourceModel).where(SourceModel.project_id == project_id, SourceModel.terminal_resource_key == resource_key).order_by(SourceModel.content_revision.desc(), SourceModel.retrieved_at.desc(), SourceModel.id)).first()
@@ -181,4 +188,4 @@ class PostgreSQLSourceRepository(SourceRepository):
 
     def list_acquisition_paths(self, project_id, workflow_run_id):
         with self._session_factory.session() as session:
-            return list(session.scalars(select(SourceAcquisitionPathModel).where(SourceAcquisitionPathModel.project_id == project_id, SourceAcquisitionPathModel.workflow_run_id == workflow_run_id)))
+            return list(session.scalars(select(SourceAcquisitionPathModel).where(SourceAcquisitionPathModel.project_id == project_id, SourceAcquisitionPathModel.workflow_run_id == workflow_run_id).order_by(SourceAcquisitionPathModel.created_at, SourceAcquisitionPathModel.id)))

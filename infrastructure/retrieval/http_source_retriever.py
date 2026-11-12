@@ -22,6 +22,8 @@ from infrastructure.retrieval.xlsx_text_extractor import (
     looks_like_xlsx_url,
 )
 from infrastructure.retrieval.link_discovery import discover_links
+from infrastructure.retrieval.navigation_budget import NavigationBudget, NavigationLimit
+from application.sources.acquisition_capability import ACQUISITION_CAPABILITY, TEXT_EXTRACTION_CAPABILITY, TABLE_EXTRACTION_CAPABILITY
 
 
 RETRIEVAL_FAILURE_CATEGORIES = {
@@ -73,12 +75,92 @@ class HttpSourceRetriever(SourceRetriever):
         limits: HttpRetrievalLimits | None = None,
         http_client=None,
         dns_timeout_seconds: float = 5.0,
+        xlsx_extraction_revision: str = TABLE_EXTRACTION_CAPABILITY,
     ) -> None:
         self._limits = limits or HttpRetrievalLimits()
         self._http_client = http_client
         self._dns_timeout_seconds = dns_timeout_seconds
+        self.xlsx_extraction_revision = xlsx_extraction_revision
 
     def retrieve(self, candidate: SourceCandidate) -> Source:
+        if self._http_client is None:
+            with self._default_client() as client:
+                return HttpSourceRetriever(limits=self._limits, http_client=client,
+                    dns_timeout_seconds=self._dns_timeout_seconds,
+                    xlsx_extraction_revision=self.xlsx_extraction_revision).retrieve(candidate)
+        nav = _navigation_metadata(candidate)
+        def limit(name, default, ceiling):
+            try:
+                return min(ceiling, max(1, int(candidate.metadata.get(name, default))))
+            except (ValueError, TypeError):
+                return default
+        budget = NavigationBudget(max_requests=limit("navigation_max_requests", 12, 24),
+            max_bytes=limit("navigation_max_bytes", 2_048_000, 8_192_000),
+            max_links=limit("navigation_total_links", 25, 50))
+        structured = candidate.metadata.get("required_resource_kind") == "table"
+        def walk(current, depth, chain):
+            metadata = dict(current.metadata)
+            metadata["navigation_enabled"] = "0"
+            source = self._retrieve_single(replace(current, metadata=metadata), budget)
+            links = source.metadata.pop("_navigation_links", ())
+            hops = source.metadata.pop("_http_chain", (current.url, source.url))
+            path = list(chain)
+            for hop in hops:
+                if not path or path[-1] != hop:
+                    path.append(hop)
+            source.metadata["navigation_chain"] = path
+            valid = source.retrieval_status in {RetrievalStatus.ACQUIRED, RetrievalStatus.TRUNCATED} and bool(source.content_text)
+            table = bool(source.metadata.get("structured_rows"))
+            html = source.content_type in {"text/html", "application/xhtml+xml"}
+            challenge = any(s in source.content_text.casefold() for s in ("just a moment", "verify you are human", "access denied", "enable javascript and cookies"))
+            if valid and (table or (not structured and not challenge and (not nav["enabled"] or not links))):
+                budget.stop_reason = "selected_terminal_resource"
+                return source
+            if html and nav["enabled"] and depth < nav["max_depth"]:
+                for link in links[:nav["max_links"]]:
+                    if budget.considered_links >= budget.max_links:
+                        budget.stop_reason = "link_budget_exhausted"
+                        break
+                    budget.considered_links += 1
+                    from application.sources.url_canonicalizer import canonicalize_url
+                    if canonicalize_url(link.url) in budget.visited:
+                        budget.event(url=link.url, decision="rejected", reason="visited", score=link.score)
+                        continue
+                    if link.score <= 0:
+                        budget.event(url=link.url, decision="rejected", reason="irrelevant", score=link.score)
+                        continue
+                    budget.event(url=link.url, decision="considered", reason=link.resource_hint, score=link.score)
+                    result = walk(replace(current, url=link.url), depth+1, tuple(path))
+                    if result.retrieval_status in {RetrievalStatus.ACQUIRED, RetrievalStatus.TRUNCATED} and result.content_text:
+                        result.metadata["navigation_selected_link"] = {"url": result.url, "text": link.text[:100], "hint": link.resource_hint}
+                        budget.event(url=link.url, decision="selected", score=link.score)
+                        return result
+                    budget.event(url=link.url, decision="rejected", reason=result.metadata.get("reason", "not_terminal"), score=link.score)
+                    if budget.stop_reason in {"request_budget_exhausted", "byte_budget_exhausted", "link_budget_exhausted"}:
+                        break
+            if valid and not structured and not challenge:
+                budget.stop_reason = "selected_terminal_resource"
+                return source
+            if valid:
+                source.retrieval_status = RetrievalStatus.FAILED
+                source.metadata["reason"] = "required_terminal_not_found" if structured else "html_challenge"
+                # The table-required traversal is a distinct extraction contract
+                # from a successful text-only snapshot of the same HTML bytes.
+                source.extraction_revision = "navigation-table-unresolved-v2" if structured else "navigation-challenge-v2"
+            if not budget.stop_reason:
+                budget.stop_reason = "depth_limit" if depth >= nav["max_depth"] else "no_terminal_resource"
+            return source
+        source = walk(candidate, 0, ())
+        diagnostics = budget.diagnostics()
+        diagnostics.update({"considered": True, "activated": nav["enabled"],
+            "max_depth": nav["max_depth"],
+            "selected_link": source.url if source.retrieval_status in {RetrievalStatus.ACQUIRED, RetrievalStatus.TRUNCATED} else None,
+            "final_url": source.url, "terminal_content_type": source.content_type})
+        source.metadata["navigation_diagnostics"] = diagnostics
+        source.metadata["acquisition_capability"] = ACQUISITION_CAPABILITY
+        return source
+
+    def _retrieve_single(self, candidate: SourceCandidate, budget) -> Source:
         now = _utc_now_iso()
         client = self._http_client or self._default_client()
         try:
@@ -88,7 +170,12 @@ class HttpSourceRetriever(SourceRetriever):
                 max_redirects=self._limits.max_redirects,
                 timeout=self._limits.timeout_seconds,
                 dns_timeout_seconds=self._dns_timeout_seconds,
+                navigation_budget=budget,
             )
+        except NavigationLimit as exc:
+            if str(exc) != "url_already_visited":
+                budget.stop_reason = str(exc)
+            return self._failed_source(candidate, now, reason=str(exc), category="content_too_large")
         except UnsafeUrlError as exc:
             return self._failed_source(
                 candidate,
@@ -142,57 +229,6 @@ class HttpSourceRetriever(SourceRetriever):
                 and navigation["depth"] < navigation["max_depth"]
             ),
         })
-        if content_type.startswith("text/html") and navigation["enabled"] and navigation["depth"] < navigation["max_depth"]:
-            terms = tuple(navigation["terms"])
-            links = discover_links(text_body := response.text, base_url=final_url, terms=terms)
-            navigation_diagnostics["candidate_links"] = len(links)
-            visited = set(navigation["visited"])
-            visited.add(final_url)
-            selected = False
-            for link in links[: navigation["max_links"]]:
-                if link.url in visited:
-                    continue
-                next_metadata = dict(candidate.metadata)
-                next_metadata.update({
-                    "navigation_enabled": "1",
-                    "navigation_depth": str(navigation["depth"] + 1),
-                    "navigation_max_depth": str(navigation["max_depth"]),
-                    "navigation_max_links": str(navigation["max_links"]),
-                    "navigation_terms": "|".join(terms),
-                    "navigation_visited": "|".join((*visited, final_url, link.url)),
-                })
-                terminal = self.retrieve(replace(candidate, url=link.url, metadata=next_metadata))
-                if terminal.retrieval_status in {RetrievalStatus.ACQUIRED, RetrievalStatus.TRUNCATED} and terminal.content_text:
-                    metadata = dict(terminal.metadata)
-                    chain = metadata.get("navigation_chain")
-                    if not isinstance(chain, list):
-                        chain = [*navigation["visited"], final_url, link.url]
-                    metadata["navigation_chain"] = list(dict.fromkeys(chain))
-                    metadata.setdefault("navigation_selected_link", {"url": link.url, "text": link.text, "hint": link.resource_hint})
-                    terminal_diagnostics = terminal.metadata.get("navigation_diagnostics")
-                    selected_link = link.url
-                    if isinstance(terminal_diagnostics, dict):
-                        selected_link = terminal_diagnostics.get("selected_link") or selected_link
-                    navigation_diagnostics.update({
-                        "selected_link": selected_link,
-                        "final_url": terminal.url,
-                        "terminal_content_type": terminal.content_type,
-                        "stop_reason": "selected_terminal_resource",
-                    })
-                    metadata["navigation_diagnostics"] = navigation_diagnostics
-                    terminal.metadata = metadata
-                    selected = True
-                    return terminal
-            if not selected:
-                navigation_diagnostics.update({
-                    "stop_reason": "no_terminal_resource",
-                    "rejection_reason": "candidates_not_acquired_or_visited",
-                })
-        elif content_type.startswith("text/html") and navigation["enabled"]:
-            navigation_diagnostics.update({
-                "stop_reason": "depth_limit",
-            })
-
         if self._should_extract_xlsx(content_type=content_type, url=final_url, body=body):
             terminal = self._acquire_xlsx(
                 candidate=candidate,
@@ -204,6 +240,11 @@ class HttpSourceRetriever(SourceRetriever):
             )
             if navigation_diagnostics.get("considered"):
                 terminal.metadata["navigation_diagnostics"] = navigation_diagnostics
+            terminal.raw_content_checksum = hashlib.sha256(body).hexdigest()
+            terminal.raw_checksum_kind = "sha256-bytes" if not truncated else "legacy-surrogate"
+            terminal.extraction_revision = self.xlsx_extraction_revision
+            if isinstance(response, httpx.Response):
+                terminal.metadata["_http_chain"] = response.extensions.get("validated_redirect_chain", (candidate.url, final_url))
             return terminal
 
         if is_unsupported_spreadsheet_url(final_url) or content_type in {
@@ -277,6 +318,11 @@ class HttpSourceRetriever(SourceRetriever):
 
         status = RetrievalStatus.TRUNCATED if truncated else RetrievalStatus.ACQUIRED
         metadata: dict[str, object] = {}
+        if "html" in content_type:
+            metadata["_navigation_links"] = discover_links(text, base_url=final_url,
+                terms=tuple(filter(None, str(candidate.metadata.get("navigation_terms", "")).split("|"))))
+        if isinstance(response, httpx.Response):
+            metadata["_http_chain"] = response.extensions.get("validated_redirect_chain", (candidate.url, final_url))
         if navigation_diagnostics.get("considered"):
             metadata["navigation_diagnostics"] = navigation_diagnostics
         if truncated:
@@ -296,6 +342,9 @@ class HttpSourceRetriever(SourceRetriever):
             content_text=extracted,
             content_checksum=checksum,
             metadata=metadata,
+            raw_content_checksum=hashlib.sha256(body).hexdigest(),
+            raw_checksum_kind="sha256-bytes" if not truncated else "legacy-surrogate",
+            extraction_revision=TEXT_EXTRACTION_CAPABILITY,
         )
 
     def _should_extract_xlsx(self, *, content_type: str, url: str, body: bytes = b"") -> bool:

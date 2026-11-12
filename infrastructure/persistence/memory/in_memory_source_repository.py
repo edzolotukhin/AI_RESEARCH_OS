@@ -87,6 +87,13 @@ class InMemorySourceRepository(SourceRepository):
     def list_acquisition_paths(self, project_id, workflow_run_id):
         return [deepcopy(p) for p in self._paths.values() if p.project_id == project_id and p.workflow_run_id == workflow_run_id]
 
+    def find_latest_for_landing(self, project_id, landing_url):
+        with self._lock:
+            paths = [p for p in self._paths.values() if p.project_id == project_id and p.landing_url == landing_url]
+            if paths:
+                return deepcopy(self._sources[paths[-1].source_id])
+        return self.get_by_canonical_url_for_project(project_id, landing_url)
+
     def get_by_id(self, source_id: str) -> Source | None:
         with self._lock:
             return deepcopy(self._sources.get(source_id))
