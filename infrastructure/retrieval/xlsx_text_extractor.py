@@ -119,6 +119,7 @@ def extract_xlsx_text(
             read_only=False,
             data_only=True,
             keep_vba=False,
+            keep_links=False,
         )
     except Exception as exc:  # noqa: BLE001
         message = str(exc).lower()
@@ -129,7 +130,25 @@ def extract_xlsx_text(
         return XlsxExtractionResult(error="workbook_parse_failed", metadata=meta)
 
     try:
-        return _render_workbook(workbook, bounds=bounds, meta=meta)
+        result = _render_workbook(workbook, bounds=bounds, meta=meta)
+        # Formula-aware second view supplies coordinates without evaluating or
+        # accepting cached formula values as observed data.
+        from infrastructure.retrieval.structured_workbook import explicit_tables
+        formula_view = load_workbook(io.BytesIO(data), read_only=False, data_only=False, keep_vba=False, keep_links=False)
+        try:
+            rows = explicit_tables(formula_view, bounds)
+        finally:
+            formula_view.close()
+        result.metadata["structured_tables_v2"] = []
+        for row in rows:
+            addition = "\n" + row["excerpt"]
+            if len(result.text) + len(addition) > bounds.max_rendered_chars:
+                result.metadata["workbook_truncated"] = True
+                break
+            result.text += addition
+            result.metadata["structured_tables_v2"].append(row)
+        result.metadata["rendered_chars"] = len(result.text)
+        return result
     except Exception as exc:  # noqa: BLE001
         meta["parse_error"] = f"workbook_render_failed:{type(exc).__name__}"
         return XlsxExtractionResult(error="workbook_parse_failed", metadata=meta)

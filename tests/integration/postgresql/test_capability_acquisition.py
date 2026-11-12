@@ -80,7 +80,7 @@ class CapabilityAcquisitionTests(PostgreSQLIntegrationTestCase):
 
     def acquire(self,run,landing="/landing",**metadata):
         repo=PostgreSQLSourceRepository(DatabaseSessionFactory(self.engine))
-        revision=metadata.pop("requested_extraction_revision","xlsx-structured-v1")
+        revision=metadata.pop("requested_extraction_revision","xlsx-structured-v2")
         service=SourceAcquisitionService(search_provider=None,source_retriever=HttpSourceRetriever(xlsx_extraction_revision=revision),source_repository=repo)
         query=SearchQuery("q","rq","in","Population 2020")
         candidate=SourceCandidate("fixture",self.origin+landing,"Population","","q",1,metadata={"required_resource_kind":"table",**metadata})
@@ -111,7 +111,7 @@ class CapabilityAcquisitionTests(PostgreSQLIntegrationTestCase):
         reused=self.acquire(self.run_id())
         self.assertEqual(reused.id,acquired.id)
         self.assertEqual(len(self.hits),count)
-        extracted=self.acquire(self.run_id(),requested_extraction_revision="xlsx-structured-v2")
+        extracted=self.acquire(self.run_id(),requested_extraction_revision="xlsx-structured-v3")
         self.assertNotEqual(extracted.id,acquired.id)
         self.assertEqual(extracted.content_revision,acquired.content_revision)
         self.body=workbook(900)

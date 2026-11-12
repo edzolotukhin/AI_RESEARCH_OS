@@ -1127,6 +1127,9 @@ class EvidenceExtractionService:
             return existing.id, True
 
         source_locator = locator.to_dict()
+        workbook_provenance = metadata.get("workbook_provenance")
+        if metadata.get("structured_table") and isinstance(workbook_provenance, dict):
+            source_locator["structured"] = dict(workbook_provenance)
         structured_sheet = candidate.metadata.get("sheet")
         structured_row = candidate.metadata.get("row")
         structured_cells = candidate.metadata.get("cells")
@@ -1150,7 +1153,7 @@ class EvidenceExtractionService:
             statement=candidate.statement,
             source_excerpt=candidate.source_excerpt,
             source_locator=source_locator,
-            extraction_method=getattr(self._evidence_extractor, "method_name", "unknown"),
+            extraction_method=("xlsx-structured-v2" if metadata.get("structured_table") and isinstance(workbook_provenance, dict) else getattr(self._evidence_extractor, "method_name", "unknown")),
             confidence=candidate.confidence,
             quality_signals={
                 "direct": candidate.direct,

@@ -243,6 +243,7 @@ class WorkItemTrace:
 @dataclass
 class EvidenceExtractionDiagnostics:
     workflow_run_id: str
+    structured_rejections: list[dict] = field(default_factory=list)
     sources_discovered: int = 0
     sources_eligible: int = 0
     sources_with_run_context: int = 0
@@ -391,6 +392,7 @@ class EvidenceExtractionDiagnostics:
     def to_dict(self) -> dict[str, Any]:
         payload = {
             "workflow_run_id": self.workflow_run_id,
+            "structured_rejections": list(self.structured_rejections),
             "sources_discovered": self.sources_discovered,
             "sources_eligible": self.sources_eligible,
             "sources_with_run_context": self.sources_with_run_context,

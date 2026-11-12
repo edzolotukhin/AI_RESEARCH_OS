@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 ACQUISITION_CAPABILITY = "bounded-navigation-v2"
 TEXT_EXTRACTION_CAPABILITY = "html-text-v1"
-TABLE_EXTRACTION_CAPABILITY = "xlsx-structured-v1"
+TABLE_EXTRACTION_CAPABILITY = "xlsx-structured-v2"
 
 
 @dataclass(frozen=True)
