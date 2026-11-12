@@ -27,6 +27,15 @@ from runtime.workflow_context import WorkflowContext
 
 
 class _PersistOnSaveSourceRepository:
+    def create_immutable_revision(self, source):
+        self.create(source)
+        return self.get_by_id(source.id)
+
+    def persist_acquisition_path(self, path):
+        # This double checks copy-on-read provenance; path persistence is covered
+        # by the real PostgreSQL repository qualification.
+        return None
+
     def __init__(self) -> None:
         self._sources: dict[str, Source] = {}
         self.save_count = 0

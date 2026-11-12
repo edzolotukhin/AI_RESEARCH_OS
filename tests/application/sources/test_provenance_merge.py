@@ -16,6 +16,22 @@ from application.sources.provenance_merge import (
 
 
 class ProvenanceMergeTests(unittest.TestCase):
+    def test_first_success_returns_new_snapshot_and_preserves_failed_source(self):
+        from copy import deepcopy
+        failed = Source(id="failed", project_id="p", url="https://example.org/a", canonical_url="https://example.org/a", title="Failed", retrieved_at="2026-01-01T00:00:00Z", retrieval_status=RetrievalStatus.FAILED)
+        before = deepcopy(failed.to_dict())
+        success = deepcopy(failed)
+        success.retrieval_status = RetrievalStatus.ACQUIRED
+        success.content_text = "body"
+        recovered = apply_first_acquisition(failed, success)
+        self.assertNotEqual(recovered.id, failed.id)
+        self.assertEqual(failed.to_dict(),before)
+        self.assertEqual(recovered.content_text,"body")
+
+    def test_failed_retry_does_not_rewrite_failed_snapshot(self):
+        failed = Source(id="failed", project_id="p", url="https://example.org/a", canonical_url="https://example.org/a", title="Failed", retrieved_at="2026-01-01T00:00:00Z", retrieval_status=RetrievalStatus.FAILED)
+        self.assertIs(apply_first_acquisition(failed,failed),failed)
+
     def test_merge_refs_preserves_first_seen_order(self) -> None:
         merged = merge_refs(("b", "a"), ("a", "c"))
         self.assertEqual(merged, ("b", "a", "c"))

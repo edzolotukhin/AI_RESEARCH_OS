@@ -32,6 +32,11 @@ class Source:
     content_checksum: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
     version: int = 0
+    terminal_resource_key: str = ""
+    raw_content_checksum: str = ""
+    raw_checksum_kind: str = "legacy-surrogate"
+    content_revision: int = 1
+    extraction_revision: str = "legacy-v1"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -57,6 +62,11 @@ class Source:
             "content_checksum": self.content_checksum,
             "metadata": dict(self.metadata),
             "version": self.version,
+            "terminal_resource_key": self.terminal_resource_key,
+            "raw_content_checksum": self.raw_content_checksum,
+            "raw_checksum_kind": self.raw_checksum_kind,
+            "content_revision": self.content_revision,
+            "extraction_revision": self.extraction_revision,
         }
 
     @classmethod
@@ -98,4 +108,9 @@ class Source:
             content_checksum=str(payload.get("content_checksum", "")),
             metadata=dict(payload.get("metadata") or {}),
             version=int(payload.get("version", 0)),
+            terminal_resource_key=str(payload.get("terminal_resource_key", "")),
+            raw_content_checksum=str(payload.get("raw_content_checksum", "")),
+            raw_checksum_kind=str(payload.get("raw_checksum_kind", "legacy-surrogate")),
+            content_revision=int(payload.get("content_revision", 1)),
+            extraction_revision=str(payload.get("extraction_revision", "legacy-v1")),
         )

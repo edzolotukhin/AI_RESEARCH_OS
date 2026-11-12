@@ -924,8 +924,9 @@ class SourceAcquisitionService:
             project_id,
             primary.canonical_url,
         )
-        if existing is not None:
+        if existing is not None and has_immutable_acquired_content(existing):
             merged = self._merge_existing_source(existing, delta, incoming=None)
+            self._persist_path(merged, primary.candidate.url, workflow_run_id)
             return merged, True, False
 
         funnel.acquisition_attempt(primary.canonical_url)
@@ -962,8 +963,10 @@ class SourceAcquisitionService:
 
         for attempt in range(_MAX_PROVENANCE_RETRIES):
             try:
-                self._source_repository.create(incoming)
-                return incoming, False, True
+                resolved = self._source_repository.create_immutable_revision(incoming)
+                resolved = self._merge_existing_source(resolved, delta, incoming=None)
+                self._persist_path(resolved, primary.candidate.url, workflow_run_id)
+                return resolved, False, True
             except DuplicateSourceError:
                 existing = self._source_repository.get_by_canonical_url_for_project(
                     project_id,
@@ -986,6 +989,10 @@ class SourceAcquisitionService:
         *,
         incoming: Source | None,
     ) -> Source:
+        if incoming is not None and not has_immutable_acquired_content(existing):
+            recovery = apply_first_acquisition(existing, incoming)
+            if recovery is not existing:
+                existing = self._source_repository.create_immutable_revision(recovery)
         for attempt in range(_MAX_PROVENANCE_RETRIES):
             pending_records = missing_discovery_records(
                 existing,
@@ -1000,8 +1007,6 @@ class SourceAcquisitionService:
             before_content = existing.content_text
 
             merged = apply_provenance_delta(existing, delta)
-            if incoming is not None and not has_immutable_acquired_content(merged):
-                merged = apply_first_acquisition(merged, incoming)
 
             if (
                 pending_records
@@ -1026,6 +1031,16 @@ class SourceAcquisitionService:
         raise SourceAcquisitionError(
             f"Failed to merge provenance for source {existing.id}",
         )
+
+    def _persist_path(self, source, landing_url, workflow_run_id):
+        from domain.sources.acquisition_path import SourceAcquisitionPath
+        chain = tuple(source.metadata.get("navigation_chain") or (landing_url, source.url))
+        self._source_repository.persist_acquisition_path(SourceAcquisitionPath(
+            project_id=source.project_id, workflow_run_id=workflow_run_id,
+            source_id=source.id, landing_url=landing_url, terminal_url=source.url,
+            navigation_chain=chain,
+            diagnostics=dict(source.metadata.get("navigation_diagnostics") or {}),
+        ))
 
     def _build_delta(
         self,
@@ -1117,7 +1132,7 @@ class SourceAcquisitionService:
         return Source(
             id=str(uuid4()),
             project_id=project_id,
-            url=item.candidate.url,
+            url=retrieved.url,
             canonical_url=item.canonical_url,
             title=retrieved.title or item.candidate.title,
             publisher=retrieved.publisher,
@@ -1136,6 +1151,9 @@ class SourceAcquisitionService:
             content_text=content_text,
             content_checksum=checksum,
             metadata=metadata,
+            raw_content_checksum=retrieved.raw_content_checksum,
+            raw_checksum_kind=retrieved.raw_checksum_kind,
+            extraction_revision=retrieved.extraction_revision,
         )
 
     def _coverage_target_satisfied(
