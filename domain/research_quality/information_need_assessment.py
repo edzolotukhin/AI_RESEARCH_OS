@@ -53,8 +53,14 @@ class InformationNeedAssessment:
     remaining_strategies: tuple[str, ...] = ()
     stop_reason: str = ""
     analysis_eligible: bool = False
+    information_need_kind: str = "ACQUIRED"
+    qualification_basis: str = "external_evidence"
+    prerequisite_diagnostics: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
+        bases={"ACQUIRED":"external_evidence","DERIVED":"dependency_prerequisites","OUTPUT":"output_deferred"}
+        if bases.get(self.information_need_kind)!=self.qualification_basis:
+            raise ValidationError("Invalid Information Need qualification basis")
         object.__setattr__(
             self,
             "information_need_id",
@@ -155,7 +161,11 @@ class InformationNeedAssessment:
                 "current assessments require matching evidence fingerprints",
             )
         if self.status == SufficiencyStatus.SUFFICIENT:
-            if self.evidence_count == 0:
+            if self.evidence_count == 0 and not (
+                self.information_need_kind in {"DERIVED","OUTPUT"}
+                and isinstance(self.prerequisite_diagnostics,dict)
+                and self.prerequisite_diagnostics.get("status") in {"ready","deferred"}
+            ):
                 raise ValidationError(
                     "SUFFICIENT assessments require evidence_count > 0",
                 )
@@ -171,7 +181,7 @@ class InformationNeedAssessment:
                 )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "information_need_id": self.information_need_id,
             "research_question_id": self.research_question_id,
             "status": self.status.value,
@@ -202,6 +212,10 @@ class InformationNeedAssessment:
             "stop_reason": self.stop_reason,
             "analysis_eligible": self.analysis_eligible,
         }
+        if self.information_need_kind!="ACQUIRED" or self.prerequisite_diagnostics is not None:
+            payload.update(information_need_kind=self.information_need_kind,qualification_basis=self.qualification_basis,
+                           prerequisite_diagnostics=self.prerequisite_diagnostics)
+        return payload
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> InformationNeedAssessment:
@@ -259,4 +273,7 @@ class InformationNeedAssessment:
             remaining_strategies=tuple_of_str(payload.get("remaining_strategies")),
             stop_reason=str(payload.get("stop_reason", "")),
             analysis_eligible=bool(payload.get("analysis_eligible", False)),
+            information_need_kind=str(payload.get("information_need_kind","ACQUIRED")),
+            qualification_basis=str(payload.get("qualification_basis","external_evidence")),
+            prerequisite_diagnostics=payload.get("prerequisite_diagnostics"),
         )

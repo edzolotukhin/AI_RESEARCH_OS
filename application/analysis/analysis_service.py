@@ -560,6 +560,10 @@ class AnalysisService:
                         "provider_attempts":0,"finding_ids":[]}
             assessments.append(assessment)
             context.write_shared("analysis_derivations",{"version":"derivation-v1","assessments":assessments})
+            readiness=context.read_shared(SHARED_STATE_KEY)
+            if isinstance(readiness,dict) and readiness.get("classification_version")=="analysis-kind-readiness-v1" and need.id not in readiness.get("analysis_eligible_information_need_ids",()):
+                assessment.update(status="not_eligible",reason="prerequisites_not_ready")
+                continue
             try:
                 findings=[self._finding_repository.get_by_id(fid) for fid in finding_ids]
                 dependencies,inputs=dependency_authority(need,[f for f in findings if f is not None],evidence_items,brief=brief,**scope)

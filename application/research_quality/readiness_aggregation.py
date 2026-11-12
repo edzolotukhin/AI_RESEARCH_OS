@@ -231,6 +231,12 @@ def _analysis_eligible_need_ids(
     }
     for assessment in assessments:
         for need in assessment.information_need_assessments:
+            if need.information_need_kind=="OUTPUT":
+                continue
+            if need.information_need_kind=="DERIVED":
+                if need.status==SufficiencyStatus.SUFFICIENT and need.assessment_current and (need.prerequisite_diagnostics or {}).get("status")=="ready":
+                    eligible.append(need.information_need_id)
+                continue
             if (
                 not need.assessment_current
                 or need.evidence_count == 0

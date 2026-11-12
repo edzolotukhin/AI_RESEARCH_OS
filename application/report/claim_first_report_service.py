@@ -99,6 +99,10 @@ class ClaimFirstReportService(ReportService):
             raise ReportError("Desk report contract changed after workflow creation")
         context.write_shared("report_generation_diagnostics", {"version": 2, "phase": "claim_generation", "status": "started", "workflow_run_id": context.workflow_run.id})
         design = self._resolve_design(context); brief = self._resolve_brief(context)
+        from application.research_quality.classified_readiness import output_obligations
+        obligations=output_obligations(design)
+        if obligations:
+            context.write_shared("report_output_obligations",{"version":"report-output-obligations-v1","requirements":list(obligations),"verification_state":"pending_finalization"})
         project_id = context.project.id; report_run_id = context.workflow_run.id
         from application.replay.desk_downstream_replay import source_run_id
         source_run = source_run_id(context)
@@ -194,6 +198,8 @@ class ClaimFirstReportService(ReportService):
         revision = 1
         dedup = compute_report_deduplication_key(workflow_run_id=report_run_id, report_type=DR06_RESEARCH_REPORT_TYPE, generation_method=method, revision_number=revision)
         metadata = {CONTRACT_KEY: contract.to_metadata(), "report_scope": contract.mode, "structured_claim_contract": "desk_report_claim_v1", "summary_units": list(rendered.summary_units)}
+        if context.read_shared("report_output_obligations") is not None:
+            metadata["output_obligations"]=context.read_shared("report_output_obligations")
         if coverage is not None: metadata.update(coverage.to_dict())
         report_id_candidate = str(uuid4())
         system_title = brief.title or "Desk Research Report"
@@ -301,6 +307,7 @@ class ClaimFirstReportService(ReportService):
         required_ins = tuple(sorted(
             need.id for need in design.information_needs
             if need.research_question_id in set(contract.required_rq_ids)
+            and need.kind.value!="OUTPUT"
         ))
         coverage_plan = build_h3_coverage_plan(
             design=design,
@@ -399,6 +406,8 @@ class ClaimFirstReportService(ReportService):
             "structured_claim_contract": H3_CONTRACT_VERSION,
             "h3_claim_generation": result.to_diagnostic_dict(),
         }
+        if context.read_shared("report_output_obligations") is not None:
+            metadata["output_obligations"]=context.read_shared("report_output_obligations")
         if coverage is not None:
             metadata.update(coverage.to_dict())
         report = Report(

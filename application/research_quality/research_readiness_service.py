@@ -58,7 +58,8 @@ class ResearchReadinessService:
         source_repository: SourceRepository | None = None,
         composed_authority_repository=None,
     ) -> None:
-        self._evaluator = evaluator
+        from application.research_quality.classified_readiness import wrap_evaluator
+        self._evaluator = wrap_evaluator(evaluator,source_repository)
         self._evidence_repository = evidence_repository
         self._gate = gate or ResearchReadinessGate()
         self._loop_service = loop_service
@@ -197,6 +198,9 @@ class ResearchReadinessService:
         for research_question in result.research_question_assessments:
             needs = []
             for assessment in research_question.information_need_assessments:
+                if assessment.information_need_kind!="ACQUIRED":
+                    needs.append(assessment)
+                    continue
                 need_id = assessment.information_need_id
                 sufficient = assessment.status.value == "sufficient" and assessment.assessment_current
                 dimensions = tuple(dict.fromkeys((*assessment.missing_aspects, *(item.value for item in assessment.gap_types))))
@@ -243,6 +247,7 @@ class ResearchReadinessService:
         cache_payload = context.read_shared(SHARED_SUFFICIENCY_CACHE_KEY)
         reconciled = reconcile_terminal_readiness(
             design=design,
+            source_repository=self._source_repository,
             evidence=qualifying_evidence(
                 design=design,
                 source_repository=self._source_repository,

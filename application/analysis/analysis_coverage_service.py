@@ -16,6 +16,7 @@ from domain.evidence.evidence import Evidence
 from domain.findings.finding import Finding
 from domain.research_brief import ResearchBrief
 from domain.planning.research_design import ResearchDesign
+from domain.planning.derivation import InformationNeedKind as Kind
 
 
 ANALYSIS_COVERAGE_DIAGNOSTIC_VERSION = "analysis_coverage_v1"
@@ -57,10 +58,11 @@ def assess_analysis_coverage(
 ) -> AnalysisCoverageResult:
     """Return exact required-IN coverage without mutating persisted authority.
 
-    A Finding covers an Information Need only when all of its Evidence refs are
-    present in the canonically qualified Evidence set and at least one cited
-    Evidence item supports that same Information Need.  Cross-project and
-    cross-design references fail closed.
+    Legacy designs retain their existing direct Evidence/Finding contract.
+    Classified designs additionally require validated ACQUIRED Findings and
+    reproducible DERIVED lineage. Every declared arithmetic period pair must be
+    present. OUTPUT is deferred, never counted as an analytic Finding target.
+    Cross-project and cross-design references fail closed.
     """
 
     design_need_ids = {item.id for item in design.information_needs}
@@ -74,7 +76,8 @@ def assess_analysis_coverage(
         raise UnknownInformationNeedError(
             f"Required Information Needs are outside the Research Design: {unknown}"
         )
-    required = tuple(sorted(requested))
+    required = tuple(sorted({n.id for n in design.information_needs if n.id in requested and n.kind!=Kind.OUTPUT}))
+    classified=any(n.kind!=Kind.ACQUIRED for n in design.information_needs)
 
     qualified = qualifying_evidence(
         design=design,
@@ -89,7 +92,26 @@ def assess_analysis_coverage(
     }
 
     covered: set[str] = set()
+    if classified:
+        from application.analysis.typed_coverage import supports_need
+        by_id={f.id:f for f in findings}
+        for need in design.information_needs:
+            if need.id not in required:
+                continue
+            supported=[f for f in findings if supports_need(f,need,project_id=project_id,design=design,findings=by_id,
+                evidence_by_id=evidence_by_id,brief=brief,source_repository=source_repository)]
+            if need.kind==Kind.DERIVED and need.derivation.operation_type.deterministic:
+                periods=need.derivation.required_periods
+                expected=(set(zip(periods,periods[1:])) if need.derivation.operation_type.value.startswith("YEAR_OVER_YEAR")
+                    else {(periods[0],periods[-1])})
+                actual={(f.metadata["derivation"]["parameters"]["from_period"],f.metadata["derivation"]["parameters"]["to_period"]) for f in supported}
+                if not expected<=actual:
+                    continue
+            if supported:
+                covered.add(need.id)
     for finding in findings:
+        if classified:
+            break
         if finding.project_id != project_id or finding.research_design_id != design.id or not finding.evidence_refs:
             continue
         cited = tuple(evidence_by_id.get(item) for item in finding.evidence_refs)
@@ -115,4 +137,5 @@ def assess_analysis_coverage(
         missing_information_need_ids=missing,
         evidence_without_finding=evidence_without_finding,
         fully_covered=not missing,
+        diagnostic_version="analysis_coverage_v2" if classified else ANALYSIS_COVERAGE_DIAGNOSTIC_VERSION,
     )
