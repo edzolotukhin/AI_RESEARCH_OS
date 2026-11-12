@@ -133,11 +133,22 @@ class HttpSourceRetriever(SourceRetriever):
             )
 
         navigation = _navigation_metadata(candidate)
+        navigation_diagnostics = dict(candidate.metadata.get("navigation_diagnostics") or {})
+        navigation_diagnostics.update({
+            "considered": True,
+            "activated": bool(
+                content_type.startswith("text/html")
+                and navigation["enabled"]
+                and navigation["depth"] < navigation["max_depth"]
+            ),
+        })
         if content_type.startswith("text/html") and navigation["enabled"] and navigation["depth"] < navigation["max_depth"]:
             terms = tuple(navigation["terms"])
             links = discover_links(text_body := response.text, base_url=final_url, terms=terms)
+            navigation_diagnostics["candidate_links"] = len(links)
             visited = set(navigation["visited"])
             visited.add(final_url)
+            selected = False
             for link in links[: navigation["max_links"]]:
                 if link.url in visited:
                     continue
@@ -158,11 +169,32 @@ class HttpSourceRetriever(SourceRetriever):
                         chain = [*navigation["visited"], final_url, link.url]
                     metadata["navigation_chain"] = list(dict.fromkeys(chain))
                     metadata.setdefault("navigation_selected_link", {"url": link.url, "text": link.text, "hint": link.resource_hint})
+                    terminal_diagnostics = terminal.metadata.get("navigation_diagnostics")
+                    selected_link = link.url
+                    if isinstance(terminal_diagnostics, dict):
+                        selected_link = terminal_diagnostics.get("selected_link") or selected_link
+                    navigation_diagnostics.update({
+                        "selected_link": selected_link,
+                        "final_url": terminal.url,
+                        "terminal_content_type": terminal.content_type,
+                        "stop_reason": "selected_terminal_resource",
+                    })
+                    metadata["navigation_diagnostics"] = navigation_diagnostics
                     terminal.metadata = metadata
+                    selected = True
                     return terminal
+            if not selected:
+                navigation_diagnostics.update({
+                    "stop_reason": "no_terminal_resource",
+                    "rejection_reason": "candidates_not_acquired_or_visited",
+                })
+        elif content_type.startswith("text/html") and navigation["enabled"]:
+            navigation_diagnostics.update({
+                "stop_reason": "depth_limit",
+            })
 
         if self._should_extract_xlsx(content_type=content_type, url=final_url, body=body):
-            return self._acquire_xlsx(
+            terminal = self._acquire_xlsx(
                 candidate=candidate,
                 retrieved_at=now,
                 final_url=final_url,
@@ -170,6 +202,9 @@ class HttpSourceRetriever(SourceRetriever):
                 body=body,
                 body_truncated=truncated,
             )
+            if navigation_diagnostics.get("considered"):
+                terminal.metadata["navigation_diagnostics"] = navigation_diagnostics
+            return terminal
 
         if is_unsupported_spreadsheet_url(final_url) or content_type in {
             "application/vnd.ms-excel",
@@ -242,6 +277,8 @@ class HttpSourceRetriever(SourceRetriever):
 
         status = RetrievalStatus.TRUNCATED if truncated else RetrievalStatus.ACQUIRED
         metadata: dict[str, object] = {}
+        if navigation_diagnostics.get("considered"):
+            metadata["navigation_diagnostics"] = navigation_diagnostics
         if truncated:
             metadata["truncated"] = True
             metadata["failure_category"] = "content_too_large"

@@ -16,14 +16,17 @@ class DiscoveredLink:
 class _LinkParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
-        self.links: list[tuple[str, str]] = []
+        self.links: list[tuple[str, str, dict[str, str]]] = []
         self._href: str | None = None
+        self._attrs: dict[str, str] = {}
         self._text: list[str] = []
 
     def handle_starttag(self, tag, attrs):
         if tag.casefold() != "a":
             return
-        self._href = dict(attrs).get("href")
+        attributes = {str(key).casefold(): str(value or "") for key, value in attrs}
+        self._href = attributes.get("href")
+        self._attrs = attributes
         self._text = []
 
     def handle_data(self, data):
@@ -32,7 +35,7 @@ class _LinkParser(HTMLParser):
 
     def handle_endtag(self, tag):
         if tag.casefold() == "a" and self._href:
-            self.links.append((self._href, " ".join(self._text).strip()))
+            self.links.append((self._href, " ".join(self._text).strip(), self._attrs))
             self._href = None
             self._text = []
 
@@ -42,17 +45,29 @@ def discover_links(html: str, *, base_url: str, terms: tuple[str, ...] = ()) -> 
     parser.feed(html)
     result: list[DiscoveredLink] = []
     seen: set[str] = set()
-    for href, text in parser.links:
+    page_has_table_format = any(
+        marker in html.casefold()
+        for marker in (".xlsx", "xlsx", ".csv", "csv", "spreadsheet", "таблич")
+    )
+    for href, text, attrs in parser.links:
         url = urljoin(base_url, href).split("#", 1)[0]
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or url in seen:
             continue
         seen.add(url)
-        haystack = f"{url} {text}".casefold()
+        haystack = f"{url} {text} {' '.join(attrs.values())}".casefold()
         score = sum(3 for term in terms if term.casefold() in haystack)
         path = parsed.path.casefold()
         hint = "html"
-        if path.endswith((".xlsx", ".csv")) or "xlsx" in haystack or "csv" in haystack:
+        download_hint = any(
+            key in attrs for key in ("download", "data-download", "data-resource", "data-format", "type")
+        ) or any(word in haystack for word in ("завантаж", "download", "file", "файл"))
+        if (
+            path.endswith((".xlsx", ".csv"))
+            or "xlsx" in haystack
+            or "csv" in haystack
+            or (page_has_table_format and download_hint)
+        ):
             hint = "table"
             score += 10
         elif path.endswith(".pdf") or "pdf" in haystack:

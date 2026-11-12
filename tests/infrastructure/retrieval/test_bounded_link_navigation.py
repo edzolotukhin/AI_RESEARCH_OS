@@ -8,6 +8,7 @@ from openpyxl import Workbook
 from domain.sources.retrieval_status import RetrievalStatus
 from domain.sources.source_candidate import SourceCandidate
 from infrastructure.retrieval.http_source_retriever import HttpSourceRetriever
+from infrastructure.retrieval.link_discovery import discover_links
 
 
 def _xlsx_bytes() -> bytes:
@@ -65,3 +66,30 @@ def test_navigation_deduplicates_cycle_and_stops_at_depth():
     ))
     assert source.retrieval_status is RetrievalStatus.ACQUIRED
     assert source.metadata.get("navigation_chain") is None
+
+
+def test_resource_page_download_without_file_extension_is_selected_as_table():
+    links = discover_links(
+        '<h1>Population.xlsx</h1><p>Format: XLSX</p>'
+        '<a href="/download/123">Завантажити</a>',
+        base_url="https://example.org/resource/123",
+    )
+    assert links[0].url == "https://example.org/download/123"
+    assert links[0].resource_hint == "table"
+
+
+def test_navigation_records_controlled_diagnostics_when_no_link_is_selected():
+    retriever = HttpSourceRetriever(http_client=httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, text="<p>complete text</p>", headers={"content-type": "text/html"}),
+    )))
+    source = retriever.retrieve(SourceCandidate(
+        "fixture", "https://example.org/page", "fixture", "", "q1", 1,
+        metadata={"navigation_enabled": "1"},
+    ))
+    assert source.metadata["navigation_diagnostics"] == {
+        "considered": True,
+        "activated": True,
+        "candidate_links": 0,
+        "stop_reason": "no_terminal_resource",
+        "rejection_reason": "candidates_not_acquired_or_visited",
+    }
