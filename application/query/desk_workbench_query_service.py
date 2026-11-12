@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 from application.query.research_run_result import ResearchRunResultProjectionError
 from application.query.research_status import ResearchExecutionStatus
+from application.query.research_outcome_presentation import present_research_outcome, readiness_reasons
 
 
 COLLECTION_LIMIT = 50
@@ -219,6 +220,15 @@ class DeskWorkbenchQueryService:
                 limitations = tuple(self._limitation(item) for item in result.limitations)
             except ResearchRunResultProjectionError:
                 pass
+            from application.research_quality.readiness_result_codec import extract_research_readiness, extract_research_product_outcome
+            task_results = self._container.workflow_service.get_task_results(run_id)
+            try:
+                product = extract_research_product_outcome(task_results) or {}
+            except ValueError:
+                product = {}
+            reasons = readiness_reasons(extract_research_readiness(task_results), template.research_design_snapshot,
+                missing_ids=product.get("unresolved_information_need_ids", ()))
+            limitations = tuple(dict.fromkeys((*limitations, *reasons)))
 
         header = self._header(
             run,
@@ -302,31 +312,18 @@ class DeskWorkbenchQueryService:
             "REVIEWING": "Виконується перевірка якості",
             "COMPLETED": "Дослідження завершено",
         }
-        if run.status.value == "cancelled":
-            state, tone = "Скасовано", "neutral"
-        elif outcome == "APPROVED":
-            state, tone = "Завершено", "success"
-        elif outcome == "NOT_READY":
-            state, tone = "Завершено з обмеженнями", "attention"
-        elif outcome == "QUALITY_REJECTED":
-            state, tone = "Потребує уваги", "attention"
-        elif outcome == "EXECUTION_FAILED" or run.status.value == "failed":
-            state, tone = "Помилка", "error"
-        elif run.status.value == "completed":
-            state, tone = "Завершено", "success"
-        elif run.status.value == "paused":
-            state, tone = "Потребує уваги", "attention"
-        elif status.execution_status is ResearchExecutionStatus.RUNNING:
-            state, tone = "Виконується", "running"
-        else:
-            state, tone = "У черзі", "neutral"
+        presentation = present_research_outcome(run.status.value, outcome)
+        state, tone = presentation.label, presentation.tone
+        activity = phase_labels.get(status.phase.value, "Стан дослідження оновлюється")
+        if status.execution_status is ResearchExecutionStatus.TERMINAL:
+            activity = presentation.explanation
         return DeskHeaderView(
             run_id=run.id,
             project_id=project.id,
             project_name=project.name,
             state=state,
             state_tone=tone,
-            activity=phase_labels.get(status.phase.value, "Стан дослідження оновлюється"),
+            activity=activity,
             execution_status=status.execution_status.value,
             outcome=outcome,
             is_terminal=status.execution_status is ResearchExecutionStatus.TERMINAL,

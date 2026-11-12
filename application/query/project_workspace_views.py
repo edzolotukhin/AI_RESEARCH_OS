@@ -20,6 +20,8 @@ class MethodOutputAvailabilityView:
     analyses_count: int | None = None
     report_available: bool | None = None
     review_available: bool | None = None
+    pdf_available: bool | None = None
+    pptx_available: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,16 @@ class MethodWorkspaceView:
     run_id: str | None = None
     execution_status: str | None = None
     replay_action: WorkspaceActionView | None = None
+    research_outcome: str | None = None
+    insufficiency_reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class WorkspaceRunView:
+    run_id: str
+    state_label: str
+    href: str
+    is_current: bool = False
 
 
 @dataclass(frozen=True)
@@ -69,6 +81,7 @@ class ProjectWorkspaceView:
     role: str = "OWNER"
     can_mutate: bool = True
     can_manage_access: bool = True
+    desk_history: tuple[WorkspaceRunView, ...] = ()
 
 
 @dataclass(frozen=True)

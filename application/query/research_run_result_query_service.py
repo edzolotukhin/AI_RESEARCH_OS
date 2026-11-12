@@ -100,6 +100,19 @@ class ResearchRunResultQueryService:
         self._review_repository = review_repository
         self._artifact_repository = artifact_repository
 
+    def available_outputs_for_run(self, run_id: str) -> dict:
+        """Availability is independent of outcome and works for ambiguous/running runs."""
+        run = self._workflow_run_repository.get_by_id(run_id)
+        if run is None:
+            raise EntityNotFoundError(f"WorkflowRun not found: {run_id}")
+        scope = dict(workflow_run_id=run_id)
+        return dict(
+            findings_count=len(self._finding_repository.list_for_project(run.project_id, **scope)),
+            insights_count=len(self._insight_repository.list_for_project(run.project_id, **scope)),
+            report_available=bool(self._report_repository.list_for_project(run.project_id, **scope)),
+            review_available=bool(self._review_repository.list_for_project(run.project_id, **scope)),
+        )
+
     def get_for_run(self, run_id: str) -> ResearchRunResult:
         workflow_run = self._workflow_run_repository.get_by_id(run_id)
         if workflow_run is None:
@@ -148,6 +161,10 @@ class ResearchRunResultQueryService:
             approved_artifact,
         )
 
+        try:
+            product_outcome = extract_research_product_outcome(task_results)
+        except ValueError as exc:
+            raise ResearchRunResultProjectionError("Ambiguous durable research outcome") from exc
         outcome = self._derive_outcome(
             workflow_run=workflow_run,
             readiness_payload=readiness_payload,
@@ -155,7 +172,7 @@ class ResearchRunResultQueryService:
             latest_review=latest_review,
             approved_artifact=approved_artifact,
             artifacts=artifacts,
-            product_outcome=extract_research_product_outcome(task_results),
+            product_outcome=product_outcome,
             findings=findings,
             evidence=evidence,
         )
@@ -314,6 +331,8 @@ class ResearchRunResultQueryService:
                 findings=findings or (), evidence=evidence or (),
                 project_id=workflow_run.project_id, workflow_run_id=workflow_run.id,
                 research_design_id=(next(iter(design_ids)) if len(design_ids) == 1 else ""),
+                technical_failure=workflow_run.status == WorkflowStatus.FAILED,
+                coverage_missing_information_need_ids=product_outcome.get("unresolved_information_need_ids", ()),
             )
             return ResearchRunOutcome(resolved)
         if isinstance(product_outcome, dict):

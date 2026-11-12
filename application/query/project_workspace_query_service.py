@@ -3,8 +3,11 @@ from __future__ import annotations
 from application.query.project_workspace_views import (
     MethodOutputAvailabilityView, MethodWorkspaceView, ProjectBriefSummaryView,
     ProjectListItemView, ProjectListView, ProjectWorkspaceView,
-    WorkspaceActionView, WorkspaceMethodState,
+    WorkspaceActionView, WorkspaceMethodState, WorkspaceRunView,
 )
+from application.query.research_outcome_presentation import present_research_outcome, readiness_reasons
+from application.query.research_run_result import ResearchRunResultProjectionError
+from application.research_quality.readiness_result_codec import extract_research_readiness, extract_research_product_outcome
 from application.quantitative.workflow import build_quantitative_workflow_template
 from domain.value_objects.task_status import TaskStatus
 from domain.research_method import DESK, QUANTITATIVE, QUALITATIVE
@@ -15,7 +18,7 @@ from application.workflow_kind import WorkflowKind, classify_workflow_template
 class ProjectWorkspaceQueryService:
     def __init__(self, *, project_service, workflow_service, quantitative_ui_service,
                  research_result_service, project_planning_service, qualitative_service=None,
-                 downstream_replay_service=None) -> None:
+                 downstream_replay_service=None, deliverables_service=None) -> None:
         self.projects = project_service
         self.workflows = workflow_service
         self.quantitative = quantitative_ui_service
@@ -23,6 +26,7 @@ class ProjectWorkspaceQueryService:
         self.planning = project_planning_service
         self.qualitative = qualitative_service
         self.downstream_replay = downstream_replay_service
+        self.deliverables = deliverables_service
 
     def list(self, *, owner_id: str) -> ProjectListView:
         items = []
@@ -88,12 +92,25 @@ class ProjectWorkspaceQueryService:
             attention_items=attention,
             can_regenerate_design=can_regenerate,
             design_regeneration_block_reason=regeneration_reason,
+            desk_history=tuple(WorkspaceRunView(run.id,
+                desk.state_label if desk and run.id == desk.run_id else present_research_outcome(run.status.value, self._desk_outcome(run)).label,
+                f"/ui/research/{run.id}/overview", run.id == (desk.run_id if desk else None))
+                for run in reversed(ordered_desk_runs)) if desk else (),
         )
 
     @staticmethod
     def _study_type():
         from domain.quantitative.workflow import QuantitativeStudyProjection
         return QuantitativeStudyProjection
+
+    def _desk_outcome(self, run):
+        if not run.is_terminal:
+            return None
+        try:
+            return self.research_results.get_for_run(run.id).outcome.value
+        except (ResearchRunResultProjectionError, ValueError):
+            # Missing/conflicting historical outcome is not research success.
+            return None
 
     def _desk(self, project_id, run, project, owner_id=None):
         if run is None:
@@ -108,31 +125,41 @@ class ProjectWorkspaceQueryService:
         total = len(run.tasks)
         complete = sum(task.status in {TaskStatus.COMPLETED, TaskStatus.SKIPPED} for task in run.tasks)
         progress = round(complete * 100 / total) if total else None
-        state = WorkspaceMethodState.RUNNING
-        label = "Виконується"
-        explanation = "Кабінетне дослідження виконується за визначеним брифом."
-        if status == "paused": state, label, explanation = WorkspaceMethodState.ATTENTION, "Потребує уваги", "Кабінетне дослідження призупинено та потребує уваги."
-        elif status == "completed": state, label, explanation = WorkspaceMethodState.COMPLETED, "Завершено", "Кабінетне дослідження завершено; підтримані результати доступні."
-        elif status in {"failed", "cancelled"}: state, label, explanation = WorkspaceMethodState.LIMITED, "Завершено з обмеженнями", "Кабінетне дослідження завершилося без повного підтриманого результату."
+        outcome = self._desk_outcome(run)
+        presentation = present_research_outcome(status, outcome)
+        state = {"success": WorkspaceMethodState.COMPLETED, "running": WorkspaceMethodState.RUNNING,
+                 "error": WorkspaceMethodState.ATTENTION, "neutral": WorkspaceMethodState.LIMITED}.get(
+                     presentation.tone, WorkspaceMethodState.LIMITED if outcome == "PARTIAL" else WorkspaceMethodState.ATTENTION)
+        label, explanation = presentation.label, presentation.explanation
+        # This percentage describes execution only, never research sufficiency.
+        if status == "completed" and outcome not in {"COMPLETED", "APPROVED"}:
+            progress = None
         output = MethodOutputAvailabilityView()
         try:
-            payload = self.research_results.get_detail_for_run(run.id).to_dict()
-            detail = payload.get("detail", payload)
-            output = MethodOutputAvailabilityView(
-                findings_count=len(detail.get("findings", ())),
-                insights_count=len(detail.get("insights", ())),
-                report_available=bool(detail.get("report")),
-                review_available=bool(detail.get("review")),
-            )
+            output = MethodOutputAvailabilityView(**self.research_results.available_outputs_for_run(run.id))
         except Exception:
             pass
+        if self.deliverables is not None and owner_id is not None:
+            try:
+                from dataclasses import replace
+                catalog = self.deliverables.catalog(project_id, owner_id=owner_id)
+                items = [item for item in catalog.desk if item.document.run_id == run.id]
+                output = replace(output, pdf_available=any(item.pdf is not None for item in items),
+                                 pptx_available=any(item.pptx is not None for item in items))
+            except Exception:
+                pass  # Unavailable file metadata cannot promote the outcome.
+        task_results = self.workflows.get_task_results(run.id)
+        try:
+            product = extract_research_product_outcome(task_results) or {}
+        except ValueError:
+            product = {}
+        reasons = readiness_reasons(extract_research_readiness(task_results),
+            self.workflows.get_template(run.workflow_template_id).research_design_snapshot,
+            missing_ids=product.get("unresolved_information_need_ids", ())) if run.is_terminal else ()
         open_action = WorkspaceActionView("Відкрити кабінетне дослідження", f"/ui/research/{run.id}/overview")
         primary_action = open_action
         if status in {"completed", "failed", "cancelled"}:
-            explanation = (
-                "Попередній запуск буде збережено. Система створить новий "
-                "запуск дослідження."
-            )
+            explanation += " Попередній запуск буде збережено; новий запуск не замінить його результати."
             primary_action = WorkspaceActionView(
                 "Запустити нове дослідження",
                 f"/ui/projects/{project_id}/methods/DESK/retry",
@@ -153,7 +180,8 @@ class ProjectWorkspaceQueryService:
                                    execution_status=(
                                        "TERMINAL"
                                        if run.is_terminal else "RUNNING"
-                                   ), replay_action=replay_action)
+                                   ), replay_action=replay_action, research_outcome=outcome,
+                                   insufficiency_reasons=reasons)
 
     def _quant(self, project_id, study, run, project):
         if study is None:

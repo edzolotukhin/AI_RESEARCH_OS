@@ -24,6 +24,7 @@ class ProjectWorkspaceFacade:
             project_planning_service=container.project_planning_service,
             qualitative_service=container.qualitative_service,
             downstream_replay_service=container.desk_downstream_replay_service,
+            deliverables_service=container.project_deliverables_service,
         )
 
     @property

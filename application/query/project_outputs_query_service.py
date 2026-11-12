@@ -7,6 +7,7 @@ from application.query.project_activity_views import ActivityTimeline
 
 from application.persistence.exceptions import AccessDeniedError
 from application.query.desk_workbench_query_service import DeskWorkbenchQueryService
+from application.workflow_kind import WorkflowKind, classify_workflow_template
 from application.query.quantitative_study_query_service import QuantitativeStudyQueryService
 from application.quantitative.workflow import (
     CMF_QUANTITATIVE_WORKFLOW_ID,
@@ -59,12 +60,14 @@ class ProjectOutputsQueryService:
                 if run.workflow_template_id not in quant_template_ids:
                     raise ValueError("Quantitative study has an unexpected workflow template")
                 quant_matches.append((run, max(snapshots, key=lambda item: item.revision)))
-            elif run.workflow_template_id not in quant_template_ids | {QUAL_TEMPLATE}:
+            elif (run.workflow_template_id not in quant_template_ids | {QUAL_TEMPLATE}
+                  and classify_workflow_template(self.container.workflow_service.get_template(run.workflow_template_id)) != WorkflowKind.PROJECT_DESIGN):
                 desk_runs.append(run)
 
         result = []
         if DESK in methods:
-            result.append(self._desk(project, desk_runs[-1] if desk_runs else None))
+            ordered = self.container.project_planning_service._order_desk_attempts(desk_runs, project.id)
+            result.append(self._desk(project, ordered[-1] if ordered else None))
         if QUANTITATIVE in methods:
             result.append(self._quant(project, owner_id, quant_matches[-1] if quant_matches else None))
         if QUALITATIVE in methods:

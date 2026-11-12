@@ -33,6 +33,10 @@ PHASE_LABELS: dict[str, str] = {
 }
 
 OUTCOME_LABELS: dict[str, str] = {
+    "COMPLETED": "Завершено",
+    "PARTIAL": "Завершено з обмеженнями",
+    "INSUFFICIENT": "Недостатньо матеріалів",
+    "FAILED": "Технічна помилка",
     "APPROVED": "Approved",
     "NOT_READY": "Not ready for analysis",
     "QUALITY_REJECTED": "Quality not approved",
@@ -40,6 +44,10 @@ OUTCOME_LABELS: dict[str, str] = {
 }
 
 OUTCOME_CSS: dict[str, str] = {
+    "COMPLETED": "outcome-approved",
+    "PARTIAL": "outcome-not-ready",
+    "INSUFFICIENT": "outcome-not-ready",
+    "FAILED": "outcome-execution-failed",
     "APPROVED": "outcome-approved",
     "NOT_READY": "outcome-not-ready",
     "QUALITY_REJECTED": "outcome-quality-rejected",
