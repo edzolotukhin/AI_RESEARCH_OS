@@ -4,7 +4,7 @@ import hashlib
 import logging
 import time
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
@@ -930,7 +930,24 @@ class SourceAcquisitionService:
 
         funnel.acquisition_attempt(primary.canonical_url)
         try:
-            retrieved = self._source_retriever.retrieve(primary.candidate)
+            candidate = primary.candidate
+            navigation_metadata = dict(candidate.metadata)
+            navigation_metadata.update({
+                "navigation_enabled": "1",
+                "navigation_max_depth": "3",
+                "navigation_max_links": "5",
+                "navigation_terms": "|".join(
+                    item for item in (
+                        primary.query.geography,
+                        primary.query.timeframe,
+                        *primary.query.preferred_source_types,
+                    ) if item
+                ),
+                "navigation_visited": primary.canonical_url,
+            })
+            retrieved = self._source_retriever.retrieve(
+                replace(candidate, metadata=navigation_metadata)
+            )
         except Exception:
             funnel.acquisition_attempt(primary.canonical_url, failed=True)
             raise

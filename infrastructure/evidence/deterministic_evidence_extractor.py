@@ -27,6 +27,38 @@ class DeterministicEvidenceExtractor(EvidenceExtractor):
         design: ResearchDesign,
         run_context: RunScopedSourceContext,
     ) -> list[EvidenceCandidate]:
+        rows = source.metadata.get("structured_rows")
+        if isinstance(rows, list) and rows:
+            need_by_id = {need.id: need for need in design.information_needs}
+            result: list[EvidenceCandidate] = []
+            for row in rows:
+                if not isinstance(row, dict) or row.get("period") is None:
+                    continue
+                cells = row.get("cells") or []
+                numeric = next((cell for cell in cells if isinstance(cell, dict) and _numeric(cell.get("value")) is not None), None)
+                if numeric is None:
+                    continue
+                period = int(row["period"])
+                values = " | ".join(f"{cell.get('header')}={cell.get('value')}" for cell in cells if isinstance(cell, dict))
+                excerpt = f"Sheet=\"{row.get('sheet')}\" | " + " | ".join(
+                    f"{cell.get('header')}={cell.get('value')}"
+                    for cell in cells if isinstance(cell, dict)
+                )
+                if excerpt not in source.content_text:
+                    continue
+                for need_id in run_context.information_need_ids:
+                    need = need_by_id.get(need_id)
+                    if need is None:
+                        continue
+                    result.append(EvidenceCandidate(
+                        statement=f"{period}: {values}", source_excerpt=excerpt,
+                        evidence_type=EvidenceType.DIRECT_EXCERPT.value,
+                        research_question_refs=(need.research_question_id,),
+                        information_need_refs=(need.id,), confidence=0.95, direct=True,
+                        metadata={"structured_table": True, "period": period, "sheet": row.get("sheet"), "row": row.get("row"), "cells": cells},
+                    ))
+            if result:
+                return result
         if self._KNOWN_EXCERPT not in source.content_text:
             return []
 
@@ -56,3 +88,10 @@ class DeterministicEvidenceExtractor(EvidenceExtractor):
                 ),
             )
         return candidates
+
+
+def _numeric(value):
+    try:
+        return float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
