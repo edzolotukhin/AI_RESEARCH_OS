@@ -13,6 +13,11 @@ from domain.findings.insight import Insight
 from domain.research_brief import ResearchBrief
 from application.evidence.temporal_scope import qualifying_evidence
 from domain.planning.research_design import ResearchDesign
+from domain.planning.derivation import InformationNeedKind, validate_dependency_graph
+from application.analysis.derivations import (
+    DerivationRefused, dependency_authority, calculate_candidates,
+    validate_deterministic_derivation,
+)
 
 from application.analysis.deduplication import (
     compute_finding_deduplication_key,
@@ -137,6 +142,9 @@ class AnalysisService:
         project_id = context.project.id
         workflow_run_id = context.workflow_run.id
         research_design_id = design.id
+        explicit_kinds = any(n.kind!=InformationNeedKind.ACQUIRED for n in design.information_needs)
+        if explicit_kinds:
+            validate_dependency_graph(design)
         questions_by_id = {question.id: question for question in design.research_questions}
         coverage = coverage_snapshot_from_payload(context.read_shared(SHARED_STATE_KEY))
         eligible_need_ids = (
@@ -178,6 +186,12 @@ class AnalysisService:
                 f"No run-scoped evidence available for analysis in run {workflow_run_id}",
             )
 
+        acquired_need_ids=tuple(n.id for n in design.information_needs if n.kind==InformationNeedKind.ACQUIRED
+            and (eligible_need_ids is None or n.id in eligible_need_ids))
+        ordinary_scope=acquired_need_ids if explicit_kinds else eligible_need_ids
+        if explicit_kinds:
+            evidence_items=[e for e in evidence_items if set(e.information_need_refs).intersection(acquired_need_ids)]
+
         evidence_by_id = {item.id: item for item in evidence_items}
         batches = batch_evidence_by_question(
             evidence_items,
@@ -208,7 +222,7 @@ class AnalysisService:
                 design=design,
                 evidence_batch=evidence_batch,
                 batch_question_id=normalized_question_id,
-                allowed_information_need_ids=eligible_need_ids or (),
+                allowed_information_need_ids=ordinary_scope or (),
                 supported_aspects_by_information_need=supported_aspects,
                 coverage_snapshot=coverage.to_dict() if coverage is not None else None,
             )
@@ -278,6 +292,15 @@ class AnalysisService:
             for candidate in candidates:
                 candidate_id = f"fc-{next_candidate_index:04d}"
                 next_candidate_index += 1
+                if not explicit_kinds and (candidate.metadata or {}).get("derivation") is not None:
+                    # Provider metadata cannot self-certify execution of the
+                    # application-owned derivation contract.
+                    from dataclasses import replace
+                    candidate=replace(candidate,metadata={k:v for k,v in candidate.metadata.items() if k!="derivation"})
+                if explicit_kinds and (not set(candidate.information_need_refs)<=set(acquired_need_ids) or (candidate.metadata or {}).get("derivation") is not None):
+                    finding_candidates_rejected += 1
+                    batch_diag.rejected_count += 1
+                    continue
                 try:
                     validated = validate_finding_candidate(
                         candidate,
@@ -286,7 +309,7 @@ class AnalysisService:
                         workflow_run_id=workflow_run_id,
                         research_design_id=research_design_id,
                         design=design,
-                        eligible_information_need_ids=eligible_need_ids,
+                        eligible_information_need_ids=ordinary_scope,
                         supported_aspects_by_information_need=(
                             _evidence_supported_aspects(
                                 candidate.evidence_refs,
@@ -434,12 +457,20 @@ class AnalysisService:
                 )
             raise AnalysisError(message)
 
+        if explicit_kinds:
+            self._execute_derivations(context=context,design=design,brief=brief,
+                evidence_items=evidence_items,finding_ids=finding_ids,
+                allowed_runs=allowed_workflow_run_ids,
+                require_single_information_need=require_single_information_need)
         persisted_findings = [
             self._finding_repository.get_by_id(finding_id)
             for finding_id in finding_ids
         ]
         findings = [item for item in persisted_findings if item is not None]
         findings_by_id = {item.id: item for item in findings}
+        insight_scope=eligible_need_ids
+        if explicit_kinds:
+            insight_scope=tuple(sorted({ref for f in findings for ref in f.information_need_refs}))
 
         insight_input = AnalysisInput(
             project_id=project_id,
@@ -449,7 +480,7 @@ class AnalysisService:
             design=design,
             evidence_batch=tuple(evidence_items),
             persisted_findings=tuple(findings),
-            allowed_information_need_ids=eligible_need_ids or (),
+            allowed_information_need_ids=insight_scope or (),
             supported_aspects_by_information_need=supported_aspects,
             coverage_snapshot=coverage.to_dict() if coverage is not None else None,
         )
@@ -482,7 +513,7 @@ class AnalysisService:
                     workflow_run_id=workflow_run_id,
                     research_design_id=research_design_id,
                     design=design,
-                    eligible_information_need_ids=eligible_need_ids,
+                    eligible_information_need_ids=insight_scope,
                 )
                 insight_id = self._persist_insight(
                     candidate=validated,
@@ -514,6 +545,102 @@ class AnalysisService:
             entailment_diagnostics=entailment_diagnostics,
             rejection_counts=_aggregate_rejection_counts(batch_diagnostics),
         )
+
+    def _execute_derivations(self, *, context, design, brief, evidence_items, finding_ids, allowed_runs, require_single_information_need):
+        from dataclasses import replace
+        import re
+        import json
+        assessments=[]
+        scope=dict(design=design,project_id=context.project.id,workflow_run_id=context.workflow_run.id,
+                   allowed_runs=allowed_runs,source_repository=self._source_repository)
+        for need in validate_dependency_graph(design):
+            if need.kind!=InformationNeedKind.DERIVED:
+                continue
+            assessment={"information_need_id":need.id,"operation_type":need.derivation.operation_type.value,
+                        "provider_attempts":0,"finding_ids":[]}
+            assessments.append(assessment)
+            context.write_shared("analysis_derivations",{"version":"derivation-v1","assessments":assessments})
+            try:
+                findings=[self._finding_repository.get_by_id(fid) for fid in finding_ids]
+                dependencies,inputs=dependency_authority(need,[f for f in findings if f is not None],evidence_items,brief=brief,**scope)
+                if need.derivation.operation_type.deterministic:
+                    try:
+                        candidates=calculate_candidates(need,inputs,dependencies,**scope)
+                    except ArithmeticError as exc:
+                        raise DerivationRefused("numeric_precision_or_range") from exc
+                    for candidate in candidates:
+                        validate_deterministic_derivation(candidate,need,inputs,dependencies,brief=brief,**scope)
+                else:
+                    if need.derivation.operation_type.value=="CROSS_SOURCE_COMPARISON":
+                        origins={self._source_repository.get_by_id(e.source_id).terminal_resource_key for e in inputs}
+                        binaries={self._source_repository.get_by_id(e.source_id).raw_content_checksum for e in inputs}
+                        if len(origins)<2 or len(binaries)<2:
+                            raise DerivationRefused("cross_source_requires_distinct_resources")
+                    prompt_chars=(sum(len(e.statement)+len(e.source_excerpt)+len(e.id) for e in inputs)
+                        +sum(len(f.statement)+len(f.id) for f in dependencies)+len(json.dumps(need.to_dict(),ensure_ascii=False))
+                        +sum(len(q.question)+len(q.id) for q in design.research_questions)
+                        +sum(len(step) for step in design.analysis_plan)+len(brief.business_question))
+                    if len(inputs)>self._max_evidence_per_batch or prompt_chars>self._max_chars_per_batch:
+                        raise DerivationRefused("semantic_input_bound")
+                    synthesis_input=AnalysisInput(project_id=context.project.id,workflow_run_id=context.workflow_run.id,
+                        research_design_id=design.id,brief=brief,design=design,evidence_batch=inputs,
+                        batch_question_id=need.research_question_id,persisted_findings=dependencies,allowed_information_need_ids=(need.id,))
+                    candidates=[]
+                    number_pattern=r"(?<!\w)[+-]?\d+(?:[.,]\d+)?"
+                    allowed_numbers=set(re.findall(number_pattern," ".join([e.statement for e in inputs]+[f.statement for f in dependencies]).replace("−","-")))
+                    for attempt in range(need.derivation.max_provider_attempts):
+                        assessment["provider_attempts"]+=1
+                        proposals=self._analysis_engine.analyze_findings(synthesis_input)
+                        valid=[]
+                        for proposal in proposals[:1]:
+                            if tuple(proposal.information_need_refs)!=(need.id,) or not set(proposal.evidence_refs)<={e.id for e in inputs}:
+                                continue
+                            if not set(re.findall(number_pattern,(proposal.statement+" "+proposal.rationale).replace("−","-")))<=allowed_numbers:
+                                continue
+                            metadata=dict(proposal.metadata or {})
+                            metadata.pop("derivation",None)
+                            metadata["required_aspect_refs"]=[]
+                            try:
+                                checked=validate_finding_candidate(replace(proposal,metadata=metadata),
+                                    evidence_by_id={e.id:e for e in inputs},project_id=context.project.id,
+                                    workflow_run_id=context.workflow_run.id,research_design_id=design.id,
+                                    design=design,allowed_workflow_run_ids=allowed_runs)
+                            except InvalidAnalysisProvenanceError:
+                                continue
+                            valid.append(ProvenanceValidFinding(candidate_id=f"derived-{need.id}-{attempt}",candidate=checked,
+                                research_question_text=next(q.question for q in design.research_questions if q.id==need.research_question_id)))
+                        diagnostics=FindingEntailmentDiagnostics()
+                        supported=self._run_entailment_gate(provenance_valid=valid,evidence_by_id={e.id:e for e in inputs},
+                            diagnostics=diagnostics,workflow_run_id=context.workflow_run.id) if valid else []
+                        assessment["entailment"]=diagnostics.to_dict()
+                        if supported:
+                            for item in supported:
+                                metadata=dict(item.candidate.metadata or {})
+                                metadata["derivation"]={"version":need.derivation.version,"operation_type":need.derivation.operation_type.value,
+                                    "contract":need.derivation.to_dict(),"dependency_information_need_ids":list(need.depends_on_information_need_ids),
+                                    "dependency_finding_ids":[f.id for f in dependencies],"input_evidence_ids":[e.id for e in inputs],
+                                    "formula":None,"method":need.derivation.method,"raw_result":None,"rounded_result":None,
+                                    "parameters":{},"preconditions":{"validated_dependencies":True,"qualified_evidence":True,"bounded_numeric_claims":True},
+                                    "source_revision_lineage":[{"evidence_id":e.id,"source_id":e.source_id,"source_content_checksum":e.source_content_checksum,
+                                        "content_revision":self._source_repository.get_by_id(e.source_id).content_revision,
+                                        "extraction_revision":self._source_repository.get_by_id(e.source_id).extraction_revision} for e in inputs],
+                                    "validation_method":"semantic-entailment-v1","validation_status":"validated"}
+                                candidates.append(replace(item.candidate,metadata=metadata))
+                            break
+                    if not candidates:
+                        raise DerivationRefused("semantic_synthesis_not_supported")
+                for candidate in candidates:
+                    fid=self._persist_finding(candidate=candidate,project_id=context.project.id,workflow_run_id=context.workflow_run.id,
+                        research_design_id=design.id,require_single_information_need=require_single_information_need)
+                    if fid not in finding_ids:
+                        finding_ids.append(fid)
+                    assessment["finding_ids"].append(fid)
+                assessment["status"]="validated"
+            except DerivationRefused as exc:
+                assessment.update(status="insufficient",reason=str(exc))
+            except Exception as exc:
+                assessment.update(status="technical_error",reason=type(exc).__name__)
+                raise AnalysisError(f"Derived Analysis technical failure: {need.id}: {type(exc).__name__}") from exc
 
     def _run_entailment_gate(
         self,
@@ -653,6 +780,13 @@ class AnalysisService:
             statement=candidate.statement,
             evidence_refs=candidate.evidence_refs,
         )
+        if (candidate.metadata or {}).get("derivation"):
+            import hashlib
+            import json
+            derivation=candidate.metadata["derivation"]
+            identity={"information_need_ids":candidate.information_need_refs,"contract":derivation["contract"],
+                      "dependency_finding_ids":derivation["dependency_finding_ids"]}
+            deduplication_key=hashlib.sha256((deduplication_key+json.dumps(identity,sort_keys=True,separators=(",",":"))).encode()).hexdigest()
         existing = self._finding_repository.get_by_deduplication_key(
             workflow_run_id,
             deduplication_key,
@@ -688,7 +822,7 @@ class AnalysisService:
             evidence_refs=candidate.evidence_refs,
             finding_type=FindingType(finding_type),
             confidence=candidate.confidence,
-            analysis_method=getattr(self._analysis_engine, "method_name", "unknown"),
+            analysis_method=("deterministic-derivation-v1" if metadata.get("derivation",{}).get("validation_method")=="deterministic-recompute-v1" else getattr(self._analysis_engine, "method_name", "unknown")),
             deduplication_key=deduplication_key,
             created_at=datetime.now(timezone.utc).isoformat(),
             metadata=metadata,
@@ -731,6 +865,8 @@ class AnalysisService:
         )
         if require_single_information_need and len(existing.information_need_refs) != 1:
             compatible = False
+        if (candidate.metadata or {}).get("derivation") is not None:
+            compatible = compatible and existing.metadata.get("validation_status")=="validated" and existing.metadata.get("derivation")==candidate.metadata["derivation"]
         if not compatible:
             raise InvalidAnalysisProvenanceError(
                 "Deduplication resolved to an incompatible persisted Finding",

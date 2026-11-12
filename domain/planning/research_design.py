@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from domain.planning.evidence_expectation import EvidenceExpectation
 from domain.planning.research_subject import ResearchSubject
+from domain.planning.derivation import InformationNeedKind, DerivationContract, validate_dependency_graph
 
 
 @dataclass(frozen=True)
@@ -145,6 +146,22 @@ class InformationNeed:
     geography: str = ""
     evidence_expectation: EvidenceExpectation | None = None
     evidence_coverage: EvidenceCoverageContract | None = None
+    kind: InformationNeedKind = InformationNeedKind.ACQUIRED
+    depends_on_information_need_ids: tuple[str, ...] = ()
+    derivation: DerivationContract | None = None
+
+    def __post_init__(self):
+        object.__setattr__(self,"kind",InformationNeedKind(self.kind))
+        object.__setattr__(self,"depends_on_information_need_ids",tuple(self.depends_on_information_need_ids))
+        if len(set(self.depends_on_information_need_ids))!=len(self.depends_on_information_need_ids):
+            raise ValueError("Duplicate dependency IDs")
+        if self.kind==InformationNeedKind.DERIVED:
+            if not isinstance(self.derivation,DerivationContract) or not self.depends_on_information_need_ids:
+                raise ValueError("DERIVED requires dependencies and an executable derivation")
+        elif self.derivation is not None:
+            raise ValueError("Only DERIVED may carry a derivation")
+        if self.kind==InformationNeedKind.ACQUIRED and self.depends_on_information_need_ids:
+            raise ValueError("ACQUIRED cannot depend on analysis results")
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -160,6 +177,12 @@ class InformationNeed:
             payload["evidence_expectation"] = self.evidence_expectation.to_dict()
         if self.evidence_coverage is not None:
             payload["evidence_coverage"] = self.evidence_coverage.to_dict()
+        # Keep legacy snapshot serialization/fingerprints unchanged.
+        if self.kind!=InformationNeedKind.ACQUIRED or self.depends_on_information_need_ids:
+            payload["kind"]=self.kind.value
+            payload["depends_on_information_need_ids"]=list(self.depends_on_information_need_ids)
+        if self.derivation is not None:
+            payload["derivation"]=self.derivation.to_dict()
         return payload
 
     @classmethod
@@ -188,6 +211,9 @@ class InformationNeed:
             geography=str(payload.get("geography", "")),
             evidence_expectation=evidence_expectation,
             evidence_coverage=evidence_coverage,
+            kind=InformationNeedKind(payload.get("kind","ACQUIRED")),
+            depends_on_information_need_ids=tuple(payload.get("depends_on_information_need_ids",())),
+            derivation=DerivationContract.from_dict(payload["derivation"]) if payload.get("derivation") is not None else None,
         )
 
 
@@ -209,6 +235,10 @@ class ResearchDesign:
     limitations: tuple[str, ...] = ()
     language: str = "en"
     research_subject: ResearchSubject | None = None
+
+    def __post_init__(self):
+        if any(n.kind!=InformationNeedKind.ACQUIRED or n.depends_on_information_need_ids for n in self.information_needs):
+            validate_dependency_graph(self)
 
     def to_dict(self) -> dict[str, Any]:
         return {
