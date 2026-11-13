@@ -212,6 +212,8 @@ def generate_h3_structural_claims(
     required_information_need_ids: tuple[str, ...],
     coverage_plan: H3CoveragePlan | None = None,
     composed_authority: ComposedResearchAuthority | None = None,
+    source_repository=None,
+    brief=None,
 ) -> H3ClaimGenerationResult:
     if coverage_plan is not None and not coverage_plan.is_fully_fillable:
         gaps = tuple(item.to_dict() for item in coverage_plan.unfillable_required_information_needs)
@@ -225,7 +227,15 @@ def generate_h3_structural_claims(
     for finding in findings:
         candidate_id = str(uuid5(NAMESPACE_URL, f"h3:{report_workflow_run_id}:{finding.id}"))
         try:
+            derived = finding.metadata.get("derivation") is not None
+            if derived and composed_authority is not None:
+                raise ClaimAuthorityError("Composed derived claim authority is not supported")
+            from application.report.derivation_authority import derived_claim_authority
             authority = (
+                derived_claim_authority(finding=finding, findings=findings, evidence_by_id=evidence_by_id,
+                    design=design, project_id=project_id, source_workflow_run_id=source_workflow_run_id,
+                    report_workflow_run_id=report_workflow_run_id, source_repository=source_repository, brief=brief)
+                if derived else
                 derive_composed_claim_authority(
                     composition=composed_authority,
                     report_workflow_run_id=report_workflow_run_id, design=design,
@@ -371,12 +381,12 @@ def _catalog_for_authority(
         periods[ref] = PeriodAuthorityRef(ref, claim_id, period)
     citation_ids = tuple(sorted({citation_id_by_source[item] for item in authority.source_ids if item in citation_id_by_source}))
     citations = {
-        citation_id: CitationAuthorityRef(citation_id, claim_id, source_id, citation_id)
+        f"{claim_id}:citation:{citation_id}": CitationAuthorityRef(f"{claim_id}:citation:{citation_id}", claim_id, source_id, citation_id)
         for source_id, citation_id in citation_id_by_source.items()
         if source_id in authority.source_ids
     }
     return H3AuthorityCatalog(
-        claims={claim_id: ClaimAuthorityRef(claim_id, citation_ids)},
+        claims={claim_id: ClaimAuthorityRef(claim_id, tuple(citations))},
         facts=facts, periods=periods, citations=citations,
         limitations={}, interpretations={},
     ), citation_ids

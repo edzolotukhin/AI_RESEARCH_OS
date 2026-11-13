@@ -14,6 +14,7 @@ from infrastructure.evidence.deterministic_evidence_extractor import (
     DeterministicEvidenceExtractor,
 )
 from infrastructure.evidence.llm_evidence_extractor import LlmEvidenceExtractor
+from application.evidence.structured_evidence_extractor import CompositeEvidenceExtractor
 
 
 def build_evidence_extractor(
@@ -41,11 +42,11 @@ def build_evidence_extractor(
                 "Expected one of: llm, deterministic.",
             )
 
-    return ChunkedEvidenceExtractor(
+    return CompositeEvidenceExtractor(ChunkedEvidenceExtractor(
         inner,
         chunk_chars=config.evidence_extraction_chunk_chars,
         overlap_chars=config.evidence_extraction_chunk_overlap_chars,
-    )
+    ))
 
 
 def build_evidence_extraction_service(

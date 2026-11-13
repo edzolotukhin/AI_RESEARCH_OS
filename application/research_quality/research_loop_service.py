@@ -80,7 +80,8 @@ class ResearchLoopService:
     ) -> None:
         self._runner = runner
         self._bounds = bounds
-        self._evaluator = evaluator
+        from application.research_quality.classified_readiness import wrap_evaluator
+        self._evaluator = wrap_evaluator(evaluator,source_repository)
         self._evidence_repository = evidence_repository
         self._source_repository = source_repository
         self._gate = gate or ResearchReadinessGate()
@@ -291,7 +292,7 @@ class ResearchLoopService:
                 try:
                     if defer_cross_assessment:
                         result = reconcile_terminal_readiness(
-                            design=design, evidence=evidence_after, previous=previous,
+                            design=design, evidence=evidence_after, previous=previous, source_repository=self._source_repository,
                             cache_payload=context.read_shared(SHARED_SUFFICIENCY_CACHE_KEY),
                         )
                     else:
@@ -302,6 +303,7 @@ class ResearchLoopService:
                     cache_payload = context.read_shared(SHARED_SUFFICIENCY_CACHE_KEY)
                     result = reconcile_terminal_readiness(
                         design=design,
+                        source_repository=self._source_repository,
                         evidence=qualifying_evidence(
                             design=design,
                             source_repository=self._source_repository,

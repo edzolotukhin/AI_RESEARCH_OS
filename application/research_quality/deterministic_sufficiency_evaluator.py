@@ -317,6 +317,15 @@ def _quantitative_evidence_present(
         return None
     flags: list[bool] = []
     for item in evidence_items:
+        if (item.metadata.get("structured_table") and semantic_assignment(item) is not None
+            and isinstance(item.metadata.get("numeric_value"),(int,float))
+            and not isinstance(item.metadata.get("numeric_value"),bool)
+            and item.source_locator.get("structured")==item.metadata.get("workbook_provenance")
+            and isinstance(item.metadata.get("workbook_provenance"),dict)):
+            import math
+            if math.isfinite(item.metadata["numeric_value"]):
+                flags.append(True)
+                continue
         for container in (item.metadata, item.quality_signals):
             if "quantitative_evidence_present" in container:
                 flags.append(bool(container["quantitative_evidence_present"]))

@@ -157,7 +157,7 @@ class ResearchDesignValidatorTests(unittest.TestCase):
                     "priority": 1,
                 },
             ],
-            information_needs=[],
+            information_needs=[{"id": "in-bad", "research_question_id": "rq-bad", "description": "Awareness statistics"}],
         )
         with self.assertRaises(ObjectiveCoverageValidationError):
             validate_research_design(design, brief=brief)

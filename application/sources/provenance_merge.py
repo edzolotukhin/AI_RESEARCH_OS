@@ -175,28 +175,19 @@ def missing_discovery_records(
 
 def apply_first_acquisition(existing: Source, incoming: Source) -> Source:
     """
-    Populate factual content on a source that has not yet succeeded.
+    Return a new snapshot for first success without changing the failed source.
 
-    Once content is acquired, later merges must use apply_provenance_delta only.
+    The caller persists it through create_immutable_revision, never save().
     """
     if has_immutable_acquired_content(existing):
         return existing
     if not is_successful_acquisition(incoming.retrieval_status):
         return existing
-    existing.url = incoming.url
-    existing.title = incoming.title
-    existing.publisher = incoming.publisher
-    existing.author = incoming.author
-    existing.published_at = incoming.published_at
-    existing.retrieved_at = incoming.retrieved_at
-    existing.source_type = incoming.source_type
-    existing.language = incoming.language
-    existing.content_type = incoming.content_type
-    existing.retrieval_status = incoming.retrieval_status
-    existing.content_text = incoming.content_text
-    existing.content_checksum = incoming.content_checksum
-    incoming_metadata = dict(incoming.metadata)
-    existing_metadata = dict(existing.metadata)
-    existing_metadata.update(incoming_metadata)
-    existing.metadata = existing_metadata
+    # Recovery returns a separate snapshot. The persisted failed Source and its
+    # historical citations must never be repurposed by a successful response.
+    from copy import deepcopy
+    from uuid import uuid4
+    existing = deepcopy(incoming)
+    existing.id = str(uuid4())
+    existing.version = 0
     return existing

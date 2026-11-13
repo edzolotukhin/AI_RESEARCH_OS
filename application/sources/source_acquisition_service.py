@@ -224,6 +224,7 @@ class SourceAcquisitionService:
                 design=design,
                 brief=brief,
                 exhausted_pairs=frozenset(),
+                project_id=project_id,
             )
         )
 
@@ -363,6 +364,7 @@ class SourceAcquisitionService:
                 design=design,
                 brief=brief,
                 exhausted_pairs=exhausted_pairs,
+                project_id=project_id,
             )
         )
 
@@ -522,6 +524,7 @@ class SourceAcquisitionService:
         design: ResearchDesign,
         brief: ResearchBrief | None = None,
         exhausted_pairs: frozenset[tuple[str, str]],
+        project_id: str | None = None,
     ) -> tuple[list[_CandidateGroup], list[dict[str, Any]], int, int]:
         need_by_id = {need.id: need for need in design.information_needs}
         contexts: dict[str, RelevanceContext] = {}
@@ -549,7 +552,24 @@ class SourceAcquisitionService:
             ineligible_hits = 0
             for item in items:
                 need_id = item.query.information_need_id
-                if (canonical, need_id) in exhausted_pairs:
+                need = need_by_id.get(need_id)
+                if need is not None:
+                    metadata = dict(item.candidate.metadata)
+                    coverage = need.evidence_coverage
+                    quantitative = bool(need.evidence_expectation and need.evidence_expectation.requires_quantitative_evidence)
+                    metadata["required_resource_kind"] = "table" if quantitative or (coverage and coverage.required_metric and coverage.required_periods) else "text"
+                    metadata["acquisition_terms"] = "|".join(filter(None, (need.description, need.geography, need.timeframe, coverage.required_metric if coverage else "", *(coverage.required_periods if coverage else ()))))[:1000]
+                    item.candidate = replace(item.candidate, metadata=metadata)
+                from application.sources.acquisition_capability import decide_acquisition, TABLE_EXTRACTION_CAPABILITY
+                known = self._source_repository.get_by_canonical_url_for_project(project_id, canonical) if project_id else None
+                capability = decide_acquisition(known, structured=item.candidate.metadata.get("required_resource_kind") == "table",
+                    extraction_revision=getattr(self._source_retriever, "xlsx_extraction_revision", TABLE_EXTRACTION_CAPABILITY))
+                can_upgrade = bool(known is not None and need is not None
+                    and hasattr(self._source_retriever, "xlsx_extraction_revision")
+                    and item.candidate.metadata.get("required_resource_kind") == "table"
+                    and capability.action in {"REFETCH", "REEXTRACT"}
+                    and evaluate_candidate(build_relevance_context(design, need, brief=brief), item.candidate, canonical_url=canonical).is_fetch_eligible)
+                if (canonical, need_id) in exhausted_pairs and not can_upgrade:
                     exhausted_hits += 1
                     decisions.append(
                         {
@@ -563,7 +583,6 @@ class SourceAcquisitionService:
                         }
                     )
                     continue
-                need = need_by_id.get(need_id)
                 if need is None:
                     decision = SourceRelevanceDecision(
                         eligibility=ELIGIBILITY_UNSCORED,
@@ -709,7 +728,10 @@ class SourceAcquisitionService:
         # Unknown aliases still count as an attempt when fetched below.
         for group in list(pending):
             known = self._source_repository.get_by_canonical_url_for_project(project_id, group.canonical_url)
-            if known is not None and all(
+            from application.sources.acquisition_capability import decide_acquisition, TABLE_EXTRACTION_CAPABILITY
+            capability = decide_acquisition(known, structured=any(i.candidate.metadata.get("required_resource_kind") == "table" for i in group.items),
+                extraction_revision=getattr(self._source_retriever, "xlsx_extraction_revision", TABLE_EXTRACTION_CAPABILITY))
+            if known is not None and capability.action in {"REUSE", "REVALIDATE"} and all(
                 (acquired_content_identity(known), item.query.information_need_id)
                 in (excluded_content or ()) for item in group.items
             ):
@@ -920,12 +942,28 @@ class SourceAcquisitionService:
             research_design_id=research_design_id,
         )
 
+        from application.sources.acquisition_capability import decide_acquisition, TABLE_EXTRACTION_CAPABILITY
         existing = self._source_repository.get_by_canonical_url_for_project(
             project_id,
             primary.canonical_url,
         )
-        if existing is not None:
+        if hasattr(self._source_repository, "find_latest_for_landing"):
+            existing = self._source_repository.find_latest_for_landing(project_id, primary.candidate.url) or existing
+        paths = self._source_repository.list_acquisition_paths(project_id, workflow_run_id) if hasattr(self._source_repository, "list_acquisition_paths") else []
+        same_run = [p for p in paths if p.landing_url == primary.candidate.url]
+        if same_run:
+            existing = self._source_repository.get_by_id(same_run[-1].source_id)
+        structured = any(i.candidate.metadata.get("required_resource_kind") == "table" for i in items)
+        decision = decide_acquisition(existing, structured=structured, research_design_id=research_design_id,
+            extraction_revision=getattr(self._source_retriever, "xlsx_extraction_revision", TABLE_EXTRACTION_CAPABILITY),
+            force_refetch=primary.candidate.metadata.get("acquisition_refresh") == "1")
+        diagnostics = {"capability_decision": decision.action, "capability_reason": decision.reason,
+                       "required_resource_kind": decision.resource_kind}
+        if same_run and existing is not None and existing.retrieval_status not in {RetrievalStatus.ACQUIRED, RetrievalStatus.TRUNCATED}:
+            return existing, True, False
+        if existing is not None and decision.action in {"REUSE", "REVALIDATE"}:
             merged = self._merge_existing_source(existing, delta, incoming=None)
+            self._persist_path(merged, primary.candidate.url, workflow_run_id, diagnostics=diagnostics)
             return merged, True, False
 
         funnel.acquisition_attempt(primary.canonical_url)
@@ -944,7 +982,9 @@ class SourceAcquisitionService:
                     ) if item
                 ),
                 "navigation_visited": primary.canonical_url,
+                "required_resource_kind": decision.resource_kind,
             })
+            navigation_metadata["navigation_terms"] += "|" + str(candidate.metadata.get("acquisition_terms", ""))
             retrieved = self._source_retriever.retrieve(
                 replace(candidate, metadata=navigation_metadata)
             )
@@ -959,11 +999,15 @@ class SourceAcquisitionService:
             workflow_run_id=workflow_run_id,
             research_design_id=research_design_id,
         )
+        path_diagnostics = {**dict(retrieved.metadata.get("navigation_diagnostics") or {}), **diagnostics}
+        chain = tuple(retrieved.metadata.get("navigation_chain") or (primary.candidate.url, retrieved.url))
 
         for attempt in range(_MAX_PROVENANCE_RETRIES):
             try:
-                self._source_repository.create(incoming)
-                return incoming, False, True
+                resolved = self._source_repository.create_immutable_revision(incoming)
+                resolved = self._merge_existing_source(resolved, delta, incoming=None)
+                self._persist_path(resolved, primary.candidate.url, workflow_run_id, diagnostics=path_diagnostics, chain=chain)
+                return resolved, False, True
             except DuplicateSourceError:
                 existing = self._source_repository.get_by_canonical_url_for_project(
                     project_id,
@@ -986,6 +1030,10 @@ class SourceAcquisitionService:
         *,
         incoming: Source | None,
     ) -> Source:
+        if incoming is not None and not has_immutable_acquired_content(existing):
+            recovery = apply_first_acquisition(existing, incoming)
+            if recovery is not existing:
+                existing = self._source_repository.create_immutable_revision(recovery)
         for attempt in range(_MAX_PROVENANCE_RETRIES):
             pending_records = missing_discovery_records(
                 existing,
@@ -1000,8 +1048,6 @@ class SourceAcquisitionService:
             before_content = existing.content_text
 
             merged = apply_provenance_delta(existing, delta)
-            if incoming is not None and not has_immutable_acquired_content(merged):
-                merged = apply_first_acquisition(merged, incoming)
 
             if (
                 pending_records
@@ -1026,6 +1072,16 @@ class SourceAcquisitionService:
         raise SourceAcquisitionError(
             f"Failed to merge provenance for source {existing.id}",
         )
+
+    def _persist_path(self, source, landing_url, workflow_run_id, *, diagnostics=None, chain=None):
+        from domain.sources.acquisition_path import SourceAcquisitionPath
+        chain = chain or tuple(source.metadata.get("navigation_chain") or (landing_url, source.url))
+        self._source_repository.persist_acquisition_path(SourceAcquisitionPath(
+            project_id=source.project_id, workflow_run_id=workflow_run_id,
+            source_id=source.id, landing_url=landing_url, terminal_url=source.url,
+            navigation_chain=chain,
+            diagnostics=diagnostics or dict(source.metadata.get("navigation_diagnostics") or {}),
+        ))
 
     def _build_delta(
         self,
@@ -1117,7 +1173,7 @@ class SourceAcquisitionService:
         return Source(
             id=str(uuid4()),
             project_id=project_id,
-            url=item.candidate.url,
+            url=retrieved.url,
             canonical_url=item.canonical_url,
             title=retrieved.title or item.candidate.title,
             publisher=retrieved.publisher,
@@ -1136,6 +1192,9 @@ class SourceAcquisitionService:
             content_text=content_text,
             content_checksum=checksum,
             metadata=metadata,
+            raw_content_checksum=retrieved.raw_content_checksum,
+            raw_checksum_kind=retrieved.raw_checksum_kind,
+            extraction_revision=retrieved.extraction_revision,
         )
 
     def _coverage_target_satisfied(

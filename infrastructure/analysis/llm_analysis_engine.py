@@ -239,6 +239,14 @@ class LlmAnalysisEngine:
             f"research_objective: {analysis_input.brief.business_question}",
             "analysis_plan:",
         ]
+        derived=[need for need in analysis_input.design.information_needs
+                 if need.derivation is not None and need.id in analysis_input.allowed_information_need_ids]
+        if derived:
+            import json
+            lines.append("explicit_derivation_contracts: "+json.dumps([need.to_dict() for need in derived],ensure_ascii=False))
+            lines.append("Use only these target IN IDs and the supplied bounded authority; do not invent numbers.")
+            for finding in analysis_input.persisted_findings:
+                lines.append(f"validated_dependency_finding: id={finding.id} statement={finding.statement} evidence_refs={list(finding.evidence_refs)}")
         if analysis_input.coverage_snapshot is not None:
             lines.append(f"deterministic_analysis_scope: {analysis_input.coverage_snapshot}")
         if analysis_input.batch_question_id is not None:

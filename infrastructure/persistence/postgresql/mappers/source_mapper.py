@@ -38,6 +38,11 @@ def source_to_model(source: Source, *, version: int) -> SourceModel:
         content_checksum=source.content_checksum or None,
         metadata_json=dict(source.metadata),
         version=version,
+        terminal_resource_key=source.terminal_resource_key,
+        raw_content_checksum=source.raw_content_checksum,
+        raw_checksum_kind=source.raw_checksum_kind,
+        content_revision=source.content_revision,
+        extraction_revision=source.extraction_revision,
     )
 
 
@@ -95,4 +100,9 @@ def source_from_model(model: SourceModel) -> Source:
         content_checksum=model.content_checksum or "",
         metadata=dict(model.metadata_json or {}),
         version=model.version,
+        terminal_resource_key=model.terminal_resource_key,
+        raw_content_checksum=model.raw_content_checksum,
+        raw_checksum_kind=model.raw_checksum_kind,
+        content_revision=model.content_revision,
+        extraction_revision=model.extraction_revision,
     )

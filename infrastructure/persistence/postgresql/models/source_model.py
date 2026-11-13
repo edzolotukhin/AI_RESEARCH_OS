@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, Index, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from infrastructure.persistence.postgresql.database import Base
@@ -11,9 +11,12 @@ class SourceModel(Base):
     __table_args__ = (
         UniqueConstraint(
             "project_id",
-            "canonical_url",
-            name="uq_sources_project_canonical_url",
+            "terminal_resource_key", "content_revision", "extraction_revision",
+            name="uq_sources_resource_revision",
         ),
+        UniqueConstraint("project_id", "terminal_resource_key", "raw_checksum_kind", "raw_content_checksum", "extraction_revision", name="uq_sources_snapshot"),
+        CheckConstraint("content_revision > 0", name="ck_source_revision_positive"),
+        Index("ix_sources_terminal_latest", "project_id", "terminal_resource_key", "content_revision"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -45,3 +48,23 @@ class SourceModel(Base):
     content_checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)
     metadata_json: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    terminal_resource_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    raw_content_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    raw_checksum_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    content_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    extraction_revision: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class SourceAcquisitionPathModel(Base):
+    __tablename__ = "source_acquisition_paths"
+    __table_args__ = (UniqueConstraint("workflow_run_id", "path_digest", "source_id", name="uq_source_path_observation"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    workflow_run_id: Mapped[str] = mapped_column(ForeignKey("workflow_runs.id"), nullable=False, index=True)
+    source_id: Mapped[str] = mapped_column(ForeignKey("sources.id"), nullable=False, index=True)
+    path_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    landing_url: Mapped[str] = mapped_column(Text, nullable=False)
+    terminal_url: Mapped[str] = mapped_column(Text, nullable=False)
+    navigation_chain: Mapped[list] = mapped_column(JSON, nullable=False)
+    diagnostics: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False)

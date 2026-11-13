@@ -167,7 +167,7 @@ class ResearchReadinessResult:
                 )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "research_question_assessments": [
                 assessment.to_dict()
                 for assessment in self.research_question_assessments
@@ -185,6 +185,14 @@ class ResearchReadinessResult:
                 self.analysis_eligible_information_need_ids,
             ),
         }
+        needs=[n for rq in self.research_question_assessments for n in rq.information_need_assessments]
+        if any(n.information_need_kind!="ACQUIRED" for n in needs):
+            payload["classification_version"]="analysis-kind-readiness-v1"
+            payload["information_need_kinds"]={n.information_need_id:n.information_need_kind for n in needs}
+            payload["analysis_required_information_need_ids"]=sorted(n.information_need_id for n in needs if n.information_need_kind!="OUTPUT")
+            payload["derived_prerequisites"]={n.information_need_id:n.prerequisite_diagnostics for n in needs if n.information_need_kind=="DERIVED"}
+            payload["output_obligations"]=[n.prerequisite_diagnostics for n in needs if n.information_need_kind=="OUTPUT"]
+        return payload
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> ResearchReadinessResult:

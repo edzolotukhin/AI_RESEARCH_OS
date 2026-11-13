@@ -34,6 +34,8 @@ def select_actionable_gaps(
         for assessment in rq_assessment.information_need_assessments:
             if assessment.information_need_id not in known_need_ids:
                 continue
+            if need_by_id[assessment.information_need_id].kind.value!="ACQUIRED":
+                continue
             if assessment.status not in ACTIONABLE_BLOCKING_STATUSES:
                 continue
             if assessment.research_question_id != rq_assessment.research_question_id:

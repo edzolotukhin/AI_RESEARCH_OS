@@ -130,6 +130,15 @@ def build_evidence_scope(
     )
     evidence_geography = list(geography) + anchor_values
     raw_numeric_facts = metadata.get("numeric_facts") or numeric_facts(grounded)
+    if (metadata.get("structured_table") and assignment
+            and isinstance(metadata.get("numeric_value"), (int, float))
+            and not isinstance(metadata.get("numeric_value"), bool)
+            and isinstance(metadata.get("workbook_provenance"), dict)):
+        from decimal import Decimal
+        number = Decimal(str(metadata.get("normalized_numeric_value", "NaN")))
+        if number.is_finite() and metadata.get("unit") and periods:
+            raw_numeric_facts = [dict(value=str(number), unit=metadata["unit"], periods=list(periods),
+                geography=evidence_geography, metrics=[metadata["metric"]], population_dimensions=[])]
     evidence_numeric_facts = [
         {
             **dict(item),

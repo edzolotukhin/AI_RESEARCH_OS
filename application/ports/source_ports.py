@@ -44,6 +44,26 @@ class SourceRetriever(ABC):
 class SourceRepository(ABC):
     """Persistence port for durable research sources."""
 
+    def resolve_terminal_identity(self, project_id, terminal_url):
+        from application.sources.source_identity import terminal_resource_key
+        return terminal_resource_key(project_id, terminal_url)
+
+    def find_latest_for_landing(self, project_id, landing_url):
+        return self.get_by_canonical_url_for_project(project_id, landing_url)
+
+    def find_latest_content_revision(self, project_id, resource_key):
+        rows = [s for s in self.list_for_project(project_id) if s.terminal_resource_key == resource_key]
+        return max(rows, key=lambda s: (s.content_revision, s.retrieved_at, s.id), default=None)
+
+    def find_matching_revision(self, project_id, resource_key, raw_checksum, extraction_revision, *, raw_checksum_kind="sha256-bytes"):
+        return next((s for s in self.list_for_project(project_id) if s.terminal_resource_key == resource_key and s.raw_content_checksum == raw_checksum and s.raw_checksum_kind == raw_checksum_kind and s.extraction_revision == extraction_revision), None)
+
+    def create_immutable_revision(self, source):
+        raise NotImplementedError
+
+    def persist_acquisition_path(self, path):
+        raise NotImplementedError
+
     @abstractmethod
     def create(self, source: Source) -> int:
         """Persist a new source. Returns version."""
