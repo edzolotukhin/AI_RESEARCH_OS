@@ -18,6 +18,11 @@ on:
         required: true
         type: boolean
         default: false
+      infrastructure_smoke:
+        description: "Run only isolated PostgreSQL/migration/API/Worker smoke checks"
+        required: true
+        type: boolean
+        default: false
       max_seconds:
         description: "Hard wall-clock limit for the research run"
         required: true
@@ -48,6 +53,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.RECOVERY2_OPENAI_API_KEY }}
       SEARCH_API_KEY: ${{ secrets.RECOVERY2_SEARCH_API_KEY }}
       RUN_REAL_E2E: ${{ inputs.run_real_e2e }}
+      INFRASTRUCTURE_SMOKE: ${{ inputs.infrastructure_smoke }}
       E2E_MAX_SECONDS: ${{ inputs.max_seconds }}
       LLM_MAX_CALLS_PER_RUN: ${{ inputs.max_llm_calls }}
       SOURCE_MAX_SOURCES_PER_RUN: ${{ inputs.max_sources }}
@@ -59,9 +65,11 @@ jobs:
           set -euo pipefail
           test "$SOURCE_REF" = "codex/r1-temporal-integration"
           test "$SOURCE_SHA" = "214a5b9d42501a72ce4ba3be8456a73e48ccf87c"
-          test "$RUN_REAL_E2E" = true
-          test -n "$OPENAI_API_KEY"
-          test -n "$SEARCH_API_KEY"
+          test "$RUN_REAL_E2E" = true || test "$INFRASTRUCTURE_SMOKE" = true
+          if [ "$RUN_REAL_E2E" = true ]; then
+            test -n "$OPENAI_API_KEY"
+            test -n "$SEARCH_API_KEY"
+          fi
           test "$E2E_MAX_SECONDS" -gt 0
           test "$LLM_MAX_CALLS_PER_RUN" -gt 0
           test "$SOURCE_MAX_SOURCES_PER_RUN" -gt 0
@@ -80,6 +88,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.RECOVERY2_OPENAI_API_KEY }}
       SEARCH_API_KEY: ${{ secrets.RECOVERY2_SEARCH_API_KEY }}
       RUN_REAL_E2E: ${{ inputs.run_real_e2e }}
+      INFRASTRUCTURE_SMOKE: ${{ inputs.infrastructure_smoke }}
       E2E_MAX_SECONDS: ${{ inputs.max_seconds }}
       LLM_MAX_CALLS_PER_RUN: ${{ inputs.max_llm_calls }}
       SOURCE_MAX_SOURCES_PER_RUN: ${{ inputs.max_sources }}
@@ -123,7 +132,7 @@ jobs:
           set -euo pipefail
           test "$SOURCE_REF" = "codex/r1-temporal-integration"
           test "$SOURCE_SHA" = "214a5b9d42501a72ce4ba3be8456a73e48ccf87c"
-          test "$RUN_REAL_E2E" = true
+          test "$RUN_REAL_E2E" = true || test "$INFRASTRUCTURE_SMOKE" = true
           test -n "$OPENAI_API_KEY"
           test -n "$SEARCH_API_KEY"
           test "$E2E_MAX_SECONDS" -gt 0
@@ -153,6 +162,7 @@ jobs:
           echo "API did not become ready" >&2
           exit 1
       - name: Register disposable API key
+        if: inputs.infrastructure_smoke == true || inputs.run_real_e2e == true
         shell: bash
         run: |
           set -euo pipefail
@@ -164,6 +174,7 @@ jobs:
           echo "E2E_API_KEY=$API_KEY" >> "$GITHUB_ENV"
           rm -f api-key.out
       - name: Run real provider E2E
+        if: inputs.run_real_e2e == true
         run: python tools/real_research_e2e.py
       - name: Collect service logs
         if: always()
