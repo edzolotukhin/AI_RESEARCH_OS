@@ -8,6 +8,11 @@ on:
         required: true
         type: string
         default: "codex/r1-temporal-integration"
+      source_sha:
+        description: "Pinned, reviewed integration commit"
+        required: true
+        type: string
+        default: "fa4a8dfb8160e31a07462f67e93f59dc2facbc42"
       run_real_e2e:
         description: "Explicitly authorize this staging-only provider run"
         required: true
@@ -34,11 +39,41 @@ permissions:
   contents: read
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SOURCE_REF: ${{ inputs.source_ref }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      OPENAI_API_KEY: ${{ secrets.RECOVERY2_OPENAI_API_KEY }}
+      SEARCH_API_KEY: ${{ secrets.RECOVERY2_SEARCH_API_KEY }}
+      RUN_REAL_E2E: ${{ inputs.run_real_e2e }}
+      E2E_MAX_SECONDS: ${{ inputs.max_seconds }}
+      LLM_MAX_CALLS_PER_RUN: ${{ inputs.max_llm_calls }}
+      SOURCE_MAX_SOURCES_PER_RUN: ${{ inputs.max_sources }}
+      LLM_MAX_TOKENS: ${{ inputs.max_tokens }}
+    steps:
+      - name: Validate execution authorization before checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$SOURCE_REF" = "codex/r1-temporal-integration"
+          test "$SOURCE_SHA" = "fa4a8dfb8160e31a07462f67e93f59dc2facbc42"
+          test "$RUN_REAL_E2E" = true
+          test -n "$OPENAI_API_KEY"
+          test -n "$SEARCH_API_KEY"
+          test "$E2E_MAX_SECONDS" -gt 0
+          test "$LLM_MAX_CALLS_PER_RUN" -gt 0
+          test "$SOURCE_MAX_SOURCES_PER_RUN" -gt 0
+          test "$LLM_MAX_TOKENS" -gt 0
+
   real-e2e:
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
       SOURCE_REF: ${{ inputs.source_ref }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
       POSTGRES_USER: ai_research_os
       POSTGRES_PASSWORD: ai_research_os_ci
       POSTGRES_DB: ai_research_os
@@ -75,7 +110,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ inputs.source_sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -87,6 +122,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$SOURCE_REF" = "codex/r1-temporal-integration"
+          test "$SOURCE_SHA" = "fa4a8dfb8160e31a07462f67e93f59dc2facbc42"
           test "$RUN_REAL_E2E" = true
           test -n "$OPENAI_API_KEY"
           test -n "$SEARCH_API_KEY"
