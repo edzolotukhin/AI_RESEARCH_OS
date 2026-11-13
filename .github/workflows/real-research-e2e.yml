@@ -65,16 +65,41 @@ jobs:
       SOURCE_MAX_SOURCES_PER_RUN: ${{ inputs.max_sources }}
       LLM_MAX_TOKENS: ${{ inputs.max_tokens }}
     steps:
+      - name: Validate all execution mode combinations
+        shell: bash
+        run: |
+          set -euo pipefail
+          accepted=0
+          rejected=0
+          for real in true false; do
+            for smoke in true false; do
+              for pdf in true false; do
+                active=0
+                [ "$real" = true ] && active=$((active + 1))
+                [ "$smoke" = true ] && active=$((active + 1))
+                [ "$pdf" = true ] && active=$((active + 1))
+                if [ "$active" -eq 1 ]; then
+                  accepted=$((accepted + 1))
+                else
+                  rejected=$((rejected + 1))
+                fi
+              done
+            done
+          done
+          test "$accepted" -eq 3
+          test "$rejected" -eq 5
+          echo "Validated all 8 mode combinations: 3 accepted, 5 rejected."
       - name: Validate execution authorization before checkout
         shell: bash
         run: |
           set -euo pipefail
           test "$SOURCE_REF" = "codex/r1-temporal-integration"
           test "$SOURCE_SHA" = "2fc6617c21112a659c2392ae7d38423a8130f17e"
-          test "$RUN_REAL_E2E" != "$INFRASTRUCTURE_SMOKE"
-          test "$RUN_REAL_E2E" != "$PDF_DIAGNOSTICS"
-          test "$INFRASTRUCTURE_SMOKE" != "$PDF_DIAGNOSTICS"
-          test "$RUN_REAL_E2E" = true || test "$INFRASTRUCTURE_SMOKE" = true || test "$PDF_DIAGNOSTICS" = true
+          active_modes=0
+          [ "$RUN_REAL_E2E" = true ] && active_modes=$((active_modes + 1))
+          [ "$INFRASTRUCTURE_SMOKE" = true ] && active_modes=$((active_modes + 1))
+          [ "$PDF_DIAGNOSTICS" = true ] && active_modes=$((active_modes + 1))
+          test "$active_modes" -eq 1
           if [ "$RUN_REAL_E2E" = true ]; then
             test -n "$OPENAI_API_KEY"
             test -n "$SEARCH_API_KEY"
@@ -143,10 +168,11 @@ jobs:
           set -euo pipefail
           test "$SOURCE_REF" = "codex/r1-temporal-integration"
           test "$SOURCE_SHA" = "2fc6617c21112a659c2392ae7d38423a8130f17e"
-          test "$RUN_REAL_E2E" != "$INFRASTRUCTURE_SMOKE"
-          test "$RUN_REAL_E2E" != "$PDF_DIAGNOSTICS"
-          test "$INFRASTRUCTURE_SMOKE" != "$PDF_DIAGNOSTICS"
-          test "$RUN_REAL_E2E" = true || test "$INFRASTRUCTURE_SMOKE" = true || test "$PDF_DIAGNOSTICS" = true
+          active_modes=0
+          [ "$RUN_REAL_E2E" = true ] && active_modes=$((active_modes + 1))
+          [ "$INFRASTRUCTURE_SMOKE" = true ] && active_modes=$((active_modes + 1))
+          [ "$PDF_DIAGNOSTICS" = true ] && active_modes=$((active_modes + 1))
+          test "$active_modes" -eq 1
           if [ "$RUN_REAL_E2E" = true ]; then
             test -n "$OPENAI_API_KEY"
             test -n "$SEARCH_API_KEY"
