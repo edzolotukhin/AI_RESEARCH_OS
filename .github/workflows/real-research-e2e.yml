@@ -1,0 +1,135 @@
+name: Recovery 2 real research E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Only the approved integration branch may be executed"
+        required: true
+        type: string
+        default: "codex/r1-temporal-integration"
+      run_real_e2e:
+        description: "Explicitly authorize this staging-only provider run"
+        required: true
+        type: boolean
+        default: false
+      max_seconds:
+        description: "Hard wall-clock limit for the research run"
+        required: true
+        default: "1800"
+      max_llm_calls:
+        description: "Application LLM call cap"
+        required: true
+        default: "24"
+      max_sources:
+        description: "Application source cap"
+        required: true
+        default: "12"
+      max_tokens:
+        description: "Per-call output token cap"
+        required: true
+        default: "4096"
+
+permissions:
+  contents: read
+
+jobs:
+  real-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      SOURCE_REF: ${{ inputs.source_ref }}
+      POSTGRES_USER: ai_research_os
+      POSTGRES_PASSWORD: ai_research_os_ci
+      POSTGRES_DB: ai_research_os
+      OPENAI_API_KEY: ${{ secrets.RECOVERY2_OPENAI_API_KEY }}
+      SEARCH_API_KEY: ${{ secrets.RECOVERY2_SEARCH_API_KEY }}
+      RUN_REAL_E2E: ${{ inputs.run_real_e2e }}
+      E2E_MAX_SECONDS: ${{ inputs.max_seconds }}
+      LLM_MAX_CALLS_PER_RUN: ${{ inputs.max_llm_calls }}
+      SOURCE_MAX_SOURCES_PER_RUN: ${{ inputs.max_sources }}
+      LLM_MAX_TOKENS: ${{ inputs.max_tokens }}
+      EVIDENCE_MAX_LLM_CALLS: ${{ inputs.max_llm_calls }}
+      SUFFICIENCY_MAX_LLM_CALLS: ${{ inputs.max_llm_calls }}
+      ANALYSIS_MAX_LLM_CALLS: ${{ inputs.max_llm_calls }}
+      REPORT_MAX_LLM_CALLS: ${{ inputs.max_llm_calls }}
+      REVIEW_MAX_CALLS: ${{ inputs.max_llm_calls }}
+      PLANNER_MAX_OUTPUT_TOKENS: ${{ inputs.max_tokens }}
+      EVIDENCE_MAX_OUTPUT_TOKENS: ${{ inputs.max_tokens }}
+      SUFFICIENCY_MAX_OUTPUT_TOKENS: ${{ inputs.max_tokens }}
+      ANALYSIS_MAX_OUTPUT_TOKENS: ${{ inputs.max_tokens }}
+      REPORT_MAX_OUTPUT_TOKENS: ${{ inputs.max_tokens }}
+      REVIEW_MAX_OUTPUT_TOKENS: ${{ inputs.max_tokens }}
+      SEARCH_PROVIDER: tavily
+      EVIDENCE_EXTRACTOR: llm
+      ANALYSIS_ENGINE: llm
+      REPORT_ENGINE: llm
+      REVIEW_ENGINE: llm
+      DETERMINISTIC_PLANNER: "0"
+      DETERMINISTIC_STAGE_EXECUTORS: "0"
+      PERSISTENCE_BACKEND: postgresql
+      DATABASE_URL: postgresql+psycopg://ai_research_os:ai_research_os_ci@127.0.0.1:5432/ai_research_os
+      E2E_API_BASE: http://127.0.0.1:8000
+      E2E_OUTPUT_DIR: real_e2e_artifacts
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install application dependencies
+        run: pip install -r requirements.txt
+      - name: Fail-closed preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$SOURCE_REF" = "codex/r1-temporal-integration"
+          test "$RUN_REAL_E2E" = true
+          test -n "$OPENAI_API_KEY"
+          test -n "$SEARCH_API_KEY"
+          test "$E2E_MAX_SECONDS" -gt 0
+          test "$LLM_MAX_CALLS_PER_RUN" -gt 0
+          test "$SOURCE_MAX_SOURCES_PER_RUN" -gt 0
+          test "$LLM_MAX_TOKENS" -gt 0
+      - name: Apply schema
+        run: |
+          docker compose -p recovery2-e2e -f docker-compose.yml -f docker-compose.recovery2-e2e.yml up -d postgres
+          python -m alembic upgrade head
+      - name: Start isolated API and Worker
+        run: |
+          docker compose -p recovery2-e2e -f docker-compose.yml -f docker-compose.recovery2-e2e.yml up -d --build api worker
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8000/ready >/dev/null; then exit 0; fi
+            sleep 5
+          done
+          echo "API did not become ready" >&2
+          exit 1
+      - name: Register disposable API key
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'rm -f api-key.out' EXIT
+          docker compose -p recovery2-e2e -f docker-compose.yml -f docker-compose.recovery2-e2e.yml run --rm api python -m tools.create_api_key --name recovery2-ci-key > api-key.out
+          API_KEY="$(awk '/^plaintext_key/{getline; print; exit}' api-key.out)"
+          test -n "$API_KEY"
+          echo "::add-mask::$API_KEY"
+          echo "E2E_API_KEY=$API_KEY" >> "$GITHUB_ENV"
+          rm -f api-key.out
+      - name: Run real provider E2E
+        run: python tools/real_research_e2e.py
+      - name: Collect service logs
+        if: always()
+        run: docker compose -p recovery2-e2e -f docker-compose.yml -f docker-compose.recovery2-e2e.yml logs --no-color --tail=400 > real_e2e_artifacts/services.log || true
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery2-real-research-e2e
+          path: real_e2e_artifacts/
+          if-no-files-found: warn
+      - name: Cleanup disposable runtime
+        if: always()
+        run: docker compose -p recovery2-e2e -f docker-compose.yml -f docker-compose.recovery2-e2e.yml down --volumes --remove-orphans
