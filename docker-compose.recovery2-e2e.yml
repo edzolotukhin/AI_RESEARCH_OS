@@ -1,7 +1,13 @@
 # Disposable Recovery 2 overlay. Never use with the pilot Compose project.
 services:
+  postgres:
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set isolated database}
+      POSTGRES_USER: ${POSTGRES_USER:?set isolated database user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set isolated database password}
   api:
     environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?set isolated database user}:${POSTGRES_PASSWORD:?set isolated database password}@postgres:5432/${POSTGRES_DB:?set isolated database}
       EVIDENCE_MAX_LLM_CALLS: ${EVIDENCE_MAX_LLM_CALLS:?set bounded evidence cap}
       SUFFICIENCY_MAX_LLM_CALLS: ${SUFFICIENCY_MAX_LLM_CALLS:?set bounded sufficiency cap}
       ANALYSIS_MAX_LLM_CALLS: ${ANALYSIS_MAX_LLM_CALLS:?set bounded analysis cap}
@@ -15,6 +21,7 @@ services:
       REVIEW_MAX_OUTPUT_TOKENS: ${REVIEW_MAX_OUTPUT_TOKENS:?set bounded review token cap}
   worker:
     environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?set isolated database user}:${POSTGRES_PASSWORD:?set isolated database password}@postgres:5432/${POSTGRES_DB:?set isolated database}
       EVIDENCE_MAX_LLM_CALLS: ${EVIDENCE_MAX_LLM_CALLS:?set bounded evidence cap}
       SUFFICIENCY_MAX_LLM_CALLS: ${SUFFICIENCY_MAX_LLM_CALLS:?set bounded sufficiency cap}
       ANALYSIS_MAX_LLM_CALLS: ${ANALYSIS_MAX_LLM_CALLS:?set bounded analysis cap}
