@@ -1,0 +1,28 @@
+# Disposable Recovery 2 overlay. Never use with the pilot Compose project.
+services:
+  api:
+    environment:
+      EVIDENCE_MAX_LLM_CALLS: ${EVIDENCE_MAX_LLM_CALLS:?set bounded evidence cap}
+      SUFFICIENCY_MAX_LLM_CALLS: ${SUFFICIENCY_MAX_LLM_CALLS:?set bounded sufficiency cap}
+      ANALYSIS_MAX_LLM_CALLS: ${ANALYSIS_MAX_LLM_CALLS:?set bounded analysis cap}
+      REPORT_MAX_LLM_CALLS: ${REPORT_MAX_LLM_CALLS:?set bounded report cap}
+      REVIEW_MAX_CALLS: ${REVIEW_MAX_CALLS:?set bounded review cap}
+      PLANNER_MAX_OUTPUT_TOKENS: ${PLANNER_MAX_OUTPUT_TOKENS:?set bounded planner token cap}
+      EVIDENCE_MAX_OUTPUT_TOKENS: ${EVIDENCE_MAX_OUTPUT_TOKENS:?set bounded evidence token cap}
+      SUFFICIENCY_MAX_OUTPUT_TOKENS: ${SUFFICIENCY_MAX_OUTPUT_TOKENS:?set bounded sufficiency token cap}
+      ANALYSIS_MAX_OUTPUT_TOKENS: ${ANALYSIS_MAX_OUTPUT_TOKENS:?set bounded analysis token cap}
+      REPORT_MAX_OUTPUT_TOKENS: ${REPORT_MAX_OUTPUT_TOKENS:?set bounded report token cap}
+      REVIEW_MAX_OUTPUT_TOKENS: ${REVIEW_MAX_OUTPUT_TOKENS:?set bounded review token cap}
+  worker:
+    environment:
+      EVIDENCE_MAX_LLM_CALLS: ${EVIDENCE_MAX_LLM_CALLS:?set bounded evidence cap}
+      SUFFICIENCY_MAX_LLM_CALLS: ${SUFFICIENCY_MAX_LLM_CALLS:?set bounded sufficiency cap}
+      ANALYSIS_MAX_LLM_CALLS: ${ANALYSIS_MAX_LLM_CALLS:?set bounded analysis cap}
+      REPORT_MAX_LLM_CALLS: ${REPORT_MAX_LLM_CALLS:?set bounded report cap}
+      REVIEW_MAX_CALLS: ${REVIEW_MAX_CALLS:?set bounded review cap}
+      PLANNER_MAX_OUTPUT_TOKENS: ${PLANNER_MAX_OUTPUT_TOKENS:?set bounded planner token cap}
+      EVIDENCE_MAX_OUTPUT_TOKENS: ${EVIDENCE_MAX_OUTPUT_TOKENS:?set bounded evidence token cap}
+      SUFFICIENCY_MAX_OUTPUT_TOKENS: ${SUFFICIENCY_MAX_OUTPUT_TOKENS:?set bounded sufficiency token cap}
+      ANALYSIS_MAX_OUTPUT_TOKENS: ${ANALYSIS_MAX_OUTPUT_TOKENS:?set bounded analysis token cap}
+      REPORT_MAX_OUTPUT_TOKENS: ${REPORT_MAX_OUTPUT_TOKENS:?set bounded report token cap}
+      REVIEW_MAX_OUTPUT_TOKENS: ${REVIEW_MAX_OUTPUT_TOKENS:?set bounded review token cap}
