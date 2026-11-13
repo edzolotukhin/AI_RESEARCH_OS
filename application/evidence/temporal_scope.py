@@ -177,7 +177,8 @@ def observation_eligibility(evidence: Evidence, cutoff: date, *, start: date | N
             return "unknown"
     # An extractor-supplied period is usable only when grounded in the actual
     # source excerpt. Free-form model metadata alone cannot establish a date.
-    grounded_reference = evidence.metadata.get("observation_period_source", reference)
+    grounded_source = evidence.metadata.get("observation_period_source")
+    grounded_reference = grounded_source if grounded_source is not None else reference
     if not isinstance(grounded_reference, str) or not _period_text_is_grounded(grounded_reference, evidence.source_excerpt):
         return "unknown"
     excerpt = " ".join(evidence.source_excerpt.casefold().split())
@@ -188,7 +189,7 @@ def observation_eligibility(evidence: Evidence, cutoff: date, *, start: date | N
     interval = observation_interval(reference)
     if interval is None:
         return "unknown"
-    if normalize_observation_period(grounded_reference) != " ".join(reference.split()):
+    if grounded_source is not None and normalize_observation_period(grounded_reference) != normalize_observation_period(reference):
         return "unknown"
     if interval[1] > cutoff or (start is not None and interval[0] < start):
         return "out_of_period"
