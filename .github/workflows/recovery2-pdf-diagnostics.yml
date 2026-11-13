@@ -1,0 +1,106 @@
+name: Recovery 2 PDF diagnostics
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/recovery2-workflow-dispatch]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ai_research_os
+          POSTGRES_PASSWORD: ai_research_os_dev
+          POSTGRES_DB: ai_research_os
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ai_research_os -d ai_research_os"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      POSTGRES_USER: ai_research_os
+      POSTGRES_PASSWORD: ai_research_os_dev
+      POSTGRES_DB: ai_research_os
+      POSTGRES_TEST_DB: ai_research_os_test
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      PERSISTENCE_BACKEND: postgresql
+      DATABASE_URL: postgresql+psycopg://ai_research_os:ai_research_os_dev@localhost:5432/ai_research_os
+      PDF_FONT_PATH: /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        run: |
+          pip install -r requirements.txt
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-dejavu-core
+          pip install pypdf==6.10.0
+      - name: Verify imports in API image
+        run: |
+          docker build --quiet -t recovery2-diagnostic-api . >/dev/null
+          docker run --rm recovery2-diagnostic-api python -c \
+            "import application.composition_root; import tools.real_research_e2e; print('container import smoke: PASS')"
+      - name: Prepare isolated database
+        run: |
+          python - <<'PY'
+          import os, psycopg
+          from psycopg import sql
+          conn = psycopg.connect(
+              host="localhost", port=5432, user=os.environ["POSTGRES_USER"],
+              password=os.environ["POSTGRES_PASSWORD"], dbname="postgres", autocommit=True)
+          with conn.cursor() as cur:
+              cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(os.environ["POSTGRES_TEST_DB"])))
+          conn.close()
+          PY
+          DATABASE_URL="postgresql+psycopg://ai_research_os:ai_research_os_dev@localhost:5432/ai_research_os_test" python -m alembic upgrade head
+      - name: Install PDF capture hook
+        run: |
+          mkdir -p pdf_diagnostics
+          cat > sitecustomize.py <<'PY'
+          from pathlib import Path
+          from infrastructure.persistence.postgresql.repositories.postgresql_pdf_store import PostgreSQLPdfStore
+          original = PostgreSQLPdfStore.complete
+          def capture(self, record, data):
+              if record.format == "PDF":
+                  Path("pdf_diagnostics/report.pdf").write_bytes(data)
+              return original(self, record, data)
+          PostgreSQLPdfStore.complete = capture
+          PY
+      - name: Run only the failing acceptance test
+        env:
+          PYTHONPATH: .
+          DATABASE_URL: postgresql+psycopg://ai_research_os:ai_research_os_dev@localhost:5432/ai_research_os_test
+        run: |
+          set +e
+          python -m unittest -v \
+            tests.integration.postgresql.test_integrated_research_acceptance.IntegratedResearchAcceptanceTests.test_full_research_production_container
+          status=$?
+          if [ -f pdf_diagnostics/report.pdf ]; then
+            python - <<'PY'
+          from pathlib import Path
+          from pypdf import PdfReader
+          expected = ("-50 persons", "-5 percent", "-5,263158 percent", "-100 persons", "-10 percent")
+          text = "\n".join(page.extract_text() or "" for page in PdfReader("pdf_diagnostics/report.pdf").pages)
+          Path("pdf_diagnostics/extracted.txt").write_text(text, encoding="utf-8")
+          Path("pdf_diagnostics/missing_values.txt").write_text(
+              "\n".join(value for value in expected if value not in text) + "\n", encoding="utf-8")
+          PY
+          else
+            echo "PDF was not persisted before failure" > pdf_diagnostics/missing_values.txt
+          fi
+          exit "$status"
+      - name: Upload PDF diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery2-pdf-diagnostics
+          path: pdf_diagnostics/
+          if-no-files-found: warn
