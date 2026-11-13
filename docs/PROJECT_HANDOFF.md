@@ -30,6 +30,8 @@ Recovery 2 preliminary gate (2026-11-13): R1 targeted regression remains green (
 
 Recovery 2 harness: `tools/real_research_e2e.py`, `.github/workflows/real-research-e2e.yml` and `docker-compose.recovery2-e2e.yml` provide a manual-only, fail-closed provider-backed run. The harness uses the public Research API and the existing worker pipeline, writes aggregate diagnostics only, and requires staging-only Search/LLM secrets plus explicit `run_real_e2e=true` and numeric limits. Preflight review verified Python compilation, fail-closed behavior and whitespace; external providers have not been called. Stage call/token caps are passed to both API and Worker through the disposable overlay. The application caps are hard execution limits; a hard monetary cap is not available in the current application contract, so owner/provider billing limits remain required before execution. Early failures now also write sanitized diagnostics.
 
+CI corrective review (2026-11-13): fixed the structured-output architecture violation in the harness by using `JSONDecoder.decode`, and restored grounded textual quarter qualification by comparing normalized source/reference periods only when an explicit source spelling is present. Targeted regression: `43 passed, 22 subtests`; no provider calls were made.
+
 ## Next milestone — Recovery 2
 
 Run a controlled, non-production E2E qualification of the R1 integration with a 2015–2021 fixture once isolated PostgreSQL/Docker is available; separately obtain explicit approval and an enabled, bounded provider budget before any real public-source/AI execution. Then classify the production case from existing durable diagnostics before any further code change.

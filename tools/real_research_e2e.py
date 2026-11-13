@@ -32,7 +32,7 @@ def _json_request(base: str, path: str, *, method: str = "GET", token: str, payl
     )
     try:
         with urlopen(request, timeout=30) as response:
-            return response.status, json.loads(response.read().decode("utf-8"))
+            return response.status, json.JSONDecoder().decode(response.read().decode("utf-8"))
     except HTTPError as exc:
         detail = exc.read(2048).decode("utf-8", errors="replace")
         raise RuntimeError(f"API {method} {path} returned HTTP {exc.code}: {detail[:400]}") from exc
