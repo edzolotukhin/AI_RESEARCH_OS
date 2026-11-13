@@ -1,13 +1,19 @@
 """Offline citation contract and actual Desk continuation regression."""
 from copy import deepcopy
 from dataclasses import replace
+from datetime import date
 from hashlib import sha256
 from types import SimpleNamespace
 import unittest
 
 from application.evidence.citation_integrity import citation_is_valid
 from application.evidence.grounding import normalize_source_text, verify_grounding
-from application.evidence.temporal_scope import qualifying_evidence
+from application.evidence.temporal_scope import (
+    normalize_observation_period,
+    observation_interval,
+    observation_eligibility,
+    qualifying_evidence,
+)
 from application.execution.execution_budget_context import execution_budget_scope
 from application.execution.execution_budget_factory import create_execution_budget
 from application.research_kernel.controller import Controller
@@ -27,6 +33,59 @@ def pair(text="Prefix. Citation text. End.", excerpt="Citation text."):
 
 
 class CitationIntegrityTests(unittest.TestCase):
+    def test_observation_period_normalizes_grounded_legacy_date_shapes(self):
+        self.assertEqual(normalize_observation_period("2016 12-01"), "2016-12-01")
+        self.assertEqual(
+            normalize_observation_period("1 липня 2025 року до 30 червня 2026 року"),
+            "1 липня 2025 to 30 червня 2026",
+        )
+
+    def test_ambiguous_observation_period_remains_unknown(self):
+        item = SimpleNamespace(
+            metadata={"observation_period": "1 липня зазначеного року"},
+            statement="Population was recorded on 1 липня зазначеного року.",
+            source_excerpt="Population was recorded on 1 липня зазначеного року.",
+        )
+        self.assertEqual(observation_eligibility(item, date(2021, 12, 31), start=date(2015, 1, 1)), "unknown")
+
+    def test_normalized_observation_period_respects_research_window(self):
+        item = SimpleNamespace(
+            metadata={"observation_period": "2016-12-01", "observation_period_source": "2016 12-01"},
+            statement="Population in 2016 12-01.",
+            source_excerpt="Population in 2016 12-01.",
+        )
+        self.assertEqual(observation_eligibility(item, date(2021, 12, 31), start=date(2015, 1, 1)), "eligible")
+        item.metadata["observation_period"] = "2022"
+        item.metadata["observation_period_source"] = "2022"
+        item.statement = item.source_excerpt = "Population in 2022."
+        self.assertEqual(observation_eligibility(item, date(2021, 12, 31), start=date(2015, 1, 1)), "out_of_period")
+
+    def test_publication_only_normalized_date_is_not_observation(self):
+        item = SimpleNamespace(
+            metadata={"observation_period": "2016-12-01", "observation_period_source": "2016 12-01"},
+            statement="The data were published on 2016 12-01.",
+            source_excerpt="The data were published on 2016 12-01.",
+        )
+        self.assertEqual(observation_eligibility(item, date(2021, 12, 31), start=date(2015, 1, 1)), "unknown")
+
+    def test_ukrainian_date_range_is_parsed_and_out_of_period(self):
+        raw = "1 липня 2025 року до 30 червня 2026 року"
+        self.assertIsNotNone(observation_interval(raw))
+        item = SimpleNamespace(
+            metadata={"observation_period": normalize_observation_period(raw), "observation_period_source": raw},
+            statement=raw,
+            source_excerpt=raw,
+        )
+        self.assertEqual(observation_eligibility(item, date(2021, 12, 31), start=date(2015, 1, 1)), "out_of_period")
+
+    def test_inconsistent_period_source_and_normalized_value_is_unknown(self):
+        item = SimpleNamespace(
+            metadata={"observation_period": "2017-12-01", "observation_period_source": "2016 12-01"},
+            statement="Population in 2016 12-01.",
+            source_excerpt="Population in 2016 12-01.",
+        )
+        self.assertEqual(observation_eligibility(item, date(2021, 12, 31), start=date(2015, 1, 1)), "unknown")
+
     def test_valid_span(self):
         self.assertTrue(citation_is_valid(*pair()))
 
