@@ -12,7 +12,7 @@ on:
         description: "Pinned, reviewed integration commit"
         required: true
         type: string
-        default: "fa4a8dfb8160e31a07462f67e93f59dc2facbc42"
+        default: "214a5b9d42501a72ce4ba3be8456a73e48ccf87c"
       run_real_e2e:
         description: "Explicitly authorize this staging-only provider run"
         required: true
@@ -58,7 +58,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$SOURCE_REF" = "codex/r1-temporal-integration"
-          test "$SOURCE_SHA" = "fa4a8dfb8160e31a07462f67e93f59dc2facbc42"
+          test "$SOURCE_SHA" = "214a5b9d42501a72ce4ba3be8456a73e48ccf87c"
           test "$RUN_REAL_E2E" = true
           test -n "$OPENAI_API_KEY"
           test -n "$SEARCH_API_KEY"
@@ -122,7 +122,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$SOURCE_REF" = "codex/r1-temporal-integration"
-          test "$SOURCE_SHA" = "fa4a8dfb8160e31a07462f67e93f59dc2facbc42"
+          test "$SOURCE_SHA" = "214a5b9d42501a72ce4ba3be8456a73e48ccf87c"
           test "$RUN_REAL_E2E" = true
           test -n "$OPENAI_API_KEY"
           test -n "$SEARCH_API_KEY"
@@ -132,7 +132,16 @@ jobs:
           test "$LLM_MAX_TOKENS" -gt 0
       - name: Apply schema
         run: |
+          mkdir -p real_e2e_artifacts
           docker compose -p recovery2-e2e -f docker-compose.yml -f docker-compose.recovery2-e2e.yml up -d postgres
+          postgres_id="$(docker compose -p recovery2-e2e -f docker-compose.yml -f docker-compose.recovery2-e2e.yml ps -q postgres)"
+          test -n "$postgres_id"
+          for attempt in {1..60}; do
+            health="$(docker inspect --format '{{.State.Health.Status}}' "$postgres_id" 2>/dev/null || true)"
+            if [ "$health" = healthy ]; then break; fi
+            sleep 2
+          done
+          docker inspect --format '{{.State.Health.Status}}' "$postgres_id" | grep -qx healthy
           python -m alembic upgrade head
       - name: Start isolated API and Worker
         run: |
