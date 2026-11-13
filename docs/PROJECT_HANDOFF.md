@@ -32,9 +32,30 @@ Recovery 2 harness: `tools/real_research_e2e.py`, `.github/workflows/real-resear
 
 CI corrective review (2026-11-13): fixed the structured-output architecture violation in the harness by using `JSONDecoder.decode`, and restored grounded textual quarter qualification by comparing normalized source/reference periods only when an explicit source spelling is present. Targeted regression: `43 passed, 22 subtests`; no provider calls were made.
 
+First real E2E launch preflight (2026-11-13): the provider workflow is manual-only and present on `codex/r1-temporal-integration`, but is not present on the GitHub default branch, so the GitHub Actions UI/API cannot dispatch it from that branch until the workflow definition is published on the default branch. Repository secret presence for `RECOVERY2_OPENAI_API_KEY` and `RECOVERY2_SEARCH_API_KEY` was not verifiable through the available read-only integration; values were not accessed. The workflow carries hard wall-clock, per-run LLM-call, source-count and per-call token caps, but no hard monetary cap. No paid calls were made.
+
+Workflow integration readiness (2026-11-13): PR #38 moved `main` to `856e8bccf3552923ae06b719d9946486523d7a0a`. The workflow-only branch was rebased onto that main and published at `9b16853c40ddc8e334c16ef26c9a50a73370191b`; its diff remains only `.github/workflows/real-research-e2e.yml`. CI run `43484714262` completed successfully. The workflow checks out only `codex/r1-temporal-integration`, requires `run_real_e2e=true`, staging secrets and positive limits, and uses an isolated Compose project. No provider calls were made.
+
 ## Next milestone — Recovery 2
 
 Run a controlled, non-production E2E qualification of the R1 integration with a 2015–2021 fixture once isolated PostgreSQL/Docker is available; separately obtain explicit approval and an enabled, bounded provider budget before any real public-source/AI execution. Then classify the production case from existing durable diagnostics before any further code change.
+
+## Recovery 2 launch correction (2026-11-13)
+
+The first provider-run diagnostic proved that direct `POST /projects/{id}/research`
+can create a run before the Desk design gate is approved. Search then correctly
+fails closed with `Approved executable ResearchSubject is required`. The harness
+now prepares the disposable project through the existing `ProjectPlanningService`
+boundaries: save brief, generate design, approve the resolved subject, and
+activate Desk; the worker and all subsequent stages remain the normal API/Worker
+pipeline. It does not synthesize a ResearchSubject or disable validation.
+
+The harness writes diagnostics before returning non-zero for failed workflow or
+stage states, `INSUFFICIENT`/`FAILED` outcomes, missing authoritative outcomes,
+or unavailable result projections. A `409 Ambiguous durable research outcome`
+is expected only when a failed workflow has no unambiguous product outcome; for
+a completed workflow it is treated as a contract failure. No paid E2E has been
+rerun.
 
 ## Collaboration rule
 

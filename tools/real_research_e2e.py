@@ -15,6 +15,35 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
+def _prepare_approved_desk_run(project_id: str) -> str:
+    """Use the canonical application design gate in the disposable API runtime."""
+    from application.composition_root import create_application_container
+    from domain.research_brief import ResearchBrief
+
+    container = create_application_container()
+    try:
+        project = container.project_service.get_project(project_id)
+        project.selected_methods = ("DESK",)
+        container.project_service.save_project(project)
+        brief = ResearchBrief.from_dict(_brief())
+        container.project_planning_service.save_brief(project, brief)
+        project = container.project_service.get_project(project_id)
+        container.project_planning_service.generate_design(project)
+        project = container.project_service.get_project(project_id)
+        design = project.current_research_design
+        if design is None:
+            raise RuntimeError("design generation did not persist a Research Design")
+        container.project_planning_service.approve_design(
+            project,
+            actor_id=project.owner_principal_id or "recovery2-e2e",
+            expected_design_id=design.id,
+        )
+        project = container.project_service.get_project(project_id)
+        return container.project_planning_service.activate_desk(project).id
+    finally:
+        container.shutdown()
+
+
 def _require(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
@@ -47,6 +76,22 @@ def _count(base: str, path: str, token: str) -> int | None:
         return None
     value = payload.get("count")
     return int(value) if isinstance(value, int) else None
+
+
+def _acceptance_failure(diagnostics: dict) -> str | None:
+    status = str(diagnostics.get("workflow_status") or "").lower()
+    if status in {"failed", "error", "technical_error"}:
+        return "workflow execution failed"
+    if diagnostics.get("stage_errors"):
+        return "one or more workflow stages failed"
+    outcome = str(diagnostics.get("outcome") or "").upper()
+    if outcome in {"INSUFFICIENT", "FAILED"}:
+        return f"research outcome is {outcome}"
+    if diagnostics.get("research_result_error"):
+        return "authoritative research result is unavailable"
+    if not diagnostics.get("outcome"):
+        return "authoritative research outcome is missing"
+    return None
 
 
 def _brief() -> dict:
@@ -86,11 +131,14 @@ def main() -> int:
         payload={"name": "Recovery 2 disposable Ukraine population E2E"},
     )
     project_id = project["id"]
-    _, submission = _json_request(
-        base, f"/projects/{project_id}/research", method="POST", token=token,
-        payload={"brief": _brief()},
-    )
-    run_id = submission["run_id"]
+    if os.environ.get("E2E_PREPARE_APPROVED_PROJECT") == "true":
+        run_id = _prepare_approved_desk_run(project_id)
+    else:
+        _, submission = _json_request(
+            base, f"/projects/{project_id}/research", method="POST", token=token,
+            payload={"brief": _brief()},
+        )
+        run_id = submission["run_id"]
     deadline = started + int(os.environ["E2E_MAX_SECONDS"])
     terminal = None
     while time.monotonic() < deadline:
@@ -122,6 +170,10 @@ def main() -> int:
                 diagnostics[key] = result[key]
     except RuntimeError as exc:
         diagnostics["research_result_error"] = str(exc)
+        diagnostics["research_result_error_expected"] = (
+            diagnostics.get("workflow_status", "").lower() in {"failed", "error", "technical_error"}
+            and "Ambiguous durable research outcome" in str(exc)
+        )
 
     (output / "diagnostics.json").write_text(json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8")
     (output / "summary.md").write_text(
@@ -129,6 +181,13 @@ def main() -> int:
         "```json\n" + json.dumps(diagnostics, ensure_ascii=False, indent=2) + "\n```\n",
         encoding="utf-8",
     )
+    failure = _acceptance_failure(diagnostics)
+    if failure:
+        diagnostics["acceptance_failure"] = failure
+        (output / "diagnostics.json").write_text(
+            json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        return 1
     return 0
 
 
