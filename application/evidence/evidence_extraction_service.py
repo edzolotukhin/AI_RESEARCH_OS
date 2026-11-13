@@ -26,6 +26,7 @@ from application.evidence.exceptions import (
     UngroundedEvidenceError,
 )
 from application.evidence.grounding import verify_grounding
+from application.evidence.temporal_scope import normalize_observation_period
 from application.evidence.provenance_validation import (
     InvalidProvenanceError,
     validate_candidate_provenance,
@@ -1080,6 +1081,11 @@ class EvidenceExtractionService:
         observation_period = metadata.get("observation_period")
         if not isinstance(observation_period, str) or " ".join(observation_period.casefold().split()) not in " ".join(candidate.source_excerpt.casefold().split()):
             metadata.pop("observation_period", None)
+        else:
+            normalized_period = normalize_observation_period(observation_period)
+            if normalized_period != observation_period:
+                metadata["observation_period_source"] = observation_period
+                metadata["observation_period"] = normalized_period
         origin_id = metadata.pop("data_origin_id", None)
         origin_excerpt = metadata.pop("data_origin_excerpt", None)
         if isinstance(origin_id, str) and isinstance(origin_excerpt, str) and origin_id.strip() and origin_excerpt.strip():

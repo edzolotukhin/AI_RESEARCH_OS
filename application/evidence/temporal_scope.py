@@ -19,6 +19,11 @@ from domain.research_brief import ResearchBrief
 
 _MONTHS = {name.casefold(): index for index, name in enumerate(calendar.month_name) if name}
 _MONTHS.update({name.casefold(): index for index, name in enumerate(calendar.month_abbr) if name})
+_MONTHS.update({
+    "січня": 1, "лютого": 2, "березня": 3, "квітня": 4,
+    "травня": 5, "червня": 6, "липня": 7, "серпня": 8,
+    "вересня": 9, "жовтня": 10, "листопада": 11, "грудня": 12,
+})
 _MONTH_PATTERN = "|".join(sorted(_MONTHS, key=len, reverse=True))
 _ISO = re.compile(r"\b(20\d{2})-(0?[1-9]|1[0-2])-(0?[1-9]|[12]\d|3[01])\b")
 _DAY_MONTH = re.compile(rf"\b([1-9]|[12]\d|3[01])\s+({_MONTH_PATTERN})\s+(20\d{{2}})\b", re.I)
@@ -29,11 +34,25 @@ _QUARTER_WORDS = {"first": "1", "second": "2", "third": "3", "fourth": "4"}
 
 
 def normalize_observation_period(text: str) -> str:
-    """Normalize explicit calendar quarters; never mine surrounding prose."""
+    """Normalize explicit grounded periods; never mine surrounding prose."""
     text = " ".join(text.split())
+    text = re.sub(r"\b(20\d{2})\s+(0?[1-9]|1[0-2])-(0?[1-9]|[12]\d|3[01])\b", r"\1-\2-\3", text)
+    text = re.sub(
+        rf"\b([1-9]|[12]\d|3[01])\s+({_MONTH_PATTERN})\s+(20\d{{2}})\s+року\b",
+        lambda m: f"{m[1]} {m[2]} {m[3]}", text, flags=re.I,
+    )
+    text = re.sub(r"\s+року\b", "", text, flags=re.I)
+    text = re.sub(r"\s+до\s+", " to ", text, flags=re.I)
     text = re.sub(r"\b(first|second|third|fourth) quarter(?: of)? (20\d{2})\b",
                   lambda m: f"Q{_QUARTER_WORDS[m[1].lower()]} {m[2]}", text, flags=re.I)
     return re.sub(r"\b(20\d{2})\s+Q([1-4])\b", r"Q\2 \1", text, flags=re.I)
+
+
+def _period_text_is_grounded(reference: str, excerpt: str) -> bool:
+    """Check the exact persisted spelling against the source excerpt."""
+    raw = " ".join(reference.split()).casefold()
+    source = " ".join(excerpt.split()).casefold()
+    return raw in source
 
 
 def observation_interval(text: str) -> tuple[date, date] | None:
@@ -158,15 +177,18 @@ def observation_eligibility(evidence: Evidence, cutoff: date, *, start: date | N
             return "unknown"
     # An extractor-supplied period is usable only when grounded in the actual
     # source excerpt. Free-form model metadata alone cannot establish a date.
-    if " ".join(reference.casefold().split()) not in " ".join(evidence.source_excerpt.casefold().split()):
+    grounded_reference = evidence.metadata.get("observation_period_source", reference)
+    if not isinstance(grounded_reference, str) or not _period_text_is_grounded(grounded_reference, evidence.source_excerpt):
         return "unknown"
     excerpt = " ".join(evidence.source_excerpt.casefold().split())
-    occurrences = list(re.finditer(re.escape(" ".join(reference.casefold().split())), excerpt))
+    occurrences = list(re.finditer(re.escape(" ".join(grounded_reference.casefold().split())), excerpt))
     if occurrences and all(re.search(r"(?:published|released|publication date)\s*(?:on|:)?\s*$",
                                      excerpt[:match.start()]) for match in occurrences):
         return "unknown"
     interval = observation_interval(reference)
     if interval is None:
+        return "unknown"
+    if normalize_observation_period(grounded_reference) != " ".join(reference.split()):
         return "unknown"
     if interval[1] > cutoff or (start is not None and interval[0] < start):
         return "out_of_period"
