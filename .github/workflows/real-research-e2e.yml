@@ -177,6 +177,11 @@ jobs:
           echo "::add-mask::$API_KEY"
           echo "E2E_API_KEY=$API_KEY" >> "$GITHUB_ENV"
           rm -f api-key.out
+      - name: Verify application imports in API image
+        if: inputs.infrastructure_smoke == true || inputs.run_real_e2e == true
+        run: |
+          docker compose -p recovery2-e2e -f docker-compose.yml -f docker-compose.recovery2-e2e.yml \
+            exec -T api python -c "import application.composition_root; import tools.real_research_e2e"
       - name: Run real provider E2E
         if: inputs.run_real_e2e == true
         shell: bash
@@ -192,7 +197,7 @@ jobs:
             -e LLM_MAX_TOKENS="$LLM_MAX_TOKENS" \
             -e E2E_PREPARE_APPROVED_PROJECT=true \
             -e E2E_OUTPUT_DIR=/tmp/real_e2e_artifacts \
-            api python tools/real_research_e2e.py
+            api python -m tools.real_research_e2e
           status=$?
           mkdir -p real_e2e_artifacts
           docker compose -p recovery2-e2e -f docker-compose.yml -f docker-compose.recovery2-e2e.yml cp \
