@@ -65,6 +65,7 @@ jobs:
           set -euo pipefail
           test "$SOURCE_REF" = "codex/r1-temporal-integration"
           test "$SOURCE_SHA" = "214a5b9d42501a72ce4ba3be8456a73e48ccf87c"
+          test "$RUN_REAL_E2E" != "$INFRASTRUCTURE_SMOKE"
           test "$RUN_REAL_E2E" = true || test "$INFRASTRUCTURE_SMOKE" = true
           if [ "$RUN_REAL_E2E" = true ]; then
             test -n "$OPENAI_API_KEY"
@@ -132,9 +133,12 @@ jobs:
           set -euo pipefail
           test "$SOURCE_REF" = "codex/r1-temporal-integration"
           test "$SOURCE_SHA" = "214a5b9d42501a72ce4ba3be8456a73e48ccf87c"
+          test "$RUN_REAL_E2E" != "$INFRASTRUCTURE_SMOKE"
           test "$RUN_REAL_E2E" = true || test "$INFRASTRUCTURE_SMOKE" = true
-          test -n "$OPENAI_API_KEY"
-          test -n "$SEARCH_API_KEY"
+          if [ "$RUN_REAL_E2E" = true ]; then
+            test -n "$OPENAI_API_KEY"
+            test -n "$SEARCH_API_KEY"
+          fi
           test "$E2E_MAX_SECONDS" -gt 0
           test "$LLM_MAX_CALLS_PER_RUN" -gt 0
           test "$SOURCE_MAX_SOURCES_PER_RUN" -gt 0
