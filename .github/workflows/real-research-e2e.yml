@@ -12,7 +12,7 @@ on:
         description: "Pinned, reviewed integration commit"
         required: true
         type: string
-        default: "214a5b9d42501a72ce4ba3be8456a73e48ccf87c"
+        default: "2fc6617c21112a659c2392ae7d38423a8130f17e"
       run_real_e2e:
         description: "Explicitly authorize this staging-only provider run"
         required: true
@@ -64,7 +64,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$SOURCE_REF" = "codex/r1-temporal-integration"
-          test "$SOURCE_SHA" = "214a5b9d42501a72ce4ba3be8456a73e48ccf87c"
+          test "$SOURCE_SHA" = "2fc6617c21112a659c2392ae7d38423a8130f17e"
           test "$RUN_REAL_E2E" != "$INFRASTRUCTURE_SMOKE"
           test "$RUN_REAL_E2E" = true || test "$INFRASTRUCTURE_SMOKE" = true
           if [ "$RUN_REAL_E2E" = true ]; then
@@ -132,7 +132,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$SOURCE_REF" = "codex/r1-temporal-integration"
-          test "$SOURCE_SHA" = "214a5b9d42501a72ce4ba3be8456a73e48ccf87c"
+          test "$SOURCE_SHA" = "2fc6617c21112a659c2392ae7d38423a8130f17e"
           test "$RUN_REAL_E2E" != "$INFRASTRUCTURE_SMOKE"
           test "$RUN_REAL_E2E" = true || test "$INFRASTRUCTURE_SMOKE" = true
           if [ "$RUN_REAL_E2E" = true ]; then
@@ -179,7 +179,25 @@ jobs:
           rm -f api-key.out
       - name: Run real provider E2E
         if: inputs.run_real_e2e == true
-        run: python tools/real_research_e2e.py
+        shell: bash
+        run: |
+          set +e
+          docker compose -p recovery2-e2e -f docker-compose.yml -f docker-compose.recovery2-e2e.yml exec -T \
+            -e RUN_REAL_E2E="$RUN_REAL_E2E" \
+            -e E2E_API_BASE="http://127.0.0.1:8000" \
+            -e E2E_API_KEY="$E2E_API_KEY" \
+            -e E2E_MAX_SECONDS="$E2E_MAX_SECONDS" \
+            -e LLM_MAX_CALLS_PER_RUN="$LLM_MAX_CALLS_PER_RUN" \
+            -e SOURCE_MAX_SOURCES_PER_RUN="$SOURCE_MAX_SOURCES_PER_RUN" \
+            -e LLM_MAX_TOKENS="$LLM_MAX_TOKENS" \
+            -e E2E_PREPARE_APPROVED_PROJECT=true \
+            -e E2E_OUTPUT_DIR=/tmp/real_e2e_artifacts \
+            api python tools/real_research_e2e.py
+          status=$?
+          mkdir -p real_e2e_artifacts
+          docker compose -p recovery2-e2e -f docker-compose.yml -f docker-compose.recovery2-e2e.yml cp \
+            api:/tmp/real_e2e_artifacts/. real_e2e_artifacts/ || true
+          exit "$status"
       - name: Collect service logs
         if: always()
         run: docker compose -p recovery2-e2e -f docker-compose.yml -f docker-compose.recovery2-e2e.yml logs --no-color --tail=400 > real_e2e_artifacts/services.log || true
