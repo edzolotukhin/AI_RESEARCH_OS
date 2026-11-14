@@ -12,7 +12,7 @@ on:
         description: "Pinned, reviewed integration commit"
         required: true
         type: string
-        default: "cc5a51d369838f8850f9ec6b9132fc92002209f1"
+        default: "87780c366ce6b581d99c3270394ebfcf378ec091"
       run_real_e2e:
         description: "Explicitly authorize this staging-only provider run"
         required: true
@@ -94,7 +94,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$SOURCE_REF" = "codex/r1-temporal-integration"
-          test "$SOURCE_SHA" = "cc5a51d369838f8850f9ec6b9132fc92002209f1"
+          test "$SOURCE_SHA" = "87780c366ce6b581d99c3270394ebfcf378ec091"
           active_modes=0
           [ "$RUN_REAL_E2E" = true ] && active_modes=$((active_modes + 1))
           [ "$INFRASTRUCTURE_SMOKE" = true ] && active_modes=$((active_modes + 1))
@@ -167,7 +167,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$SOURCE_REF" = "codex/r1-temporal-integration"
-          test "$SOURCE_SHA" = "cc5a51d369838f8850f9ec6b9132fc92002209f1"
+          test "$SOURCE_SHA" = "87780c366ce6b581d99c3270394ebfcf378ec091"
           active_modes=0
           [ "$RUN_REAL_E2E" = true ] && active_modes=$((active_modes + 1))
           [ "$INFRASTRUCTURE_SMOKE" = true ] && active_modes=$((active_modes + 1))
