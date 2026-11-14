@@ -237,6 +237,39 @@ class WorkflowRuntimePersisterAuditOrderingTests(unittest.TestCase):
 
         self.assertNotIn(task.id, persisted)
 
+    def test_failed_search_persists_acquisition_summary_without_funnel(self) -> None:
+        task = self.workflow_run.tasks[0]
+        self.context.current_task = task
+        task.definition_id = "task-collect-evidence"
+        task.ready()
+        task.start()
+        task.fail()
+        self.context.shared_state["source_acquisition"] = {
+            "candidate_count_raw": 3,
+            "acquired_count": 1,
+            "failed_count": 2,
+            "selection_decisions": [{"action": "fetch_failed", "reason": "http_error"}],
+        }
+        self.context.shared_state.pop("research_funnel_v1", None)
+        persisted = {}
+
+        def save(run, expected_version, **kwargs):
+            persisted.update(kwargs["task_results"])
+            return expected_version + 1
+
+        self.workflow_service.save_workflow_run.side_effect = save
+        persister = WorkflowRuntimePersister(
+            workflow_service=self.workflow_service,
+            audit=self.audit,
+            run_id=self.workflow_run.id,
+            initial_version=0,
+        )
+        persister.on_task_finished(self.context, error=RuntimeError("source minimum"))
+
+        snapshot = persisted[task.id]
+        self.assertEqual(snapshot["shared_state"]["source_acquisition"]["acquired_count"], 1)
+        self.assertNotIn("research_funnel_v1", snapshot["shared_state"])
+
 
 class WorkflowExecutionAuditResumeTests(unittest.TestCase):
 

@@ -1,17 +1,72 @@
 """Safe funnel journal survives the existing workflow JSONB checkpoint."""
+import json
+import tempfile
 import unittest
+from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4
 from unittest.mock import Mock
 
+from fastapi.testclient import TestClient
+
 from application import research_funnel_telemetry as funnel
+from application.composition_root import create_application_container
+from application.ports.source_ports import SearchProvider, SourceRetriever
 from application.runtime.task_result_codec import capture_task_progress, restore_runtime_state
 from application.runtime.workflow_runtime_persister import WorkflowRuntimePersister
-from api.mappers.response_mappers import task_results_to_response
-from tools.real_research_e2e import _source_acquisition_diagnostics
+from application.sources.exceptions import SourceAcquisitionError
+from application.sources.source_acquisition_service import SourceAcquisitionService
+from application.sources.source_budget import SourceAcquisitionBudget
+from api.app import create_fastapi_app
+from domain.sources.retrieval_status import RetrievalStatus
+from domain.sources.source import Source
+from domain.sources.source_candidate import SourceCandidate
+from tools.real_research_e2e import _source_acquisition_diagnostics, _write_diagnostics
+from infrastructure.persistence.memory.in_memory_source_repository import InMemorySourceRepository
 from infrastructure.persistence.postgresql.repositories.postgresql_project_repository import PostgreSQLProjectRepository
 from infrastructure.persistence.postgresql.repositories.postgresql_workflow_run_repository import PostgreSQLWorkflowRunRepository
+from tests.api.auth_helpers import auth_headers
 from tests.application.test_prf08s_funnel_telemetry import run_fixture
-from tests.integration.postgresql.helpers import PostgreSQLIntegrationTestCase, integration_tests_enabled
+from tests.integration.postgresql.helpers import (
+    PostgreSQLIntegrationTestCase,
+    integration_tests_enabled,
+    postgresql_application_config,
+)
+
+
+class _ThreeCandidateSearch(SearchProvider):
+    def search(self, query):
+        return [SourceCandidate(
+            provider="diagnostic-fixture",
+            url=f"https://example.test/{query.information_need_id}",
+            title="Synthetic report",
+            snippet="Synthetic report",
+            query_id=query.id,
+            rank=1,
+        )]
+
+
+class _BoundedSuccessRetriever(SourceRetriever):
+    def __init__(self, successful: int) -> None:
+        self.successful = successful
+        self.calls = 0
+
+    def retrieve(self, candidate):
+        self.calls += 1
+        acquired = self.calls <= self.successful
+        return Source(
+            id="",
+            project_id="",
+            url=candidate.url,
+            canonical_url=candidate.url,
+            title=candidate.title,
+            retrieved_at=datetime.now(timezone.utc).isoformat(),
+            retrieval_status=(
+                RetrievalStatus.ACQUIRED if acquired else RetrievalStatus.FAILED
+            ),
+            content_text="Synthetic report body" if acquired else "",
+            metadata={} if acquired else {"failure_category": "http_error"},
+        )
 
 
 @unittest.skipUnless(integration_tests_enabled(), "Disposable PostgreSQL required")
@@ -26,12 +81,44 @@ class FunnelPostgreSQLTests(PostgreSQLIntegrationTestCase):
         # run_fixture intentionally uses stable in-memory IDs. PostgreSQL tests
         # need per-test identities because the suite may reuse one database.
         context.project.id = f"pg-funnel-project-{uuid4().hex}"
+        context.project.owner_principal_id = f"pg-funnel-owner-{uuid4().hex}"
         context.workflow_run.id = f"pg-funnel-run-{uuid4().hex}"
         context.workflow_run.project_id = context.project.id
         PostgreSQLProjectRepository(self.session_factory).create(context.project)
         repo = PostgreSQLWorkflowRunRepository(self.session_factory)
         repo.create(context.workflow_run, project_id=context.project.id)
         return context, repo
+
+    def fail_acquisition(self, context, *, acquired: int) -> None:
+        context.execution_metadata["research_funnel_enabled"] = False
+        context.shared_state.pop(funnel.KEY, None)
+        service = SourceAcquisitionService(
+            search_provider=_ThreeCandidateSearch(),
+            source_retriever=_BoundedSuccessRetriever(acquired),
+            source_repository=InMemorySourceRepository(),
+            budget=SourceAcquisitionBudget(
+                max_sources_per_run=3,
+                min_successful_sources=3,
+            ),
+        )
+        with self.assertRaises(SourceAcquisitionError):
+            service.acquire_for_context(context)
+        assert context.shared_state["source_acquisition"]["acquired_count"] == acquired
+        assert funnel.KEY not in context.shared_state
+
+    @staticmethod
+    def api_key_for_owner(container, owner_principal_id: str) -> str:
+        plaintext, key_id, key_prefix, key_hash = (
+            container.authentication_service.generate_key_material()
+        )
+        container.authentication_service.register_api_key(
+            name="failed-acquisition-diagnostic",
+            key_id=key_id,
+            key_prefix=key_prefix,
+            key_hash=key_hash,
+            principal_id=owner_principal_id,
+        )
+        return plaintext
 
     def test_jsonb_checkpoint_restore_and_legacy_absence(self):
         context, repo = self.prepare()
@@ -62,23 +149,10 @@ class FunnelPostgreSQLTests(PostgreSQLIntegrationTestCase):
         for acquired in (2, 0):
             with self.subTest(acquired=acquired):
                 context, repo = self.prepare()
+                self.fail_acquisition(context, acquired=acquired)
                 context.current_task.ready()
                 context.current_task.start()
                 context.current_task.fail()
-                context.shared_state["source_acquisition"] = {
-                    "candidate_count_raw": 3,
-                    "candidate_count_unique": 3,
-                    "candidates_attempted": 3,
-                    "acquired_count": acquired,
-                    "failed_count": 3 - acquired,
-                    "skipped_duplicate_count": 0,
-                    "skipped_budget_count": 0,
-                    "failure_category_counts": {"http_error": 3 - acquired},
-                    "selection_decisions": [
-                        {"canonical_url": "https://private.example/secret", "source_id": "private-source-id",
-                         "action": "fetch_failed", "reason": "http_error"},
-                    ],
-                }
                 service = Mock()
                 service.save_workflow_run.side_effect = repo.save
                 persister = WorkflowRuntimePersister(
@@ -91,15 +165,64 @@ class FunnelPostgreSQLTests(PostgreSQLIntegrationTestCase):
 
                 fresh_repo = PostgreSQLWorkflowRunRepository(self.session_factory)
                 loaded = fresh_repo.get_task_results(context.workflow_run.id)
-                api_items = task_results_to_response(context.workflow_run.id, loaded)
-                projection = _source_acquisition_diagnostics({"task_results": [
-                    {"task_id": item.task_id, "snapshot": item.snapshot}
-                    for item in api_items
-                ]})
+                self.assertEqual(
+                    loaded[context.current_task.id]["shared_state"]
+                    ["source_acquisition"]["acquired_count"],
+                    acquired,
+                )
+                self.assertNotIn(
+                    funnel.KEY,
+                    loaded[context.current_task.id]["shared_state"],
+                )
+
+                container = create_application_container(
+                    config=postgresql_application_config(
+                        deterministic_stage_executors=True,
+                        background_execution_mode="external",
+                    ),
+                )
+                token = self.api_key_for_owner(
+                    container,
+                    context.project.owner_principal_id,
+                )
+                try:
+                    with TestClient(create_fastapi_app(container=container)) as client:
+                        response = client.get(
+                            f"/workflow-runs/{context.workflow_run.id}/results",
+                            headers=auth_headers(token),
+                        )
+                    self.assertEqual(response.status_code, 200)
+                    durable_results = response.json()
+                finally:
+                    container.shutdown()
+
+                projection = _source_acquisition_diagnostics(durable_results)
                 assert projection is not None
                 self.assertEqual(projection["summary"]["acquired_count"], acquired)
-                self.assertNotIn("private.example", str(projection))
-                self.assertNotIn("private-source-id", str(projection))
+                self.assertEqual(
+                    projection["failure_category_counts"].get("http_error"),
+                    3 - acquired,
+                )
+                diagnostics = {
+                    "status": "failed",
+                    "workflow_status": durable_results["status"],
+                    "source_acquisition_diagnostics": projection,
+                }
+                with tempfile.TemporaryDirectory() as output_dir:
+                    _write_diagnostics(Path(output_dir), diagnostics)
+                    serialized = (Path(output_dir) / "diagnostics.json").read_text(
+                        encoding="utf-8",
+                    )
+                    persisted_json = json.loads(serialized)
+                self.assertEqual(
+                    persisted_json["source_acquisition_diagnostics"]
+                    ["summary"]["acquired_count"],
+                    acquired,
+                )
+                self.assertNotIn("example.test", serialized)
+                self.assertNotIn("source_id", serialized)
+                self.assertNotIn("provider", serialized)
+                self.assertNotIn("credential", serialized)
 
     def test_split_subject_and_local_need_rejections_survive_jsonb_checkpoint(self):
         context, repo = self.prepare()

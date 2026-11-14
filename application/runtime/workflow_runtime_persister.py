@@ -119,6 +119,7 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
             elif task.status == TaskStatus.FAILED and (
                 is_quantitative_diagnostic_stage(task.definition_id)
                 or has_evidence_failure_diagnostics(context)
+                or _has_source_acquisition_diagnostics(context)
                 or bool(context.shared_state.get("research_funnel_v1"))
                 or _has_report_failure_diagnostics(context)
                 or _has_design_generation_failure_diagnostics(context)
@@ -241,6 +242,11 @@ def _has_report_failure_diagnostics(context: WorkflowContext) -> bool:
         key in context.shared_state
         for key in REPORT_FAILURE_DIAGNOSTIC_KEYS
     )
+
+
+def _has_source_acquisition_diagnostics(context: WorkflowContext) -> bool:
+    summary = context.shared_state.get("source_acquisition")
+    return isinstance(summary, dict) and bool(summary)
 
 
 def _has_design_generation_failure_diagnostics(context: WorkflowContext) -> bool:
