@@ -15,6 +15,12 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from application.research_funnel_telemetry import safe_text
+
+
+_LAST_DIAGNOSTICS: dict = {}
+_LAST_OUTPUT: Path | None = None
+
 
 def _prepare_approved_desk_run(project_id: str) -> str:
     """Use the canonical application design gate in the disposable API runtime."""
@@ -88,21 +94,27 @@ def _source_acquisition_diagnostics(results: dict) -> dict | None:
     task_results = results.get("task_results")
     if not isinstance(task_results, list):
         return None
-    summary = None
-    funnel = None
+    candidates = []
     for item in task_results:
         snapshot = item.get("snapshot") if isinstance(item, dict) else None
         shared = snapshot.get("shared_state") if isinstance(snapshot, dict) else None
         if not isinstance(shared, dict):
             continue
-        candidate = shared.get("source_acquisition")
-        if isinstance(candidate, dict):
-            summary = candidate
-        candidate_funnel = shared.get("research_funnel_v1")
-        if isinstance(candidate_funnel, dict):
-            funnel = candidate_funnel
-    if summary is None and funnel is None:
+        if isinstance(shared.get("source_acquisition"), dict):
+            candidates.append((item, shared["source_acquisition"], shared.get("research_funnel_v1")))
+    if not candidates:
         return None
+
+    search_candidates = [item for item in candidates if (
+        isinstance(item[0].get("snapshot"), dict)
+        and item[0]["snapshot"].get("definition_id") == "task-collect-evidence"
+    )]
+    if len(search_candidates) != 1:
+        raise ValueError(
+            "ambiguous source acquisition task result: expected exactly one "
+            "task-collect-evidence snapshot"
+        )
+    _, summary, funnel = search_candidates[0]
 
     def counts(values) -> dict[str, int]:
         return dict(Counter(str(value) for value in values if value))
@@ -149,6 +161,29 @@ def _source_acquisition_diagnostics(results: dict) -> dict | None:
     return result
 
 
+def _write_diagnostics(output: Path, diagnostics: dict) -> None:
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "diagnostics.json").write_text(
+        json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    (output / "summary.md").write_text(
+        "# Recovery 2 real-provider E2E\n\n" +
+        "```json\n" + json.dumps(diagnostics, ensure_ascii=False, indent=2) + "\n```\n",
+        encoding="utf-8",
+    )
+
+
+def _record_unhandled_error(output: Path, diagnostics: dict, exc: BaseException) -> None:
+    """Preserve collected diagnostics while marking the harness failed."""
+    diagnostics["status"] = "failed"
+    diagnostics["unhandled_error"] = {
+        "error_class": type(exc).__name__,
+        "error": safe_text(str(exc))[:400],
+    }
+    diagnostics["acceptance_failure"] = "unhandled harness exception"
+    _write_diagnostics(output, diagnostics)
+
+
 def _acceptance_failure(diagnostics: dict) -> str | None:
     status = str(diagnostics.get("workflow_status") or "").lower()
     if status in {"failed", "error", "technical_error"}:
@@ -160,6 +195,8 @@ def _acceptance_failure(diagnostics: dict) -> str | None:
         return f"research outcome is {outcome}"
     if diagnostics.get("research_result_error"):
         return "authoritative research result is unavailable"
+    if diagnostics.get("source_acquisition_diagnostics_error"):
+        return "source acquisition diagnostics are ambiguous or unavailable"
     if not diagnostics.get("outcome"):
         return "authoritative research outcome is missing"
     return None
@@ -184,8 +221,12 @@ def _brief() -> dict:
 
 
 def main() -> int:
+    global _LAST_DIAGNOSTICS, _LAST_OUTPUT
     output = Path(os.environ.get("E2E_OUTPUT_DIR", "real_e2e_artifacts"))
     output.mkdir(parents=True, exist_ok=True)
+    diagnostics: dict = {}
+    _LAST_DIAGNOSTICS = diagnostics
+    _LAST_OUTPUT = output
     if os.environ.get("RUN_REAL_E2E") != "true":
         raise RuntimeError("RUN_REAL_E2E must equal true; refusing external calls")
     for name in ("E2E_API_BASE", "E2E_API_KEY", "OPENAI_API_KEY", "SEARCH_API_KEY"):
@@ -220,7 +261,7 @@ def main() -> int:
     if not terminal or not terminal.get("is_terminal"):
         raise RuntimeError("real research did not reach a terminal state within E2E_MAX_SECONDS")
 
-    diagnostics = {
+    diagnostics.update({
         "project_id": project_id,
         "workflow_run_id": run_id,
         "workflow_status": terminal.get("status"),
@@ -231,7 +272,7 @@ def main() -> int:
         "insight_count": _count(base, f"/projects/{project_id}/insights?workflow_run_id={run_id}", token),
         "report_count": _count(base, f"/projects/{project_id}/reports?workflow_run_id={run_id}", token),
         "artifact_count": _count(base, f"/workflow-runs/{run_id}/artifacts", token),
-    }
+    })
     try:
         _, result = _json_request(base, f"/workflow-runs/{run_id}/research-result", token=token)
         for key in ("outcome", "readiness", "budget_usage", "source_summary", "evidence_summary",
@@ -251,21 +292,14 @@ def main() -> int:
         acquisition = _source_acquisition_diagnostics(durable_results)
         if acquisition is not None:
             diagnostics["source_acquisition_diagnostics"] = acquisition
-    except RuntimeError as exc:
-        diagnostics["source_acquisition_diagnostics_error"] = str(exc)
+    except (RuntimeError, ValueError) as exc:
+        diagnostics["source_acquisition_diagnostics_error"] = safe_text(str(exc))[:400]
 
-    (output / "diagnostics.json").write_text(json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8")
-    (output / "summary.md").write_text(
-        "# Recovery 2 real-provider E2E\n\n" +
-        "```json\n" + json.dumps(diagnostics, ensure_ascii=False, indent=2) + "\n```\n",
-        encoding="utf-8",
-    )
+    _write_diagnostics(output, diagnostics)
     failure = _acceptance_failure(diagnostics)
     if failure:
         diagnostics["acceptance_failure"] = failure
-        (output / "diagnostics.json").write_text(
-            json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        _write_diagnostics(output, diagnostics)
         return 1
     return 0
 
@@ -275,14 +309,6 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except Exception as exc:
         output = Path(os.environ.get("E2E_OUTPUT_DIR", "real_e2e_artifacts"))
-        output.mkdir(parents=True, exist_ok=True)
-        (output / "diagnostics.json").write_text(
-            json.dumps({"status": "blocked_or_failed", "error_class": type(exc).__name__, "error": str(exc)[:400]}, indent=2),
-            encoding="utf-8",
-        )
-        (output / "summary.md").write_text(
-            f"# Recovery 2 real-provider E2E\n\nStatus: blocked_or_failed\n\nError class: `{type(exc).__name__}`\n",
-            encoding="utf-8",
-        )
+        _record_unhandled_error(output, _LAST_DIAGNOSTICS, exc)
         print(f"BLOCKED: {type(exc).__name__}: {exc}", file=sys.stderr)
         raise SystemExit(2)

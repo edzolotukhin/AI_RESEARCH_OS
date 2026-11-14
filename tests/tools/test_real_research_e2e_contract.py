@@ -1,4 +1,8 @@
-from tools.real_research_e2e import _acceptance_failure, _source_acquisition_diagnostics
+from tools.real_research_e2e import (
+    _acceptance_failure,
+    _record_unhandled_error,
+    _source_acquisition_diagnostics,
+)
 
 
 def test_failed_workflow_is_not_an_accepted_e2e_result():
@@ -32,6 +36,7 @@ def test_source_acquisition_diagnostics_aggregates_durable_summary_without_ident
     result = _source_acquisition_diagnostics({
         "task_results": [{
             "snapshot": {
+                "definition_id": "task-collect-evidence",
                 "shared_state": {
                     "source_acquisition": {
                         "candidate_count_raw": 12,
@@ -66,3 +71,44 @@ def test_source_acquisition_diagnostics_aggregates_durable_summary_without_ident
     serialized = str(result)
     assert "secret.example" not in serialized
     assert "private-id" not in serialized
+
+
+def test_source_acquisition_diagnostics_rejects_ambiguous_search_snapshots():
+    snapshot = {
+        "definition_id": "task-collect-evidence",
+        "shared_state": {"source_acquisition": {"acquired_count": 2}},
+    }
+    import pytest
+    with pytest.raises(ValueError, match="ambiguous source acquisition"):
+        _source_acquisition_diagnostics({
+            "task_results": [
+                {"snapshot": snapshot},
+                {"snapshot": snapshot},
+            ],
+        })
+
+
+def test_source_acquisition_diagnostics_ignores_non_search_snapshot():
+    result = _source_acquisition_diagnostics({
+        "task_results": [
+            {"snapshot": {"definition_id": "task-assess-research-readiness",
+                           "shared_state": {"source_acquisition": {"acquired_count": 99}}}},
+            {"snapshot": {"definition_id": "task-collect-evidence",
+                           "shared_state": {"source_acquisition": {"acquired_count": 2}}}},
+        ],
+    })
+    assert result["summary"]["acquired_count"] == 2
+
+
+def test_unhandled_error_preserves_collected_diagnostics(tmp_path):
+    diagnostics = {
+        "workflow_run_id": "run-safe",
+        "workflow_status": "failed",
+        "source_acquisition_diagnostics": {"summary": {"acquired_count": 2}},
+    }
+    _record_unhandled_error(tmp_path, diagnostics, RuntimeError("late failure"))
+    saved = (tmp_path / "diagnostics.json").read_text(encoding="utf-8")
+    assert '"workflow_run_id": "run-safe"' in saved
+    assert '"acquired_count": 2' in saved
+    assert '"unhandled_error"' in saved
+    assert '"status": "failed"' in saved
