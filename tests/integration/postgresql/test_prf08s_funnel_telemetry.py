@@ -175,6 +175,12 @@ class FunnelPostgreSQLTests(PostgreSQLIntegrationTestCase):
         summary = snapshot["shared_state"]["source_acquisition"]
         self.assertEqual(summary["acquired_count"], acquired)
         self.assertEqual(summary["failed_count"], 3 - acquired)
+        self.assertEqual(len(summary["safe_attempt_diagnostics"]), 3)
+        self.assertFalse(summary["safe_diagnostics_truncated"])
+        self.assertEqual(
+            sum(item["action"] == "fetch_failed" for item in summary["safe_attempt_diagnostics"]),
+            3 - acquired,
+        )
         self.assertEqual(
             summary["failure_category_counts"].get("http_error"),
             3 - acquired,
@@ -195,6 +201,7 @@ class FunnelPostgreSQLTests(PostgreSQLIntegrationTestCase):
         projection = _source_acquisition_diagnostics(durable_results)
         self.assertIsNotNone(projection)
         self.assertEqual(projection["summary"]["acquired_count"], acquired)
+        self.assertEqual(len(projection["attempts"]), 3)
         return durable_results, projection
 
     def test_real_worker_failed_acquisition_survives_reload_http_and_projection(self):
@@ -267,6 +274,12 @@ class FunnelPostgreSQLTests(PostgreSQLIntegrationTestCase):
                     loaded[context.current_task.id]["shared_state"]
                     ["source_acquisition"]["acquired_count"],
                     acquired,
+                )
+                durable_attempts = loaded[context.current_task.id]["shared_state"]["source_acquisition"]["safe_attempt_diagnostics"]
+                self.assertEqual(len(durable_attempts), 3)
+                self.assertEqual(
+                    sum(item["action"] == "fetch_failed" for item in durable_attempts),
+                    3 - acquired,
                 )
                 self.assertNotIn(
                     funnel.KEY,

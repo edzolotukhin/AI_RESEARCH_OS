@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import unittest
 from unittest.mock import Mock, patch
+import httpx
 
 from domain.sources.source_candidate import SourceCandidate
 
@@ -11,6 +12,35 @@ from infrastructure.retrieval.http_source_retriever import HttpSourceRetriever
 
 
 class HttpSourceRetrieverTests(unittest.TestCase):
+    @patch("infrastructure.retrieval.network_safety._default_resolve_host_addresses", return_value=["93.184.216.34"])
+    def test_safe_http_status_classes_and_success(self, _resolve) -> None:
+        candidate = SourceCandidate("test", "https://example.com/report", "Report", "", "sq-1", 1)
+        for status, expected in ((403, "4xx"), (503, "5xx"), (200, "none")):
+            with self.subTest(status=status):
+                client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(
+                    status, text="safe body", headers={"content-type": "text/plain"},
+                )))
+                with client:
+                    source = HttpSourceRetriever(http_client=client).retrieve(candidate)
+                diagnostic = source.metadata["retrieval_diagnostic"]
+                self.assertEqual(diagnostic["http_status_class"], expected)
+                self.assertEqual(diagnostic["stage"], "fetch" if status >= 400 else "success")
+                self.assertEqual(diagnostic["failure_category"], "http_error" if status >= 400 else "none")
+
+    @patch("infrastructure.retrieval.network_safety._default_resolve_host_addresses", return_value=["93.184.216.34"])
+    def test_safe_size_and_exception_diagnostics(self, _resolve) -> None:
+        candidate = SourceCandidate("test", "https://example.com/report", "Report", "", "sq-1", 1,
+                                    metadata={"navigation_max_bytes": "4"})
+        client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, text="oversized")))
+        with client:
+            source = HttpSourceRetriever(http_client=client).retrieve(candidate)
+        self.assertEqual(source.metadata["retrieval_diagnostic"]["limit_code"], "byte_budget_exhausted")
+        client = httpx.Client(transport=httpx.MockTransport(lambda request: (_ for _ in ()).throw(httpx.ConnectError("SECRET https://private.example"))))
+        with client:
+            source = HttpSourceRetriever(http_client=client).retrieve(candidate)
+        self.assertEqual(source.metadata["retrieval_diagnostic"]["exception_class"], "ConnectError")
+        self.assertNotIn("SECRET", str(source.metadata["retrieval_diagnostic"]))
+
     @patch("infrastructure.retrieval.network_safety._default_resolve_host_addresses")
     def test_extracts_html_text(self, resolve_addresses) -> None:
         resolve_addresses.return_value = ["93.184.216.34"]

@@ -122,8 +122,22 @@ def _source_acquisition_diagnostics(results: dict) -> dict | None:
     selection = summary.get("selection_decisions", []) if summary else []
     if not isinstance(selection, list):
         selection = []
-    selection_counts = counts(item.get("action") for item in selection if isinstance(item, dict))
-    decision_reason_counts = counts(item.get("reason") for item in selection if isinstance(item, dict))
+    safe_actions = {"selected", "proxy_deprioritized", "unrelated_rejected", "fetch_failed", "skipped_duplicate_content", "skipped_budget", "exhausted"}
+    selection_counts = counts(
+        item.get("action") if item.get("action") in safe_actions else "other"
+        for item in selection if isinstance(item, dict)
+    )
+    safe_reasons = {
+        "retriever_known_unsupported_url", "zero_grounded_evidence_after_extraction",
+        "subject_irrelevant", "subject_unresolved_no_positive_signal",
+        "generic_local_overlap_without_parent_topic", "no_positive_topic_signal_unscored",
+        "acquired_duplicate_content", "known_exhausted_content", "source_attempt_cap",
+        "topic_and_geography_aligned", "category_not_preserved",
+    }
+    decision_reason_counts = counts(
+        item.get("reason") if item.get("reason") in safe_reasons else "other"
+        for item in selection if isinstance(item, dict)
+    )
     failure_counts = summary.get("failure_category_counts", {}) if summary else {}
     if not isinstance(failure_counts, dict):
         failure_counts = {}
@@ -141,22 +155,48 @@ def _source_acquisition_diagnostics(results: dict) -> dict | None:
             )
             if summary is not None and key in summary
         },
-        "failure_category_counts": {str(key): int(value) for key, value in failure_counts.items()},
+        "failure_category_counts": {
+            str(key): int(value)
+            for key, value in failure_counts.items()
+            if key in {"dns_resolution_failed", "unsafe_address", "http_error", "timeout", "unsupported_content_type", "content_too_large", "other_retrieval_error"}
+            and type(value) is int and 0 <= value <= 10000
+        },
         "selection_action_counts": selection_counts,
         "selection_reason_counts": decision_reason_counts,
     }
+    safe_records = summary.get("safe_attempt_diagnostics", []) if summary else []
+    if not isinstance(safe_records, list):
+        safe_records = []
+    allowed = {
+        "action": {"unrelated_rejected", "fetch_failed", "selected", "proxy_deprioritized"},
+        "rejection_reason": {"retriever_known_unsupported_url", "zero_grounded_evidence_after_extraction", "subject_irrelevant", "subject_unresolved_no_positive_signal", "generic_local_overlap_without_parent_topic", "no_positive_topic_signal_unscored", "other", "none"},
+        "stage": {"fetch", "navigation", "size", "xlsx", "success", "unknown"},
+        "http_status_class": {"4xx", "5xx", "other", "none"},
+        "limit_code": {"url_already_visited", "request_budget_exhausted", "byte_budget_exhausted", "link_budget_exhausted", "body_bytes", "workbook_truncated", "none"},
+        "exception_class": {"TimeoutException", "HTTPStatusError", "ConnectError", "ReadError", "RemoteProtocolError", "DecodingError", "other", "none"},
+        "failure_category": {"dns_resolution_failed", "unsafe_address", "http_error", "timeout", "unsupported_content_type", "content_too_large", "other_retrieval_error", "none"},
+    }
+    result["attempts"] = [
+        {**{key: record.get(key) if record.get(key) in values else "other" for key, values in allowed.items()},
+         "need_index": record.get("need_index") if type(record.get("need_index")) is int and 1 <= record["need_index"] <= 100 else None}
+        for record in safe_records[:32] if isinstance(record, dict)
+    ]
+    result["attempts_truncated"] = bool(summary.get("safe_diagnostics_truncated")) or len(safe_records) > 32
     if funnel is not None:
         events = funnel.get("events", [])
         if not isinstance(events, list):
             events = []
         result["funnel_event_counts"] = counts(
-            event.get("kind") for event in events if isinstance(event, dict)
+            event.get("kind") if event.get("kind") in {"candidate", "acquisition", "search_result", "search_start"} else "other"
+            for event in events if isinstance(event, dict)
         )
         result["funnel_reason_counts"] = counts(
-            event.get("reason") for event in events if isinstance(event, dict)
+            event.get("reason") if event.get("reason") in safe_reasons else "other"
+            for event in events if isinstance(event, dict) and event.get("reason")
         )
         result["funnel_status_counts"] = counts(
-            event.get("status") for event in events if isinstance(event, dict)
+            event.get("status") if event.get("status") in {"failed", "acquired", "success", "failure", "truncated", "unsupported"} else "other"
+            for event in events if isinstance(event, dict) and event.get("status")
         )
     return result
 

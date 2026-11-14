@@ -75,6 +75,26 @@ def test_source_acquisition_diagnostics_aggregates_durable_summary_without_ident
     assert "private-id" not in serialized
 
 
+def test_bounded_attempt_projection_drops_injected_identifiers_and_payload():
+    result = _source_acquisition_diagnostics({"task_results": [{"snapshot": {
+        "definition_id": "task-collect-evidence", "shared_state": {"source_acquisition": {
+            "safe_attempt_diagnostics": [{
+                "action": "fetch_failed", "need_index": 2, "stage": "fetch",
+                "http_status_class": "5xx", "limit_code": "none",
+                "exception_class": "other", "failure_category": "http_error",
+                "url": "https://private.example", "source_id": "secret-id",
+                "payload": "SECRET", "message": "SECRET",
+            }] * 40,
+        }}
+    }}]})
+    assert result["attempts"][0]["need_index"] == 2
+    assert len(result["attempts"]) == 32
+    assert result["attempts_truncated"] is True
+    assert "private.example" not in str(result)
+    assert "secret-id" not in str(result)
+    assert "SECRET" not in str(result)
+
+
 def test_source_acquisition_diagnostics_rejects_ambiguous_search_snapshots():
     snapshot = {
         "definition_id": "task-collect-evidence",

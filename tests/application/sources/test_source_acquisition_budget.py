@@ -22,7 +22,7 @@ from application.executors.search_executor import SearchExecutor
 from application.ports.source_ports import SearchProvider, SourceRetriever
 from application.sources.exceptions import SourceAcquisitionError
 from application.sources.search_query_builder import SearchQueryBuilder
-from application.sources.source_acquisition_service import SourceAcquisitionService
+from application.sources.source_acquisition_service import SourceAcquisitionService, _safe_attempt_diagnostics
 from application.sources.source_budget import SourceAcquisitionBudget
 from infrastructure.persistence.memory.in_memory_source_repository import (
     InMemorySourceRepository,
@@ -229,6 +229,31 @@ class _AllFailedRetriever(SourceRetriever):
 
 
 class SourceAcquisitionBudgetTests(unittest.TestCase):
+    def test_safe_rejection_and_attempt_projection_is_bounded_and_anonymous(self) -> None:
+        design = _design_with_needs(2)
+        decisions = [{
+            "action": "unrelated_rejected", "information_need_id": "in-2",
+            "reason": "subject_irrelevant", "canonical_url": "https://private.example",
+            "source_id": "secret-id", "payload": "SECRET",
+        }] + [{
+            "action": "fetch_failed", "information_need_id": "in-1",
+            "retrieval_diagnostic": {
+                "stage": "fetch", "http_status_class": "4xx", "limit_code": "none",
+                "exception_class": "other", "failure_category": "http_error",
+                "message": "SECRET",
+            },
+        }] * 40
+        records, truncated = _safe_attempt_diagnostics(decisions, design)
+        self.assertEqual(len(records), 32)
+        self.assertTrue(truncated)
+        self.assertEqual(records[0]["need_index"], 2)
+        self.assertEqual(records[0]["rejection_reason"], "subject_irrelevant")
+        self.assertEqual(records[1]["http_status_class"], "4xx")
+        self.assertEqual(records[1]["need_index"], 1)
+        self.assertNotIn("private.example", str(records))
+        self.assertNotIn("secret-id", str(records))
+        self.assertNotIn("SECRET", str(records))
+
     def test_scenario_a_unique_cap_priority_dedup_and_provenance(self) -> None:
         design = _design_with_needs(10)
         context = _workflow_context(design)

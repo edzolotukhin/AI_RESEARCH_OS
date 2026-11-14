@@ -36,6 +36,19 @@ RETRIEVAL_FAILURE_CATEGORIES = {
     "other_retrieval_error",
 }
 
+_LIMIT_CODES = frozenset({"url_already_visited", "request_budget_exhausted", "byte_budget_exhausted", "link_budget_exhausted", "body_bytes", "workbook_truncated"})
+_EXCEPTION_CLASSES = frozenset({"TimeoutException", "HTTPStatusError", "ConnectError", "ReadError", "RemoteProtocolError", "DecodingError"})
+
+
+def _retrieval_diagnostic(*, stage="unknown", status=None, limit_code=None, exception=None, category=None):
+    return {
+        "stage": stage if stage in {"fetch", "navigation", "size", "xlsx", "success", "unknown"} else "unknown",
+        "http_status_class": "4xx" if isinstance(status, int) and 400 <= status < 500 else "5xx" if isinstance(status, int) and 500 <= status < 600 else "other" if isinstance(status, int) else "none",
+        "limit_code": limit_code if limit_code in _LIMIT_CODES else "none",
+        "exception_class": type(exception).__name__ if exception is not None and type(exception).__name__ in _EXCEPTION_CLASSES else "other" if exception is not None else "none",
+        "failure_category": category if category in RETRIEVAL_FAILURE_CATEGORIES else "none",
+    }
+
 
 class HttpRetrievalLimits:
     timeout_seconds: float = 10.0
@@ -144,6 +157,7 @@ class HttpSourceRetriever(SourceRetriever):
             if valid:
                 source.retrieval_status = RetrievalStatus.FAILED
                 source.metadata["reason"] = "required_terminal_not_found" if structured else "html_challenge"
+                source.metadata["retrieval_diagnostic"] = _retrieval_diagnostic(stage="navigation")
                 # The table-required traversal is a distinct extraction contract
                 # from a successful text-only snapshot of the same HTML bytes.
                 source.extraction_revision = "navigation-table-unresolved-v2" if structured else "navigation-challenge-v2"
@@ -151,6 +165,8 @@ class HttpSourceRetriever(SourceRetriever):
                 budget.stop_reason = "depth_limit" if depth >= nav["max_depth"] else "no_terminal_resource"
             return source
         source = walk(candidate, 0, ())
+        if source.retrieval_status == RetrievalStatus.FAILED and "retrieval_diagnostic" not in source.metadata:
+            source.metadata["retrieval_diagnostic"] = _retrieval_diagnostic(stage="navigation")
         diagnostics = budget.diagnostics()
         diagnostics.update({"considered": True, "activated": nav["enabled"],
             "max_depth": nav["max_depth"],
@@ -175,13 +191,15 @@ class HttpSourceRetriever(SourceRetriever):
         except NavigationLimit as exc:
             if str(exc) != "url_already_visited":
                 budget.stop_reason = str(exc)
-            return self._failed_source(candidate, now, reason=str(exc), category="content_too_large")
+            return self._failed_source(candidate, now, reason=str(exc), category="content_too_large", stage="size", limit_code=str(exc))
         except UnsafeUrlError as exc:
             return self._failed_source(
                 candidate,
                 now,
                 reason=str(exc),
                 category=exc.category,
+                stage="fetch",
+                exception=exc,
             )
         except httpx.TimeoutException as exc:
             return self._failed_source(
@@ -189,6 +207,8 @@ class HttpSourceRetriever(SourceRetriever):
                 now,
                 reason=str(exc) or "Request timed out",
                 category="timeout",
+                stage="fetch",
+                exception=exc,
             )
         except httpx.HTTPStatusError as exc:
             return self._failed_source(
@@ -196,6 +216,9 @@ class HttpSourceRetriever(SourceRetriever):
                 now,
                 reason=str(exc),
                 category="http_error",
+                stage="fetch",
+                status=exc.response.status_code if exc.response is not None else None,
+                exception=exc,
             )
         except Exception as exc:  # noqa: BLE001
             return self._failed_source(
@@ -203,6 +226,8 @@ class HttpSourceRetriever(SourceRetriever):
                 now,
                 reason=str(exc),
                 category="other_retrieval_error",
+                stage="fetch",
+                exception=exc,
             )
 
         final_url = str(response.url)
@@ -217,6 +242,8 @@ class HttpSourceRetriever(SourceRetriever):
                 reason=f"HTTP {response.status_code} for {final_url}",
                 category="http_error",
                 content_type=content_type,
+                stage="fetch",
+                status=response.status_code,
             )
 
         navigation = _navigation_metadata(candidate)
@@ -328,6 +355,7 @@ class HttpSourceRetriever(SourceRetriever):
         if truncated:
             metadata["truncated"] = True
             metadata["failure_category"] = "content_too_large"
+        metadata["retrieval_diagnostic"] = _retrieval_diagnostic(stage="size" if truncated else "success", limit_code="body_bytes" if truncated else None, category="content_too_large" if truncated else None)
         checksum = _content_checksum(extracted)
         return Source(
             id="",
@@ -385,6 +413,7 @@ class HttpSourceRetriever(SourceRetriever):
             metadata["body_truncated"] = True
             metadata["failure_category"] = "content_too_large"
             metadata["workbook_truncated"] = True
+        metadata["retrieval_diagnostic"] = _retrieval_diagnostic(stage="xlsx", limit_code="body_bytes" if body_truncated else None, category="content_too_large" if body_truncated else None)
 
         if result.error == "encrypted_workbook":
             return Source(
@@ -401,6 +430,7 @@ class HttpSourceRetriever(SourceRetriever):
                     **metadata,
                     "reason": "encrypted_workbook",
                     "failure_category": "unsupported_content_type",
+                    "retrieval_diagnostic": _retrieval_diagnostic(stage="xlsx", category="unsupported_content_type"),
                 },
             )
 
@@ -419,6 +449,7 @@ class HttpSourceRetriever(SourceRetriever):
                     **metadata,
                     "reason": result.error,
                     "failure_category": "other_retrieval_error",
+                    "retrieval_diagnostic": _retrieval_diagnostic(stage="xlsx", category="other_retrieval_error"),
                 },
             )
 
@@ -437,6 +468,7 @@ class HttpSourceRetriever(SourceRetriever):
                     **metadata,
                     "reason": result.error,
                     "failure_category": "other_retrieval_error",
+                    "retrieval_diagnostic": _retrieval_diagnostic(stage="xlsx", category="other_retrieval_error"),
                 },
             )
 
@@ -456,6 +488,7 @@ class HttpSourceRetriever(SourceRetriever):
                     **metadata,
                     "reason": "no_renderable_cells",
                     "failure_category": "other_retrieval_error",
+                    "retrieval_diagnostic": _retrieval_diagnostic(stage="xlsx", category="other_retrieval_error"),
                 },
             )
 
@@ -468,6 +501,9 @@ class HttpSourceRetriever(SourceRetriever):
         if workbook_truncated:
             metadata["workbook_truncated"] = True
             metadata.setdefault("failure_category", "content_too_large")
+            metadata["retrieval_diagnostic"] = _retrieval_diagnostic(stage="xlsx", limit_code="body_bytes" if body_truncated else "workbook_truncated", category="content_too_large")
+        else:
+            metadata["retrieval_diagnostic"] = _retrieval_diagnostic(stage="success")
 
         checksum = _content_checksum(text)
         return Source(
@@ -493,6 +529,10 @@ class HttpSourceRetriever(SourceRetriever):
         reason: str,
         content_type: str = "",
         category: str = "other_retrieval_error",
+        stage: str = "unknown",
+        status: int | None = None,
+        limit_code: str | None = None,
+        exception: BaseException | None = None,
     ) -> Source:
         return Source(
             id="",
@@ -507,6 +547,7 @@ class HttpSourceRetriever(SourceRetriever):
             metadata={
                 "reason": reason,
                 "failure_category": category,
+                "retrieval_diagnostic": _retrieval_diagnostic(stage=stage, status=status, limit_code=limit_code, exception=exception, category=category),
             },
         )
 
