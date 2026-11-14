@@ -87,7 +87,23 @@ jobs:
           test "$LLM_MAX_TOKENS" -gt 0
       - name: Apply schema
         run: |
+          set -euo pipefail
+          mkdir -p real_e2e_artifacts
           docker compose -p recovery2-e2e -f docker-compose.yml -f docker-compose.recovery2-e2e.yml up -d postgres
+          for attempt in {1..60}; do
+            if docker compose -p recovery2-e2e -f docker-compose.yml -f docker-compose.recovery2-e2e.yml exec -T postgres pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              docker compose -p recovery2-e2e -f docker-compose.yml -f docker-compose.recovery2-e2e.yml logs --no-color postgres > real_e2e_artifacts/postgres.log || true
+              postgres_id="$(docker compose -p recovery2-e2e -f docker-compose.yml -f docker-compose.recovery2-e2e.yml ps -q postgres)"
+              if [ -n "$postgres_id" ]; then
+                docker inspect "$postgres_id" > real_e2e_artifacts/postgres.inspect.json 2>/dev/null || true
+              fi
+              exit 1
+            fi
+            sleep 2
+          done
           python -m alembic upgrade head
       - name: Start isolated API and Worker
         run: |
