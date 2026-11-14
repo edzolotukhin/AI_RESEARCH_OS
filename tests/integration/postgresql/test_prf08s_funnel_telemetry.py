@@ -1,5 +1,6 @@
 """Safe funnel journal survives the existing workflow JSONB checkpoint."""
 import unittest
+from uuid import uuid4
 from unittest.mock import Mock
 
 from application import research_funnel_telemetry as funnel
@@ -17,6 +18,11 @@ from tests.integration.postgresql.helpers import PostgreSQLIntegrationTestCase, 
 class FunnelPostgreSQLTests(PostgreSQLIntegrationTestCase):
     def prepare(self):
         context = run_fixture()[0]
+        # run_fixture intentionally uses stable in-memory IDs. PostgreSQL tests
+        # need per-test identities because the suite may reuse one database.
+        context.project.id = f"pg-funnel-project-{uuid4().hex}"
+        context.workflow_run.id = f"pg-funnel-run-{uuid4().hex}"
+        context.workflow_run.project_id = context.project.id
         PostgreSQLProjectRepository(self.session_factory).create(context.project)
         repo = PostgreSQLWorkflowRunRepository(self.session_factory)
         repo.create(context.workflow_run, project_id=context.project.id)
