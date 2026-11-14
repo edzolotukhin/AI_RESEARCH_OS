@@ -157,7 +157,10 @@ class HttpSourceRetriever(SourceRetriever):
             if valid:
                 source.retrieval_status = RetrievalStatus.FAILED
                 source.metadata["reason"] = "required_terminal_not_found" if structured else "html_challenge"
-                source.metadata["retrieval_diagnostic"] = _retrieval_diagnostic(stage="navigation")
+                source.metadata["failure_category"] = "other_retrieval_error"
+                source.metadata["retrieval_diagnostic"] = _retrieval_diagnostic(
+                    stage="navigation", category="other_retrieval_error",
+                )
                 # The table-required traversal is a distinct extraction contract
                 # from a successful text-only snapshot of the same HTML bytes.
                 source.extraction_revision = "navigation-table-unresolved-v2" if structured else "navigation-challenge-v2"
@@ -189,9 +192,20 @@ class HttpSourceRetriever(SourceRetriever):
                 navigation_budget=budget,
             )
         except NavigationLimit as exc:
-            if str(exc) != "url_already_visited":
-                budget.stop_reason = str(exc)
-            return self._failed_source(candidate, now, reason=str(exc), category="content_too_large", stage="size", limit_code=str(exc))
+            code = str(exc)
+            if code == "url_already_visited":
+                # A child redirect may revisit a URL already fetched during
+                # this traversal. Leave the shared budget usable for siblings.
+                return self._failed_source(
+                    candidate, now, reason=code,
+                    category="other_retrieval_error", stage="navigation",
+                    limit_code=code,
+                )
+            budget.stop_reason = code
+            return self._failed_source(
+                candidate, now, reason=code,
+                category="content_too_large", stage="size", limit_code=code,
+            )
         except UnsafeUrlError as exc:
             return self._failed_source(
                 candidate,
