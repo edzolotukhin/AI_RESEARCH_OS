@@ -514,6 +514,12 @@ class SourceAcquisitionCoveragePolicyTests(unittest.TestCase):
             with self.assertRaises(SourceAcquisitionError):
                 service.acquire_for_context(context)
 
+        summary = context.shared_state["source_acquisition"]
+        self.assertEqual(summary["acquired_count"], 2)
+        self.assertEqual(summary["failed_count"], 1)
+        self.assertEqual(summary["skipped_duplicate_count"], 0)
+        self.assertGreater(summary["skipped_budget_count"], 0)
+
 
 class SourceAcquisitionMinimumCoverageGateTests(unittest.TestCase):
     def test_a_one_source_covering_all_needs_does_not_early_stop_at_minimum_three(self) -> None:

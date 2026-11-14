@@ -307,6 +307,12 @@ class SourceAcquisitionService:
             },
         )
 
+        # Preserve the complete bounded acquisition summary before raising the
+        # minimum-source gate.  The executor writes this key only after a
+        # successful return, while the runtime persister can still checkpoint
+        # shared state for a failed task (including the funnel journal).
+        context.write_shared("source_acquisition", summary.to_dict())
+
         if acquired == 0:
             raise SourceAcquisitionError(
                 "No sources were successfully acquired for project "
