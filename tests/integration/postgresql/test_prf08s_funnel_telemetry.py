@@ -18,6 +18,11 @@ from tests.integration.postgresql.helpers import PostgreSQLIntegrationTestCase, 
 class FunnelPostgreSQLTests(PostgreSQLIntegrationTestCase):
     def prepare(self):
         context = run_fixture()[0]
+        # run_fixture is an extraction fixture; this suite exercises the
+        # Search-task checkpoint contract consumed by the E2E harness.
+        assert context.current_task is not None
+        context.current_task.definition_id = "task-collect-evidence"
+        context.current_task.executor_id = "search"
         # run_fixture intentionally uses stable in-memory IDs. PostgreSQL tests
         # need per-test identities because the suite may reuse one database.
         context.project.id = f"pg-funnel-project-{uuid4().hex}"
