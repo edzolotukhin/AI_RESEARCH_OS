@@ -10,6 +10,7 @@ import json
 import os
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -76,6 +77,76 @@ def _count(base: str, path: str, token: str) -> int | None:
         return None
     value = payload.get("count")
     return int(value) if isinstance(value, int) else None
+
+
+def _source_acquisition_diagnostics(results: dict) -> dict | None:
+    """Return bounded acquisition telemetry from durable task results.
+
+    Keep this projection aggregate-only: source URLs, content, source IDs and
+    provider payloads must never be copied into CI diagnostics.
+    """
+    task_results = results.get("task_results")
+    if not isinstance(task_results, list):
+        return None
+    summary = None
+    funnel = None
+    for item in task_results:
+        snapshot = item.get("snapshot") if isinstance(item, dict) else None
+        shared = snapshot.get("shared_state") if isinstance(snapshot, dict) else None
+        if not isinstance(shared, dict):
+            continue
+        candidate = shared.get("source_acquisition")
+        if isinstance(candidate, dict):
+            summary = candidate
+        candidate_funnel = shared.get("research_funnel_v1")
+        if isinstance(candidate_funnel, dict):
+            funnel = candidate_funnel
+    if summary is None and funnel is None:
+        return None
+
+    def counts(values) -> dict[str, int]:
+        return dict(Counter(str(value) for value in values if value))
+
+    selection = summary.get("selection_decisions", []) if summary else []
+    if not isinstance(selection, list):
+        selection = []
+    selection_counts = counts(item.get("action") for item in selection if isinstance(item, dict))
+    decision_reason_counts = counts(item.get("reason") for item in selection if isinstance(item, dict))
+    failure_counts = summary.get("failure_category_counts", {}) if summary else {}
+    if not isinstance(failure_counts, dict):
+        failure_counts = {}
+
+    result = {
+        "summary": {
+            key: summary.get(key)
+            for key in (
+                "queries_executed", "candidate_count_raw", "candidate_count_unique",
+                "candidates_attempted", "acquired_count", "truncated_count",
+                "failed_count", "skipped_duplicate_count", "skipped_budget_count",
+                "skipped_ineligible_count", "skipped_exhausted_count",
+                "budget_exhausted", "coverage_target_satisfied",
+                "information_needs_covered_count", "information_needs_total",
+            )
+            if summary is not None and key in summary
+        },
+        "failure_category_counts": {str(key): int(value) for key, value in failure_counts.items()},
+        "selection_action_counts": selection_counts,
+        "selection_reason_counts": decision_reason_counts,
+    }
+    if funnel is not None:
+        events = funnel.get("events", [])
+        if not isinstance(events, list):
+            events = []
+        result["funnel_event_counts"] = counts(
+            event.get("kind") for event in events if isinstance(event, dict)
+        )
+        result["funnel_reason_counts"] = counts(
+            event.get("reason") for event in events if isinstance(event, dict)
+        )
+        result["funnel_status_counts"] = counts(
+            event.get("status") for event in events if isinstance(event, dict)
+        )
+    return result
 
 
 def _acceptance_failure(diagnostics: dict) -> str | None:
@@ -174,6 +245,14 @@ def main() -> int:
             diagnostics.get("workflow_status", "").lower() in {"failed", "error", "technical_error"}
             and "Ambiguous durable research outcome" in str(exc)
         )
+
+    try:
+        _, durable_results = _json_request(base, f"/workflow-runs/{run_id}/results", token=token)
+        acquisition = _source_acquisition_diagnostics(durable_results)
+        if acquisition is not None:
+            diagnostics["source_acquisition_diagnostics"] = acquisition
+    except RuntimeError as exc:
+        diagnostics["source_acquisition_diagnostics_error"] = str(exc)
 
     (output / "diagnostics.json").write_text(json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8")
     (output / "summary.md").write_text(
