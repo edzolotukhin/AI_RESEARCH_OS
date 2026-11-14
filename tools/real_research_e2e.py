@@ -282,14 +282,7 @@ def main() -> int:
         payload={"name": "Recovery 2 disposable Ukraine population E2E"},
     )
     project_id = project["id"]
-    if os.environ.get("E2E_PREPARE_APPROVED_PROJECT") == "true":
-        run_id = _prepare_approved_desk_run(project_id)
-    else:
-        _, submission = _json_request(
-            base, f"/projects/{project_id}/research", method="POST", token=token,
-            payload={"brief": _brief()},
-        )
-        run_id = submission["run_id"]
+    run_id = _prepare_approved_desk_run(project_id)
     deadline = started + int(os.environ["E2E_MAX_SECONDS"])
     terminal = None
     while time.monotonic() < deadline:

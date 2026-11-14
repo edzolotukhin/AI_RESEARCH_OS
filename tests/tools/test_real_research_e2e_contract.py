@@ -4,6 +4,7 @@ from tools.real_research_e2e import (
     _record_unhandled_error,
     _source_acquisition_diagnostics,
 )
+import tools.real_research_e2e as real_e2e
 
 
 def test_failed_workflow_is_not_an_accepted_e2e_result():
@@ -134,3 +135,25 @@ def test_missing_failed_search_snapshot_is_explicitly_diagnostic():
     assert diagnostics["source_acquisition_diagnostics_error"] == (
         "missing_durable_acquisition_snapshot"
     )
+
+
+def test_recovery2_entrypoint_requires_approved_desk_activation(monkeypatch, tmp_path):
+    class StopAtApprovedDeskActivation(Exception):
+        pass
+
+    monkeypatch.setattr(real_e2e, "_json_request", lambda *args, **kwargs: (201, {"id": "project-test"}))
+
+    def approved_run(project_id):
+        assert project_id == "project-test"
+        raise StopAtApprovedDeskActivation
+
+    monkeypatch.setattr(real_e2e, "_prepare_approved_desk_run", approved_run)
+    monkeypatch.setenv("RUN_REAL_E2E", "true")
+    monkeypatch.setenv("E2E_OUTPUT_DIR", str(tmp_path))
+    for key in ("E2E_API_BASE", "E2E_API_KEY", "OPENAI_API_KEY", "SEARCH_API_KEY"):
+        monkeypatch.setenv(key, "fixture")
+    for key in ("E2E_MAX_SECONDS", "LLM_MAX_CALLS_PER_RUN", "SOURCE_MAX_SOURCES_PER_RUN", "LLM_MAX_TOKENS"):
+        monkeypatch.setenv(key, "1")
+    import pytest
+    with pytest.raises(StopAtApprovedDeskActivation):
+        real_e2e.main()
