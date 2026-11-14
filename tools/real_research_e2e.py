@@ -161,6 +161,45 @@ def _source_acquisition_diagnostics(results: dict) -> dict | None:
     return result
 
 
+def _mark_missing_source_acquisition_diagnostics(
+    diagnostics: dict,
+    results: dict,
+) -> None:
+    """Make a missing failed-search snapshot explicit without exposing payloads."""
+    if str(diagnostics.get("workflow_status") or "").lower() not in {
+        "failed", "error", "technical_error",
+    }:
+        return
+    task_results = results.get("task_results")
+    task_statuses = diagnostics.get("task_statuses")
+    if not isinstance(task_results, list) or not isinstance(task_statuses, list):
+        return
+    search_failed = any(
+        isinstance(task, dict)
+        and task.get("definition_id") == "task-collect-evidence"
+        and task.get("status") == "failed"
+        for task in task_statuses
+    )
+    if not search_failed:
+        return
+    has_search_snapshot = any(
+        isinstance(item, dict)
+        and isinstance(item.get("snapshot"), dict)
+        and item["snapshot"].get("definition_id") == "task-collect-evidence"
+        and isinstance(item["snapshot"].get("shared_state"), dict)
+        and isinstance(
+            item["snapshot"]["shared_state"].get("source_acquisition"),
+            dict,
+        )
+        for item in task_results
+    )
+    if not has_search_snapshot:
+        diagnostics.setdefault(
+            "source_acquisition_diagnostics_error",
+            "missing_durable_acquisition_snapshot",
+        )
+
+
 def _write_diagnostics(output: Path, diagnostics: dict) -> None:
     output.mkdir(parents=True, exist_ok=True)
     (output / "diagnostics.json").write_text(
@@ -292,6 +331,8 @@ def main() -> int:
         acquisition = _source_acquisition_diagnostics(durable_results)
         if acquisition is not None:
             diagnostics["source_acquisition_diagnostics"] = acquisition
+        else:
+            _mark_missing_source_acquisition_diagnostics(diagnostics, durable_results)
     except (RuntimeError, ValueError) as exc:
         diagnostics["source_acquisition_diagnostics_error"] = safe_text(str(exc))[:400]
 

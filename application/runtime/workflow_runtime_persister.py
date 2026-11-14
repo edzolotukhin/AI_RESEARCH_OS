@@ -145,6 +145,25 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
                         diagnostic_context,
                         task.id,
                     )
+                elif (
+                    task.definition_id == "task-collect-evidence"
+                    and _has_source_acquisition_diagnostics(context)
+                ):
+                    diagnostic_context = replace(
+                        context,
+                        shared_state={
+                            key: context.shared_state[key]
+                            for key in (
+                                "source_acquisition",
+                                "research_product_outcome",
+                            )
+                            if key in context.shared_state
+                        },
+                    )
+                    self._task_results[task.id] = capture_task_result(
+                        diagnostic_context,
+                        task.id,
+                    )
                 elif _has_report_failure_diagnostics(context):
                     diagnostic_context = replace(
                         context,

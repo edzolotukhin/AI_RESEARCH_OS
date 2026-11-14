@@ -250,6 +250,12 @@ class WorkflowRuntimePersisterAuditOrderingTests(unittest.TestCase):
             "failed_count": 2,
             "selection_decisions": [{"action": "fetch_failed", "reason": "http_error"}],
         }
+        self.context.shared_state["research_product_outcome"] = {
+            "outcome": "FAILED",
+            "reason": "SourceAcquisitionError",
+        }
+        self.context.shared_state["provider_payload"] = {"raw": "must not persist"}
+        self.context.shared_state["credentials"] = "must not persist"
         self.context.shared_state.pop("research_funnel_v1", None)
         persisted = {}
 
@@ -268,7 +274,13 @@ class WorkflowRuntimePersisterAuditOrderingTests(unittest.TestCase):
 
         snapshot = persisted[task.id]
         self.assertEqual(snapshot["shared_state"]["source_acquisition"]["acquired_count"], 1)
+        self.assertEqual(
+            snapshot["shared_state"]["research_product_outcome"]["outcome"],
+            "FAILED",
+        )
         self.assertNotIn("research_funnel_v1", snapshot["shared_state"])
+        self.assertNotIn("provider_payload", snapshot["shared_state"])
+        self.assertNotIn("credentials", snapshot["shared_state"])
 
 
 class WorkflowExecutionAuditResumeTests(unittest.TestCase):

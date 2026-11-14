@@ -6,12 +6,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 from unittest.mock import Mock
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from application import research_funnel_telemetry as funnel
+from application.config import ApplicationOverrides
 from application.composition_root import create_application_container
 from application.ports.source_ports import SearchProvider, SourceRetriever
+from application.planner.research_design_workflow_mapper import ResearchDesignWorkflowMapper
 from application.runtime.task_result_codec import capture_task_progress, restore_runtime_state
 from application.runtime.workflow_runtime_persister import WorkflowRuntimePersister
 from application.sources.exceptions import SourceAcquisitionError
@@ -21,6 +24,9 @@ from api.app import create_fastapi_app
 from domain.sources.retrieval_status import RetrievalStatus
 from domain.sources.source import Source
 from domain.sources.source_candidate import SourceCandidate
+from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
+from domain.value_objects.task_status import TaskStatus
+from domain.workflow_status import WorkflowStatus
 from tools.real_research_e2e import _source_acquisition_diagnostics, _write_diagnostics
 from infrastructure.persistence.memory.in_memory_source_repository import InMemorySourceRepository
 from infrastructure.persistence.postgresql.repositories.postgresql_project_repository import PostgreSQLProjectRepository
@@ -119,6 +125,98 @@ class FunnelPostgreSQLTests(PostgreSQLIntegrationTestCase):
             principal_id=owner_principal_id,
         )
         return plaintext
+
+    def run_real_worker_failure(self, *, acquired: int):
+        config = postgresql_application_config(background_execution_mode="external")
+        worker = create_application_container(
+            config=config,
+            overrides=ApplicationOverrides(
+                search_provider=_ThreeCandidateSearch(),
+                source_retriever=_BoundedSuccessRetriever(acquired),
+            ),
+        )
+        self.addCleanup(worker.shutdown)
+        worker.agency.initialize()
+        project = worker.project_service.create_project(
+            f"Worker acquisition diagnostic {acquired}",
+            owner_principal_id=f"worker-diagnostic-owner-{uuid4().hex}",
+        )
+        design = ResearchDesign(
+            id=f"worker-diagnostic-design-{acquired}",
+            research_questions=(ResearchQuestion("rq-worker", "Synthetic population"),),
+            information_needs=tuple(
+                InformationNeed(f"in-worker-{i}", "rq-worker", "Synthetic population")
+                for i in range(3)
+            ),
+        )
+        template = ResearchDesignWorkflowMapper().from_research_design(design, project)
+        run_id = worker.durable_workflow_service.submit_research(
+            project, template,
+        ).workflow_run.id
+
+        self.assertTrue(
+            worker.worker_execution_service.process_once(
+                f"diagnostic-worker-{acquired}",
+            )
+        )
+        repository = PostgreSQLWorkflowRunRepository(self.session_factory)
+        reloaded_run = repository.get_by_id(run_id)
+        self.assertIsNotNone(reloaded_run)
+        collect = next(
+            task for task in reloaded_run.tasks
+            if task.definition_id == "task-collect-evidence"
+        )
+        self.assertEqual(collect.status, TaskStatus.FAILED)
+        self.assertEqual(reloaded_run.status, WorkflowStatus.FAILED)
+        loaded = repository.get_task_results(run_id)
+        snapshot = loaded[collect.id]
+        self.assertIn("source_acquisition", snapshot.get("shared_state", {}))
+        self.assertEqual(snapshot["definition_id"], "task-collect-evidence")
+        summary = snapshot["shared_state"]["source_acquisition"]
+        self.assertEqual(summary["acquired_count"], acquired)
+        self.assertEqual(summary["failed_count"], 3 - acquired)
+        self.assertEqual(
+            summary["failure_category_counts"].get("http_error"),
+            3 - acquired,
+        )
+
+        api = create_application_container(
+            config=postgresql_application_config(background_execution_mode="external"),
+        )
+        self.addCleanup(api.shutdown)
+        token = self.api_key_for_owner(api, project.owner_principal_id)
+        with TestClient(create_fastapi_app(container=api)) as client:
+            response = client.get(
+                f"/workflow-runs/{run_id}/results",
+                headers=auth_headers(token),
+            )
+        self.assertEqual(response.status_code, 200)
+        durable_results = response.json()
+        projection = _source_acquisition_diagnostics(durable_results)
+        self.assertIsNotNone(projection)
+        self.assertEqual(projection["summary"]["acquired_count"], acquired)
+        return durable_results, projection
+
+    def test_real_worker_failed_acquisition_survives_reload_http_and_projection(self):
+        for acquired in (0, 2):
+            with self.subTest(acquired=acquired):
+                durable_results, projection = self.run_real_worker_failure(
+                    acquired=acquired,
+                )
+                search_results = [
+                    item for item in durable_results["task_results"]
+                    if item.get("snapshot", {}).get("definition_id")
+                    == "task-collect-evidence"
+                ]
+                self.assertEqual(
+                    len(search_results),
+                    1,
+                )
+                serialized = json.dumps(projection, ensure_ascii=False)
+                self.assertNotIn("example.test", serialized)
+                self.assertNotIn("source_id", serialized)
+                self.assertNotIn("provider", serialized)
+                self.assertNotIn("credential", serialized)
 
     def test_jsonb_checkpoint_restore_and_legacy_absence(self):
         context, repo = self.prepare()

@@ -1,5 +1,6 @@
 from tools.real_research_e2e import (
     _acceptance_failure,
+    _mark_missing_source_acquisition_diagnostics,
     _record_unhandled_error,
     _source_acquisition_diagnostics,
 )
@@ -112,3 +113,24 @@ def test_unhandled_error_preserves_collected_diagnostics(tmp_path):
     assert '"acquired_count": 2' in saved
     assert '"unhandled_error"' in saved
     assert '"status": "failed"' in saved
+
+
+def test_missing_failed_search_snapshot_is_explicitly_diagnostic():
+    diagnostics = {
+        "workflow_status": "failed",
+        "task_statuses": [{
+            "definition_id": "task-collect-evidence",
+            "status": "failed",
+        }],
+    }
+    _mark_missing_source_acquisition_diagnostics(diagnostics, {
+        "task_results": [{
+            "snapshot": {
+                "definition_id": "task-collect-evidence",
+                "shared_state": {},
+            },
+        }],
+    })
+    assert diagnostics["source_acquisition_diagnostics_error"] == (
+        "missing_durable_acquisition_snapshot"
+    )
