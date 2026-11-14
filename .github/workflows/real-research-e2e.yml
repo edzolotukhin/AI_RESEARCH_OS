@@ -126,7 +126,7 @@ jobs:
           echo "E2E_API_KEY=$API_KEY" >> "$GITHUB_ENV"
           rm -f api-key.out
       - name: Run real provider E2E
-        run: python tools/real_research_e2e.py
+        run: python -m tools.real_research_e2e
       - name: Collect service logs
         if: always()
         run: docker compose -p recovery2-e2e -f docker-compose.yml -f docker-compose.recovery2-e2e.yml logs --no-color --tail=400 > real_e2e_artifacts/services.log || true
