@@ -279,6 +279,12 @@ jobs:
       POSTGRES_PORT: "5432"
       PERSISTENCE_BACKEND: postgresql
       PDF_FONT_PATH: /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+      CI: "true"
+      POSTGRESQL_INTEGRATION_TESTS: "1"
+      POSTGRESQL_DISPOSABLE_TEST_DATABASE: "1"
+      CI_POSTGRESQL_TEST_DATABASE: ai_research_os_test
+      DATABASE_URL_TEST: postgresql+psycopg://ai_research_os:ai_research_os_dev@localhost:5432/ai_research_os_test
+      DATABASE_URL: postgresql+psycopg://ai_research_os:ai_research_os_dev@localhost:5432/ai_research_os_test
     steps:
       - uses: actions/checkout@v4
         with:
@@ -323,14 +329,20 @@ jobs:
               return original(self, record, data)
           PostgreSQLPdfStore.complete = capture
           PY
+      - name: Require integration test environment
+        run: |
+          python -c "from tests.integration.postgresql.helpers import require_integration_tests; require_integration_tests(); print('integration test environment: PASS')"
       - name: Run only PDF acceptance test
         env:
           PYTHONPATH: .
-          DATABASE_URL: postgresql+psycopg://ai_research_os:ai_research_os_dev@localhost:5432/ai_research_os_test
         run: |
           set +e
-          python -m unittest -v tests.integration.postgresql.test_integrated_research_acceptance.IntegratedResearchAcceptanceTests.test_full_research_production_container
-          status=$?
+          python -m unittest -v tests.integration.postgresql.test_integrated_research_acceptance.IntegratedResearchAcceptanceTests.test_full_research_production_container 2>&1 | tee pdf_diagnostics/test.log
+          status=${PIPESTATUS[0]}
+          if ! grep -q 'Ran 1 test' pdf_diagnostics/test.log || grep -q 'skipped=1' pdf_diagnostics/test.log || grep -q 'Ran 0 tests' pdf_diagnostics/test.log; then
+            echo "Diagnostic target did not execute exactly one test" >> pdf_diagnostics/test.log
+            status=1
+          fi
           if [ -f pdf_diagnostics/report.pdf ]; then
             python - <<'PY'
           from pathlib import Path
