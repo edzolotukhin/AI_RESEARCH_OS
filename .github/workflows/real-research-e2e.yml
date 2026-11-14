@@ -12,7 +12,7 @@ on:
         description: "Pinned, reviewed integration commit"
         required: true
         type: string
-        default: "2fc6617c21112a659c2392ae7d38423a8130f17e"
+        default: "89bf632027bba0b3563560c42909b40afe42ee06"
       run_real_e2e:
         description: "Explicitly authorize this staging-only provider run"
         required: true
@@ -94,7 +94,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$SOURCE_REF" = "codex/r1-temporal-integration"
-          test "$SOURCE_SHA" = "2fc6617c21112a659c2392ae7d38423a8130f17e"
+          test "$SOURCE_SHA" = "89bf632027bba0b3563560c42909b40afe42ee06"
           active_modes=0
           [ "$RUN_REAL_E2E" = true ] && active_modes=$((active_modes + 1))
           [ "$INFRASTRUCTURE_SMOKE" = true ] && active_modes=$((active_modes + 1))
@@ -167,7 +167,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$SOURCE_REF" = "codex/r1-temporal-integration"
-          test "$SOURCE_SHA" = "2fc6617c21112a659c2392ae7d38423a8130f17e"
+          test "$SOURCE_SHA" = "89bf632027bba0b3563560c42909b40afe42ee06"
           active_modes=0
           [ "$RUN_REAL_E2E" = true ] && active_modes=$((active_modes + 1))
           [ "$INFRASTRUCTURE_SMOKE" = true ] && active_modes=$((active_modes + 1))
@@ -292,12 +292,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.16.0"
       - name: Install diagnostic dependencies
         run: |
           pip install -r requirements.txt
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends fonts-dejavu-core
           pip install pypdf==6.10.0
+          npm ci --prefix infrastructure/documents/pptx_runtime --omit=dev --ignore-scripts --no-audit --no-fund
       - name: Verify imports in API image
         run: |
           docker build --quiet -t recovery2-diagnostic-api . >/dev/null
