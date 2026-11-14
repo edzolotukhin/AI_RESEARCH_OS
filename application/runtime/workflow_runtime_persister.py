@@ -31,6 +31,7 @@ from application.executors.design_generation_executor import (
     DESIGN_GENERATION_DIAGNOSTIC_KEY,
 )
 from application.runtime.checkpoint_context import CHECKPOINT_FAILURE_HANDLER_KEY
+from application import research_funnel_telemetry as funnel
 
 
 class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
@@ -155,6 +156,7 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
                             key: context.shared_state[key]
                             for key in (
                                 "source_acquisition",
+                                funnel.KEY,
                                 "research_product_outcome",
                             )
                             if key in context.shared_state

@@ -237,7 +237,7 @@ class WorkflowRuntimePersisterAuditOrderingTests(unittest.TestCase):
 
         self.assertNotIn(task.id, persisted)
 
-    def test_failed_search_persists_acquisition_summary_without_funnel(self) -> None:
+    def test_failed_search_persists_all_safe_diagnostics(self) -> None:
         task = self.workflow_run.tasks[0]
         self.context.current_task = task
         task.definition_id = "task-collect-evidence"
@@ -254,9 +254,11 @@ class WorkflowRuntimePersisterAuditOrderingTests(unittest.TestCase):
             "outcome": "FAILED",
             "reason": "SourceAcquisitionError",
         }
+        self.context.shared_state["research_funnel_v1"] = {
+            "events": [{"phase": "acquisition", "status": "failed"}],
+        }
         self.context.shared_state["provider_payload"] = {"raw": "must not persist"}
         self.context.shared_state["credentials"] = "must not persist"
-        self.context.shared_state.pop("research_funnel_v1", None)
         persisted = {}
 
         def save(run, expected_version, **kwargs):
@@ -278,7 +280,10 @@ class WorkflowRuntimePersisterAuditOrderingTests(unittest.TestCase):
             snapshot["shared_state"]["research_product_outcome"]["outcome"],
             "FAILED",
         )
-        self.assertNotIn("research_funnel_v1", snapshot["shared_state"])
+        self.assertEqual(
+            snapshot["shared_state"]["research_funnel_v1"]["events"][0]["phase"],
+            "acquisition",
+        )
         self.assertNotIn("provider_payload", snapshot["shared_state"])
         self.assertNotIn("credentials", snapshot["shared_state"])
 
