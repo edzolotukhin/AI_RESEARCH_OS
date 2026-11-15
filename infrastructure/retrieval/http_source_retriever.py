@@ -23,6 +23,9 @@ from infrastructure.retrieval.xlsx_text_extractor import (
 )
 from infrastructure.retrieval.link_discovery import discover_links
 from infrastructure.retrieval.navigation_budget import NavigationBudget, NavigationLimit
+from infrastructure.retrieval.bounded_pdf_text_extractor import (
+    PDF_EXTRACTION_REVISION, MAX_PDF_BYTES, extract_pdf_text,
+)
 from application.sources.acquisition_capability import ACQUISITION_CAPABILITY, TEXT_EXTRACTION_CAPABILITY, TABLE_EXTRACTION_CAPABILITY
 
 
@@ -77,10 +80,8 @@ class HttpSourceRetriever(SourceRetriever):
     )
 
     def known_unsupported_url(self, url: str) -> bool:
-        # PDF bodies are explicitly unsupported by this HTML/text/XLSX adapter.
-        # Screen only an unambiguous path extension; redirects/content types
-        # remain the responsibility of retrieve().
-        return urlsplit(url).path.casefold().endswith(".pdf")
+        # PDF URLs use the same relevance and acquisition path as other candidates.
+        return False
 
     def __init__(
         self,
@@ -288,6 +289,58 @@ class HttpSourceRetriever(SourceRetriever):
                 terminal.metadata["_http_chain"] = response.extensions.get("validated_redirect_chain", (candidate.url, final_url))
             return terminal
 
+        pdf_signature = body.startswith(b"%PDF-")
+        pdf_claimed = (
+            content_type == "application/pdf"
+            or pdf_signature
+            or urlsplit(final_url).path.casefold().endswith(".pdf")
+        )
+        if pdf_claimed:
+            redirect_chain = response.extensions.get("validated_redirect_chain", (candidate.url, final_url)) if isinstance(response, httpx.Response) else (candidate.url, final_url)
+
+            def failed_pdf(code: str, category: str, *, stage: str = "unknown", limit_code: str | None = None) -> Source:
+                source = self._failed_source(
+                    replace(candidate, url=final_url), now, reason=code,
+                    content_type=content_type, category=category, stage=stage,
+                    limit_code=limit_code,
+                )
+                source.metadata["_http_chain"] = redirect_chain
+                return source
+
+            declared_length = response.headers.get("content-length", "")
+            declared_oversized = (
+                declared_length.isascii() and declared_length.isdecimal()
+                and (len(declared_length) > 9 or int(declared_length) > MAX_PDF_BYTES)
+            )
+            if truncated or declared_oversized:
+                return failed_pdf("pdf_body_limit", "content_too_large", stage="size", limit_code="body_bytes")
+            if not pdf_signature or content_type not in {"application/pdf", "application/octet-stream", "binary/octet-stream", ""}:
+                return failed_pdf("pdf_mime_mismatch", "unsupported_content_type")
+            result = extract_pdf_text(body)
+            if result.error_code:
+                category = (
+                    "content_too_large" if result.error_code in {"pdf_body_limit", "pdf_page_limit", "pdf_stream_limit", "pdf_text_limit"}
+                    else "timeout" if result.error_code == "pdf_timeout"
+                    else "unsupported_content_type" if result.error_code in {"pdf_encrypted", "pdf_mime_mismatch", "pdf_runtime_unavailable"}
+                    else "other_retrieval_error"
+                )
+                return failed_pdf(result.error_code, category, stage="size" if category == "content_too_large" else "unknown")
+            return Source(
+                id="", project_id="", url=final_url, canonical_url=final_url,
+                title=candidate.title, retrieved_at=now,
+                source_type=candidate.source_type or "web", content_type="application/pdf",
+                retrieval_status=RetrievalStatus.ACQUIRED,
+                content_text=result.text, content_checksum=_content_checksum(result.text),
+                metadata={
+                    "pdf_page_count": result.page_count,
+                    "_http_chain": redirect_chain,
+                    "retrieval_diagnostic": _retrieval_diagnostic(stage="success"),
+                },
+                raw_content_checksum=hashlib.sha256(body).hexdigest(),
+                raw_checksum_kind="sha256-bytes",
+                extraction_revision=PDF_EXTRACTION_REVISION,
+            )
+
         if is_unsupported_spreadsheet_url(final_url) or content_type in {
             "application/vnd.ms-excel",
             "application/vnd.ms-excel.sheet.binary.macroenabled.12",
@@ -310,22 +363,6 @@ class HttpSourceRetriever(SourceRetriever):
             )
 
         if not any(content_type.startswith(item) for item in self._SUPPORTED_CONTENT_TYPES):
-            if content_type.startswith("application/pdf"):
-                return Source(
-                    id="",
-                    project_id="",
-                    url=final_url,
-                    canonical_url=final_url,
-                    title=candidate.title,
-                    retrieved_at=now,
-                    source_type=candidate.source_type or "web",
-                    content_type=content_type,
-                    retrieval_status=RetrievalStatus.UNSUPPORTED,
-                    metadata={
-                        "reason": "PDF retrieval deferred in DR-03 v1",
-                        "failure_category": "unsupported_content_type",
-                    },
-                )
             return Source(
                 id="",
                 project_id="",
