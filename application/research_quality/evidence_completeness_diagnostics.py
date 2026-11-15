@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import date
-from decimal import Decimal, InvalidOperation
 import re
 from typing import Any, Mapping, Sequence
 
 from application.evidence.citation_integrity import citation_is_valid
-from application.evidence.semantic_assignment import semantic_assignment
+from application.analysis.numeric_integrity import (
+    NumericIntegrityError,
+    NumericObservationRequirements,
+    evaluate_numeric_series,
+    validate_numeric_observation,
+)
 from application.research_quality.deterministic_sufficiency_evaluator import (
     _deduplicate_evidence, _independent_lineages,
 )
@@ -24,11 +28,14 @@ _READINESS_STATUSES = {"sufficient", "partial", "insufficient", "missing", "bloc
 _GAP_TYPES = {"no_evidence", "insufficient_depth", "insufficient_diversity", "missing_quantitative_data", "stale_evidence", "conflicting_evidence", "insufficient_source_quality", "unresolvable", "unknown"}
 _STRATEGIES = {"direct", "semantic_expansion", "source_diversification", "proxy_indicators", "unknown"}
 _TEMPORAL_OUT = {"applicable_failed", "out_of_period"}
-_REJECTIONS = {"invalid_citation", "temporal_out_of_period", "temporal_unresolved", "numeric_binding_unverified", "undeclared_period", "unknown"}
+_REJECTIONS = {"invalid_citation", "temporal_out_of_period", "temporal_unresolved", "numeric_binding_unverified", "conflicting_numeric_observations", "undeclared_period", "unknown"}
 
 
 def build_evidence_coverage_diagnostics(
     *, information_need_id: str, workflow_run_id: str, research_design_id: str,
+    research_subject_id: str | None, research_subject_fingerprint: str | None,
+    allowed_dependency_information_need_ids: Sequence[str],
+    required_numeric_unit: str | None,
     coverage_contract: EvidenceCoverageContract, sources: Sequence[Any], evidence: Sequence[Any],
     temporal_qualification_by_evidence_and_need: Mapping[tuple[str, str], str],
     readiness_snapshot: Any, sources_complete: bool | None, evidence_complete: bool | None,
@@ -39,7 +46,14 @@ def build_evidence_coverage_diagnostics(
     need_id = str(information_need_id or "").strip()
     run_id = str(workflow_run_id or "").strip()
     design_id = str(research_design_id or "").strip()
-    if not need_id or not run_id or not design_id or not isinstance(coverage_contract, EvidenceCoverageContract):
+    subject_id = str(research_subject_id or "").strip()
+    subject_fingerprint = str(research_subject_fingerprint or "").strip()
+    numeric_unit = str(required_numeric_unit or "").strip()
+    allowed_assignment_needs = tuple(dict.fromkeys((need_id, *(
+        str(value).strip() for value in allowed_dependency_information_need_ids if str(value).strip()
+    ))))
+    if (not need_id or not run_id or not design_id or not subject_id or not subject_fingerprint or not numeric_unit
+            or not isinstance(coverage_contract, EvidenceCoverageContract)):
         return _unavailable(need_id, "invalid_input")
     if sources_complete is not True or evidence_complete is not True:
         return _unavailable(need_id, "collections_incomplete")
@@ -65,12 +79,24 @@ def build_evidence_coverage_diagnostics(
     if any(str(getattr(item, "workflow_run_id", "")) != run_id or str(getattr(item, "research_design_id", "")) != design_id for item in in_scope):
         return _unavailable(need_id, "evidence_collection_inconsistent")
 
+    numeric_requirements = NumericObservationRequirements(
+        allowed_information_need_ids=allowed_assignment_needs,
+        subject_id=subject_id,
+        subject_fingerprint=subject_fingerprint,
+        research_design_id=design_id,
+        allowed_workflow_run_ids=(run_id,),
+        metric=coverage_contract.required_metric,
+        unit=numeric_unit,
+        geography=coverage_contract.geography,
+        required_periods=tuple(coverage_contract.required_periods),
+    )
+
     period_limit = max(1, min(int(max_periods), MAX_PERIODS))
     loop_limit = max(1, min(int(max_loop_attempts), MAX_LOOP_ATTEMPTS))
     declared, unmapped = _declared_periods(coverage_contract.required_periods)
     visible = declared[:period_limit]
     periods_truncated = len(declared) > len(visible)
-    states = {period: {"confirmed": [], "claims": 0, "unknown": False, "rejections": Counter()} for period in visible}
+    states = {period: {"validated": [], "claims": 0, "unknown": False, "rejections": Counter()} for period in visible}
     rejections: Counter[str] = Counter()
     citation_valid: list[Any] = []
     temporal_eligible: list[Any] = []
@@ -95,10 +121,18 @@ def build_evidence_coverage_diagnostics(
                     reason = "temporal_unresolved"
                 elif bucket is None:
                     reason = "undeclared_period"
-                elif _verified_observation(item, source, coverage_contract, need_id, run_id, design_id):
-                    numeric_verified.append(item)
-                    bucket["confirmed"].append(item)
                 else:
+                    try:
+                        observation = validate_numeric_observation(
+                            item, source, numeric_requirements,
+                            temporal_eligible=(temporal == "applicable_satisfied"),
+                        )
+                    except NumericIntegrityError:
+                        observation = None
+                    if observation is not None:
+                        numeric_verified.append(item)
+                        bucket["validated"].append((item, observation))
+                        continue
                     bucket["claims"] += 1
                     bucket["unknown"] = True
                     reason = "numeric_binding_unverified"
@@ -122,7 +156,17 @@ def build_evidence_coverage_diagnostics(
     confirmed_total = 0
     for period in visible:
         state = states[period]
-        confirmed, _ = _deduplicate_evidence(state["confirmed"])
+        unique_items, _ = _deduplicate_evidence([item for item, _ in state["validated"]])
+        unique_ids = {item.id for item in unique_items}
+        observations = [observation for item, observation in state["validated"] if item.id in unique_ids]
+        series = evaluate_numeric_series(observations)
+        if series.conflicting_periods:
+            confirmed = []
+            state["unknown"] = True
+            state["rejections"]["conflicting_numeric_observations"] += 1
+            rejections["conflicting_numeric_observations"] += 1
+        else:
+            confirmed = unique_items
         confirmed_sources, _ = _independent_lineages(confirmed)
         confirmed_total += len(confirmed)
         if confirmed:
@@ -164,60 +208,6 @@ def build_evidence_coverage_diagnostics(
                             "missing_period_count": len(missing), "unknown_period_count": len(unknown)},
         "readiness": readiness, "loop_progress": loop,
     }
-
-
-def _verified_observation(item: Any, source: Any, contract: EvidenceCoverageContract, need_id: str, run_id: str, design_id: str) -> bool:
-    metadata = getattr(item, "metadata", {}) or {}
-    locator = getattr(item, "source_locator", {}) or {}
-    provenance = metadata.get("workbook_provenance")
-    assignment = semantic_assignment(item)
-    if (assignment is None or assignment.get("information_need_id") != need_id
-            or run_id not in tuple(getattr(source, "workflow_run_refs", ()))
-            or design_id not in tuple(getattr(source, "research_design_refs", ()))
-            or metadata.get("structured_table") is not True or not isinstance(provenance, dict)
-            or locator.get("structured") != provenance or not str(metadata.get("unit", "")).strip()):
-        return False
-    try:
-        normalized = Decimal(str(metadata.get("normalized_numeric_value", "NaN")))
-        numeric = Decimal(str(metadata.get("numeric_value", "NaN")))
-    except (InvalidOperation, ValueError):
-        return False
-    if not normalized.is_finite() or numeric != normalized:
-        return False
-    if contract.required_metric and not _same(metadata.get("metric"), contract.required_metric):
-        return False
-    if contract.geography and not _same(metadata.get("geography"), contract.geography):
-        return False
-    if not (getattr(source, "raw_content_checksum", "")
-            and provenance.get("raw_workbook_checksum") == source.raw_content_checksum
-            and provenance.get("raw_checksum_kind") == source.raw_checksum_kind
-            and provenance.get("terminal_resource_key") == source.terminal_resource_key
-            and provenance.get("extraction_revision") == source.extraction_revision
-            and provenance.get("content_revision") == source.content_revision):
-        return False
-    matching = [row for row in (getattr(source, "metadata", {}) or {}).get("structured_tables_v2", ())
-                if isinstance(row, dict) and row.get("sheet") == provenance.get("sheet")
-                and row.get("table_range") == provenance.get("table_range") and row.get("row") == provenance.get("row")]
-    if len(matching) != 1 or matching[0].get("ambiguous_headers"):
-        return False
-    row = matching[0]
-    if row.get("header_checksum") != provenance.get("header_checksum") or row.get("excerpt") != item.source_excerpt:
-        return False
-    cells = {cell.get("cell"): cell for cell in row.get("cells", ()) if isinstance(cell, dict) and cell.get("cell")}
-    metric_cell = cells.get(provenance.get("cell"), {})
-    period_cell = cells.get(provenance.get("period_cell"), {})
-    unit_cells = [cells.get(key, {}) for key in provenance.get("unit_cells", ())]
-    geography_cells = [cells.get(key, {}) for key in provenance.get("geography_cells", ())]
-    try:
-        cell_number = Decimal(str(metric_cell.get("numeric_value", "NaN")))
-    except (InvalidOperation, ValueError):
-        return False
-    metric_header = re.sub(r"\s*\([^)]*\)\s*$", "", str(metric_cell.get("header", "")))
-    return (not metric_cell.get("formula") and not period_cell.get("formula") and cell_number == normalized
-            and period_cell.get("value") == metadata.get("observation_period") and bool(unit_cells)
-            and any(_same(cell.get("value"), metadata.get("unit")) for cell in unit_cells)
-            and (not contract.geography or (bool(geography_cells) and any(_same(cell.get("value"), contract.geography) for cell in geography_cells)))
-            and (not contract.required_metric or _same(metric_header, contract.required_metric)))
 
 
 def _unavailable(need_id: str, reason: str) -> dict[str, Any]:

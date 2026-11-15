@@ -1,21 +1,22 @@
 """Bounded arithmetic and authority checks used only by AnalysisService."""
 from dataclasses import replace
 from decimal import Decimal, localcontext, ROUND_HALF_EVEN
-import re
 
 from application.ports.analysis_ports import FindingCandidate
 from application.analysis.provenance_validation import validate_finding_candidate
 from application.evidence.temporal_scope import qualifying_evidence
-from application.evidence.semantic_assignment import semantic_assignment
+from application.analysis.numeric_integrity import (
+    NumericIntegrityError,
+    NumericObservationRequirements,
+    evaluate_numeric_series,
+    same,
+    validate_numeric_observation,
+)
 from domain.planning.derivation import InformationNeedKind
 
 
 class DerivationRefused(ValueError):
     """Explicit methodological refusal, never a fabricated calculation."""
-
-
-def same(a,b):
-    return " ".join(str(a).replace("_"," ").casefold().split())==" ".join(str(b).replace("_"," ").casefold().split())
 
 
 def dependency_authority(need, findings, evidence, *, design, project_id, workflow_run_id, allowed_runs, brief, source_repository):
@@ -46,60 +47,46 @@ def dependency_authority(need, findings, evidence, *, design, project_id, workfl
 
 def observed_series(need, inputs, *, design, source_repository):
     spec=need.derivation
-    values={}
-    lineage=[]
+    subject=design.research_subject
+    if subject is None:
+        raise DerivationRefused("unvalidated_numeric_semantics")
+    requirements=NumericObservationRequirements(
+        allowed_information_need_ids=tuple(need.depends_on_information_need_ids),
+        subject_id=subject.subject_id,
+        subject_fingerprint=subject.semantic_fingerprint,
+        research_design_id=design.id,
+        allowed_workflow_run_ids=tuple(sorted({e.workflow_run_id for e in inputs})),
+        metric=spec.metric,
+        unit=spec.input_unit,
+        geography=spec.geography,
+        required_periods=tuple(spec.required_periods),
+    )
+    observations=[]
     for evidence in inputs:
-        data=evidence.metadata
-        if not data.get("structured_table"):
+        if not evidence.metadata.get("structured_table"):
             continue
-        assignment=semantic_assignment(evidence)
-        subject=design.research_subject
-        if not assignment or subject is None or assignment.get("subject_fingerprint")!=subject.semantic_fingerprint or assignment.get("subject_id")!=subject.subject_id:
-            raise DerivationRefused("unvalidated_numeric_semantics")
-        if assignment.get("information_need_id") not in set(evidence.information_need_refs).intersection(need.depends_on_information_need_ids):
-            raise DerivationRefused("numeric_semantic_dependency_mismatch")
-        if not set(evidence.information_need_refs).intersection(need.depends_on_information_need_ids):
-            raise DerivationRefused("numeric_input_not_owned_by_dependency")
-        period=data.get("observation_period")
-        if period not in spec.required_periods:
+        if evidence.metadata.get("observation_period") not in spec.required_periods:
             continue
         source=source_repository.get_by_id(evidence.source_id)
-        if source is None:
-            raise DerivationRefused("numeric_source_missing")
-        if design.id not in source.research_design_refs or evidence.workflow_run_id not in source.workflow_run_refs:
-            raise DerivationRefused("numeric_source_authority_scope_mismatch")
-        locator=evidence.source_locator.get("structured",{})
-        if locator!=data.get("workbook_provenance") or locator.get("terminal_resource_key")!=source.terminal_resource_key or locator.get("extraction_revision")!=source.extraction_revision or locator.get("content_revision")!=source.content_revision or locator.get("raw_workbook_checksum")!=source.raw_content_checksum:
-            raise DerivationRefused("numeric_source_revision_mismatch")
-        rows=[r for r in source.metadata.get("structured_tables_v2",()) if r.get("sheet")==locator.get("sheet") and r.get("table_range")==locator.get("table_range") and r.get("row")==locator.get("row")]
-        if len(rows)!=1 or rows[0].get("ambiguous_headers"):
-            raise DerivationRefused("ambiguous_numeric_source")
-        cells={c["cell"]:c for c in rows[0]["cells"]}
-        cell=cells.get(locator.get("cell"),{})
-        period_cell=cells.get(locator.get("period_cell"),{})
-        if locator.get("header_checksum")!=rows[0].get("header_checksum") or evidence.source_excerpt!=rows[0].get("excerpt"):
-            raise DerivationRefused("numeric_header_or_excerpt_mismatch")
-        units=[c["value"] for c in cells.values() if c.get("header","").casefold() in {"unit","units","одиниця","одиниці"}]
-        header_unit=re.search(r"\(([^)]+)\)\s*$",cell.get("header",""))
-        if header_unit:
-            units.append(header_unit[1])
-        geographies=[c["value"] for c in cells.values() if c.get("header","").casefold() in {"geography","country","географія","країна"}]
-        if not units or any(not same(u,spec.input_unit) for u in units) or not geographies or any(not same(g,spec.geography) for g in geographies):
-            raise DerivationRefused("numeric_unit_or_geography_binding_invalid")
-        number=Decimal(str(data.get("normalized_numeric_value","NaN")))
-        header=re.sub(r"\s*\([^)]*\)\s*$","",cell.get("header",""))
-        if not number.is_finite() or cell.get("formula") or period_cell.get("formula") or period_cell.get("value")!=period or cell.get("numeric_value") is None or Decimal(cell["numeric_value"])!=number or not same(header,spec.metric):
-            raise DerivationRefused("numeric_cell_binding_invalid")
-        if period in values and values[period]!=number:
-            raise DerivationRefused("conflicting_values:"+period)
-        values[period]=number
-        lineage.append({"evidence_id":evidence.id,"source_id":source.id,"source_content_checksum":source.content_checksum,
-            "terminal_resource_key":source.terminal_resource_key,"raw_content_checksum":source.raw_content_checksum,
-            "raw_checksum_kind":source.raw_checksum_kind,"content_revision":source.content_revision,
-            "extraction_revision":source.extraction_revision,"cell":locator["cell"],"period":period})
-    if set(values)!=set(spec.required_periods):
+        try:
+            observations.append(validate_numeric_observation(
+                evidence,source,requirements,temporal_eligible=True,
+            ))
+        except NumericIntegrityError as exc:
+            raise DerivationRefused(exc.code) from exc
+    series=evaluate_numeric_series(observations)
+    if series.conflicting_periods:
+        raise DerivationRefused("conflicting_values:"+series.conflicting_periods[0])
+    if set(series.values)!=set(spec.required_periods):
         raise DerivationRefused("missing_required_observation")
-    return values,lineage
+    lineage=[{"evidence_id":item.evidence_id,"source_id":item.source_id,
+        "source_content_checksum":item.source_content_checksum,
+        "terminal_resource_key":item.terminal_resource_key,
+        "raw_content_checksum":item.raw_content_checksum,
+        "raw_checksum_kind":item.raw_checksum_kind,"content_revision":item.content_revision,
+        "extraction_revision":item.extraction_revision,"cell":item.cell,"period":item.period}
+        for period in spec.required_periods for item in series.observations_by_period[period]]
+    return dict(series.values),lineage
 
 
 def calculate_candidates(need, inputs, dependencies, *, design, project_id, workflow_run_id, allowed_runs, source_repository):

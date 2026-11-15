@@ -14,10 +14,12 @@ from domain.sources.source import Source
 NEED = "in-population"
 RUN = "run"
 DESIGN = "design"
+SUBJECT = "subject"
+SUBJECT_FINGERPRINT = "fingerprint"
 
 
-def source(identifier="source-1", period="2019", *, workflow=RUN, design=DESIGN):
-    text = f"Population {period} 100 persons Ukraine"
+def source(identifier="source-1", period="2019", *, workflow=RUN, design=DESIGN, numeric="100"):
+    text = f"Population {period} {numeric} persons Ukraine"
     checksum = sha256(text.encode()).hexdigest()
     return Source(
         identifier, "project", "https://secret.example/data.xlsx", "https://secret.example/data.xlsx",
@@ -26,7 +28,7 @@ def source(identifier="source-1", period="2019", *, workflow=RUN, design=DESIGN)
             "header_checksum": "header-checksum", "excerpt": text, "ambiguous_headers": False,
             "cells": [
                 {"cell": "A2", "header": "Year", "value": period, "numeric_value": period, "formula": False},
-                {"cell": "B2", "header": "Population", "value": "100", "numeric_value": "100", "formula": False},
+                {"cell": "B2", "header": "Population", "value": numeric, "numeric_value": numeric, "formula": False},
                 {"cell": "C2", "header": "Unit", "value": "persons", "numeric_value": None, "formula": False},
                 {"cell": "D2", "header": "Geography", "value": "Ukraine", "numeric_value": None, "formula": False},
             ]}]},
@@ -38,18 +40,19 @@ def source(identifier="source-1", period="2019", *, workflow=RUN, design=DESIGN)
 
 def evidence(item_source, period="2019", *, identifier="evidence-1", structured=True,
              needs=(NEED,), assignment_need=NEED, lineage=None, unit="persons", geography="Ukraine",
-             workflow=RUN, design=DESIGN):
+             workflow=RUN, design=DESIGN, numeric="100", subject_id=SUBJECT,
+             subject_fingerprint=SUBJECT_FINGERPRINT):
     excerpt = item_source.content_text
     provenance = {"raw_workbook_checksum": item_source.raw_content_checksum,
         "raw_checksum_kind": item_source.raw_checksum_kind, "terminal_resource_key": item_source.terminal_resource_key,
         "extraction_revision": item_source.extraction_revision, "content_revision": item_source.content_revision,
         "sheet": "Population", "table_range": "A1:D2", "row": 2, "cell": "B2", "period_cell": "A2",
         "unit_cells": ["C2"], "geography_cells": ["D2"], "header_checksum": "header-checksum"}
-    metadata = {"observation_period": period, "metric": "Population", "numeric_value": "100",
-        "normalized_numeric_value": "100", "unit": unit, "geography": geography,
+    metadata = {"observation_period": period, "metric": "Population", "numeric_value": numeric,
+        "normalized_numeric_value": numeric, "unit": unit, "geography": geography,
         "semantic_assignment": {"contract_version": "desk_evidence_candidate_v2",
             "validation_version": "desk_semantic_assignment_v1", "information_need_id": assignment_need,
-            "subject_id": "subject", "subject_fingerprint": "fingerprint", "binding_type": "canonical_subject",
+            "subject_id": subject_id, "subject_fingerprint": subject_fingerprint, "binding_type": "canonical_subject",
             "supporting_relation_id": None, "required_aspect_refs": [], "geography_applicability": ["Ukraine"],
             "semantic_justification": "fixture", "lexical_diagnostics": {}},
         "data_lineage": lineage or {"status": "established", "origin_id": f"origin-{item_source.id}"}}
@@ -78,6 +81,8 @@ def build(*, sources=(), rows=(), temporal=None, coverage=None, snapshot=None, c
           sources_complete=True, evidence_complete=True, need=NEED, max_periods=32, max_loop_attempts=16):
     return build_evidence_coverage_diagnostics(
         information_need_id=need, workflow_run_id=RUN, research_design_id=DESIGN,
+        research_subject_id=SUBJECT, research_subject_fingerprint=SUBJECT_FINGERPRINT,
+        allowed_dependency_information_need_ids=(), required_numeric_unit="persons",
         coverage_contract=coverage or contract(), sources=sources, evidence=rows,
         temporal_qualification_by_evidence_and_need=temporal or {}, readiness_snapshot=snapshot or readiness(count, need),
         sources_complete=sources_complete, evidence_complete=evidence_complete, research_loop_history=history,
@@ -126,6 +131,47 @@ class EvidenceCompletenessDiagnosticsTests(unittest.TestCase):
             with self.subTest(item=item.id):
                 result = build(sources=(item,), rows=(current,), temporal=eligible(current.id), count=1)
                 self.assertEqual(result["period_coverage"][0]["status"], "unknown")
+
+    def test_conflicting_unit_and_geography_cells_are_rejected(self):
+        base = source()
+        original_row = base.metadata["structured_tables_v2"][0]
+        conflicting = replace(base, metadata={"structured_tables_v2": [{
+            **original_row,
+            "cells": [
+                *original_row["cells"],
+                {"cell": "E2", "header": "Units", "value": "thousands", "numeric_value": None, "formula": False},
+                {"cell": "F2", "header": "Country", "value": "Poland", "numeric_value": None, "formula": False},
+            ],
+        }]})
+        row = evidence(conflicting)
+        result = build(sources=(conflicting,), rows=(row,), temporal=eligible(row.id), count=1)
+        self.assertEqual(result["period_coverage"][0]["status"], "unknown")
+        self.assertEqual(result["qualification"]["numeric_binding_verified_evidence_count"], 0)
+        self.assertEqual(result["qualification"]["rejection_reason_counts"], {"numeric_binding_unverified": 1})
+
+    def test_subject_identity_mismatch_is_rejected(self):
+        item = source()
+        for field in ("subject_id", "subject_fingerprint"):
+            with self.subTest(field=field):
+                kwargs = {field: "wrong"}
+                row = evidence(item, **kwargs)
+                result = build(sources=(item,), rows=(row,), temporal=eligible(row.id), count=1)
+                self.assertEqual(result["period_coverage"][0]["status"], "unknown")
+                self.assertEqual(result["qualification"]["numeric_binding_verified_evidence_count"], 0)
+
+    def test_conflicting_numeric_observations_do_not_confirm_period(self):
+        first = source("s1", numeric="100")
+        second = source("s2", numeric="101")
+        e1 = evidence(first, identifier="e1", numeric="100")
+        e2 = evidence(second, identifier="e2", numeric="101")
+        result = build(sources=(first, second), rows=(e1, e2), temporal=eligible("e1", "e2"), count=2)
+        period = result["period_coverage"][0]
+        self.assertEqual(period["status"], "unknown")
+        self.assertEqual(period["confirmed_observation_count"], 0)
+        self.assertEqual(period["rejection_reason_counts"], {"conflicting_numeric_observations": 1})
+        self.assertEqual(result["qualification"]["numeric_binding_verified_evidence_count"], 2)
+        self.assertEqual(result["qualification"]["confirmed_observation_count"], 0)
+        self.assertEqual(result["qualification"]["rejection_reason_counts"], {"conflicting_numeric_observations": 1})
 
     def test_mirrors_and_unknown_lineage_do_not_multiply_independence(self):
         for lineage in ({"status": "established", "origin_id": "same-primary"}, {"status": "unknown"}):
