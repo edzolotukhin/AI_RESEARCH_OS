@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import os
+import struct
 import subprocess
 import sys
 import tempfile
@@ -20,6 +20,11 @@ MAX_IPC_BYTES = 512 * 1024
 MAX_PARSER_MEMORY_BYTES = 512 * 1024 * 1024
 MAX_PARSER_CPU_SECONDS = 5
 MAX_PARSER_WALL_SECONDS = 10
+
+_IPC_MAGIC = b"AIROPDF1"
+_IPC_STATUS_SUCCESS = 0
+_IPC_STATUS_ERROR = 1
+_IPC_HEADER = struct.Struct(">8sBQQQII")
 
 PDF_ERROR_CODES = frozenset({
     "pdf_body_limit", "pdf_mime_mismatch", "pdf_encrypted", "pdf_malformed",
@@ -39,6 +44,69 @@ class _PdfParseError(Exception):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+def _encode_ipc_result(result: PdfTextResult, limits: dict[str, int]) -> bytes:
+    status = _IPC_STATUS_ERROR if result.error_code else _IPC_STATUS_SUCCESS
+    payload = (
+        result.error_code.encode("ascii")
+        if result.error_code
+        else result.text.encode("utf-8", errors="strict")
+    )
+    page_count = 0 if result.error_code else result.page_count
+    if len(payload) > MAX_IPC_BYTES - _IPC_HEADER.size:
+        status = _IPC_STATUS_ERROR
+        payload = b"pdf_ipc_invalid"
+        page_count = 0
+    header = _IPC_HEADER.pack(
+        _IPC_MAGIC,
+        status,
+        limits["memory_bytes"],
+        limits["cpu_seconds"],
+        limits["file_bytes"],
+        page_count,
+        len(payload),
+    )
+    return header + payload
+
+
+def _decode_ipc_result(encoded: bytes) -> PdfTextResult:
+    if not _IPC_HEADER.size <= len(encoded) <= MAX_IPC_BYTES:
+        return PdfTextResult(error_code="pdf_ipc_invalid")
+    try:
+        magic, status, memory_bytes, cpu_seconds, file_bytes, page_count, payload_size = (
+            _IPC_HEADER.unpack(encoded[:_IPC_HEADER.size])
+        )
+    except struct.error:
+        return PdfTextResult(error_code="pdf_ipc_invalid")
+    payload = encoded[_IPC_HEADER.size:]
+    if (
+        magic != _IPC_MAGIC
+        or status not in {_IPC_STATUS_SUCCESS, _IPC_STATUS_ERROR}
+        or payload_size != len(payload)
+        or memory_bytes != MAX_PARSER_MEMORY_BYTES
+        or cpu_seconds != MAX_PARSER_CPU_SECONDS
+        or file_bytes != MAX_IPC_BYTES
+    ):
+        return PdfTextResult(error_code="pdf_ipc_invalid")
+    try:
+        if status == _IPC_STATUS_ERROR:
+            if page_count != 0:
+                return PdfTextResult(error_code="pdf_ipc_invalid")
+            code = payload.decode("ascii", errors="strict")
+            return PdfTextResult(
+                error_code=code if code in PDF_ERROR_CODES else "pdf_ipc_invalid",
+            )
+        text = payload.decode("utf-8", errors="strict")
+    except UnicodeError:
+        return PdfTextResult(error_code="pdf_ipc_invalid")
+    if (
+        not text.strip()
+        or len(text) > MAX_PDF_TEXT_CHARS
+        or not 1 <= page_count <= MAX_PDF_PAGES
+    ):
+        return PdfTextResult(error_code="pdf_ipc_invalid")
+    return PdfTextResult(text=text, page_count=page_count)
 
 
 def _parse_pdf_bytes(body: bytes) -> PdfTextResult:
@@ -93,13 +161,9 @@ def _child_main(output_path: str) -> int:
         body = sys.stdin.buffer.read(MAX_PDF_BYTES + 1)
         try:
             result = _parse_pdf_bytes(body)
-            payload = {"text": result.text, "page_count": result.page_count, "limits": active_limits}
         except _PdfParseError as exc:
-            payload = {"error_code": exc.code, "limits": active_limits}
-        encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8", errors="replace")
-        if len(encoded) > MAX_IPC_BYTES:
-            payload = {"error_code": "pdf_ipc_invalid"}
-            encoded = json.dumps(payload).encode("ascii")
+            result = PdfTextResult(error_code=exc.code)
+        encoded = _encode_ipc_result(result, active_limits)
         descriptor = os.open(output_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         with os.fdopen(descriptor, "wb") as output:
             output.write(encoded)
@@ -119,7 +183,7 @@ def extract_pdf_text(body: bytes) -> PdfTextResult:
 
     try:
         with tempfile.TemporaryDirectory(prefix="airos-pdf-") as directory:
-            output_path = Path(directory) / "result.json"
+            output_path = Path(directory) / "result.bin"
             try:
                 process = subprocess.Popen(
                     [sys.executable, "-I", "-B", str(Path(__file__).resolve()), "--child", str(output_path)],
@@ -146,25 +210,9 @@ def extract_pdf_text(body: bytes) -> PdfTextResult:
                 if output_path.stat().st_size > MAX_IPC_BYTES:
                     return PdfTextResult(error_code="pdf_ipc_invalid")
                 with output_path.open("rb") as output:
-                    payload = json.loads(output.read(MAX_IPC_BYTES + 1))
-                if not isinstance(payload, dict):
-                    return PdfTextResult(error_code="pdf_ipc_invalid")
-                if payload.get("limits") != {
-                    "memory_bytes": MAX_PARSER_MEMORY_BYTES,
-                    "cpu_seconds": MAX_PARSER_CPU_SECONDS,
-                    "file_bytes": MAX_IPC_BYTES,
-                }:
-                    return PdfTextResult(error_code="pdf_ipc_invalid")
-                code = payload.get("error_code")
-                if code is not None:
-                    return PdfTextResult(error_code=code if isinstance(code, str) and code in PDF_ERROR_CODES else "pdf_ipc_invalid")
-                text, page_count = payload.get("text"), payload.get("page_count")
-                if (not isinstance(text, str) or not text.strip()
-                        or len(text) > MAX_PDF_TEXT_CHARS or type(page_count) is not int
-                        or not 1 <= page_count <= MAX_PDF_PAGES):
-                    return PdfTextResult(error_code="pdf_ipc_invalid")
-                return PdfTextResult(text=text, page_count=page_count)
-            except (OSError, ValueError, UnicodeError):
+                    encoded = output.read(MAX_IPC_BYTES + 1)
+                return _decode_ipc_result(encoded)
+            except OSError:
                 return PdfTextResult(error_code="pdf_ipc_invalid")
     except OSError:
         return PdfTextResult(error_code="pdf_runtime_unavailable")
