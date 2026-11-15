@@ -241,6 +241,7 @@ class SourceAcquisitionBudgetTests(unittest.TestCase):
                 "stage": "fetch", "http_status_class": "4xx", "limit_code": "none",
                 "exception_class": "other", "failure_category": "http_error",
                 "message": "SECRET",
+                "terminal_reason": "https://private.example/SECRET",
             },
         }] * 40
         records, truncated = _safe_attempt_diagnostics(decisions, design)
@@ -250,6 +251,7 @@ class SourceAcquisitionBudgetTests(unittest.TestCase):
         self.assertEqual(records[0]["rejection_reason"], "subject_irrelevant")
         self.assertEqual(records[1]["http_status_class"], "4xx")
         self.assertEqual(records[1]["need_index"], 1)
+        self.assertEqual(records[1]["terminal_reason"], "other")
         self.assertNotIn("private.example", str(records))
         self.assertNotIn("secret-id", str(records))
         self.assertNotIn("SECRET", str(records))

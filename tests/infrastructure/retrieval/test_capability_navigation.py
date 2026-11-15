@@ -101,6 +101,7 @@ class CapabilityNavigationTests(unittest.TestCase):
         source=self.retrieve(lambda r:httpx.Response(200,text='<table><tr><td>2020</td><td>950</td></tr></table>',headers={"content-type":"text/html"}))
         self.assertEqual(source.retrieval_status.value,"failed")
         self.assertEqual(source.metadata["reason"],"required_terminal_not_found")
+        self.assertEqual(source.metadata["retrieval_diagnostic"]["terminal_reason"], "required_terminal_not_found")
         self.assertEqual(source.metadata["failure_category"],"other_retrieval_error")
         self.assertEqual(source.metadata["retrieval_diagnostic"]["failure_category"],"other_retrieval_error")
         design=ResearchDesign(id="diagnostic-design",research_questions=(ResearchQuestion("rq","Population"),),
@@ -110,6 +111,7 @@ class CapabilityNavigationTests(unittest.TestCase):
             "retrieval_diagnostic":source.metadata["retrieval_diagnostic"]}],design)
         self.assertEqual(category,"other_retrieval_error")
         self.assertEqual(records[0]["failure_category"],category)
+        self.assertEqual(records[0]["terminal_reason"], "required_terminal_not_found")
         self.assertFalse(truncated)
 
     def test_pdf_failure_safe_projection_omits_source_and_payload(self):
@@ -140,6 +142,7 @@ class CapabilityNavigationTests(unittest.TestCase):
         source=self.retrieve(lambda r:httpx.Response(200,text="Just a moment. Verify you are human",headers={"content-type":"text/html"}),required_resource_kind="text")
         self.assertEqual(source.retrieval_status.value,"failed")
         self.assertEqual(source.metadata["reason"],"html_challenge")
+        self.assertEqual(source.metadata["retrieval_diagnostic"]["terminal_reason"], "html_challenge")
         self.assertEqual(source.metadata["failure_category"],"other_retrieval_error")
         self.assertEqual(source.metadata["retrieval_diagnostic"]["failure_category"],"other_retrieval_error")
 

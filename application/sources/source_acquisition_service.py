@@ -1355,5 +1355,6 @@ def _safe_attempt_diagnostics(decisions: list[dict[str, Any]], design: ResearchD
                 "dns_resolution_failed", "unsafe_address", "http_error", "timeout",
                 "unsupported_content_type", "content_too_large", "other_retrieval_error", "none",
             } else "other_retrieval_error" if action == ACTION_FETCH_FAILED else "none",
+            "terminal_reason": raw.get("terminal_reason") if raw.get("terminal_reason") in {"required_terminal_not_found", "html_challenge", "none"} else "other",
         })
     return tuple(records), truncated

@@ -175,6 +175,7 @@ def _source_acquisition_diagnostics(results: dict) -> dict | None:
         "limit_code": {"url_already_visited", "request_budget_exhausted", "byte_budget_exhausted", "link_budget_exhausted", "body_bytes", "workbook_truncated", "none"},
         "exception_class": {"TimeoutException", "HTTPStatusError", "ConnectError", "ReadError", "RemoteProtocolError", "DecodingError", "other", "none"},
         "failure_category": {"dns_resolution_failed", "unsafe_address", "http_error", "timeout", "unsupported_content_type", "content_too_large", "other_retrieval_error", "none"},
+        "terminal_reason": {"required_terminal_not_found", "html_challenge", "none", "other"},
     }
     result["attempts"] = [
         {**{key: record.get(key) if record.get(key) in values else "other" for key, values in allowed.items()},

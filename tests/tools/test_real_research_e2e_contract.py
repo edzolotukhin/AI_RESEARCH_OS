@@ -82,6 +82,7 @@ def test_bounded_attempt_projection_drops_injected_identifiers_and_payload():
                 "action": "fetch_failed", "need_index": 2, "stage": "fetch",
                 "http_status_class": "5xx", "limit_code": "none",
                 "exception_class": "other", "failure_category": "http_error",
+                "terminal_reason": "https://private.example/SECRET",
                 "url": "https://private.example", "source_id": "secret-id",
                 "payload": "SECRET", "message": "SECRET",
             }] * 40,
@@ -90,6 +91,7 @@ def test_bounded_attempt_projection_drops_injected_identifiers_and_payload():
     assert result["attempts"][0]["need_index"] == 2
     assert len(result["attempts"]) == 32
     assert result["attempts_truncated"] is True
+    assert result["attempts"][0]["terminal_reason"] == "other"
     assert "private.example" not in str(result)
     assert "secret-id" not in str(result)
     assert "SECRET" not in str(result)

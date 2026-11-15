@@ -43,13 +43,14 @@ _LIMIT_CODES = frozenset({"url_already_visited", "request_budget_exhausted", "by
 _EXCEPTION_CLASSES = frozenset({"TimeoutException", "HTTPStatusError", "ConnectError", "ReadError", "RemoteProtocolError", "DecodingError"})
 
 
-def _retrieval_diagnostic(*, stage="unknown", status=None, limit_code=None, exception=None, category=None):
+def _retrieval_diagnostic(*, stage="unknown", status=None, limit_code=None, exception=None, category=None, terminal_reason=None):
     return {
         "stage": stage if stage in {"fetch", "navigation", "size", "xlsx", "success", "unknown"} else "unknown",
         "http_status_class": "4xx" if isinstance(status, int) and 400 <= status < 500 else "5xx" if isinstance(status, int) and 500 <= status < 600 else "other" if isinstance(status, int) else "none",
         "limit_code": limit_code if limit_code in _LIMIT_CODES else "none",
         "exception_class": type(exception).__name__ if exception is not None and type(exception).__name__ in _EXCEPTION_CLASSES else "other" if exception is not None else "none",
         "failure_category": category if category in RETRIEVAL_FAILURE_CATEGORIES else "none",
+        "terminal_reason": terminal_reason if terminal_reason in {"required_terminal_not_found", "html_challenge"} else "other" if terminal_reason is not None else "none",
     }
 
 
@@ -161,6 +162,7 @@ class HttpSourceRetriever(SourceRetriever):
                 source.metadata["failure_category"] = "other_retrieval_error"
                 source.metadata["retrieval_diagnostic"] = _retrieval_diagnostic(
                     stage="navigation", category="other_retrieval_error",
+                    terminal_reason=source.metadata["reason"],
                 )
                 # The table-required traversal is a distinct extraction contract
                 # from a successful text-only snapshot of the same HTML bytes.
