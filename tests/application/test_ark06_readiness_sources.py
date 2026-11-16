@@ -11,27 +11,72 @@ from application.research_quality.deterministic_research_sufficiency_evaluator i
 from application.methods.desk.executor import VersionedDeskExecutor
 from application.execution.execution_budget_context import execution_budget_scope
 from application.execution.execution_budget_factory import create_execution_budget
-from domain.planning.research_design import ResearchDesign, ResearchQuestion, InformationNeed
+from domain.planning.research_design import (
+    EvidenceCoverageContract, InformationNeed, ResearchDesign, ResearchQuestion,
+)
 from domain.planning.evidence_expectation import EvidenceExpectation
 from domain.planning.evidence_nature import EvidenceNature
+from domain.planning.research_subject import (
+    LexicalRepresentation, ResearchSubject, SubjectResolutionStatus,
+)
 from domain.research_brief import ResearchBrief
 from tests.application.test_ark02_desk import fixture
 from tests.application.test_ark02_kernel import Store
 from tests.application.research_quality.test_prf08c_research_integrity import _evidence
+from tests.application.research_quality.test_evidence_completeness_diagnostics import (
+    evidence as structured_evidence,
+    source as structured_source,
+)
 from tests.helpers.citation_fixtures import sources_for
 
 
 def replay():
     cfg, ctx, sources, evidence, llm, adapter, overrides, client = fixture()
-    design = ResearchDesign('offline-design', research_questions=(ResearchQuestion('RQ1', 'Water meter counts'),),
-        information_needs=tuple(InformationNeed(f'IN{i}', 'RQ1', 'Water meter counts',
-            timeframe='1 January 2025 to 1 July 2026',
-            evidence_expectation=EvidenceExpectation(nature=EvidenceNature.QUANTITATIVE)) for i in range(1, 6)))
+    subject = ResearchSubject(
+        'population', 'Population', 'en', ('population',),
+        (LexicalRepresentation(
+            'population-en', 'en', 'Population', ('population',),
+            ('population',), 'fixture', 'approved',
+        ),),
+        resolution_status=SubjectResolutionStatus.RESOLVED,
+    )
+    design = ResearchDesign('offline-design', research_questions=(ResearchQuestion('RQ1', 'Population counts'),),
+        information_needs=tuple(InformationNeed(f'IN{i}', 'RQ1', 'Population counts',
+            timeframe='1 January 2025 to 1 July 2026', geography='Ukraine',
+            evidence_expectation=EvidenceExpectation(nature=EvidenceNature.QUANTITATIVE),
+            evidence_coverage=EvidenceCoverageContract(
+                required_periods=('Q1 2026',), required_metric='Population',
+                required_unit='persons', geography='Ukraine',
+            )) for i in range(1, 6)), research_subject=subject)
     ctx.workflow_template.research_design_snapshot = design
-    ctx.workflow_template.research_brief_snapshot = ResearchBrief('Synthetic meters', 'How many?', timeframe='1 January 2025 to 1 July 2026')
-    rows = [replace(_evidence(f'e{i}', f's{i}', 'Q1 2026' if i < 5 else None),
-                    project_id=ctx.project.id, workflow_run_id=ctx.workflow_run.id, deduplication_key=f'key{i}') for i in range(9)]
-    sources_for(rows, sources)
+    ctx.workflow_template.research_brief_snapshot = ResearchBrief(
+        'Synthetic population', 'How many people?',
+        timeframe='1 January 2025 to 1 July 2026', geography=('Ukraine',),
+    )
+    rows = []
+    for i in range(5):
+        item_source = replace(
+            structured_source(f's{i}', 'Q1 2026', workflow=ctx.workflow_run.id,
+                              design=design.id, numeric='100'),
+            project_id=ctx.project.id, url=f'https://fixture.test/s{i}.xlsx',
+            canonical_url=f'https://fixture.test/s{i}.xlsx',
+            raw_content_checksum=f'{i + 1:064x}',
+        )
+        sources.create(item_source)
+        rows.append(replace(
+            structured_evidence(
+                item_source, 'Q1 2026', identifier=f'e{i}', needs=('IN1',),
+                assignment_need='IN1', workflow=ctx.workflow_run.id, design=design.id,
+                numeric='100', subject_id=subject.subject_id,
+                subject_fingerprint=subject.semantic_fingerprint,
+            ),
+            project_id=ctx.project.id, deduplication_key=f'key{i}',
+        ))
+    unresolved = [replace(_evidence(f'e{i}', f's{i}', None),
+                          project_id=ctx.project.id, workflow_run_id=ctx.workflow_run.id,
+                          deduplication_key=f'key{i}') for i in range(5, 9)]
+    sources_for(unresolved, sources)
+    rows.extend(unresolved)
     for row in rows:
         evidence.create(row)
     evaluator = DeterministicResearchSufficiencyEvaluator()
