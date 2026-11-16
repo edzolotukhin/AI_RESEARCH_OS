@@ -102,6 +102,21 @@ class ClaimLineageV2Tests(unittest.TestCase):
         with self.assertRaises(TypeError):
             result.source_revision_digests[self.source.id] = "changed"
 
+    def test_unrelated_evidence_cannot_support_finding(self) -> None:
+        other_need = InformationNeed("need-2", "rq-2", "Other")
+        design = ResearchDesign(
+            DESIGN, self.design.research_questions + (ResearchQuestion("rq-2", "Other"),),
+            self.design.information_needs + (other_need,),
+        )
+        unrelated = replace(
+            self.evidence, research_question_refs=("rq-2",), information_need_refs=("need-2",),
+        )
+        with self.assertRaises(ClaimLineageV2Error):
+            self.build(
+                design=design, evidence_by_id={unrelated.id: unrelated},
+                temporal_decisions={(unrelated.id, "need-2"): "applicable_satisfied"},
+            )
+
     def test_missing_or_foreign_finding_and_insight_are_rejected(self) -> None:
         cases = (
             dict(findings=()),
@@ -149,6 +164,31 @@ class ClaimLineageV2Tests(unittest.TestCase):
         )
         with self.assertRaises(ClaimLineageV2Error):
             self.build(numeric_qualifications={NEED: rejected})
+
+    def test_numeric_scope_fact_requires_exact_accepted_observation(self) -> None:
+        fact = self.scope.numeric_facts[0]
+        mutations = (
+            replace(fact, value="11"), replace(fact, unit="thousands"),
+            replace(fact, metrics=("Employment",)), replace(fact, periods=("2023",)),
+        )
+        for changed in mutations:
+            with self.subTest(changed=changed), self.assertRaises(ClaimLineageV2Error):
+                self.build(scope=replace(self.scope, numeric_facts=(changed,)))
+
+    def test_unsupported_additional_numeric_fact_is_rejected(self) -> None:
+        unsupported = replace(self.scope.numeric_facts[0], value="99", periods=("2025",))
+        with self.assertRaises(ClaimLineageV2Error):
+            self.build(scope=replace(self.scope, numeric_facts=self.scope.numeric_facts + (unsupported,)))
+
+    def test_mismatched_accepted_evidence_and_observation_identity_is_rejected(self) -> None:
+        cases = (
+            replace(self.qualification, accepted_evidence=(replace(self.evidence, id="ev-other"),)),
+            replace(self.qualification, observations=(replace(self.observation, evidence_id="ev-other"),)),
+            replace(self.qualification, accepted_evidence=(replace(self.evidence, source_content_checksum="x" * 64),)),
+        )
+        for qualification in cases:
+            with self.subTest(qualification=qualification), self.assertRaises(ClaimLineageV2Error):
+                self.build(numeric_qualifications={NEED: qualification})
 
     def test_mixed_workflow_runs_are_rejected(self) -> None:
         mixed = replace(self.evidence, workflow_run_id="other-run")

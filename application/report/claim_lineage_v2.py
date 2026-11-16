@@ -10,9 +10,11 @@ from application.analysis.numeric_integrity import (
     NumericQualificationResult,
     ValidatedNumericObservation,
     is_numeric_acquired_need,
+    same,
 )
 from application.evidence.temporal_scope import NO_EXPLICIT_TEMPORAL_CONSTRAINT
 from application.report.claim_contract import authority_digest_v2, component_digest_v2
+from application.research_scope.numeric_normalization import normalize_numeric_value
 from domain.reports.report_claim import ClaimScope
 
 
@@ -123,7 +125,19 @@ def build_claim_lineage_v2(
         evidence[item.id] = item
         sources[source.id] = source
 
+    for finding in findings:
+        finding_needs = set(finding.information_need_refs)
+        finding_questions = set(finding.research_question_refs)
+        for evidence_id in finding.evidence_refs:
+            item = evidence[evidence_id]
+            evidence_needs = set(item.information_need_refs)
+            evidence_questions = set(item.research_question_refs)
+            if (not evidence_needs or not evidence_needs <= finding_needs
+                    or not evidence_questions or not evidence_questions <= finding_questions):
+                raise ClaimLineageV2Error("Evidence does not support Finding requirements")
+
     proof_digests: dict[str, str] = {}
+    accepted_observations: list[ValidatedNumericObservation] = []
     for need_id in sorted({ref for finding in findings for ref in finding.information_need_refs}):
         need = needs_by_id[need_id]
         if not is_numeric_acquired_need(need):
@@ -131,16 +145,29 @@ def build_claim_lineage_v2(
         qualification = numeric_qualifications.get(need_id)
         if qualification is None or qualification.information_need_id != need_id or not qualification.available:
             raise ClaimLineageV2Error("numeric qualification is unavailable")
-        accepted_ids = {item.id for item in qualification.accepted_evidence}
+        accepted_items = tuple(qualification.accepted_evidence)
+        accepted_ids = {item.id for item in accepted_items}
         observations = tuple(qualification.observations)
-        if accepted_ids != {item.evidence_id for item in observations}:
+        observation_ids = [item.evidence_id for item in observations]
+        if (len(accepted_ids) != len(accepted_items) or len(set(observation_ids)) != len(observation_ids)
+                or accepted_ids != set(observation_ids)):
             raise ClaimLineageV2Error("numeric accepted Evidence and observations disagree")
         required_ids = {
             item.id for item in evidence.values() if need_id in item.information_need_refs
         }
         if not required_ids <= accepted_ids:
             raise ClaimLineageV2Error("Finding cites rejected numeric Evidence")
-        for observation in observations:
+        accepted_by_id = {item.id: item for item in accepted_items}
+        for evidence_id in required_ids:
+            accepted = accepted_by_id[evidence_id]
+            authoritative = evidence[evidence_id]
+            if (accepted.project_id != authoritative.project_id
+                    or accepted.workflow_run_id != authoritative.workflow_run_id
+                    or accepted.research_design_id != authoritative.research_design_id
+                    or accepted.source_id != authoritative.source_id
+                    or accepted.source_content_checksum != authoritative.source_content_checksum):
+                raise ClaimLineageV2Error("numeric accepted Evidence authority mismatch")
+        for observation in (item for item in observations if item.evidence_id in required_ids):
             _validate_numeric_observation_lineage(
                 observation, need_id=need_id, evidence=evidence, sources=sources,
                 temporal_decisions=temporal_decisions,
@@ -150,6 +177,10 @@ def build_claim_lineage_v2(
             proof_digests[observation.evidence_id] = component_digest_v2(
                 _numeric_observation_payload(observation),
             )
+            accepted_observations.append(observation)
+
+    if accepted_observations:
+        _validate_numeric_scope(scope, accepted_observations)
 
     finding_digests = {
         item.id: component_digest_v2(_finding_payload(item))
@@ -206,6 +237,27 @@ def _validate_numeric_observation_lineage(
             or observation.extraction_revision != source.extraction_revision
             or observation.content_revision != source.content_revision):
         raise ClaimLineageV2Error("numeric observation Source revision mismatch")
+
+
+def _validate_numeric_scope(
+    scope: ClaimScope, observations: Sequence[ValidatedNumericObservation],
+) -> None:
+    for fact in scope.numeric_facts:
+        if not fact.metrics or not fact.geography or not fact.periods:
+            raise ClaimLineageV2Error("numeric ClaimScope fact is incomplete")
+        expected_value = normalize_numeric_value(fact.value)
+        for metric in fact.metrics:
+            for geography in fact.geography:
+                for period in fact.periods:
+                    if not any(
+                        normalize_numeric_value(item.value) == expected_value
+                        and same(item.unit, fact.unit)
+                        and same(item.metric, metric)
+                        and same(item.geography, geography)
+                        and item.period == period
+                        for item in observations
+                    ):
+                        raise ClaimLineageV2Error("numeric ClaimScope fact lacks accepted observation authority")
 
 
 def _finding_payload(item: Any) -> dict[str, Any]:
