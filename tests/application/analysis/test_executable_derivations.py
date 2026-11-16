@@ -49,6 +49,8 @@ class ProviderFixture:
         self.semantic_statement="Population observations indicate a decline."
         self.reject_semantic=False
         self.fail_semantic=False
+        self.semantic_evidence_refs=None
+        self.semantic_entailment_refs=None
         self.calls=[]
 
     def generate(self,prompt,**kwargs):
@@ -59,7 +61,10 @@ class ProviderFixture:
                 candidate_id=block.splitlines()[0].strip()
                 refs=ast.literal_eval(re.search(r"evidence_refs=(\[[^\n]+\])",block)[1])
                 status="UNSUPPORTED" if self.reject_semantic and candidate_id.startswith("derived-") else "SUPPORTED"
-                verdicts.append(dict(candidate_id=candidate_id,status=status,supported_evidence_ids=refs if status=="SUPPORTED" else [],unsupported_claim_parts=[],rationale="Synthetic boundary verdict"))
+                supported=refs
+                if candidate_id.startswith("derived-") and self.semantic_entailment_refs is not None:
+                    supported=[ref for ref in refs if ref in set(self.semantic_entailment_refs)]
+                verdicts.append(dict(candidate_id=candidate_id,status=status,supported_evidence_ids=supported if status=="SUPPORTED" else [],unsupported_claim_parts=[],rationale="Synthetic boundary verdict"))
             return LLMResponse(json.dumps({"verdicts":verdicts}))
         if "An Insight" in prompt.system:
             refs=re.findall(r"^- id=(\S+) statement=",prompt.user,re.M)
@@ -73,6 +78,8 @@ class ProviderFixture:
             payload=json.loads(next(line.split(": ",1)[1] for line in prompt.user.splitlines() if line.startswith("explicit_derivation_contracts:")))
             target=payload[0]["id"]
             statement=self.semantic_statement
+            if self.semantic_evidence_refs is not None:
+                refs=list(self.semantic_evidence_refs)
         return LLMResponse(json.dumps({"findings":[{"statement":statement,"rationale":"Supported population observations.","evidence_refs":refs,"information_need_refs":[target]}]}))
 
 
@@ -125,6 +132,37 @@ class DerivationContractTests(unittest.TestCase):
 
 
 class ExecutableDerivationTests(unittest.TestCase):
+    def test_ordinary_numeric_finding_excludes_f1_rejected_extra_evidence(self):
+        context,analysis,findings,evidence,sources,provider=setup_memory()
+        accepted=tuple(evidence.list_for_project("project"))
+        rejected=replace(accepted[0],id="rejected-fingerprint",
+            deduplication_key="rejected-fingerprint",metadata={
+                **accepted[0].metadata,
+                "semantic_assignment":{
+                    **accepted[0].metadata["semantic_assignment"],
+                    "subject_fingerprint":"incorrect-subject-fingerprint",
+                },
+            })
+        evidence.create(rejected)
+
+        analysis.analyze_for_context(context)
+
+        acquired=next(item for item in findings.list_for_project("project")
+            if item.information_need_refs==("in-pop",))
+        self.assertEqual(acquired.evidence_refs,tuple(sorted(item.id for item in accepted)))
+        self.assertNotIn(rejected.id,acquired.evidence_refs)
+
+    def test_rejected_required_dependency_fails_closed_without_finding(self):
+        context,analysis,findings,evidence,sources,provider=setup_memory(unit="thousands")
+
+        analysis.analyze_for_context(context)
+
+        self.assertEqual(findings.list_for_project("project"),[])
+        assessments=context.read_shared("analysis_derivations")["assessments"]
+        self.assertTrue(assessments)
+        self.assertTrue(all(item["status"]=="insufficient" for item in assessments))
+        self.assertTrue(all(item["reason"]=="rejected_required_dependency" for item in assessments))
+
     def test_recomputation_rejects_tampering_and_foreign_authority(self):
         context,analysis,findings,evidence,sources,provider=setup_memory()
         analysis.analyze_for_context(context)
@@ -276,6 +314,37 @@ class ExecutableDerivationTests(unittest.TestCase):
             derived=[f for f in findings.list_for_project("project") if f.metadata.get("derivation")]
             self.assertEqual(len(derived),0 if reject else 1)
             self.assertEqual(context.read_shared("analysis_derivations")["assessments"][0]["provider_attempts"],1)
+
+    def test_semantic_derivation_records_only_exact_supported_subset(self):
+        model=derived_design(operations=(DerivationOperation.TREND_CHARACTERIZATION,))
+        context,analysis,findings,evidence,sources,provider=setup_memory(model)
+        accepted=tuple(sorted(item.id for item in evidence.list_for_project("project")))
+        subset=accepted[:2]
+        provider.semantic_evidence_refs=subset
+        provider.semantic_entailment_refs=subset
+
+        analysis.analyze_for_context(context)
+
+        derived=next(item for item in findings.list_for_project("project")
+            if item.metadata.get("derivation"))
+        proof=derived.metadata["derivation"]
+        self.assertEqual(derived.evidence_refs,subset)
+        self.assertEqual(tuple(proof["input_evidence_ids"]),subset)
+        self.assertEqual(tuple(row["evidence_id"] for row in proof["source_revision_lineage"]),subset)
+
+    def test_semantic_derivation_fails_closed_on_unproven_support(self):
+        model=derived_design(operations=(DerivationOperation.TREND_CHARACTERIZATION,))
+        context,analysis,findings,evidence,sources,provider=setup_memory(model)
+        accepted=tuple(sorted(item.id for item in evidence.list_for_project("project")))
+        provider.semantic_evidence_refs=accepted[:2]
+        provider.semantic_entailment_refs=accepted[:1]
+
+        analysis.analyze_for_context(context)
+
+        self.assertFalse(any(item.metadata.get("derivation")
+            for item in findings.list_for_project("project")))
+        assessment=context.read_shared("analysis_derivations")["assessments"][0]
+        self.assertEqual(assessment["status"],"insufficient")
 
     def test_cross_source_and_bounded_attempt_contract(self):
         model=derived_design(operations=(DerivationOperation.CROSS_SOURCE_COMPARISON,))

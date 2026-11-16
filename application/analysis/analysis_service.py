@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -21,6 +21,7 @@ from application.analysis.derivations import (
     DerivationRefused, dependency_authority, calculate_candidates,
     validate_deterministic_derivation,
 )
+from application.analysis.numeric_integrity import project_numeric_evidence_for_design
 
 from application.analysis.deduplication import (
     compute_finding_deduplication_key,
@@ -182,6 +183,12 @@ class AnalysisService:
             design=design, evidence=evidence_items, brief=brief,
             source_repository=self._source_repository, citation_prequalified=True,
         )
+        numeric_projection = project_numeric_evidence_for_design(
+            design=design, evidence=temporal.evidence,
+            source_repository=self._source_repository,
+            temporal_decisions=temporal.decisions,
+            allowed_workflow_run_ids=allowed_workflow_run_ids,
+        )
         evidence_items = list(temporal.evidence)
         if eligible_need_ids is not None:
             eligible = set(eligible_need_ids)
@@ -303,12 +310,28 @@ class AnalysisService:
                 if not explicit_kinds and (candidate.metadata or {}).get("derivation") is not None:
                     # Provider metadata cannot self-certify execution of the
                     # application-owned derivation contract.
-                    from dataclasses import replace
                     candidate=replace(candidate,metadata={k:v for k,v in candidate.metadata.items() if k!="derivation"})
                 if explicit_kinds and (not set(candidate.information_need_refs)<=set(acquired_need_ids) or (candidate.metadata or {}).get("derivation") is not None):
                     finding_candidates_rejected += 1
                     batch_diag.rejected_count += 1
                     continue
+                numeric_need_ids=set(candidate.information_need_refs).intersection(
+                    numeric_projection.qualifications
+                )
+                if numeric_need_ids:
+                    accepted_ids={
+                        item.id
+                        for need_id in numeric_need_ids
+                        for item in numeric_projection.qualifications[need_id].accepted_evidence
+                    }
+                    accepted_refs=tuple(
+                        ref for ref in candidate.evidence_refs if ref in accepted_ids
+                    )
+                    if not accepted_refs:
+                        finding_candidates_rejected += 1
+                        batch_diag.rejected_count += 1
+                        continue
+                    candidate=replace(candidate,evidence_refs=accepted_refs)
                 try:
                     validated = validate_finding_candidate(
                         candidate,
@@ -391,6 +414,11 @@ class AnalysisService:
                 and all(item.failure_category is None for item in batch_diagnostics)
             )
             if completed_without_failure:
+                if explicit_kinds:
+                    self._record_unavailable_derivation_authority(
+                        context=context, design=design,
+                        numeric_qualifications=numeric_projection.qualifications,
+                    )
                 return AnalysisSummary(
                     finding_ids=(), insight_ids=(),
                     evidence_batches_processed=len(batches),
@@ -450,6 +478,11 @@ class AnalysisService:
                 and entailment_diagnostics.entailment_accepted_count == 0
             )
             if completed_without_failure:
+                if explicit_kinds:
+                    self._record_unavailable_derivation_authority(
+                        context=context, design=design,
+                        numeric_qualifications=numeric_projection.qualifications,
+                    )
                 return AnalysisSummary(
                     finding_ids=(), insight_ids=(),
                     evidence_batches_processed=len(batches),
@@ -470,7 +503,8 @@ class AnalysisService:
                 evidence_items=evidence_items,finding_ids=finding_ids,
                 allowed_runs=allowed_workflow_run_ids,
                 require_single_information_need=require_single_information_need,
-                temporal_decisions=temporal.decisions)
+                temporal_decisions=temporal.decisions,
+                numeric_qualifications=numeric_projection.qualifications)
         persisted_findings = [
             self._finding_repository.get_by_id(finding_id)
             for finding_id in finding_ids
@@ -555,8 +589,31 @@ class AnalysisService:
             rejection_counts=_aggregate_rejection_counts(batch_diagnostics),
         )
 
-    def _execute_derivations(self, *, context, design, brief, evidence_items, finding_ids, allowed_runs, require_single_information_need, temporal_decisions):
-        from dataclasses import replace
+    @staticmethod
+    def _record_unavailable_derivation_authority(*, context, design, numeric_qualifications):
+        assessments=[]
+        for need in validate_dependency_graph(design):
+            if need.kind!=InformationNeedKind.DERIVED:
+                continue
+            reason="missing_validated_dependency_finding"
+            dependency_results=[numeric_qualifications.get(ref) for ref in need.depends_on_information_need_ids]
+            if any(result is not None and result.conflicting_periods for result in dependency_results):
+                result=next(result for result in dependency_results if result is not None and result.conflicting_periods)
+                reason="conflicting_values:"+result.conflicting_periods[0]
+            elif any(result is not None and result.rejections and not result.accepted_evidence for result in dependency_results):
+                reason="rejected_required_dependency"
+            elif any(result is not None and result.missing_periods for result in dependency_results):
+                reason="missing_required_observation"
+            elif any(result is not None and not result.available for result in dependency_results):
+                reason="numeric_requirements_unavailable"
+            elif any(result is not None and not result.accepted_evidence for result in dependency_results):
+                reason="rejected_required_dependency"
+            assessments.append({"information_need_id":need.id,
+                "operation_type":need.derivation.operation_type.value,"provider_attempts":0,
+                "finding_ids":[],"status":"insufficient","reason":reason})
+        context.write_shared("analysis_derivations",{"version":"derivation-v1","assessments":assessments})
+
+    def _execute_derivations(self, *, context, design, brief, evidence_items, finding_ids, allowed_runs, require_single_information_need, temporal_decisions, numeric_qualifications):
         import re
         import json
         assessments=[]
@@ -574,6 +631,10 @@ class AnalysisService:
                 assessment.update(status="not_eligible",reason="prerequisites_not_ready")
                 continue
             try:
+                dependency_results=[numeric_qualifications.get(ref) for ref in need.depends_on_information_need_ids]
+                if any(result is not None and result.conflicting_periods for result in dependency_results):
+                    result=next(result for result in dependency_results if result is not None and result.conflicting_periods)
+                    raise DerivationRefused("conflicting_values:"+result.conflicting_periods[0])
                 findings=[self._finding_repository.get_by_id(fid) for fid in finding_ids]
                 dependencies,inputs=dependency_authority(need,[f for f in findings if f is not None],evidence_items,brief=brief,**scope)
                 if need.derivation.operation_type.deterministic:
@@ -630,19 +691,26 @@ class AnalysisService:
                                 research_question_text=next(q.question for q in design.research_questions if q.id==need.research_question_id)))
                         diagnostics=FindingEntailmentDiagnostics()
                         supported=self._run_entailment_gate(provenance_valid=valid,evidence_by_id={e.id:e for e in inputs},
-                            diagnostics=diagnostics,workflow_run_id=context.workflow_run.id) if valid else []
+                            diagnostics=diagnostics,workflow_run_id=context.workflow_run.id,
+                            require_exact_evidence_support=True) if valid else []
                         assessment["entailment"]=diagnostics.to_dict()
                         if supported:
                             for item in supported:
+                                support_ids=tuple(item.candidate.evidence_refs)
+                                support_by_id={e.id:e for e in inputs}
+                                support_inputs=tuple(support_by_id[eid] for eid in support_ids)
+                                if any(not any(ref in e.information_need_refs for e in support_inputs)
+                                       for ref in need.depends_on_information_need_ids):
+                                    continue
                                 metadata=dict(item.candidate.metadata or {})
                                 metadata["derivation"]={"version":need.derivation.version,"operation_type":need.derivation.operation_type.value,
                                     "contract":need.derivation.to_dict(),"dependency_information_need_ids":list(need.depends_on_information_need_ids),
-                                    "dependency_finding_ids":[f.id for f in dependencies],"input_evidence_ids":[e.id for e in inputs],
+                                    "dependency_finding_ids":[f.id for f in dependencies],"input_evidence_ids":list(support_ids),
                                     "formula":None,"method":need.derivation.method,"raw_result":None,"rounded_result":None,
                                     "parameters":{},"preconditions":{"validated_dependencies":True,"qualified_evidence":True,"bounded_numeric_claims":True},
                                     "source_revision_lineage":[{"evidence_id":e.id,"source_id":e.source_id,"source_content_checksum":e.source_content_checksum,
                                         "content_revision":self._source_repository.get_by_id(e.source_id).content_revision,
-                                        "extraction_revision":self._source_repository.get_by_id(e.source_id).extraction_revision} for e in inputs],
+                                        "extraction_revision":self._source_repository.get_by_id(e.source_id).extraction_revision} for e in support_inputs],
                                     "validation_method":"semantic-entailment-v1","validation_status":"validated"}
                                 candidates.append(replace(item.candidate,metadata=metadata))
                             break
@@ -668,6 +736,7 @@ class AnalysisService:
         evidence_by_id: dict[str, Evidence],
         diagnostics: FindingEntailmentDiagnostics,
         workflow_run_id: str,
+        require_exact_evidence_support: bool = False,
     ) -> list[ProvenanceValidFinding]:
         projections = [
             project_entailment_candidate(item, evidence_by_id=evidence_by_id)
@@ -738,6 +807,12 @@ class AnalysisService:
                 if (
                     projection.truncated
                     and status == FindingEntailmentStatus.SUPPORTED
+                ):
+                    status = FindingEntailmentStatus.INSUFFICIENT_EVIDENCE
+                if (
+                    require_exact_evidence_support
+                    and status == FindingEntailmentStatus.SUPPORTED
+                    and set(verdict.supported_evidence_ids) != set(projection.evidence_refs)
                 ):
                     status = FindingEntailmentStatus.INSUFFICIENT_EVIDENCE
                 verdicts_by_id[projection.candidate_id] = status
