@@ -193,6 +193,12 @@ class IntegratedResearchAcceptanceTests(http_fixture.CapabilityAcquisitionTests)
         project.research_brief = ResearchBrief(title="Синтетична чисельність населення", business_question="Population Ukraine",
             timeframe="2019–2021", language="uk")
         model = derived_design()
+        if incompatible_units:
+            model = replace(model, information_needs=tuple(
+                replace(n, evidence_coverage=replace(n.evidence_coverage, required_unit="thousands"))
+                if n.id == "in-pop" else n
+                for n in model.information_needs
+            ))
         if geography_conflict:
             model = replace(model, information_needs=tuple(replace(n, derivation=replace(n.derivation, geography="Poland")) if n.derivation else n for n in model.information_needs))
         project.current_research_design = replace(model, information_needs=(
