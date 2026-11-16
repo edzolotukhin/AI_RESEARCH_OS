@@ -70,7 +70,8 @@ def replay():
                 numeric='100', subject_id=subject.subject_id,
                 subject_fingerprint=subject.semantic_fingerprint,
             ),
-            project_id=ctx.project.id, deduplication_key=f'key{i}',
+            project_id=ctx.project.id, research_question_refs=('RQ1',),
+            deduplication_key=f'key{i}',
         ))
     unresolved = [replace(_evidence(f'e{i}', f's{i}', None),
                           project_id=ctx.project.id, workflow_run_id=ctx.workflow_run.id,
