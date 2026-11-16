@@ -20,7 +20,7 @@ class PostgreSQLSchemaLifecycleTests(PostgreSQLIntegrationTestCase):
         with self.engine.begin() as connection:
             self.assertEqual(
                 connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one(),
-                "030_source_revisions",
+                "031_report_claim_v2_contract",
             )
             self.assertEqual(
                 connection.execute(text(
