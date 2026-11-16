@@ -30,7 +30,10 @@ from domain.reports.report import Report
 from domain.reports.report_section import ReportSection
 from domain.planning.evidence_expectation import EvidenceExpectation
 from domain.planning.evidence_nature import EvidenceNature
-from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
+from domain.planning.research_design import (
+    EvidenceCoverageContract, InformationNeed, ResearchDesign, ResearchQuestion,
+    TemporalGranularity,
+)
 from domain.planning.research_subject import (
     LexicalRepresentation, RepresentationApprovalStatus, ResearchSubject,
     SubjectResolutionStatus,
@@ -56,6 +59,14 @@ TS = "2026-01-01T00:00:00+00:00"
 PROJECT = "touchpoll-e2e"
 PARENT = "touchpoll-parent"
 NEEDS = ("in1_nominal_turnover", "in2_real_adjustment", "in3_trend_character")
+
+
+def _metric_for(need_id: str) -> str:
+    return {
+        NEEDS[0]: "nominal_turnover",
+        NEEDS[1]: "retail_real_volume",
+        NEEDS[2]: "trend_direction",
+    }[need_id]
 
 
 def _subject() -> ResearchSubject:
@@ -91,6 +102,12 @@ def _design() -> ResearchDesign:
                     geography="UA", timeframe="2021,2022,2023,2024,2025,2026",
                     minimum_independent_sources=2, requires_quantitative_evidence=True,
                 ),
+                evidence_coverage=EvidenceCoverageContract(
+                    temporal_granularity=TemporalGranularity.ANNUAL,
+                    required_periods=("2026",),
+                    required_metric=aspects[0], required_unit="UAH",
+                    minimum_independent_sources=2, geography="UA",
+                ),
             )
             for need_id, description, aspects in specs
         ),
@@ -107,16 +124,18 @@ class _Search(SearchProvider):
     def search(self, query):
         self.calls += 1
         need = query.information_need_id
+        metric = _metric_for(need)
+        metric_text = metric.replace("_", " ")
         rows = [
-            (f"https://fixture.test/{need}/parent", f"Parent authority {need}"),
-            (f"https://fixture.test/{need}/new", f"New authority {need}"),
+            (f"https://fixture.test/{need}/parent", f"Parent Ukraine retail turnover authority {need} {metric_text}"),
+            (f"https://fixture.test/{need}/new", f"New Ukraine retail turnover authority {need} {metric_text}"),
         ]
         if need == NEEDS[1]:
             rows.append(("https://fixture.test/in2/cpi-only", "CPI only temptation"))
         return [
             SourceCandidate(
                 provider="fixture", provider_result_id=f"{query.id}-{index}", url=url,
-                title=title, snippet=f"Ukraine retail {need} 2021 2026", source_type="web",
+                title=title, snippet=f"Ukraine retail turnover {need} {metric_text} 2021 2026", source_type="web",
                 rank=index, query_id=query.id,
             )
             for index, (url, title) in enumerate(rows, start=1)
@@ -125,16 +144,35 @@ class _Search(SearchProvider):
 
 class _Retriever(SourceRetriever):
     def retrieve(self, candidate):
+        need_id = (NEEDS[1] if "cpi-only" in candidate.url else
+                   next(need for need in NEEDS if need in candidate.url))
+        metric = "cpi" if "cpi-only" in candidate.url else _metric_for(need_id)
         text = (
             "Ukraine CPI general inflation was 10% in 2026."
             if "cpi-only" in candidate.url
             else f"Ukraine retail authority {candidate.title}: 2021–2026 retail value was 100 UAH in 2021 and 120 UAH in 2026."
         )
+        checksum = sha256(text.encode()).hexdigest()
+        row = {
+            "sheet": "Retail", "sheet_index": 0, "table_range": "A1:D2",
+            "header_cells": ["A1", "B1", "C1", "D1"],
+            "header_values": ["Year", metric, "Unit", "Geography"],
+            "header_checksum": f"header-{metric}", "row": 2,
+            "excerpt": text, "ambiguous_headers": False,
+            "cells": [
+                {"cell": "A2", "column": 1, "header": "Year", "value": "2026", "numeric_value": "2026", "formula": False},
+                {"cell": "B2", "column": 2, "header": metric, "value": "120", "numeric_value": "120", "formula": False},
+                {"cell": "C2", "column": 3, "header": "Unit", "value": "UAH", "numeric_value": None, "formula": False},
+                {"cell": "D2", "column": 4, "header": "Geography", "value": "UA", "numeric_value": None, "formula": False},
+            ],
+        }
         return Source(
             id="", project_id="", url=candidate.url, canonical_url=candidate.url,
             title=candidate.title, retrieved_at=TS, retrieval_status=RetrievalStatus.ACQUIRED,
-            content_type="text/plain", content_text=text,
-            metadata={"fixture": "provider-free-e2e"},
+            content_type="text/plain", content_text=text, content_checksum=checksum,
+            metadata={"fixture": "provider-free-e2e", "structured_tables_v2": [row]},
+            terminal_resource_key=candidate.url, raw_content_checksum=checksum,
+            raw_checksum_kind="sha256-bytes", extraction_revision="fixture-structured-v1",
         )
 
 
@@ -151,11 +189,7 @@ class _EvidenceExtractor:
             aspect = "cpi"
             statement = "Ukraine CPI general inflation was 10% in 2026."
         else:
-            aspect = {
-                NEEDS[0]: "nominal_turnover",
-                NEEDS[1]: "retail_real_volume",
-                NEEDS[2]: "trend_direction",
-            }[need_id]
+            aspect = _metric_for(need_id)
             statement = source.content_text
         return [EvidenceCandidate(
             statement=statement, source_excerpt=statement,
@@ -624,12 +658,12 @@ class FullDeskResearchProviderFreeE2ETests(PostgreSQLIntegrationTestCase):
             PROJECT, workflow_run_id=extension.extension_workflow_run_id,
         )
         cpi = [item for item in extension_evidence if "CPI general inflation" in item.statement]
-        self.assertTrue(cpi)
+        self.assertFalse(cpi)
         observations = container.authority_extension_service._state(
             extension.extension_workflow_run_id,
         ).observations
         cpi_observations = [item for item in observations if item.authority_kind == "cpi"]
-        self.assertTrue(cpi_observations)
+        self.assertFalse(cpi_observations)
         self.assertEqual("satisfied", dict(state.outcomes)[NEEDS[1]].value)
 
         # Fresh repositories after composition prove the authority is durable.
