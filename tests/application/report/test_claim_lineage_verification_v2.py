@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
+from dataclasses import replace
+from types import MappingProxyType, SimpleNamespace
 from unittest.mock import patch
 import unittest
 
@@ -24,6 +25,14 @@ class ClaimLineageVerificationV2UnitTests(unittest.TestCase):
         ).ClaimRevisionV2Tests()
         revision_fixture.setUp()
         material = revision_fixture.base.build()
+        qualification = replace(
+            revision_fixture.base.qualification,
+            rejection_reason_counts=MappingProxyType({"none": 0}),
+            observations=tuple(
+                replace(item, lineage=MappingProxyType(dict(item.lineage)))
+                for item in revision_fixture.base.qualification.observations
+            ),
+        )
         source_run = SimpleNamespace(project_id="project-1", workflow_template_id="template-1")
         template = SimpleNamespace(research_design_snapshot=revision_fixture.base.design, research_brief_snapshot=SimpleNamespace(timeframe=""))
         repos = {
@@ -37,8 +46,7 @@ class ClaimLineageVerificationV2UnitTests(unittest.TestCase):
         report = SimpleNamespace(project_id="project-1", workflow_run_id="report-run", research_design_id="design-1")
         claim = revision_fixture.claim
         with patch("application.report.claim_lineage_verification_v2.qualify_evidence_with_temporal_decisions") as temporal, \
-             patch("application.report.claim_lineage_verification_v2.qualify_numeric_information_need", return_value=revision_fixture.base.qualification), \
-             patch("application.report.claim_lineage_verification_v2.build_claim_lineage_v2", return_value=material):
+             patch("application.report.claim_lineage_verification_v2.qualify_numeric_information_need", return_value=qualification):
             temporal.return_value = SimpleNamespace(decisions={(revision_fixture.base.evidence.id, "need-1"): "applicable_satisfied"})
             snapshot = verify_persisted_claim_v2_snapshot(
                 claim=claim, report=report, **repos,
@@ -46,6 +54,8 @@ class ClaimLineageVerificationV2UnitTests(unittest.TestCase):
         verified, context = snapshot.to_revision_inputs()
         self.assertIs(verified.claim, snapshot.claim)
         self.assertEqual(context.evidence_by_id[revision_fixture.base.evidence.id].id, revision_fixture.base.evidence.id)
+        self.assertEqual(snapshot.numeric_qualifications["need-1"].rejection_reason_counts, {"none": 0})
+        self.assertIsInstance(snapshot.numeric_qualifications["need-1"].observations[0].lineage, MappingProxyType)
         original = revision_fixture.base.source.content_checksum
         revision_fixture.base.source.metadata["tampered"] = True
         self.assertEqual(snapshot.source_by_id[revision_fixture.base.source.id].content_checksum, original)

@@ -6,7 +6,7 @@ domain values as read-only by contract.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, is_dataclass, replace
 import copy
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -57,7 +57,10 @@ class VerifiedClaimLineageV2Snapshot:
         object.__setattr__(self, "evidence_by_id", MappingProxyType(copy.deepcopy(dict(self.evidence_by_id))))
         object.__setattr__(self, "source_by_id", MappingProxyType(copy.deepcopy(dict(self.source_by_id))))
         object.__setattr__(self, "temporal_decisions", MappingProxyType(copy.deepcopy(dict(self.temporal_decisions))))
-        object.__setattr__(self, "numeric_qualifications", MappingProxyType(copy.deepcopy(dict(self.numeric_qualifications))))
+        object.__setattr__(self, "numeric_qualifications", MappingProxyType({
+            key: _detach_numeric_qualification(value)
+            for key, value in self.numeric_qualifications.items()
+        }))
         detached_material = replace(
             self.material,
             finding_content_digests=MappingProxyType(copy.deepcopy(dict(self.material.finding_content_digests))),
@@ -217,3 +220,25 @@ def _load_exact(repository: Any, identifiers: tuple[str, ...], label: str) -> tu
     if len({item.id for item in loaded}) != len(identifiers):
         raise ClaimLineageVerificationV2Error(f"authoritative {label} identity is ambiguous")
     return tuple(loaded)
+
+
+def _detach_numeric_qualification(value: Any) -> Any:
+    """Copy qualification dataclasses without pickling MappingProxyType."""
+    if not is_dataclass(value):
+        raise ClaimLineageVerificationV2Error("numeric qualification has unsupported shape")
+    return _detach(value)
+
+
+def _detach(value: Any) -> Any:
+    """Defensively copy bounded authority values, including proxy mappings."""
+    if isinstance(value, Mapping):
+        return MappingProxyType({copy.deepcopy(key): _detach(item) for key, item in value.items()})
+    if is_dataclass(value):
+        return replace(value, **{field.name: _detach(getattr(value, field.name)) for field in fields(value)})
+    if isinstance(value, tuple):
+        return tuple(_detach(item) for item in value)
+    if isinstance(value, list):
+        return tuple(_detach(item) for item in value)
+    if isinstance(value, set):
+        return frozenset(_detach(item) for item in value)
+    return copy.deepcopy(value)
