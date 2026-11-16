@@ -102,6 +102,68 @@ class ReportClaimV2ContractTests(unittest.TestCase):
     def test_malformed_contract_version_is_rejected(self) -> None:
         self.assert_payload_rejected(lambda value: value["validation"].update(contract_version="desk_report_claim_v1"))
 
+    def test_duplicate_top_level_and_support_ids_are_rejected(self) -> None:
+        mutations = (
+            lambda value: value["finding_ids"].append("finding-1"),
+            lambda value: value["evidence_ids"].append("ev-1"),
+            lambda value: value["insight_ids"].append("insight-1"),
+            lambda value: value["support"]["source_ids"].append("source-1"),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                self.assert_payload_rejected(mutate)
+
+    def test_duplicate_nested_insight_finding_refs_are_rejected(self) -> None:
+        self.assert_payload_rejected(
+            lambda value: value["support"]["insight_finding_refs"]["insight-1"].append("finding-1"),
+        )
+
+    def test_nonstring_ids_are_rejected_without_coercion(self) -> None:
+        mutations = (
+            lambda value: value["finding_ids"].__setitem__(0, 1),
+            lambda value: value["evidence_ids"].__setitem__(0, True),
+            lambda value: value["insight_ids"].__setitem__(0, None),
+            lambda value: value.update(claim_id=1),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                self.assert_payload_rejected(mutate)
+
+    def test_nonstring_digest_keys_and_values_are_rejected(self) -> None:
+        def numeric_key(value) -> None:
+            digest = value["support"]["source_revision_digests"].pop("source-1")
+            value["support"]["source_revision_digests"][1] = digest
+
+        mutations = (
+            numeric_key,
+            lambda value: value["support"]["finding_content_digests"].update({"finding-1": 1}),
+            lambda value: value["support"]["evidence_content_digests"].update({"ev-1": None}),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                self.assert_payload_rejected(mutate)
+
+    def test_nonstring_nested_reference_elements_are_rejected(self) -> None:
+        for item in (1, True, None, [], {}):
+            with self.subTest(item=item):
+                self.assert_payload_rejected(
+                    lambda value, item=item: value["support"]["insight_finding_refs"]["insight-1"].__setitem__(0, item),
+                )
+
+    def test_previously_coercible_or_normalized_key_collisions_are_rejected(self) -> None:
+        def coercible_collision(value) -> None:
+            digest = value["support"]["source_revision_digests"]["source-1"]
+            value["support"]["source_revision_digests"][1] = digest
+            value["support"]["source_revision_digests"]["1"] = digest
+
+        def normalized_collision(value) -> None:
+            digest = value["support"]["source_revision_digests"]["source-1"]
+            value["support"]["source_revision_digests"][" source-1 "] = digest
+
+        for mutate in (coercible_collision, normalized_collision):
+            with self.subTest(mutate=mutate):
+                self.assert_payload_rejected(mutate)
+
 
 if __name__ == "__main__":
     unittest.main()

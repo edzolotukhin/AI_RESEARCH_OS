@@ -37,7 +37,11 @@ def _digest_map(value: Any, *, field: str, required: bool) -> dict[str, str]:
         raise ReportClaimContractError(f"{field} must not be empty")
     if len(value) > _V2_MAX_REFERENCES:
         raise ReportClaimContractError(f"{field} exceeds bounded size")
-    result = {str(key).strip(): str(digest).strip() for key, digest in value.items()}
+    if any(not isinstance(key, str) or not isinstance(digest, str) for key, digest in value.items()):
+        raise ReportClaimContractError(f"{field} keys and values must be strings")
+    result = {key.strip(): digest.strip() for key, digest in value.items()}
+    if len(result) != len(value):
+        raise ReportClaimContractError(f"{field} contains colliding normalized IDs")
     if any(not key or key == "*" or len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest) for key, digest in result.items()):
         raise ReportClaimContractError(f"{field} must contain SHA-256 digests keyed by non-empty IDs")
     return result
@@ -46,13 +50,14 @@ def _digest_map(value: Any, *, field: str, required: bool) -> dict[str, str]:
 def _reference_map(value: Any, *, field: str) -> dict[str, tuple[str, ...]]:
     if not isinstance(value, dict) or len(value) > _V2_MAX_REFERENCES:
         raise ReportClaimContractError(f"{field} must be a bounded object")
-    if any(not str(key).strip() or str(key).strip() == "*" for key in value):
+    if any(not isinstance(key, str) for key in value):
+        raise ReportClaimContractError(f"{field} keys must be strings")
+    if any(not key.strip() or key.strip() == "*" for key in value):
         raise ReportClaimContractError(f"{field} contains an empty or wildcard ID")
-    return {
-        str(key).strip(): _strings(refs, field=f"{field}.{key}", required=True)
-        for key, refs in value.items()
-        if str(key).strip()
-    }
+    result = {key.strip(): _strict_v2_strings(refs, field=f"{field}.{key}", required=True) for key, refs in value.items()}
+    if len(result) != len(value):
+        raise ReportClaimContractError(f"{field} contains colliding normalized IDs")
+    return result
 
 
 def _strings(value: Any, *, field: str, required: bool = False) -> tuple[str, ...]:
@@ -64,6 +69,30 @@ def _strings(value: Any, *, field: str, required: bool = False) -> tuple[str, ..
     if required and not result:
         raise ReportClaimContractError(f"{field} must not be empty")
     return tuple(dict.fromkeys(result))
+
+
+def _strict_v2_string(value: Any, *, field: str) -> str:
+    if not isinstance(value, str):
+        raise ReportClaimContractError(f"{field} must be a string")
+    result = value.strip()
+    if not result or result == "*":
+        raise ReportClaimContractError(f"{field} must be a non-empty non-wildcard string")
+    return result
+
+
+def _strict_v2_strings(value: Any, *, field: str, required: bool = False) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise ReportClaimContractError(f"{field} must be an array")
+    if any(not isinstance(item, str) for item in value):
+        raise ReportClaimContractError(f"{field} elements must be strings")
+    if len(set(value)) != len(value):
+        raise ReportClaimContractError(f"{field} contains duplicate IDs")
+    result = tuple(_strict_v2_string(item, field=field) for item in value)
+    if len(set(result)) != len(result):
+        raise ReportClaimContractError(f"{field} contains colliding normalized IDs")
+    if required and not result:
+        raise ReportClaimContractError(f"{field} must not be empty")
+    return result
 
 
 def _exact(payload: dict[str, Any], expected: set[str], *, field: str) -> None:
@@ -218,6 +247,15 @@ class ReportClaim:
         )
         if any(len(items) > _V2_MAX_REFERENCES for items in collections):
             raise ReportClaimContractError("v2 reference list exceeds bounded size")
+        for name, items in (
+            ("research_question_ids", self.research_question_ids),
+            ("information_need_ids", self.information_need_ids),
+            ("finding_ids", self.finding_ids), ("insight_ids", self.insight_ids),
+            ("evidence_ids", self.evidence_ids), ("source_ids", self.source_ids),
+            ("citation_ids", self.citation_ids),
+        ):
+            _strict_v2_strings(items, field=name, required=name not in {"insight_ids", "citation_ids"})
+        _strict_v2_strings(self.support_evidence_ids, field="support.evidence_ids", required=True)
         if len(self.proposition) > _V2_MAX_TEXT or any(len(str(item)) > 256 for items in collections for item in items):
             raise ReportClaimContractError("v2 text or reference ID exceeds bounded size")
         scope_collections = (
@@ -238,6 +276,7 @@ class ReportClaim:
             raise ReportClaimContractError("numeric proof digest keys must be selected Evidence IDs")
         for name in ("finding_content_digests", "insight_content_digests", "evidence_content_digests", "source_revision_digests", "numeric_observation_proof_digests"):
             _digest_map(dict(getattr(self, name)), field=f"support.{name}", required=name != "numeric_observation_proof_digests" and (name != "insight_content_digests" or bool(self.insight_ids)))
+        _reference_map(dict(self.insight_finding_refs), field="support.insight_finding_refs")
         expected_authority = _digest(authority_digest_v2_payload(self))
         if self.authority_digest != expected_authority:
             raise ReportClaimContractError("v2 authority digest mismatch")
@@ -260,11 +299,15 @@ class ReportClaim:
             validation_fields.add("claim_digest")
         _exact(support, support_fields, field="support")
         _exact(validation, validation_fields, field="validation")
+        v2 = version == REPORT_CLAIM_V2_VERSION
         for key in ("finding_content_digests", "evidence_content_digests"):
+            if v2:
+                continue
             if not isinstance(support[key], dict) or any(not str(k).strip() or not str(v).strip() for k, v in support[key].items()):
                 raise ReportClaimContractError(f"support.{key} must be a non-empty string map")
-        v2 = version == REPORT_CLAIM_V2_VERSION
-        return cls(claim_id=str(payload["claim_id"]), project_id=str(payload["project_id"]), source_workflow_run_id=str(payload["source_workflow_run_id"]), report_workflow_run_id=str(payload["report_workflow_run_id"]), design_id=str(payload["design_id"]), research_question_ids=_strings(payload["research_question_ids"], field="research_question_ids", required=True), information_need_ids=_strings(payload["information_need_ids"], field="information_need_ids", required=True), finding_ids=_strings(payload["finding_ids"], field="finding_ids", required=True), insight_ids=_strings(payload["insight_ids"], field="insight_ids"), evidence_ids=_strings(payload["evidence_ids"], field="evidence_ids", required=True), kind=str(assertion["kind"]), proposition=str(assertion["proposition"]), certainty=str(assertion["certainty"]), direction=str(assertion["direction"]), scope=ClaimScope.from_dict(payload["scope"]), support_evidence_ids=_strings(support["evidence_ids"], field="support.evidence_ids", required=True), source_ids=_strings(support["source_ids"], field="support.source_ids", required=True), citation_ids=_strings(support["citation_ids"], field="support.citation_ids"), finding_content_digests={str(k): str(v) for k, v in support["finding_content_digests"].items()}, evidence_content_digests={str(k): str(v) for k, v in support["evidence_content_digests"].items()}, status=str(validation["status"]), contract_version=str(validation["contract_version"]), authority_digest=str(validation["authority_digest"]), validated_at=str(validation["validated_at"]), structural_assertion=dict(payload["structural_assertion"]) if "structural_assertion" in payload else None, version=str(version), insight_content_digests=_digest_map(support["insight_content_digests"], field="support.insight_content_digests", required=False) if v2 else {}, insight_finding_refs=_reference_map(support["insight_finding_refs"], field="support.insight_finding_refs") if v2 else {}, source_revision_digests=_digest_map(support["source_revision_digests"], field="support.source_revision_digests", required=v2) if v2 else {}, numeric_observation_proof_digests=_digest_map(support["numeric_observation_proof_digests"], field="support.numeric_observation_proof_digests", required=False) if v2 else {}, claim_digest=str(validation["claim_digest"]) if v2 else "")
+        strings = _strict_v2_strings if v2 else _strings
+        scalar = (lambda value, field: _strict_v2_string(value, field=field)) if v2 else (lambda value, field: str(value))
+        return cls(claim_id=scalar(payload["claim_id"], "claim_id"), project_id=scalar(payload["project_id"], "project_id"), source_workflow_run_id=scalar(payload["source_workflow_run_id"], "source_workflow_run_id"), report_workflow_run_id=scalar(payload["report_workflow_run_id"], "report_workflow_run_id"), design_id=scalar(payload["design_id"], "design_id"), research_question_ids=strings(payload["research_question_ids"], field="research_question_ids", required=True), information_need_ids=strings(payload["information_need_ids"], field="information_need_ids", required=True), finding_ids=strings(payload["finding_ids"], field="finding_ids", required=True), insight_ids=strings(payload["insight_ids"], field="insight_ids"), evidence_ids=strings(payload["evidence_ids"], field="evidence_ids", required=True), kind=scalar(assertion["kind"], "assertion.kind"), proposition=scalar(assertion["proposition"], "assertion.proposition"), certainty=scalar(assertion["certainty"], "assertion.certainty"), direction=scalar(assertion["direction"], "assertion.direction"), scope=ClaimScope.from_dict(payload["scope"]), support_evidence_ids=strings(support["evidence_ids"], field="support.evidence_ids", required=True), source_ids=strings(support["source_ids"], field="support.source_ids", required=True), citation_ids=strings(support["citation_ids"], field="support.citation_ids"), finding_content_digests=_digest_map(support["finding_content_digests"], field="support.finding_content_digests", required=True) if v2 else {str(k): str(v) for k, v in support["finding_content_digests"].items()}, evidence_content_digests=_digest_map(support["evidence_content_digests"], field="support.evidence_content_digests", required=True) if v2 else {str(k): str(v) for k, v in support["evidence_content_digests"].items()}, status=scalar(validation["status"], "validation.status"), contract_version=scalar(validation["contract_version"], "validation.contract_version"), authority_digest=scalar(validation["authority_digest"], "validation.authority_digest"), validated_at=scalar(validation["validated_at"], "validation.validated_at"), structural_assertion=dict(payload["structural_assertion"]) if "structural_assertion" in payload else None, version=scalar(version, "version"), insight_content_digests=_digest_map(support["insight_content_digests"], field="support.insight_content_digests", required=bool(payload["insight_ids"])) if v2 else {}, insight_finding_refs=_reference_map(support["insight_finding_refs"], field="support.insight_finding_refs") if v2 else {}, source_revision_digests=_digest_map(support["source_revision_digests"], field="support.source_revision_digests", required=v2) if v2 else {}, numeric_observation_proof_digests=_digest_map(support["numeric_observation_proof_digests"], field="support.numeric_observation_proof_digests", required=False) if v2 else {}, claim_digest=scalar(validation["claim_digest"], "validation.claim_digest") if v2 else "")
 
     def to_dict(self) -> dict[str, Any]:
         payload = {"version": self.version, "claim_id": self.claim_id, "project_id": self.project_id, "source_workflow_run_id": self.source_workflow_run_id, "report_workflow_run_id": self.report_workflow_run_id, "design_id": self.design_id, "research_question_ids": list(self.research_question_ids), "information_need_ids": list(self.information_need_ids), "finding_ids": list(self.finding_ids), "insight_ids": list(self.insight_ids), "evidence_ids": list(self.evidence_ids), "assertion": {"kind": self.kind, "proposition": self.proposition, "certainty": self.certainty, "direction": self.direction}, "scope": self.scope.to_dict(), "support": {"evidence_ids": list(self.support_evidence_ids), "source_ids": list(self.source_ids), "citation_ids": list(self.citation_ids), "finding_content_digests": dict(self.finding_content_digests), "evidence_content_digests": dict(self.evidence_content_digests)}, "validation": {"status": self.status, "contract_version": self.contract_version, "authority_digest": self.authority_digest, "validated_at": self.validated_at}}
