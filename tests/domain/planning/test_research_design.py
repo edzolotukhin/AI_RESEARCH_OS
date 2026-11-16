@@ -11,11 +11,26 @@ from domain.planning.research_design import (
     ResearchQuestion,
     TemporalGranularity,
 )
+from domain.planning.evidence_expectation import EvidenceExpectation
+from domain.planning.evidence_nature import EvidenceNature
 
 from tests.fixtures.planner_responses import VALID_RESEARCH_DESIGN_RESPONSE
 
 
 class ResearchDesignModelTests(unittest.TestCase):
+    @staticmethod
+    def numeric_need(coverage: EvidenceCoverageContract) -> InformationNeed:
+        return InformationNeed(
+            id="in-population",
+            research_question_id="rq-awareness",
+            description="Population",
+            evidence_expectation=EvidenceExpectation(
+                nature=EvidenceNature.QUANTITATIVE,
+                requires_quantitative_evidence=True,
+            ),
+            evidence_coverage=coverage,
+        )
+
     def test_from_dict_round_trip(self) -> None:
         design = ResearchDesign.from_dict(
             {"id": "design-1", **VALID_RESEARCH_DESIGN_RESPONSE},
@@ -77,6 +92,64 @@ class ResearchDesignModelTests(unittest.TestCase):
                 temporal_granularity=TemporalGranularity.QUARTERLY,
                 required_periods=("2025",),
             )
+
+    def test_numeric_contract_requires_explicit_authoritative_unit(self) -> None:
+        with self.assertRaisesRegex(ValueError, "explicit required_unit"):
+            self.numeric_need(EvidenceCoverageContract(
+                required_metric="Population",
+                required_periods=("2020",),
+                geography="Ukraine",
+            ))
+
+    def test_numeric_contract_unit_is_normalized_and_round_trips(self) -> None:
+        need = self.numeric_need(EvidenceCoverageContract(
+            required_metric="Population",
+            required_unit="  thousand   persons ",
+            required_periods=("2020",),
+            geography="Ukraine",
+        ))
+        self.assertEqual(need.evidence_coverage.required_unit, "thousand persons")
+        payload = need.to_dict()
+        self.assertEqual(payload["evidence_coverage"]["required_unit"], "thousand persons")
+        self.assertEqual(InformationNeed.from_dict(payload), need)
+
+    def test_legacy_numeric_payload_without_unit_remains_loadable_but_incomplete(self) -> None:
+        payload = {
+            "id": "legacy-numeric",
+            "research_question_id": "rq-awareness",
+            "description": "Population",
+            "evidence_expectation": {
+                "nature": "quantitative",
+                "requires_quantitative_evidence": True,
+            },
+            "evidence_coverage": {
+                "required_metric": "Population",
+                "required_periods": ["2020"],
+                "geography": "Ukraine",
+            },
+        }
+        restored = InformationNeed.from_dict(payload)
+        self.assertEqual(restored.evidence_coverage.required_unit, "")
+        normalized = restored.to_dict()
+        self.assertNotIn("required_unit", normalized["evidence_coverage"])
+        self.assertEqual(InformationNeed.from_dict(normalized).to_dict(), normalized)
+
+    def test_nonnumeric_contract_does_not_require_unit(self) -> None:
+        need = InformationNeed(
+            id="in-methodology", research_question_id="rq-awareness",
+            description="Methodology",
+            evidence_expectation=EvidenceExpectation(EvidenceNature.QUALITATIVE),
+            evidence_coverage=EvidenceCoverageContract(
+                required_observations=("methodology",),
+            ),
+        )
+        self.assertEqual(need.evidence_coverage.required_unit, "")
+        self.assertNotIn("required_unit", need.to_dict()["evidence_coverage"])
+
+    def test_invalid_unit_is_rejected(self) -> None:
+        for invalid in (42, "x" * 201):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                EvidenceCoverageContract(required_unit=invalid)
 
 
 if __name__ == "__main__":

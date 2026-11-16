@@ -30,7 +30,7 @@ def design():
         resolution_status=SubjectResolutionStatus.RESOLVED)
     need=InformationNeed("in-pop","rq-pop","Population",geography="Ukraine",
         evidence_expectation=EvidenceExpectation(EvidenceNature.QUANTITATIVE,required_aspects=("level","timepoint","geography"),geography="Ukraine",requires_quantitative_evidence=True),
-        evidence_coverage=EvidenceCoverageContract(required_metric="Population",required_periods=("2019","2020","2021"),geography="Ukraine"))
+        evidence_coverage=EvidenceCoverageContract(required_metric="Population",required_unit="persons",required_periods=("2019","2020","2021"),geography="Ukraine"))
     return ResearchDesign("design",(ResearchQuestion("rq-pop","Population"),),(need,),research_subject=subject)
 
 
