@@ -113,7 +113,7 @@ def align_readiness(design,evidence,result,source_repository,temporal_decisions,
                     raise DerivationRefused("source_repository_unavailable")
                 if any(next(n for n in design.information_needs if n.id==ref).kind!=Kind.ACQUIRED for ref in need.depends_on_information_need_ids):
                     raise DerivationRefused("calculation_requires_acquired_observation_series")
-                values,_=observed_series(
+                values,_,_=observed_series(
                     need,inputs,design=design,source_repository=source_repository,
                     temporal_decisions=temporal_decisions,
                 )
