@@ -126,6 +126,26 @@ class ClassifiedReadinessTests(unittest.TestCase):
         _,result=readiness(context,evidence,sources)
         self.assertTrue(all("geography_mismatch" in d["reasons"] for d in result.to_dict()["derived_prerequisites"].values()))
 
+    def test_readiness_and_analysis_share_fail_closed_temporal_authority(self):
+        context,analysis,findings,evidence,sources,_=setup_memory()
+        context.workflow_template=replace(
+            context.workflow_template,
+            research_brief_snapshot=replace(
+                context.workflow_template.research_brief_snapshot,
+                timeframe="ambiguous reporting window",
+            ),
+        )
+        _,result=readiness(context,evidence,sources)
+        self.assertTrue(all(
+            diagnostic["status"] == "not_ready"
+            for diagnostic in result.to_dict()["derived_prerequisites"].values()
+        ))
+        analysis.analyze_for_context(context)
+        self.assertFalse(any(
+            finding.metadata.get("derivation")
+            for finding in findings.list_for_project("project")
+        ))
+
     def test_analysis_coverage_and_authoritative_outcome(self):
         context,analysis,findings,evidence,sources,_=setup_memory()
         readiness(context,evidence,sources)

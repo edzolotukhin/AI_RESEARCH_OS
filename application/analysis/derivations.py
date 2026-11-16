@@ -5,6 +5,7 @@ from decimal import Decimal, localcontext, ROUND_HALF_EVEN
 from application.ports.analysis_ports import FindingCandidate
 from application.analysis.provenance_validation import validate_finding_candidate
 from application.evidence.temporal_scope import qualifying_evidence
+from application.evidence.semantic_assignment import semantic_assignment
 from application.analysis.numeric_integrity import (
     NumericIntegrityError,
     NumericObservationRequirements,
@@ -45,7 +46,7 @@ def dependency_authority(need, findings, evidence, *, design, project_id, workfl
     return tuple(sorted({f.id:f for f in selected}.values(),key=lambda f:f.id)),inputs
 
 
-def observed_series(need, inputs, *, design, source_repository):
+def observed_series(need, inputs, *, design, source_repository, temporal_decisions):
     spec=need.derivation
     subject=design.research_subject
     if subject is None:
@@ -68,9 +69,16 @@ def observed_series(need, inputs, *, design, source_repository):
         if evidence.metadata.get("observation_period") not in spec.required_periods:
             continue
         source=source_repository.get_by_id(evidence.source_id)
+        assignment=semantic_assignment(evidence)
+        assignment_need=(
+            str(assignment.get("information_need_id", ""))
+            if assignment is not None else ""
+        )
+        temporal_decision=temporal_decisions.get((evidence.id,assignment_need))
         try:
             observations.append(validate_numeric_observation(
-                evidence,source,requirements,temporal_eligible=True,
+                evidence,source,requirements,
+                temporal_eligible=(temporal_decision=="applicable_satisfied"),
             ))
         except NumericIntegrityError as exc:
             raise DerivationRefused(exc.code) from exc
@@ -89,11 +97,14 @@ def observed_series(need, inputs, *, design, source_repository):
     return dict(series.values),lineage
 
 
-def calculate_candidates(need, inputs, dependencies, *, design, project_id, workflow_run_id, allowed_runs, source_repository):
+def calculate_candidates(need, inputs, dependencies, *, design, project_id, workflow_run_id, allowed_runs, source_repository, temporal_decisions):
     spec=need.derivation
     if any(next(n for n in design.information_needs if n.id==ref).kind!=InformationNeedKind.ACQUIRED for ref in need.depends_on_information_need_ids):
         raise DerivationRefused("calculation_requires_acquired_observation_series")
-    values,lineage=observed_series(need,inputs,design=design,source_repository=source_repository)
+    values,lineage=observed_series(
+        need,inputs,design=design,source_repository=source_repository,
+        temporal_decisions=temporal_decisions,
+    )
     periods=spec.required_periods
     pairs=list(zip(periods,periods[1:])) if spec.operation_type.value.startswith("YEAR_OVER_YEAR") else [(periods[0],periods[-1])]
     result=[]
@@ -125,8 +136,12 @@ def calculate_candidates(need, inputs, dependencies, *, design, project_id, work
 
 def validate_deterministic_derivation(candidate, need, inputs, dependencies, **scope):
     brief=scope.pop("brief")
+    temporal_decisions=scope.pop("temporal_decisions")
     checked_dependencies,checked_inputs=dependency_authority(need,dependencies,inputs,brief=brief,**scope)
-    reproduced=calculate_candidates(need,checked_inputs,checked_dependencies,**scope)
+    reproduced=calculate_candidates(
+        need,checked_inputs,checked_dependencies,
+        temporal_decisions=temporal_decisions,**scope,
+    )
     if not any(candidate==expected for expected in reproduced):
         raise DerivationRefused("deterministic_reproduction_failed")
     return candidate

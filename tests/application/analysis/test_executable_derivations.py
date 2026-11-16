@@ -22,6 +22,7 @@ from application.analysis.analysis_factory import build_analysis_service
 from application.analysis.exceptions import AnalysisError
 from application.analysis.derivations import calculate_candidates, dependency_authority, validate_deterministic_derivation, DerivationRefused
 from application.evidence.evidence_factory import build_evidence_extraction_service
+from application.evidence.temporal_scope import qualify_evidence_with_temporal_decisions
 from application.ports.analysis_ports import FindingCandidate
 from infrastructure.persistence.memory.in_memory_source_repository import InMemorySourceRepository
 from infrastructure.persistence.memory.in_memory_evidence_repository import InMemoryEvidenceRepository
@@ -130,14 +131,38 @@ class ExecutableDerivationTests(unittest.TestCase):
         need=context.workflow_template.research_design_snapshot.information_needs[1]
         scope=dict(design=context.workflow_template.research_design_snapshot,project_id="project",workflow_run_id="run",allowed_runs=("run",),source_repository=sources)
         deps,inputs=dependency_authority(need,findings.list_for_project("project"),evidence.list_for_project("project"),brief=context.workflow_template.research_brief_snapshot,**scope)
-        candidate=calculate_candidates(need,inputs,deps,**scope)[0]
+        temporal=qualify_evidence_with_temporal_decisions(
+            design=scope["design"],evidence=inputs,
+            brief=context.workflow_template.research_brief_snapshot,
+            source_repository=sources,
+        )
+        candidate=calculate_candidates(need,inputs,deps,temporal_decisions=temporal.decisions,**scope)[0]
         altered=replace(candidate,metadata={**candidate.metadata,"derivation":{**candidate.metadata["derivation"],"raw_result":"42"}})
         with self.assertRaises(DerivationRefused):
-            validate_deterministic_derivation(altered,need,inputs,deps,brief=context.workflow_template.research_brief_snapshot,**scope)
+            validate_deterministic_derivation(altered,need,inputs,deps,brief=context.workflow_template.research_brief_snapshot,
+                temporal_decisions=temporal.decisions,**scope)
         for field in ("project_id","workflow_run_id","research_design_id","source_content_checksum"):
             foreign=tuple(replace(e,**{field:"foreign"}) for e in inputs)
             with self.assertRaises(DerivationRefused):
-                validate_deterministic_derivation(candidate,need,foreign,deps,brief=context.workflow_template.research_brief_snapshot,**scope)
+                validate_deterministic_derivation(candidate,need,foreign,deps,brief=context.workflow_template.research_brief_snapshot,
+                    temporal_decisions=temporal.decisions,**scope)
+
+    def test_numeric_derivation_requires_exact_positive_temporal_authority(self):
+        context,analysis,findings,evidence,sources,provider=setup_memory()
+        analysis.analyze_for_context(context)
+        need=context.workflow_template.research_design_snapshot.information_needs[1]
+        scope=dict(design=context.workflow_template.research_design_snapshot,project_id="project",workflow_run_id="run",allowed_runs=("run",),source_repository=sources)
+        deps,inputs=dependency_authority(need,findings.list_for_project("project"),evidence.list_for_project("project"),brief=context.workflow_template.research_brief_snapshot,**scope)
+        positive={(item.id,"in-pop"): "applicable_satisfied" for item in inputs}
+        self.assertTrue(calculate_candidates(need,inputs,deps,temporal_decisions=positive,**scope))
+        for decision in ("applicable_failed", "applicable_unresolved", "not_applicable",
+                         "no_explicit_temporal_constraint"):
+            with self.subTest(decision=decision), self.assertRaises(DerivationRefused):
+                calculate_candidates(need,inputs,deps,
+                    temporal_decisions={(item.id,"in-pop"): decision for item in inputs},**scope)
+        with self.assertRaises(DerivationRefused):
+            calculate_candidates(need,inputs,deps,
+                temporal_decisions={(item.id,"other"): "applicable_satisfied" for item in inputs},**scope)
 
     def test_conflicting_confirmed_observations_refuse_arithmetic(self):
         context,analysis,findings,evidence,sources,provider=setup_memory()

@@ -11,7 +11,10 @@ from domain.findings.finding import Finding
 from domain.findings.finding_type import FindingType
 from domain.findings.insight import Insight
 from domain.research_brief import ResearchBrief
-from application.evidence.temporal_scope import qualifying_evidence
+from application.evidence.temporal_scope import (
+    qualify_evidence_with_temporal_decisions,
+    qualifying_evidence,  # Compatibility seam retained for existing callers/tests.
+)
 from domain.planning.research_design import ResearchDesign
 from domain.planning.derivation import InformationNeedKind, validate_dependency_graph
 from application.analysis.derivations import (
@@ -175,6 +178,11 @@ class AnalysisService:
             design=design, evidence=evidence_items, brief=brief,
             source_repository=self._source_repository,
         )
+        temporal = qualify_evidence_with_temporal_decisions(
+            design=design, evidence=evidence_items, brief=brief,
+            source_repository=self._source_repository, citation_prequalified=True,
+        )
+        evidence_items = list(temporal.evidence)
         if eligible_need_ids is not None:
             eligible = set(eligible_need_ids)
             evidence_items = [
@@ -461,7 +469,8 @@ class AnalysisService:
             self._execute_derivations(context=context,design=design,brief=brief,
                 evidence_items=evidence_items,finding_ids=finding_ids,
                 allowed_runs=allowed_workflow_run_ids,
-                require_single_information_need=require_single_information_need)
+                require_single_information_need=require_single_information_need,
+                temporal_decisions=temporal.decisions)
         persisted_findings = [
             self._finding_repository.get_by_id(finding_id)
             for finding_id in finding_ids
@@ -546,7 +555,7 @@ class AnalysisService:
             rejection_counts=_aggregate_rejection_counts(batch_diagnostics),
         )
 
-    def _execute_derivations(self, *, context, design, brief, evidence_items, finding_ids, allowed_runs, require_single_information_need):
+    def _execute_derivations(self, *, context, design, brief, evidence_items, finding_ids, allowed_runs, require_single_information_need, temporal_decisions):
         from dataclasses import replace
         import re
         import json
@@ -569,11 +578,17 @@ class AnalysisService:
                 dependencies,inputs=dependency_authority(need,[f for f in findings if f is not None],evidence_items,brief=brief,**scope)
                 if need.derivation.operation_type.deterministic:
                     try:
-                        candidates=calculate_candidates(need,inputs,dependencies,**scope)
+                        candidates=calculate_candidates(
+                            need,inputs,dependencies,
+                            temporal_decisions=temporal_decisions,**scope,
+                        )
                     except ArithmeticError as exc:
                         raise DerivationRefused("numeric_precision_or_range") from exc
                     for candidate in candidates:
-                        validate_deterministic_derivation(candidate,need,inputs,dependencies,brief=brief,**scope)
+                        validate_deterministic_derivation(
+                            candidate,need,inputs,dependencies,brief=brief,
+                            temporal_decisions=temporal_decisions,**scope,
+                        )
                 else:
                     if need.derivation.operation_type.value=="CROSS_SOURCE_COMPARISON":
                         origins={self._source_repository.get_by_id(e.source_id).terminal_resource_key for e in inputs}

@@ -78,11 +78,13 @@ def readiness(count, need=NEED, *, current=True):
 
 
 def build(*, sources=(), rows=(), temporal=None, coverage=None, snapshot=None, count=0, history=(),
-          sources_complete=True, evidence_complete=True, need=NEED, max_periods=32, max_loop_attempts=16):
+          sources_complete=True, evidence_complete=True, need=NEED, kind="ACQUIRED",
+          dependencies=(), max_periods=32, max_loop_attempts=16):
     return build_evidence_coverage_diagnostics(
         information_need_id=need, workflow_run_id=RUN, research_design_id=DESIGN,
+        information_need_kind=kind,
         research_subject_id=SUBJECT, research_subject_fingerprint=SUBJECT_FINGERPRINT,
-        allowed_dependency_information_need_ids=(), required_numeric_unit="persons",
+        allowed_dependency_information_need_ids=dependencies, required_numeric_unit="persons",
         coverage_contract=coverage or contract(), sources=sources, evidence=rows,
         temporal_qualification_by_evidence_and_need=temporal or {}, readiness_snapshot=snapshot or readiness(count, need),
         sources_complete=sources_complete, evidence_complete=evidence_complete, research_loop_history=history,
@@ -112,12 +114,38 @@ class EvidenceCompletenessDiagnosticsTests(unittest.TestCase):
 
     def test_forged_metadata_and_missing_assignment_are_unknown(self):
         item = source(); row = evidence(item)
-        for metadata in ({**row.metadata, "numeric_value": "999"}, {k: v for k, v in row.metadata.items() if k != "semantic_assignment"}):
+        cases = (({**row.metadata, "numeric_value": "999"}, 1),
+                 ({k: v for k, v in row.metadata.items() if k != "semantic_assignment"}, 0))
+        for metadata, count in cases:
             with self.subTest(keys=tuple(metadata)):
                 forged = replace(row, metadata=metadata)
-                result = build(sources=(item,), rows=(forged,), temporal=eligible(row.id), count=1)
+                result = build(sources=(item,), rows=(forged,), temporal=eligible(row.id), count=count)
                 self.assertEqual(result["period_coverage"][0]["status"], "unknown")
                 self.assertEqual(result["qualification"]["numeric_binding_verified_evidence_count"], 0)
+
+    def test_acquired_and_derived_semantic_ownership(self):
+        item = source()
+        own = evidence(item)
+        acquired = build(sources=(item,), rows=(own,), temporal=eligible(own.id), count=1)
+        self.assertEqual(acquired["period_coverage"][0]["status"], "confirmed")
+
+        other = evidence(item, assignment_need="other", needs=(NEED, "other"))
+        rejected = build(sources=(item,), rows=(other,),
+            temporal={(other.id, "other"): "applicable_satisfied"}, count=1)
+        self.assertEqual(rejected["period_coverage"][0]["status"], "unknown")
+
+        dependency = "in-input"
+        derived_row = evidence(item, assignment_need=dependency, needs=(dependency,))
+        derived = build(sources=(item,), rows=(derived_row,), kind="DERIVED",
+            dependencies=(dependency,),
+            temporal={(derived_row.id, dependency): "applicable_satisfied"}, count=0)
+        self.assertEqual(derived["period_coverage"][0]["status"], "confirmed")
+        self.assertEqual(derived["qualification"]["coverage_basis"], "declared_dependencies")
+
+        undeclared = build(sources=(item,), rows=(derived_row,), kind="DERIVED",
+            dependencies=("different-input",),
+            temporal={(derived_row.id, dependency): "applicable_satisfied"}, count=0)
+        self.assertTrue(all(row["status"] == "missing" for row in undeclared["period_coverage"]))
 
     def test_source_scope_and_row_unit_geography_are_verified(self):
         base = source(); row = evidence(base)
@@ -217,7 +245,8 @@ class EvidenceCompletenessDiagnosticsTests(unittest.TestCase):
         result = build(sources=(s1, s2, s3), rows=(confirmed, claim, invalid),
             temporal=eligible("confirmed", "claim", "invalid"), count=2)
         self.assertEqual(result["qualification"], {
-            "persisted_evidence_count": 3, "citation_valid_evidence_count": 2,
+            "persisted_evidence_count": 3, "coverage_basis": "current_information_need",
+            "citation_valid_evidence_count": 2,
             "temporally_eligible_evidence_count": 2, "numeric_binding_verified_evidence_count": 1,
             "confirmed_observation_count": 1, "independent_source_count": 2,
             "rejection_reason_counts": {"invalid_citation": 1, "numeric_binding_unverified": 1}})

@@ -1,5 +1,6 @@
 """Validate classified Finding authority without executing providers."""
 from application.analysis.derivations import dependency_authority, validate_deterministic_derivation
+from application.evidence.temporal_scope import qualify_evidence_with_temporal_decisions
 from application.ports.analysis_ports import FindingCandidate
 from domain.planning.derivation import InformationNeedKind as Kind
 
@@ -27,6 +28,10 @@ def supports_need(finding,need,*,project_id,design,findings,evidence_by_id,brief
                 return False
         scope=dict(design=design,project_id=project_id,workflow_run_id=finding.workflow_run_id,
             allowed_runs=tuple({e.workflow_run_id for e in evidence_by_id.values()}),source_repository=source_repository)
+        temporal=qualify_evidence_with_temporal_decisions(
+            design=design,evidence=tuple(evidence_by_id.values()),brief=brief,
+            source_repository=source_repository,
+        )
         checked_deps,inputs=dependency_authority(need,deps,tuple(evidence_by_id.values()),brief=brief,**scope)
         if {f.id for f in checked_deps}!=set(proof["dependency_finding_ids"]) or {e.id for e in inputs}!=set(finding.evidence_refs):
             return False
@@ -39,7 +44,10 @@ def supports_need(finding,need,*,project_id,design,findings,evidence_by_id,brief
             candidate=FindingCandidate(finding.statement,finding.rationale,finding.evidence_refs,
                 finding.research_question_refs,finding.information_need_refs,finding.finding_type.value,
                 finding.confidence,{k:v for k,v in finding.metadata.items() if k!="validation_status"})
-            validate_deterministic_derivation(candidate,need,inputs,checked_deps,brief=brief,**scope)
+            validate_deterministic_derivation(
+                candidate,need,inputs,checked_deps,brief=brief,
+                temporal_decisions=temporal.decisions,**scope,
+            )
             return True
         if proof.get("validation_method")!="semantic-entailment-v1":
             return False

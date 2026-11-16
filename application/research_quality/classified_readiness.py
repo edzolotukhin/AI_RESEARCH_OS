@@ -24,7 +24,7 @@ def output_obligations(design):
         for n in design.information_needs if n.kind==Kind.OUTPUT)
 
 
-def align_readiness(design,evidence,result,source_repository):
+def align_readiness(design,evidence,result,source_repository,temporal_decisions):
     if not classified(design):
         return result
     order=validate_dependency_graph(design)
@@ -98,7 +98,10 @@ def align_readiness(design,evidence,result,source_repository):
                     raise DerivationRefused("source_repository_unavailable")
                 if any(next(n for n in design.information_needs if n.id==ref).kind!=Kind.ACQUIRED for ref in need.depends_on_information_need_ids):
                     raise DerivationRefused("calculation_requires_acquired_observation_series")
-                values,_=observed_series(need,inputs,design=design,source_repository=source_repository)
+                values,_=observed_series(
+                    need,inputs,design=design,source_repository=source_repository,
+                    temporal_decisions=temporal_decisions,
+                )
                 starts=need.derivation.required_periods[:-1] if need.derivation.operation_type.value.startswith("YEAR_OVER_YEAR") else need.derivation.required_periods[:1]
                 if need.derivation.operation_type.value.endswith("PERCENT_CHANGE") and any(values[p]==0 for p in starts):
                     raise DerivationRefused("zero_denominator")
@@ -124,9 +127,12 @@ class ClassifiedReadinessEvaluator:
         self.inner=inner
         self.sources=source_repository
 
-    def evaluate(self,*,design,evidence):
+    def evaluate(self,*,design,evidence,temporal_decisions=None):
         result=self.inner.evaluate(design=acquired_view(design),evidence=evidence)
-        return align_readiness(design,evidence,result,self.sources)
+        return align_readiness(
+            design,evidence,result,self.sources,
+            temporal_decisions or {},
+        )
 
 
 def wrap_evaluator(evaluator,source_repository):

@@ -8,6 +8,7 @@ import re
 from typing import Any, Mapping, Sequence
 
 from application.evidence.citation_integrity import citation_is_valid
+from application.evidence.semantic_assignment import semantic_assignment
 from application.analysis.numeric_integrity import (
     NumericIntegrityError,
     NumericObservationRequirements,
@@ -18,6 +19,7 @@ from application.research_quality.deterministic_sufficiency_evaluator import (
     _deduplicate_evidence, _independent_lineages,
 )
 from domain.planning.research_design import EvidenceCoverageContract
+from domain.planning.derivation import InformationNeedKind
 
 
 DIAGNOSTIC_VERSION = "evidence_coverage_diagnostics_v1"
@@ -33,6 +35,7 @@ _REJECTIONS = {"invalid_citation", "temporal_out_of_period", "temporal_unresolve
 
 def build_evidence_coverage_diagnostics(
     *, information_need_id: str, workflow_run_id: str, research_design_id: str,
+    information_need_kind: InformationNeedKind | str,
     research_subject_id: str | None, research_subject_fingerprint: str | None,
     allowed_dependency_information_need_ids: Sequence[str],
     required_numeric_unit: str | None,
@@ -49,9 +52,24 @@ def build_evidence_coverage_diagnostics(
     subject_id = str(research_subject_id or "").strip()
     subject_fingerprint = str(research_subject_fingerprint or "").strip()
     numeric_unit = str(required_numeric_unit or "").strip()
-    allowed_assignment_needs = tuple(dict.fromkeys((need_id, *(
-        str(value).strip() for value in allowed_dependency_information_need_ids if str(value).strip()
-    ))))
+    dependencies = tuple(dict.fromkeys(
+        str(value).strip() for value in allowed_dependency_information_need_ids
+        if str(value).strip()
+    ))
+    try:
+        need_kind = InformationNeedKind(information_need_kind)
+    except (TypeError, ValueError):
+        return _unavailable(need_id, "information_need_kind_invalid")
+    if need_kind == InformationNeedKind.ACQUIRED:
+        if dependencies:
+            return _unavailable(need_id, "dependency_context_inconsistent")
+        allowed_assignment_needs = (need_id,)
+    elif need_kind == InformationNeedKind.DERIVED:
+        if not dependencies or need_id in dependencies:
+            return _unavailable(need_id, "dependency_context_inconsistent")
+        allowed_assignment_needs = dependencies
+    else:
+        return _unavailable(need_id, "numeric_coverage_not_applicable")
     if (not need_id or not run_id or not design_id or not subject_id or not subject_fingerprint or not numeric_unit
             or not isinstance(coverage_contract, EvidenceCoverageContract)):
         return _unavailable(need_id, "invalid_input")
@@ -70,8 +88,11 @@ def build_evidence_coverage_diagnostics(
     if not all(evidence_ids) or len(evidence_ids) != len(set(evidence_ids)):
         return _unavailable(need_id, "evidence_collection_inconsistent")
     source_by_id = dict(zip(source_ids, sources))
+    relevant_need_ids = set(allowed_assignment_needs)
     in_scope = sorted(
-        (item for item in evidence if need_id in tuple(getattr(item, "information_need_refs", ()))),
+        (item for item in evidence if relevant_need_ids.intersection(
+            tuple(getattr(item, "information_need_refs", ()))
+        )),
         key=lambda item: str(getattr(item, "id", "")),
     )
     if any(str(getattr(item, "source_id", "")) not in source_by_id for item in in_scope):
@@ -112,7 +133,14 @@ def build_evidence_coverage_diagnostics(
             reason = "invalid_citation"
         else:
             citation_valid.append(item)
-            temporal = str(temporal_qualification_by_evidence_and_need.get((str(item.id), need_id), "")).strip()
+            assignment = semantic_assignment(item)
+            assignment_need = (
+                str(assignment.get("information_need_id", ""))
+                if assignment is not None else ""
+            )
+            temporal = str(temporal_qualification_by_evidence_and_need.get(
+                (str(item.id), assignment_need), "",
+            )).strip()
             if temporal in _TEMPORAL_OUT:
                 reason = "temporal_out_of_period"
             elif temporal == "applicable_satisfied" or (temporal == "not_applicable" and metadata.get("observation_period") in (None, "")):
@@ -147,7 +175,7 @@ def build_evidence_coverage_diagnostics(
                     bucket["unknown"] = True
 
     unique_temporal, _ = _deduplicate_evidence(list(temporal_eligible))
-    if readiness["evidence_count"] != len(unique_temporal):
+    if need_kind == InformationNeedKind.ACQUIRED and readiness["evidence_count"] != len(unique_temporal):
         return _unavailable(need_id, "readiness_evidence_count_mismatch")
     independent, _ = _independent_lineages(unique_temporal)
     rows = []
@@ -197,6 +225,7 @@ def build_evidence_coverage_diagnostics(
                          "required_observation_count": len(coverage_contract.required_observations),
                          "minimum_independent_sources": coverage_contract.minimum_independent_sources},
         "qualification": {"persisted_evidence_count": len(in_scope),
+                          "coverage_basis": ("current_information_need" if need_kind == InformationNeedKind.ACQUIRED else "declared_dependencies"),
                           "citation_valid_evidence_count": len(citation_valid),
                           "temporally_eligible_evidence_count": len(unique_temporal),
                           "numeric_binding_verified_evidence_count": len(numeric_verified),

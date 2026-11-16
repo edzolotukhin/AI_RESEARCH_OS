@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from domain.evidence.evidence import Evidence
 from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
@@ -36,6 +36,7 @@ def reconcile_terminal_readiness(
     cache_payload: dict | None,
     max_evidence_items: int = DEFAULT_MAX_EVIDENCE_ITEMS,
     source_repository=None,
+    temporal_decisions: Mapping[tuple[str, str], str] | None = None,
 ) -> ResearchReadinessResult:
     """Build a truthful terminal snapshot without semantic or external calls.
 
@@ -47,8 +48,11 @@ def reconcile_terminal_readiness(
     from application.research_quality.classified_readiness import classified, acquired_view, align_readiness
     if classified(design):
         acquired=reconcile_terminal_readiness(design=acquired_view(design),evidence=evidence,previous=previous,
-            cache_payload=cache_payload,max_evidence_items=max_evidence_items,source_repository=source_repository)
-        return align_readiness(design,evidence,acquired,source_repository)
+            cache_payload=cache_payload,max_evidence_items=max_evidence_items,source_repository=source_repository,
+            temporal_decisions=temporal_decisions)
+        return align_readiness(
+            design,evidence,acquired,source_repository,temporal_decisions or {},
+        )
     signals_by_need = {
         item.information_need_id: item
         for item in DeterministicSufficiencyEvaluator().evaluate(
