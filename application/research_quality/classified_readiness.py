@@ -5,6 +5,10 @@ from domain.research_quality.information_need_assessment import InformationNeedA
 from domain.research_quality.sufficiency_status import SufficiencyStatus as Status
 from domain.research_quality.gap_type import GapType
 from application.analysis.derivations import observed_series, DerivationRefused, same
+from application.analysis.numeric_integrity import (
+    is_numeric_acquired_need,
+    project_numeric_evidence_for_design,
+)
 from application.research_quality.readiness_aggregation import build_research_readiness_assessment, build_research_readiness_result
 
 
@@ -24,8 +28,10 @@ def output_obligations(design):
         for n in design.information_needs if n.kind==Kind.OUTPUT)
 
 
-def align_readiness(design,evidence,result,source_repository,temporal_decisions):
-    if not classified(design):
+def align_readiness(design,evidence,result,source_repository,temporal_decisions,numeric_qualifications=None):
+    if not classified(design) and not any(
+        is_numeric_acquired_need(need) for need in design.information_needs
+    ):
         return result
     order=validate_dependency_graph(design)
     previous={n.information_need_id:n for rq in result.research_question_assessments for n in rq.information_need_assessments}
@@ -43,6 +49,15 @@ def align_readiness(design,evidence,result,source_repository,temporal_decisions)
             if assessment.contradictions:
                 issues.append("conflicting_evidence")
             coverage=need.evidence_coverage
+            numeric=(numeric_qualifications or {}).get(need.id)
+            if is_numeric_acquired_need(need):
+                if numeric is None or not numeric.available:
+                    issues.append("numeric_requirements_unavailable")
+                else:
+                    if numeric.conflicting_periods:
+                        issues.append("conflicting_numeric_observations")
+                    if numeric.missing_periods:
+                        issues.append("missing_required_numeric_periods")
             geography=need.geography or (coverage.geography if coverage else "")
             if geography and (not items or any(not same(e.metadata.get("geography",""),geography) for e in items)):
                 issues.append("geography_unresolved_or_conflicting")
@@ -128,10 +143,17 @@ class ClassifiedReadinessEvaluator:
         self.sources=source_repository
 
     def evaluate(self,*,design,evidence,temporal_decisions=None):
+        decisions=temporal_decisions or {}
+        allowed_runs=tuple(sorted({item.workflow_run_id for item in evidence}))
+        projection=project_numeric_evidence_for_design(
+            design=design,evidence=evidence,source_repository=self.sources,
+            temporal_decisions=decisions,allowed_workflow_run_ids=allowed_runs,
+        )
+        evidence=projection.evidence
         result=self.inner.evaluate(design=acquired_view(design),evidence=evidence)
         return align_readiness(
             design,evidence,result,self.sources,
-            temporal_decisions or {},
+            decisions,projection.qualifications,
         )
 
 

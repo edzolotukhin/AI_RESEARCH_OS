@@ -5,12 +5,21 @@ from application.analysis.numeric_integrity import (
     NumericIntegrityError,
     NumericObservationRequirements,
     evaluate_numeric_series,
+    qualify_numeric_information_need,
     validate_numeric_observation,
 )
 from application.analysis import derivations
 from application.research_quality import evidence_completeness_diagnostics
 from tests.application.research_quality.test_evidence_completeness_diagnostics import (
     DESIGN, NEED, RUN, SUBJECT, SUBJECT_FINGERPRINT, evidence, source,
+)
+from domain.planning.evidence_expectation import EvidenceExpectation
+from domain.planning.evidence_nature import EvidenceNature
+from domain.planning.research_design import (
+    EvidenceCoverageContract, InformationNeed, ResearchDesign, ResearchQuestion,
+)
+from domain.planning.research_subject import (
+    LexicalRepresentation, ResearchSubject, SubjectResolutionStatus,
 )
 
 
@@ -128,6 +137,131 @@ class NumericSeriesIntegrityTests(unittest.TestCase):
                 self.assertEqual(result.conflicting_periods, ())
                 self.assertNotIn("2019", result.values)
                 self.assertEqual(len(result.observations_by_scope), 2)
+
+
+class CanonicalNumericQualificationTests(unittest.TestCase):
+    def design(self, *, periods=("2019",), unit="persons"):
+        subject = ResearchSubject(
+            SUBJECT, "Population", "en", ("population",),
+            (LexicalRepresentation(
+                "population-en", "en", "Population", ("population",),
+                ("population",), "fixture", "approved",
+            ),),
+            resolution_status=SubjectResolutionStatus.RESOLVED,
+        )
+        need = InformationNeed(
+            NEED, "rq", "Population", geography="Ukraine",
+            evidence_expectation=EvidenceExpectation(
+                EvidenceNature.QUANTITATIVE,
+                requires_quantitative_evidence=True,
+            ),
+            evidence_coverage=EvidenceCoverageContract(
+                required_metric="Population", required_unit=unit,
+                required_periods=periods, geography="Ukraine",
+            ),
+        )
+        return ResearchDesign(DESIGN, (ResearchQuestion("rq", "Population"),),
+            (need,), research_subject=subject)
+
+    def qualify(self, sources, rows, *, design=None, temporal=None):
+        design = design or self.design()
+        source_by_id = {item.id: item for item in sources}
+        class Repository:
+            @staticmethod
+            def get_by_id(identifier):
+                return source_by_id.get(identifier)
+        repository = Repository()
+        fixed = []
+        for item in rows:
+            assignment = dict(item.metadata["semantic_assignment"])
+            if (assignment.get("subject_id") == SUBJECT
+                    and assignment.get("subject_fingerprint") == SUBJECT_FINGERPRINT):
+                assignment.update(
+                    subject_id=design.research_subject.subject_id,
+                    subject_fingerprint=design.research_subject.semantic_fingerprint,
+                )
+            fixed.append(replace(item, metadata={
+                **item.metadata, "semantic_assignment": assignment,
+            }))
+        decisions = temporal if temporal is not None else {
+            (item.id, NEED): "applicable_satisfied" for item in fixed
+        }
+        return qualify_numeric_information_need(
+            design=design, information_need=design.information_needs[0],
+            evidence=fixed, source_repository=repository,
+            temporal_decisions=decisions, allowed_workflow_run_ids=(RUN,),
+        )
+
+    def test_invalid_authority_and_temporal_inputs_are_rejected(self):
+        item_source = source()
+        base = evidence(item_source)
+        cases = (
+            replace(base, source_locator={**base.source_locator, "structured": {
+                **base.source_locator["structured"], "terminal_resource_key": "forged",
+            }}),
+            evidence(item_source, subject_id="wrong"),
+            evidence(item_source, geography="Poland"),
+            evidence(item_source, period="2021"),
+        )
+        for item in cases:
+            with self.subTest(item=item):
+                result = self.qualify((item_source,), (item,))
+                self.assertFalse(result.accepted_evidence)
+                self.assertTrue(result.rejection_reason_counts)
+        result = self.qualify((item_source,), (base,), temporal={})
+        self.assertEqual(result.rejection_reason_counts, {"numeric_temporal_ineligible": 1})
+
+    def test_missing_wrong_and_legacy_unit_fail_closed(self):
+        item_source = source(); row = evidence(item_source)
+        wrong = self.qualify((item_source,), (row,), design=self.design(unit="thousands"))
+        self.assertEqual(wrong.rejection_reason_counts,
+            {"numeric_unit_or_geography_binding_invalid": 1})
+        payload = self.design().to_dict()
+        del payload["information_needs"][0]["evidence_coverage"]["required_unit"]
+        legacy = ResearchDesign.from_dict(payload)
+        unavailable = self.qualify((item_source,), (row,), design=legacy)
+        self.assertFalse(unavailable.available)
+        self.assertEqual(unavailable.rejection_reason_counts,
+            {"numeric_requirements_unavailable": 1})
+
+    def test_conflicts_duplicates_periods_and_lineage_are_deterministic(self):
+        first = source("s1", numeric="100")
+        second = source("s2", numeric="101")
+        conflict = self.qualify(
+            (first, second),
+            (evidence(first, identifier="e1", numeric="100"),
+             evidence(second, identifier="e2", numeric="101")),
+        )
+        self.assertEqual(conflict.conflicting_periods, ("2019",))
+        self.assertFalse(conflict.accepted_evidence)
+
+        second = source("s2", numeric="100")
+        duplicates = self.qualify(
+            (first, second),
+            (evidence(first, identifier="e1", numeric="100", lineage={"status":"established","origin_id":"mirror"}),
+             evidence(second, identifier="e2", numeric="100", lineage={"status":"established","origin_id":"mirror"})),
+        )
+        self.assertEqual(duplicates.compatible_duplicate_periods, ("2019",))
+        self.assertEqual(duplicates.established_lineage_ids, ("mirror",))
+        self.assertEqual(len(duplicates.accepted_evidence), 2)
+
+    def test_valid_independent_series_and_missing_periods(self):
+        first = source("s1", "2019", numeric="100")
+        second = source("s2", "2020", numeric="90")
+        design = self.design(periods=("2019", "2020"))
+        complete = self.qualify(
+            (first, second),
+            (evidence(first, "2019", identifier="e1", numeric="100"),
+             evidence(second, "2020", identifier="e2", numeric="90")),
+            design=design,
+        )
+        self.assertEqual(complete.qualified_periods, ("2019", "2020"))
+        self.assertEqual(complete.missing_periods, ())
+        incomplete = self.qualify(
+            (first,), (evidence(first, "2019", identifier="e1", numeric="100"),),
+            design=design,
+        )
+        self.assertEqual(incomplete.missing_periods, ("2020",))
 
 
 if __name__ == "__main__":

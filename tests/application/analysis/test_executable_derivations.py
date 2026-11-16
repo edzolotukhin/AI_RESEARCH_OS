@@ -175,6 +175,13 @@ class ExecutableDerivationTests(unittest.TestCase):
         other=replace(workbook_source(stream.getvalue()),id="other",url="https://example.org/other.xlsx",canonical_url="https://example.org/other.xlsx")
         sources.create(other)
         build_evidence_extraction_service(config=ApplicationConfig(evidence_extractor="llm"),overrides=ApplicationOverrides(),evidence_repository=evidence,source_repository=sources,llm_client=Mock()).extract_for_source_ids(context,(other.id,),allow_empty=True)
+        from application.research_quality.research_readiness_service import ResearchReadinessService
+        from application.research_quality.deterministic_research_sufficiency_evaluator import DeterministicResearchSufficiencyEvaluator
+        readiness=ResearchReadinessService(
+            evaluator=DeterministicResearchSufficiencyEvaluator(),
+            evidence_repository=evidence,source_repository=sources,
+        ).evaluate_for_context(context)
+        self.assertNotIn("in-pop",readiness.analysis_eligible_information_need_ids)
         analysis.analyze_for_context(context)
         assessments=context.read_shared("analysis_derivations")["assessments"]
         self.assertTrue(all(a["status"]=="insufficient" and a["reason"].startswith("conflicting_values") for a in assessments))

@@ -5,11 +5,9 @@ from decimal import Decimal, localcontext, ROUND_HALF_EVEN
 from application.ports.analysis_ports import FindingCandidate
 from application.analysis.provenance_validation import validate_finding_candidate
 from application.evidence.temporal_scope import qualifying_evidence
-from application.evidence.semantic_assignment import semantic_assignment
 from application.analysis.numeric_integrity import (
-    NumericIntegrityError,
-    NumericObservationRequirements,
     evaluate_numeric_series,
+    qualify_numeric_information_need,
     same,
     validate_numeric_observation,
 )
@@ -48,40 +46,29 @@ def dependency_authority(need, findings, evidence, *, design, project_id, workfl
 
 def observed_series(need, inputs, *, design, source_repository, temporal_decisions):
     spec=need.derivation
-    subject=design.research_subject
-    if subject is None:
-        raise DerivationRefused("unvalidated_numeric_semantics")
-    requirements=NumericObservationRequirements(
-        allowed_information_need_ids=tuple(need.depends_on_information_need_ids),
-        subject_id=subject.subject_id,
-        subject_fingerprint=subject.semantic_fingerprint,
-        research_design_id=design.id,
-        allowed_workflow_run_ids=tuple(sorted({e.workflow_run_id for e in inputs})),
-        metric=spec.metric,
-        unit=spec.input_unit,
-        geography=spec.geography,
-        required_periods=tuple(spec.required_periods),
-    )
     observations=[]
-    for evidence in inputs:
-        if not evidence.metadata.get("structured_table"):
-            continue
-        if evidence.metadata.get("observation_period") not in spec.required_periods:
-            continue
-        source=source_repository.get_by_id(evidence.source_id)
-        assignment=semantic_assignment(evidence)
-        assignment_need=(
-            str(assignment.get("information_need_id", ""))
-            if assignment is not None else ""
+    need_by_id={item.id:item for item in design.information_needs}
+    allowed_runs=tuple(sorted({e.workflow_run_id for e in inputs}))
+    for dependency_id in need.depends_on_information_need_ids:
+        dependency=need_by_id[dependency_id]
+        coverage=dependency.evidence_coverage
+        if (coverage is None or not same(coverage.required_metric,spec.metric)
+                or not same(coverage.required_unit,spec.input_unit)
+                or not same(coverage.geography or dependency.geography,spec.geography)
+                or tuple(coverage.required_periods)!=tuple(spec.required_periods)):
+            raise DerivationRefused("numeric_dependency_contract_mismatch")
+        result=qualify_numeric_information_need(
+            design=design,information_need=dependency,evidence=inputs,
+            source_repository=source_repository,temporal_decisions=temporal_decisions,
+            allowed_workflow_run_ids=allowed_runs,
         )
-        temporal_decision=temporal_decisions.get((evidence.id,assignment_need))
-        try:
-            observations.append(validate_numeric_observation(
-                evidence,source,requirements,
-                temporal_eligible=(temporal_decision=="applicable_satisfied"),
-            ))
-        except NumericIntegrityError as exc:
-            raise DerivationRefused(exc.code) from exc
+        if not result.available:
+            raise DerivationRefused("numeric_requirements_unavailable")
+        if result.conflicting_periods:
+            raise DerivationRefused("conflicting_values:"+result.conflicting_periods[0])
+        if result.missing_periods:
+            raise DerivationRefused("missing_required_observation")
+        observations.extend(result.observations)
     series=evaluate_numeric_series(observations)
     if series.conflicting_periods:
         raise DerivationRefused("conflicting_values:"+series.conflicting_periods[0])

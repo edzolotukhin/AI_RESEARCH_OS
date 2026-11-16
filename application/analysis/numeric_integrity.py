@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 import re
+from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
 from application.evidence.semantic_assignment import semantic_assignment
+from domain.planning.derivation import InformationNeedKind
+from domain.planning.evidence_nature import EvidenceNature
+
+
+MAX_NUMERIC_QUALIFICATION_ITEMS = 100
 
 
 @dataclass(frozen=True)
@@ -54,10 +61,220 @@ class NumericSeriesIntegrity:
     conflicting_periods: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class NumericQualificationResult:
+    """Bounded F1/F2 result for one authoritative numeric ACQUIRED need."""
+
+    information_need_id: str
+    available: bool
+    accepted_evidence: tuple[Any, ...]
+    observations: tuple[ValidatedNumericObservation, ...]
+    rejections: tuple[tuple[str, str], ...]
+    rejection_reason_counts: Mapping[str, int]
+    qualified_periods: tuple[str, ...]
+    missing_periods: tuple[str, ...]
+    compatible_duplicate_periods: tuple[str, ...]
+    conflicting_periods: tuple[str, ...]
+    established_lineage_ids: tuple[str, ...]
+    unknown_lineage_count: int
+    truncated: bool = False
+
+
+@dataclass(frozen=True)
+class NumericEvidenceProjection:
+    evidence: tuple[Any, ...]
+    qualifications: Mapping[str, NumericQualificationResult]
+
+
 class NumericIntegrityError(ValueError):
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+
+
+def is_numeric_acquired_need(need: Any) -> bool:
+    expectation = getattr(need, "evidence_expectation", None)
+    return bool(
+        getattr(need, "kind", None) == InformationNeedKind.ACQUIRED
+        and expectation is not None
+        and (
+            expectation.nature == EvidenceNature.QUANTITATIVE
+            or expectation.requires_quantitative_evidence
+        )
+    )
+
+
+def qualify_numeric_information_need(
+    *,
+    design: Any,
+    information_need: Any,
+    evidence: Sequence[Any],
+    source_repository: Any,
+    temporal_decisions: Mapping[tuple[str, str], str],
+    allowed_workflow_run_ids: Sequence[str],
+    max_items: int = MAX_NUMERIC_QUALIFICATION_ITEMS,
+) -> NumericQualificationResult:
+    """Apply canonical F1 then F2 using requirements owned by Research Design."""
+    need_id = str(getattr(information_need, "id", ""))
+    mapped = tuple(sorted(
+        (item for item in evidence if need_id in tuple(item.information_need_refs)),
+        key=lambda item: item.id,
+    ))
+    coverage = getattr(information_need, "evidence_coverage", None)
+    subject = getattr(design, "research_subject", None)
+    required_periods = tuple(getattr(coverage, "required_periods", ()) or ())
+    required_metric = str(getattr(coverage, "required_metric", "") or "").strip()
+    required_unit = str(getattr(coverage, "required_unit", "") or "").strip()
+    required_geography = str(
+        getattr(coverage, "geography", "")
+        or getattr(information_need, "geography", "")
+        or ""
+    ).strip()
+    allowed_runs = tuple(dict.fromkeys(str(item) for item in allowed_workflow_run_ids if str(item)))
+    requirements_available = bool(
+        is_numeric_acquired_need(information_need)
+        and coverage is not None
+        and subject is not None
+        and required_metric
+        and required_unit
+        and required_geography
+        and required_periods
+        and allowed_runs
+        and source_repository is not None
+    )
+    if not requirements_available:
+        return _numeric_unavailable(need_id, mapped, "numeric_requirements_unavailable")
+    if len(mapped) > max_items:
+        return _numeric_unavailable(
+            need_id, mapped, "numeric_input_bound_exceeded", truncated=True,
+        )
+
+    requirements = NumericObservationRequirements(
+        allowed_information_need_ids=(need_id,),
+        subject_id=subject.subject_id,
+        subject_fingerprint=subject.semantic_fingerprint,
+        research_design_id=design.id,
+        allowed_workflow_run_ids=allowed_runs,
+        metric=required_metric,
+        unit=required_unit,
+        geography=required_geography,
+        required_periods=required_periods,
+    )
+    observations: list[ValidatedNumericObservation] = []
+    evidence_by_id: dict[str, Any] = {}
+    rejections: Counter[str] = Counter()
+    rejected_items: list[tuple[str, str]] = []
+    for item in mapped:
+        assignment = semantic_assignment(item)
+        assignment_need = str(assignment.get("information_need_id", "")) if assignment else ""
+        temporal_eligible = (
+            temporal_decisions.get((item.id, assignment_need))
+            == "applicable_satisfied"
+        )
+        try:
+            source = source_repository.get_by_id(item.source_id)
+            observation = validate_numeric_observation(
+                item, source, requirements, temporal_eligible=temporal_eligible,
+            )
+        except (NumericIntegrityError, KeyError, LookupError, AttributeError) as exc:
+            code = exc.code if isinstance(exc, NumericIntegrityError) else "numeric_source_missing"
+            rejections[code] += 1
+            rejected_items.append((item.id, code))
+            continue
+        observations.append(observation)
+        evidence_by_id[item.id] = item
+
+    series = evaluate_numeric_series(observations)
+    conflicting = set(series.conflicting_periods)
+    accepted_observations = tuple(
+        item for item in observations if item.period not in conflicting
+    )
+    accepted_ids = {item.evidence_id for item in accepted_observations}
+    for period in series.conflicting_periods:
+        for item in series.observations_by_period.get(period, ()):
+            rejections["conflicting_numeric_observations"] += 1
+            rejected_items.append((item.evidence_id, "conflicting_numeric_observations"))
+    accepted_evidence = tuple(
+        evidence_by_id[item_id] for item_id in sorted(accepted_ids)
+    )
+    established: set[str] = set()
+    unknown = 0
+    from application.evidence.lineage_identity import canonical_lineage_identity
+    for item in accepted_evidence:
+        identity = canonical_lineage_identity(item.metadata.get("data_lineage"))
+        if identity:
+            established.add(identity)
+        else:
+            unknown += 1
+    qualified_periods = tuple(
+        period for period in required_periods if period in series.values
+    )
+    return NumericQualificationResult(
+        information_need_id=need_id,
+        available=True,
+        accepted_evidence=accepted_evidence,
+        observations=accepted_observations,
+        rejections=tuple(sorted(rejected_items)),
+        rejection_reason_counts=MappingProxyType(dict(sorted(rejections.items()))),
+        qualified_periods=qualified_periods,
+        missing_periods=tuple(period for period in required_periods if period not in series.values),
+        compatible_duplicate_periods=series.compatible_duplicate_periods,
+        conflicting_periods=series.conflicting_periods,
+        established_lineage_ids=tuple(sorted(established)),
+        unknown_lineage_count=unknown,
+    )
+
+
+def project_numeric_evidence_for_design(
+    *, design: Any, evidence: Sequence[Any], source_repository: Any,
+    temporal_decisions: Mapping[tuple[str, str], str],
+    allowed_workflow_run_ids: Sequence[str],
+) -> NumericEvidenceProjection:
+    """Remove only rejected numeric need refs; preserve every nonnumeric ref."""
+    numeric_needs = tuple(
+        need for need in design.information_needs if is_numeric_acquired_need(need)
+    )
+    results = {
+        need.id: qualify_numeric_information_need(
+            design=design, information_need=need, evidence=evidence,
+            source_repository=source_repository, temporal_decisions=temporal_decisions,
+            allowed_workflow_run_ids=allowed_workflow_run_ids,
+        )
+        for need in numeric_needs
+    }
+    accepted = {
+        need_id: {item.id for item in result.accepted_evidence}
+        for need_id, result in results.items()
+    }
+    projected = []
+    for item in evidence:
+        refs = tuple(
+            ref for ref in item.information_need_refs
+            if ref not in results or item.id in accepted[ref]
+        )
+        if refs:
+            projected.append(item if refs == item.information_need_refs else replace(
+                item, information_need_refs=refs,
+            ))
+    return NumericEvidenceProjection(
+        evidence=tuple(projected),
+        qualifications=MappingProxyType(results),
+    )
+
+
+def _numeric_unavailable(
+    need_id: str, evidence: Sequence[Any], reason: str, *, truncated: bool = False,
+) -> NumericQualificationResult:
+    count = len(tuple(evidence))
+    return NumericQualificationResult(
+        information_need_id=need_id, available=False, accepted_evidence=(),
+        observations=(),
+        rejections=tuple((item.id, reason) for item in tuple(evidence)[:MAX_NUMERIC_QUALIFICATION_ITEMS]),
+        rejection_reason_counts=MappingProxyType({reason: count or 1}),
+        qualified_periods=(), missing_periods=(), compatible_duplicate_periods=(),
+        conflicting_periods=(), established_lineage_ids=(), unknown_lineage_count=0,
+        truncated=truncated,
+    )
 
 
 def validate_numeric_observation(
