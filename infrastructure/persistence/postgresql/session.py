@@ -27,6 +27,9 @@ class DatabaseSessionFactory:
         self._active: ContextVar[Session | None] = ContextVar(
             f"postgresql_unit_of_work_{id(self)}", default=None,
         )
+        self._active_mode: ContextVar[str | None] = ContextVar(
+            f"postgresql_transaction_mode_{id(self)}", default=None,
+        )
         self._after_commit: ContextVar[list[Callable[[], None]] | None] = ContextVar(
             f"postgresql_after_commit_{id(self)}", default=None,
         )
@@ -62,6 +65,8 @@ class DatabaseSessionFactory:
         indivisible operation. A later Activity insert can use this session.
         """
         active = self._active.get()
+        if self._active_mode.get() == "consistent_read":
+            raise RuntimeError("activation cannot be nested inside consistent_read")
         if active is not None:
             yield active
             return
@@ -97,6 +102,8 @@ class DatabaseSessionFactory:
     def transaction(self) -> Iterator[Session]:
         """Share one commit for a new project and its first study."""
         active = self._active.get()
+        if self._active_mode.get() == "consistent_read":
+            raise RuntimeError("transaction cannot be nested inside consistent_read")
         if active is not None:
             yield active
             return
@@ -120,6 +127,51 @@ class DatabaseSessionFactory:
         if committed:
             for callback in callbacks:
                 callback()
+
+    @contextmanager
+    def consistent_read(self) -> Iterator[Session]:
+        """Run repository reads in one PostgreSQL repeatable-read snapshot.
+
+        This boundary is deliberately incompatible with an already active
+        transaction: silently reusing it could lose the isolation/read-only
+        guarantees promised by this API.
+        """
+        if self._active.get() is not None:
+            raise RuntimeError("consistent_read cannot be nested inside an active transaction")
+        connection = self._engine.connect()
+        transaction = None
+        session = None
+        token = None
+        mode_token = None
+        rolled_back = False
+        try:
+            connection = connection.execution_options(
+                isolation_level="REPEATABLE READ",
+            )
+            transaction = connection.begin()
+            connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+            session = self._session_factory(bind=connection)
+            token = self._active.set(session)
+            mode_token = self._active_mode.set("consistent_read")
+            yield session
+        except BaseException:
+            if transaction is not None and not rolled_back:
+                transaction.rollback()
+                rolled_back = True
+            raise
+        else:
+            transaction.rollback()
+            rolled_back = True
+        finally:
+            if transaction is not None and not rolled_back:
+                transaction.rollback()
+            if token is not None:
+                self._active.reset(token)
+            if mode_token is not None:
+                self._active_mode.reset(mode_token)
+            if session is not None:
+                session.close()
+            connection.close()
 
     def defer_until_commit(self, callback: Callable[[], None]) -> bool:
         callbacks = self._after_commit.get()
