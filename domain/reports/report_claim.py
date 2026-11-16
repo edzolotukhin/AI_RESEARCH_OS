@@ -241,6 +241,12 @@ class ReportClaim:
             raise ReportClaimContractError("v1/H3 ReportClaim cannot contain v2 lineage")
 
     def _validate_v2(self) -> None:
+        for name in (
+            "claim_id", "project_id", "source_workflow_run_id", "report_workflow_run_id",
+            "design_id", "kind", "proposition", "certainty", "direction", "status",
+            "contract_version", "version", "authority_digest", "claim_digest", "validated_at",
+        ):
+            _strict_v2_string(getattr(self, name), field=name)
         collections = (
             self.research_question_ids, self.information_need_ids, self.finding_ids,
             self.insight_ids, self.evidence_ids, self.source_ids, self.citation_ids,

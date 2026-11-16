@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import fields
 from types import SimpleNamespace
 import unittest
 
@@ -57,6 +58,22 @@ class ReportClaimV2ContractTests(unittest.TestCase):
         values["claim_digest"] = claim_digest_v2(draft)
         return ReportClaim(**values)
 
+    def direct_values(self) -> dict:
+        claim = self.claim()
+        return {item.name: getattr(claim, item.name) for item in fields(ReportClaim)}
+
+    def assert_direct_scalar_rejected(self, name: str, value) -> None:
+        values = self.direct_values()
+        values[name] = value
+        draft = SimpleNamespace(**values)
+        if name not in {"authority_digest", "claim_digest"}:
+            values["authority_digest"] = authority_digest_v2(draft)
+            draft.authority_digest = values["authority_digest"]
+        if name != "claim_digest":
+            values["claim_digest"] = claim_digest_v2(draft)
+        with self.assertRaises(ReportClaimContractError):
+            ReportClaim(**values)
+
     def assert_payload_rejected(self, mutate) -> None:
         payload = copy.deepcopy(self.claim().to_dict())
         mutate(payload)
@@ -75,6 +92,20 @@ class ReportClaimV2ContractTests(unittest.TestCase):
     def test_v2_canonical_round_trip(self) -> None:
         claim = self.claim()
         self.assertEqual(ReportClaim.from_dict(claim.to_dict()), claim)
+
+    def test_valid_v2_direct_construction_remains_supported(self) -> None:
+        self.assertEqual(self.claim().version, REPORT_CLAIM_V2_VERSION)
+
+    def test_direct_constructor_rejects_nonstring_v2_scalars(self) -> None:
+        names = (
+            "claim_id", "project_id", "source_workflow_run_id", "report_workflow_run_id",
+            "design_id", "kind", "proposition", "certainty", "direction", "status",
+            "contract_version", "version", "authority_digest", "claim_digest", "validated_at",
+        )
+        for name in names:
+            for value in (1, True, None):
+                with self.subTest(name=name, value=value):
+                    self.assert_direct_scalar_rejected(name, value)
 
     def test_reordered_maps_have_identical_digests(self) -> None:
         first, second = self.claim(), self.claim(reverse_maps=True)
