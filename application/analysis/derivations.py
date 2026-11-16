@@ -47,6 +47,7 @@ def dependency_authority(need, findings, evidence, *, design, project_id, workfl
 def observed_series(need, inputs, *, design, source_repository, temporal_decisions):
     spec=need.derivation
     observations=[]
+    accepted_evidence_by_id={}
     need_by_id={item.id:item for item in design.information_needs}
     allowed_runs=tuple(sorted({e.workflow_run_id for e in inputs}))
     for dependency_id in need.depends_on_information_need_ids:
@@ -69,6 +70,7 @@ def observed_series(need, inputs, *, design, source_repository, temporal_decisio
         if result.missing_periods:
             raise DerivationRefused("missing_required_observation")
         observations.extend(result.observations)
+        accepted_evidence_by_id.update({item.id:item for item in result.accepted_evidence})
     series=evaluate_numeric_series(observations)
     if series.conflicting_periods:
         raise DerivationRefused("conflicting_values:"+series.conflicting_periods[0])
@@ -81,17 +83,19 @@ def observed_series(need, inputs, *, design, source_repository, temporal_decisio
         "raw_checksum_kind":item.raw_checksum_kind,"content_revision":item.content_revision,
         "extraction_revision":item.extraction_revision,"cell":item.cell,"period":item.period}
         for period in spec.required_periods for item in series.observations_by_period[period]]
-    return dict(series.values),lineage
+    return dict(series.values),lineage,tuple(sorted(accepted_evidence_by_id))
 
 
 def calculate_candidates(need, inputs, dependencies, *, design, project_id, workflow_run_id, allowed_runs, source_repository, temporal_decisions):
     spec=need.derivation
     if any(next(n for n in design.information_needs if n.id==ref).kind!=InformationNeedKind.ACQUIRED for ref in need.depends_on_information_need_ids):
         raise DerivationRefused("calculation_requires_acquired_observation_series")
-    values,lineage=observed_series(
+    values,lineage,accepted_evidence_ids=observed_series(
         need,inputs,design=design,source_repository=source_repository,
         temporal_decisions=temporal_decisions,
     )
+    input_by_id={item.id:item for item in inputs}
+    accepted_inputs=tuple(input_by_id[item_id] for item_id in accepted_evidence_ids)
     periods=spec.required_periods
     pairs=list(zip(periods,periods[1:])) if spec.operation_type.value.startswith("YEAR_OVER_YEAR") else [(periods[0],periods[-1])]
     result=[]
@@ -107,16 +111,16 @@ def calculate_candidates(need, inputs, dependencies, *, design, project_id, work
         formula="(end - start) / start * 100" if percentage else "end - start"
         metadata={"version":spec.version,"operation_type":spec.operation_type.value,"contract":spec.to_dict(),
             "dependency_information_need_ids":list(need.depends_on_information_need_ids),
-            "dependency_finding_ids":[f.id for f in dependencies],"input_evidence_ids":[e.id for e in inputs],
+            "dependency_finding_ids":[f.id for f in dependencies],"input_evidence_ids":[e.id for e in accepted_inputs],
             "parameters":{"from_period":start,"to_period":end},"input_values":{p:str(values[p]) for p in periods},
             "preconditions":{"qualified_authority":True,"compatible_metric":True,"compatible_unit":True,"compatible_geography":True,"complete_periods":True,"no_conflicting_values":True},
             "formula":formula,"raw_result":str(raw),"rounded_result":str(rounded),"unit":unit,
             "metric":spec.metric,"geography":spec.geography,"rounding":{"decimal_places":spec.decimal_places,"mode":"ROUND_HALF_EVEN","precision":34},
             "source_revision_lineage":lineage,"validation_method":"deterministic-recompute-v1","validation_status":"validated"}
         candidate=FindingCandidate(statement=f"{spec.metric}: {end} versus {start}, {spec.operation_type.value.lower()} = {rounded} {unit} ({spec.geography}).",
-            rationale=f"Reproduced from qualified observations using {formula}.",evidence_refs=tuple(e.id for e in inputs),
+            rationale=f"Reproduced from qualified observations using {formula}.",evidence_refs=tuple(e.id for e in accepted_inputs),
             research_question_refs=(need.research_question_id,),information_need_refs=(need.id,),finding_type="trend",metadata={"derivation":metadata})
-        result.append(validate_finding_candidate(candidate,evidence_by_id={e.id:e for e in inputs},project_id=project_id,
+        result.append(validate_finding_candidate(candidate,evidence_by_id={e.id:e for e in accepted_inputs},project_id=project_id,
             workflow_run_id=workflow_run_id,research_design_id=design.id,design=design,allowed_workflow_run_ids=allowed_runs))
     return result
 

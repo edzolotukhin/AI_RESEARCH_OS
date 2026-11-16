@@ -263,6 +263,23 @@ class CanonicalNumericQualificationTests(unittest.TestCase):
         )
         self.assertEqual(incomplete.missing_periods, ("2020",))
 
+    def test_more_than_one_hundred_evidence_fails_closed_without_partial_qualification(self):
+        item_source = source()
+        rows = tuple(
+            evidence(item_source, identifier=f"evidence-{index:03d}")
+            for index in range(101)
+        )
+
+        result = self.qualify((item_source,), rows)
+
+        self.assertFalse(result.available)
+        self.assertTrue(result.truncated)
+        self.assertEqual(result.accepted_evidence, ())
+        self.assertEqual(result.observations, ())
+        self.assertEqual(result.qualified_periods, ())
+        self.assertEqual(result.rejection_reason_counts,
+            {"numeric_input_bound_exceeded": 101})
+
 
 if __name__ == "__main__":
     unittest.main()

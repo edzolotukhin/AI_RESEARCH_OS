@@ -164,6 +164,49 @@ class ExecutableDerivationTests(unittest.TestCase):
             calculate_candidates(need,inputs,deps,
                 temporal_decisions={(item.id,"other"): "applicable_satisfied" for item in inputs},**scope)
 
+    def test_derived_provenance_contains_only_canonically_accepted_evidence(self):
+        context,analysis,findings,evidence,sources,provider=setup_memory()
+        analysis.analyze_for_context(context)
+        design=context.workflow_template.research_design_snapshot
+        need=design.information_needs[1]
+        valid=tuple(evidence.list_for_project("project"))
+        rejected=replace(valid[0],id="rejected-fingerprint",metadata={
+            **valid[0].metadata,
+            "semantic_assignment":{
+                **valid[0].metadata["semantic_assignment"],
+                "subject_fingerprint":"incorrect-subject-fingerprint",
+            },
+        })
+        dependency=next(
+            item for item in findings.list_for_project("project")
+            if "in-pop" in item.information_need_refs
+        )
+        dependency=replace(dependency,evidence_refs=tuple(
+            sorted((*dependency.evidence_refs,rejected.id))
+        ))
+        scope=dict(design=design,project_id="project",workflow_run_id="run",
+            allowed_runs=("run",),source_repository=sources)
+        deps,inputs=dependency_authority(
+            need,(dependency,),(*valid,rejected),
+            brief=context.workflow_template.research_brief_snapshot,**scope,
+        )
+        self.assertIn(rejected.id,{item.id for item in inputs})
+        temporal={(item.id,"in-pop"):"applicable_satisfied" for item in inputs}
+
+        candidates=calculate_candidates(
+            need,inputs,deps,temporal_decisions=temporal,**scope,
+        )
+
+        accepted_ids=tuple(sorted(item.id for item in valid))
+        self.assertTrue(candidates)
+        for candidate in candidates:
+            self.assertEqual(candidate.evidence_refs,accepted_ids)
+            self.assertEqual(
+                tuple(candidate.metadata["derivation"]["input_evidence_ids"]),
+                accepted_ids,
+            )
+            self.assertNotIn(rejected.id,candidate.evidence_refs)
+
     def test_conflicting_confirmed_observations_refuse_arithmetic(self):
         context,analysis,findings,evidence,sources,provider=setup_memory()
         other=workbook_source()
