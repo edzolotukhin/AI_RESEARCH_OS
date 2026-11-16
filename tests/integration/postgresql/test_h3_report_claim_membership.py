@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import unittest
-from dataclasses import replace
+from dataclasses import fields, replace
+from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 import os
+import json
+from types import SimpleNamespace
 
 from alembic import command
 from alembic.config import Config
@@ -13,6 +16,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.pool import NullPool
 
 from application.ports.report_claim_repository import ReportClaimConflictError
+from application.report.claim_contract import authority_digest_v2, claim_digest_v2
 from domain.factories.project_factory import ProjectFactory
 from domain.reports.report import Report
 from infrastructure.persistence.postgresql.repositories.postgresql_project_repository import (
@@ -25,6 +29,8 @@ from infrastructure.persistence.postgresql.repositories.postgresql_report_reposi
     PostgreSQLReportRepository,
 )
 from tests.application.report.test_h3_claim_generation import _Fixture, _valid_response
+from tests.application.report.test_report_claim_contract import ReportClaimContractTests
+from tests.application.report.test_report_claim_v2_contract import ReportClaimV2ContractTests
 from application.report.h3_claim_generation import generate_h3_structural_claims
 from tests.integration.postgresql.helpers import (
     PostgreSQLIntegrationTestCase,
@@ -147,6 +153,27 @@ class PostgreSQLH3ReportClaimMembershipTests(PostgreSQLIntegrationTestCase):
         )
         return replace(result.claims[0], design_id="design-1")
 
+    def _v2_claim(self, claim_id: str):
+        source = ReportClaimV2ContractTests().claim()
+        values = {
+            item.name: getattr(source, item.name)
+            for item in fields(source)
+        }
+        values.update(
+            claim_id=claim_id,
+            project_id=self.project.id,
+            source_workflow_run_id="source-run",
+            report_workflow_run_id="report-run",
+            design_id="design-1",
+            authority_digest="",
+            claim_digest="",
+        )
+        draft = SimpleNamespace(**values)
+        values["authority_digest"] = authority_digest_v2(draft)
+        draft.authority_digest = values["authority_digest"]
+        values["claim_digest"] = claim_digest_v2(draft)
+        return source.__class__(**values)
+
     def test_h3_contract_and_revision_membership_round_trip(self) -> None:
         claim = self._claim()
         r1 = self._report("r1", 1)
@@ -160,6 +187,138 @@ class PostgreSQLH3ReportClaimMembershipTests(PostgreSQLIntegrationTestCase):
         with self.engine.connect() as conn:
             self.assertEqual(conn.execute(text("SELECT COUNT(*) FROM report_claims")).scalar_one(), 1)
             self.assertEqual(conn.execute(text("SELECT COUNT(*) FROM report_revision_claims")).scalar_one(), 2)
+
+    def test_mixed_claim_set_is_rejected_before_report_persistence(self) -> None:
+        h3_claim = self._claim()
+        v1_fixture = ReportClaimContractTests()
+        v1_fixture.setUp()
+        v1_claim = replace(
+            v1_fixture.claim(report_run="report-run"),
+            project_id=self.project.id,
+            source_workflow_run_id="source-run",
+            design_id="design-1",
+        )
+        report = replace(self._report("mixed-report", 1), metadata={})
+        with self.assertRaises(ReportClaimConflictError):
+            self.claims.create_with_report(report, (v1_claim, h3_claim))
+        with self.engine.connect() as connection:
+            self.assertEqual(connection.execute(text(
+                "SELECT COUNT(*) FROM reports WHERE id='mixed-report'"
+            )).scalar_one(), 0)
+            self.assertEqual(connection.execute(text(
+                "SELECT COUNT(*) FROM report_claims"
+            )).scalar_one(), 0)
+
+    def test_sequential_v1_then_v2_append_is_rejected_atomically(self) -> None:
+        v1_fixture = ReportClaimContractTests()
+        v1_fixture.setUp()
+        v1_claim = replace(
+            v1_fixture.claim(report_run="report-run"),
+            project_id=self.project.id,
+            source_workflow_run_id="source-run",
+            design_id="design-1",
+        )
+        v2_claim = self._v2_claim("sequential-v2")
+        report = replace(self._report("sequential-v1", 1), metadata={})
+        self.claims.create_with_report(report, (v1_claim,))
+        with self.assertRaises(ReportClaimConflictError):
+            self.claims.create_many((v2_claim,), report_id=report.id, report_revision=1)
+        self.assertEqual(len(self.claims.list_for_report(report.id, 1)), 1)
+
+    def test_sequential_v2_then_v1_append_is_rejected_atomically(self) -> None:
+        v1_fixture = ReportClaimContractTests()
+        v1_fixture.setUp()
+        v1_claim = replace(
+            v1_fixture.claim(report_run="report-run"),
+            project_id=self.project.id,
+            source_workflow_run_id="source-run",
+            design_id="design-1",
+        )
+        v2_claim = self._v2_claim("sequential-v2-reverse")
+        report = replace(self._report("sequential-v2", 1), metadata={})
+        self.claims.create_with_report(report, (v2_claim,))
+        with self.assertRaises(ReportClaimConflictError):
+            self.claims.create_many((v1_claim,), report_id=report.id, report_revision=1)
+        self.assertEqual(len(self.claims.list_for_report(report.id, 1)), 1)
+
+    def test_sequential_mixed_attachment_is_rejected(self) -> None:
+        v1_fixture = ReportClaimContractTests()
+        v1_fixture.setUp()
+        v1_claim = replace(
+            v1_fixture.claim(report_run="report-run"),
+            project_id=self.project.id,
+            source_workflow_run_id="source-run",
+            design_id="design-1",
+        )
+        v2_claim = self._v2_claim("attach-v2")
+        report = replace(self._report("attach-sequential", 1), metadata={})
+        self.claims.create_with_report(report, (v1_claim,))
+        with self.assertRaises(ReportClaimConflictError):
+            self.claims.attach_claims_to_report_revision(report, (v2_claim,))
+        self.assertEqual(len(self.claims.list_for_report(report.id, 1)), 1)
+
+    def test_concurrent_mixed_attachment_has_one_winner(self) -> None:
+        v1_fixture = ReportClaimContractTests()
+        v1_fixture.setUp()
+        v1_claim = replace(
+            v1_fixture.claim(report_run="report-run"),
+            project_id=self.project.id,
+            source_workflow_run_id="source-run",
+            design_id="design-1",
+        )
+        v2_claim = self._v2_claim("attach-concurrent-v2")
+        source_v1 = replace(self._report("attach-source-v1", 1), metadata={})
+        source_v2 = replace(self._report("attach-source-v2", 1), metadata={})
+        report = replace(self._report("attach-concurrent", 1), metadata={})
+        reports = PostgreSQLReportRepository(self.session_factory)
+        self.claims.create_with_report(source_v1, (v1_claim,))
+        self.claims.create_with_report(source_v2, (v2_claim,))
+        reports.create(report)
+
+        def attach(claim):
+            repository = PostgreSQLReportClaimRepository(self.session_factory)
+            try:
+                repository.attach_claims_to_report_revision(report, (claim,))
+                return True
+            except ReportClaimConflictError:
+                return False
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(attach, (v1_claim, v2_claim)))
+        self.assertEqual(sum(outcomes), 1)
+        stored = self.claims.list_for_report(report.id, report.revision_number)
+        self.assertEqual(len(stored), 1)
+
+    def test_reload_rejects_mixed_claim_membership(self) -> None:
+        h3_claim = self._claim()
+        v1_fixture = ReportClaimContractTests()
+        v1_fixture.setUp()
+        v1_claim = replace(
+            v1_fixture.claim(report_run="report-run"),
+            project_id=self.project.id,
+            source_workflow_run_id="source-run",
+            design_id="design-1",
+        )
+        report = replace(self._report("reload-mixed", 1), metadata={})
+        self.claims.create_with_report(report, (v1_claim,))
+        with self.engine.begin() as connection:
+            connection.execute(text(
+                "INSERT INTO report_claims "
+                "(id,report_id,report_revision,project_id,source_workflow_run_id,"
+                "report_workflow_run_id,research_design_id,contract_version,"
+                "claim_payload,authority_digest,created_at) VALUES "
+                "(:id,:report_id,1,:project,'source-run','report-run','design-1',"
+                ":contract_version,CAST(:payload AS jsonb),:authority_digest,CURRENT_TIMESTAMP)"
+            ), {
+                "id": h3_claim.claim_id,
+                "report_id": report.id,
+                "project": self.project.id,
+                "contract_version": h3_claim.contract_version,
+                "payload": json.dumps(h3_claim.to_dict()),
+                "authority_digest": h3_claim.authority_digest,
+            })
+        with self.assertRaises(ReportClaimConflictError):
+            self.claims.list_for_report(report.id, report.revision_number)
 
     def test_j2_revision_survives_repository_restart_without_new_claim_rows(self) -> None:
         claim = self._claim()
