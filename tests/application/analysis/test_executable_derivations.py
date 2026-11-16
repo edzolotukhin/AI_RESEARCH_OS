@@ -5,7 +5,7 @@ import io
 import json
 import re
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from openpyxl import Workbook
 
 from domain.ai.llm_response import LLMResponse
@@ -21,6 +21,7 @@ from application.config import ApplicationConfig, ApplicationOverrides
 from application.analysis.analysis_factory import build_analysis_service
 from application.analysis.exceptions import AnalysisError
 from application.analysis.derivations import calculate_candidates, dependency_authority, validate_deterministic_derivation, DerivationRefused
+from application.analysis.numeric_integrity import project_numeric_evidence_for_design
 from application.evidence.evidence_factory import build_evidence_extraction_service
 from application.evidence.temporal_scope import qualify_evidence_with_temporal_decisions
 from application.ports.analysis_ports import FindingCandidate
@@ -83,7 +84,7 @@ class ProviderFixture:
         return LLMResponse(json.dumps({"findings":[{"statement":statement,"rationale":"Supported population observations.","evidence_refs":refs,"information_need_refs":[target]}]}))
 
 
-def setup_memory(model=None,series=((2019,1000),(2020,950),(2021,900)),unit="persons"):
+def setup_memory(model=None,series=((2019,1000),(2020,950),(2021,900)),unit="persons",timeframe="2019–2021"):
     model=model or derived_design()
     book=Workbook()
     book.active.append(["Year","Population","Unit","Geography"])
@@ -94,7 +95,7 @@ def setup_memory(model=None,series=((2019,1000),(2020,950),(2021,900)),unit="per
     sources=InMemorySourceRepository(); sources.create(source)
     evidence=InMemoryEvidenceRepository()
     findings=InMemoryFindingRepository(); insights=InMemoryInsightRepository()
-    brief=ResearchBrief(title="Population",business_question="Population",timeframe="2019–2021")
+    brief=ResearchBrief(title="Population",business_question="Population",timeframe=timeframe)
     template=WorkflowTemplate("template","Fixture",(),research_design_snapshot=model,research_brief_snapshot=brief)
     run=WorkflowRunFactory(task_factory=TaskFactory()).create(template=template,run_id="run",project_id="project")
     context=WorkflowContext(project=Project("project","Fixture"),workflow_template=template,workflow_run=run)
@@ -345,6 +346,69 @@ class ExecutableDerivationTests(unittest.TestCase):
             for item in findings.list_for_project("project")))
         assessment=context.read_shared("analysis_derivations")["assessments"][0]
         self.assertEqual(assessment["status"],"insufficient")
+
+    def test_semantic_derivation_requires_available_numeric_dependency(self):
+        model=derived_design(operations=(DerivationOperation.TREND_CHARACTERIZATION,))
+        model=replace(model,information_needs=tuple(
+            replace(item,evidence_coverage=replace(
+                item.evidence_coverage,required_periods=("2024","2025"),
+            )) if item.id=="in-pop" else
+            replace(item,derivation=replace(
+                item.derivation,required_periods=("2024","2025"),
+            )) if item.kind==InformationNeedKind.DERIVED else item
+            for item in model.information_needs
+        ))
+
+        context,analysis,findings,evidence,sources,provider=setup_memory(
+            model,series=((2024,1000),(2025,950)),timeframe="2024–2025",
+        )
+        analysis.analyze_for_context(context)
+        self.assertTrue(any(item.metadata.get("derivation")
+            for item in findings.list_for_project("project")))
+
+        context,analysis,findings,evidence,sources,provider=setup_memory(
+            model,series=((2024,1000),),timeframe="2024–2025",
+        )
+        analysis.analyze_for_context(context)
+        self.assertFalse(any(item.metadata.get("derivation")
+            for item in findings.list_for_project("project")))
+        assessment=context.read_shared("analysis_derivations")["assessments"][0]
+        self.assertEqual(assessment["status"],"insufficient")
+        self.assertEqual(assessment["reason"],"missing_required_observation")
+
+        context,analysis,findings,evidence,sources,provider=setup_memory(
+            model,series=((2024,1000),(2025,950)),timeframe="2024–2025",
+        )
+
+        def incomplete_projection(**kwargs):
+            projection=project_numeric_evidence_for_design(**kwargs)
+            qualification=projection.qualifications["in-pop"]
+            accepted=tuple(item for item in qualification.accepted_evidence
+                if item.metadata.get("observation_period")=="2024")
+            observations=tuple(item for item in qualification.observations
+                if item.period=="2024")
+            return replace(projection,qualifications={
+                **projection.qualifications,
+                "in-pop":replace(
+                    qualification,available=False,accepted_evidence=accepted,
+                    observations=observations,qualified_periods=("2024",),
+                    missing_periods=("2025",),
+                ),
+            })
+
+        with patch(
+            "application.analysis.analysis_service.project_numeric_evidence_for_design",
+            side_effect=incomplete_projection,
+        ):
+            analysis.analyze_for_context(context)
+
+        self.assertFalse(any(item.metadata.get("derivation")
+            for item in findings.list_for_project("project")))
+        assessment=context.read_shared("analysis_derivations")["assessments"][0]
+        self.assertEqual(assessment["status"],"insufficient")
+        self.assertEqual(
+            assessment["reason"],"numeric_dependency_qualification_unavailable",
+        )
 
     def test_cross_source_and_bounded_attempt_contract(self):
         model=derived_design(operations=(DerivationOperation.CROSS_SOURCE_COMPARISON,))

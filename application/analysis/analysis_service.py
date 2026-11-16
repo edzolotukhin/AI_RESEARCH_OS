@@ -21,7 +21,9 @@ from application.analysis.derivations import (
     DerivationRefused, dependency_authority, calculate_candidates,
     validate_deterministic_derivation,
 )
-from application.analysis.numeric_integrity import project_numeric_evidence_for_design
+from application.analysis.numeric_integrity import (
+    is_numeric_acquired_need, project_numeric_evidence_for_design,
+)
 
 from application.analysis.deduplication import (
     compute_finding_deduplication_key,
@@ -632,9 +634,21 @@ class AnalysisService:
                 continue
             try:
                 dependency_results=[numeric_qualifications.get(ref) for ref in need.depends_on_information_need_ids]
+                numeric_dependency_ids={
+                    item.id for item in design.information_needs
+                    if is_numeric_acquired_need(item)
+                }
                 if any(result is not None and result.conflicting_periods for result in dependency_results):
                     result=next(result for result in dependency_results if result is not None and result.conflicting_periods)
                     raise DerivationRefused("conflicting_values:"+result.conflicting_periods[0])
+                for dependency_id in need.depends_on_information_need_ids:
+                    if dependency_id not in numeric_dependency_ids:
+                        continue
+                    qualification=numeric_qualifications.get(dependency_id)
+                    if qualification is None or not qualification.available:
+                        raise DerivationRefused("numeric_dependency_qualification_unavailable")
+                    if qualification.missing_periods:
+                        raise DerivationRefused("missing_required_observation")
                 findings=[self._finding_repository.get_by_id(fid) for fid in finding_ids]
                 dependencies,inputs=dependency_authority(need,[f for f in findings if f is not None],evidence_items,brief=brief,**scope)
                 if need.derivation.operation_type.deterministic:
