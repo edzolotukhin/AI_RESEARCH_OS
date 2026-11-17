@@ -13,6 +13,7 @@ from application.report.claim_contract import claim_digest_v2
 from application.report.claim_lineage_v2 import build_claim_lineage_v2
 from application.report.claim_lineage_verification_v2 import (
     ClaimLineageVerificationV2Error,
+    verify_persisted_claim_v2_snapshot_consistent_read,
     verify_persisted_claim_v2,
 )
 from domain.factories.project_factory import ProjectFactory
@@ -173,10 +174,77 @@ class PostgreSQLReportClaimV2VerificationTests(PostgreSQLIntegrationTestCase):
             workflow_template_repository=PostgreSQLWorkflowTemplateRepository(self.session_factory),
         )
 
+    def verify_fresh_snapshot(self):
+        return self.verify_fresh_snapshot_with_ids(
+            report_id=self.report.id,
+            claim_id=self.claim.claim_id,
+        )
+
+    def verify_fresh_snapshot_with_ids(self, *, report_id, claim_id, report_claim_repository=None):
+        claims = PostgreSQLReportClaimRepository(self.session_factory)
+        reports = PostgreSQLReportRepository(self.session_factory)
+        return verify_persisted_claim_v2_snapshot_consistent_read(
+            session_factory=self.session_factory, report_id=report_id, claim_id=claim_id,
+            report_repository=reports, report_claim_repository=report_claim_repository or claims,
+            finding_repository=PostgreSQLFindingRepository(self.session_factory),
+            insight_repository=PostgreSQLInsightRepository(self.session_factory),
+            evidence_repository=PostgreSQLEvidenceRepository(self.session_factory),
+            source_repository=PostgreSQLSourceRepository(self.session_factory),
+            workflow_run_repository=PostgreSQLWorkflowRunRepository(self.session_factory),
+            workflow_template_repository=PostgreSQLWorkflowTemplateRepository(self.session_factory),
+        )
+
     def test_persist_reload_and_independent_authority_verification(self) -> None:
         verified = self.verify_fresh()
         self.assertEqual(self.claim.claim_id, verified.claim_id)
         self.assertEqual(self.claim.authority_digest, verified.authority_digest)
+
+    def test_consistent_read_snapshot_survives_transaction_close(self) -> None:
+        snapshot = self.verify_fresh_snapshot()
+        self.assertEqual(snapshot.claim.claim_id, self.claim.claim_id)
+        self.assertEqual(snapshot.material.authority_digest, self.claim.authority_digest)
+        with self.engine.begin() as connection:
+            connection.execute(text("UPDATE sources SET title='changed-after-read' WHERE id='source-1'"))
+        self.assertNotEqual(snapshot.source_by_id["source-1"].title, "changed-after-read")
+
+    def test_consistent_read_rejects_repositories_from_another_factory(self) -> None:
+        with self.assertRaises(ClaimLineageVerificationV2Error):
+            verify_persisted_claim_v2_snapshot_consistent_read(
+                session_factory=self.session_factory, report_id=self.report.id, claim_id=self.claim.claim_id,
+                report_repository=PostgreSQLReportRepository(self.session_factory),
+                report_claim_repository=PostgreSQLReportClaimRepository(self.session_factory),
+                finding_repository=PostgreSQLFindingRepository(self.session_factory),
+                insight_repository=PostgreSQLInsightRepository(self.session_factory),
+                evidence_repository=PostgreSQLEvidenceRepository(self.session_factory),
+                source_repository=PostgreSQLSourceRepository(self.session_factory),
+                workflow_run_repository=PostgreSQLWorkflowRunRepository(self.session_factory),
+                workflow_template_repository=PostgreSQLWorkflowTemplateRepository(
+                    type(self.session_factory)(self.engine),
+                ),
+            )
+
+    def test_consistent_read_rejects_missing_report_and_claim(self) -> None:
+        with self.assertRaises(ClaimLineageVerificationV2Error):
+            self.verify_fresh_snapshot_with_ids(report_id="missing-report", claim_id=self.claim.claim_id)
+        with self.assertRaises(ClaimLineageVerificationV2Error):
+            self.verify_fresh_snapshot_with_ids(report_id=self.report.id, claim_id="missing-claim")
+
+    def test_consistent_read_rejects_mismatched_membership(self) -> None:
+        class MismatchedMembershipRepository(PostgreSQLReportClaimRepository):
+            def list_for_report(self, report_id, report_revision):
+                return []
+
+        claims = MismatchedMembershipRepository(self.session_factory)
+        with self.assertRaises(ClaimLineageVerificationV2Error):
+            self.verify_fresh_snapshot_with_ids(
+                report_id=self.report.id, claim_id=self.claim.claim_id,
+                report_claim_repository=claims,
+            )
+
+    def test_consistent_read_rejects_incompatible_active_transaction(self) -> None:
+        with self.assertRaises(ClaimLineageVerificationV2Error):
+            with self.session_factory.transaction():
+                self.verify_fresh_snapshot()
 
     def test_changed_finding_is_rejected(self) -> None:
         with self.engine.begin() as connection:

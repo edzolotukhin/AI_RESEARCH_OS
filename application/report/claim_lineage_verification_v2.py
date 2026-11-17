@@ -210,6 +210,58 @@ def verify_persisted_claim_v2_snapshot(
         raise ClaimLineageVerificationV2Error("authoritative ReportClaim v2 verification failed") from exc
 
 
+def verify_persisted_claim_v2_snapshot_consistent_read(
+    *, session_factory: Any, report_id: str, claim_id: str,
+    report_repository: Any, report_claim_repository: Any,
+    finding_repository: Any, insight_repository: Any, evidence_repository: Any,
+    source_repository: Any, workflow_run_repository: Any,
+    workflow_template_repository: Any, proposition_trace: dict[str, Any] | None = None,
+) -> VerifiedClaimLineageV2Snapshot:
+    """Verify using one explicit PostgreSQL REPEATABLE READ snapshot.
+
+    All repositories must be bound to the supplied DatabaseSessionFactory;
+    otherwise the function fails closed instead of falling back to ordinary
+    sessions.
+    """
+    repositories = (
+        report_repository, report_claim_repository,
+        finding_repository, insight_repository, evidence_repository,
+        source_repository, workflow_run_repository, workflow_template_repository,
+    )
+    if any(getattr(repository, "_session_factory", None) is not session_factory for repository in repositories):
+        raise ClaimLineageVerificationV2Error("authoritative repositories must share the consistent-read session factory")
+    try:
+        with session_factory.consistent_read():
+            report = report_repository.get_by_id(report_id)
+            if (report is None or report.id != report_id
+                    or not isinstance(report.revision_number, int)
+                    or report.revision_number < 1):
+                raise ClaimLineageVerificationV2Error("authoritative Report is missing")
+            claim = report_claim_repository.get_by_id(claim_id)
+            if claim is None or claim.claim_id != claim_id:
+                raise ClaimLineageVerificationV2Error("authoritative ReportClaim is missing")
+            members = report_claim_repository.list_for_report(report.id, report.revision_number)
+            matching = tuple(item for item in members if item.claim_id == claim_id)
+            if (len(matching) != 1
+                    or len({item.claim_id for item in members}) != len(members)
+                    or matching[0].claim_id != claim.claim_id):
+                raise ClaimLineageVerificationV2Error("ReportClaim membership is missing or ambiguous")
+            return verify_persisted_claim_v2_snapshot(
+                claim=claim, report=report,
+                finding_repository=finding_repository,
+                insight_repository=insight_repository,
+                evidence_repository=evidence_repository,
+                source_repository=source_repository,
+                workflow_run_repository=workflow_run_repository,
+                workflow_template_repository=workflow_template_repository,
+                proposition_trace=proposition_trace,
+            )
+    except ClaimLineageVerificationV2Error:
+        raise
+    except Exception as exc:
+        raise ClaimLineageVerificationV2Error("consistent-read authority verification failed") from exc
+
+
 def _load_exact(repository: Any, identifiers: tuple[str, ...], label: str) -> tuple[Any, ...]:
     loaded = []
     for identifier in identifiers:
