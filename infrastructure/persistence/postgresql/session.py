@@ -102,8 +102,8 @@ class DatabaseSessionFactory:
     def transaction(self) -> Iterator[Session]:
         """Share one commit for a new project and its first study."""
         active = self._active.get()
-        if self._active_mode.get() == "consistent_read":
-            raise RuntimeError("transaction cannot be nested inside consistent_read")
+        if self._active_mode.get() in {"consistent_read", "repeatable_read_write"}:
+            raise RuntimeError("transaction cannot be nested inside a specialized transaction")
         if active is not None:
             yield active
             return
@@ -124,6 +124,52 @@ class DatabaseSessionFactory:
             self._active.reset(token)
             self._after_commit.reset(callback_token)
             session.close()
+        if committed:
+            for callback in callbacks:
+                callback()
+
+    @contextmanager
+    def repeatable_read_transaction(self) -> Iterator[Session]:
+        """Own an opt-in PostgreSQL REPEATABLE READ write transaction."""
+        if self._active.get() is not None:
+            raise RuntimeError(
+                "repeatable_read_transaction cannot be nested inside an active transaction"
+            )
+        connection = self._engine.connect()
+        transaction = None
+        session = None
+        token = None
+        mode_token = None
+        callback_token = None
+        callbacks: list[Callable[[], None]] = []
+        committed = False
+        try:
+            connection = connection.execution_options(
+                isolation_level="REPEATABLE READ",
+            )
+            transaction = connection.begin()
+            session = self._session_factory(bind=connection)
+            token = self._active.set(session)
+            mode_token = self._active_mode.set("repeatable_read_write")
+            callback_token = self._after_commit.set(callbacks)
+            yield session
+            session.flush()
+            transaction.commit()
+            committed = True
+        except BaseException:
+            if transaction is not None:
+                transaction.rollback()
+            raise
+        finally:
+            if token is not None:
+                self._active.reset(token)
+            if mode_token is not None:
+                self._active_mode.reset(mode_token)
+            if callback_token is not None:
+                self._after_commit.reset(callback_token)
+            if session is not None:
+                session.close()
+            connection.close()
         if committed:
             for callback in callbacks:
                 callback()

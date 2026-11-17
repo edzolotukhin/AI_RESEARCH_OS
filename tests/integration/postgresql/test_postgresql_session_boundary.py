@@ -70,6 +70,40 @@ class PostgreSQLConsistentReadTests(PostgreSQLIntegrationTestCase):
                 raise ValueError("rollback")
         self.assertIsNone(factory._active.get())
 
+    def test_repeatable_read_write_transaction_is_shared_and_commits(self) -> None:
+        factory = DatabaseSessionFactory(self.engine)
+        with factory.repeatable_read_transaction() as session:
+            self.assertEqual(
+                session.execute(text("SHOW transaction_isolation")).scalar_one(),
+                "repeatable read",
+            )
+            with factory.session() as nested:
+                self.assertIs(session, nested)
+                nested.execute(text(f"UPDATE {TABLE} SET value='committed' WHERE id=1"))
+        with self.engine.connect() as connection:
+            self.assertEqual(
+                connection.execute(text(f"SELECT value FROM {TABLE} WHERE id=1")).scalar_one(),
+                "committed",
+            )
+        self.assertIsNone(factory._active.get())
+
+    def test_repeatable_read_write_transaction_rolls_back_and_rejects_nesting(self) -> None:
+        factory = DatabaseSessionFactory(self.engine)
+        with self.assertRaises(RuntimeError):
+            with factory.repeatable_read_transaction():
+                with factory.transaction():
+                    pass
+        with self.assertRaises(ValueError):
+            with factory.repeatable_read_transaction() as session:
+                session.execute(text(f"UPDATE {TABLE} SET value='rolled-back' WHERE id=1"))
+                raise ValueError("rollback")
+        with self.engine.connect() as connection:
+            self.assertEqual(
+                connection.execute(text(f"SELECT value FROM {TABLE} WHERE id=1")).scalar_one(),
+                "before",
+            )
+        self.assertIsNone(factory._active.get())
+
     def test_initialization_failures_close_connection(self) -> None:
         class Connection:
             def __init__(self, *, fail_at=None):
