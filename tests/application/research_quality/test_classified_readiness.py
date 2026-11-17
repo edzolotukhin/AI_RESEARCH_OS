@@ -2,6 +2,7 @@ from dataclasses import replace
 import unittest
 
 from application.analysis.analysis_coverage_service import assess_analysis_coverage
+from application.analysis.exceptions import AnalysisError
 from application.research_quality.research_readiness_service import ResearchReadinessService
 from application.research_quality.deterministic_research_sufficiency_evaluator import DeterministicResearchSufficiencyEvaluator
 from application.research_quality.authoritative_outcome import derive_authoritative_outcome
@@ -22,6 +23,53 @@ def coverage(context,findings,evidence,sources):
 
 
 class ClassifiedReadinessTests(unittest.TestCase):
+    def test_rejected_numeric_observation_is_excluded_from_sufficiency_and_readiness(self):
+        from infrastructure.persistence.memory.in_memory_evidence_repository import InMemoryEvidenceRepository
+        context,analysis,findings,evidence,sources,_=setup_memory()
+        rows=evidence.list_for_project("project")
+        first=rows[0]
+        assignment={**first.metadata["semantic_assignment"],"subject_id":"forged-subject"}
+        forged=replace(first,metadata={**first.metadata,"semantic_assignment":assignment})
+        repository=InMemoryEvidenceRepository()
+        for item in (forged,*rows[1:]):
+            repository.create(item)
+        service=ResearchReadinessService(
+            evaluator=DeterministicResearchSufficiencyEvaluator(),
+            evidence_repository=repository,source_repository=sources,
+        )
+        result=service.evaluate_for_context(context)
+        acquired=next(
+            item for rq in result.research_question_assessments
+            for item in rq.information_need_assessments
+            if item.information_need_id=="in-pop"
+        )
+        self.assertEqual(acquired.evidence_count,2)
+        self.assertEqual(acquired.status.value,"insufficient")
+        self.assertNotIn("in-pop",result.analysis_eligible_information_need_ids)
+        self.assertTrue(all(
+            diagnostic["status"]=="not_ready"
+            for diagnostic in result.to_dict()["derived_prerequisites"].values()
+        ))
+
+    def test_wrong_and_legacy_numeric_unit_are_not_analysis_eligible(self):
+        base=derived_design()
+        acquired=base.information_needs[0]
+        wrong=replace(acquired,evidence_coverage=replace(
+            acquired.evidence_coverage,required_unit="thousands",
+        ))
+        wrong_design=replace(base,information_needs=(wrong,*base.information_needs[1:]))
+        context,_,_,evidence,sources,_=setup_memory(wrong_design)
+        _,result=readiness(context,evidence,sources)
+        self.assertNotIn("in-pop",result.analysis_eligible_information_need_ids)
+
+        payload=base.to_dict()
+        del payload["information_needs"][0]["evidence_coverage"]["required_unit"]
+        from domain.planning.research_design import ResearchDesign
+        legacy=ResearchDesign.from_dict(payload)
+        context,_,_,evidence,sources,_=setup_memory(legacy)
+        _,result=readiness(context,evidence,sources)
+        self.assertNotIn("in-pop",result.analysis_eligible_information_need_ids)
+
     def test_output_only_question_is_deferred_without_blocking_analysis(self):
         from domain.planning.research_design import ResearchQuestion
         model = derived_design()
@@ -104,6 +152,7 @@ class ClassifiedReadinessTests(unittest.TestCase):
         self.assertEqual(restored.to_dict(),result.to_dict())
         self.assertEqual(restored.to_dict()["output_obligations"][0]["verification_stage"],"report_finalization")
         self.assertFalse(restored.to_dict()["output_obligations"][0]["satisfied"])
+        self.assertFalse(findings.list_for_project("project"))
 
     def test_acquired_without_evidence_not_ready(self):
         context,analysis,findings,evidence,sources,_=setup_memory(series=())
@@ -125,6 +174,27 @@ class ClassifiedReadinessTests(unittest.TestCase):
         context,analysis,findings,evidence,sources,_=setup_memory(model)
         _,result=readiness(context,evidence,sources)
         self.assertTrue(all("geography_mismatch" in d["reasons"] for d in result.to_dict()["derived_prerequisites"].values()))
+
+    def test_readiness_and_analysis_share_fail_closed_temporal_authority(self):
+        context,analysis,findings,evidence,sources,_=setup_memory()
+        context.workflow_template=replace(
+            context.workflow_template,
+            research_brief_snapshot=replace(
+                context.workflow_template.research_brief_snapshot,
+                timeframe="ambiguous reporting window",
+            ),
+        )
+        _,result=readiness(context,evidence,sources)
+        self.assertTrue(all(
+            diagnostic["status"] == "not_ready"
+            for diagnostic in result.to_dict()["derived_prerequisites"].values()
+        ))
+        with self.assertRaises(AnalysisError):
+            analysis.analyze_for_context(context)
+        self.assertFalse(any(
+            finding.metadata.get("derivation")
+            for finding in findings.list_for_project("project")
+        ))
 
     def test_analysis_coverage_and_authoritative_outcome(self):
         context,analysis,findings,evidence,sources,_=setup_memory()
@@ -165,7 +235,12 @@ class ClassifiedReadinessTests(unittest.TestCase):
         self.assertIn("in-pop",coverage(context,candidates,evidence,sources).missing_information_need_ids)
 
     def test_legacy_design_readiness_unchanged(self):
-        context,analysis,findings,evidence,sources,_=setup_memory(legacy_design())
+        model=legacy_design()
+        model=replace(model,information_needs=tuple(
+            replace(need,evidence_expectation=None,evidence_coverage=None)
+            for need in model.information_needs
+        ))
+        context,analysis,findings,evidence,sources,_=setup_memory(model)
         before=context.workflow_template.research_design_snapshot.to_dict()
         expected=DeterministicResearchSufficiencyEvaluator().evaluate(design=context.workflow_template.research_design_snapshot,evidence=evidence.list_for_project("project"))
         service=ResearchReadinessService(evaluator=DeterministicResearchSufficiencyEvaluator(),evidence_repository=evidence,source_repository=sources)

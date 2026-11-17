@@ -23,6 +23,9 @@ from infrastructure.retrieval.xlsx_text_extractor import (
 )
 from infrastructure.retrieval.link_discovery import discover_links
 from infrastructure.retrieval.navigation_budget import NavigationBudget, NavigationLimit
+from infrastructure.retrieval.bounded_pdf_text_extractor import (
+    PDF_EXTRACTION_REVISION, MAX_PDF_BYTES, extract_pdf_text,
+)
 from application.sources.acquisition_capability import ACQUISITION_CAPABILITY, TEXT_EXTRACTION_CAPABILITY, TABLE_EXTRACTION_CAPABILITY
 
 
@@ -35,6 +38,20 @@ RETRIEVAL_FAILURE_CATEGORIES = {
     "content_too_large",
     "other_retrieval_error",
 }
+
+_LIMIT_CODES = frozenset({"url_already_visited", "request_budget_exhausted", "byte_budget_exhausted", "link_budget_exhausted", "body_bytes", "workbook_truncated"})
+_EXCEPTION_CLASSES = frozenset({"TimeoutException", "HTTPStatusError", "ConnectError", "ReadError", "RemoteProtocolError", "DecodingError"})
+
+
+def _retrieval_diagnostic(*, stage="unknown", status=None, limit_code=None, exception=None, category=None, terminal_reason=None):
+    return {
+        "stage": stage if stage in {"fetch", "navigation", "size", "xlsx", "success", "unknown"} else "unknown",
+        "http_status_class": "4xx" if isinstance(status, int) and 400 <= status < 500 else "5xx" if isinstance(status, int) and 500 <= status < 600 else "other" if isinstance(status, int) else "none",
+        "limit_code": limit_code if limit_code in _LIMIT_CODES else "none",
+        "exception_class": type(exception).__name__ if exception is not None and type(exception).__name__ in _EXCEPTION_CLASSES else "other" if exception is not None else "none",
+        "failure_category": category if category in RETRIEVAL_FAILURE_CATEGORIES else "none",
+        "terminal_reason": terminal_reason if terminal_reason in {"required_terminal_not_found", "html_challenge"} else "other" if terminal_reason is not None else "none",
+    }
 
 
 class HttpRetrievalLimits:
@@ -64,10 +81,8 @@ class HttpSourceRetriever(SourceRetriever):
     )
 
     def known_unsupported_url(self, url: str) -> bool:
-        # PDF bodies are explicitly unsupported by this HTML/text/XLSX adapter.
-        # Screen only an unambiguous path extension; redirects/content types
-        # remain the responsibility of retrieve().
-        return urlsplit(url).path.casefold().endswith(".pdf")
+        # PDF URLs use the same relevance and acquisition path as other candidates.
+        return False
 
     def __init__(
         self,
@@ -144,6 +159,11 @@ class HttpSourceRetriever(SourceRetriever):
             if valid:
                 source.retrieval_status = RetrievalStatus.FAILED
                 source.metadata["reason"] = "required_terminal_not_found" if structured else "html_challenge"
+                source.metadata["failure_category"] = "other_retrieval_error"
+                source.metadata["retrieval_diagnostic"] = _retrieval_diagnostic(
+                    stage="navigation", category="other_retrieval_error",
+                    terminal_reason=source.metadata["reason"],
+                )
                 # The table-required traversal is a distinct extraction contract
                 # from a successful text-only snapshot of the same HTML bytes.
                 source.extraction_revision = "navigation-table-unresolved-v2" if structured else "navigation-challenge-v2"
@@ -151,6 +171,8 @@ class HttpSourceRetriever(SourceRetriever):
                 budget.stop_reason = "depth_limit" if depth >= nav["max_depth"] else "no_terminal_resource"
             return source
         source = walk(candidate, 0, ())
+        if source.retrieval_status == RetrievalStatus.FAILED and "retrieval_diagnostic" not in source.metadata:
+            source.metadata["retrieval_diagnostic"] = _retrieval_diagnostic(stage="navigation")
         diagnostics = budget.diagnostics()
         diagnostics.update({"considered": True, "activated": nav["enabled"],
             "max_depth": nav["max_depth"],
@@ -173,15 +195,28 @@ class HttpSourceRetriever(SourceRetriever):
                 navigation_budget=budget,
             )
         except NavigationLimit as exc:
-            if str(exc) != "url_already_visited":
-                budget.stop_reason = str(exc)
-            return self._failed_source(candidate, now, reason=str(exc), category="content_too_large")
+            code = str(exc)
+            if code == "url_already_visited":
+                # A child redirect may revisit a URL already fetched during
+                # this traversal. Leave the shared budget usable for siblings.
+                return self._failed_source(
+                    candidate, now, reason=code,
+                    category="other_retrieval_error", stage="navigation",
+                    limit_code=code,
+                )
+            budget.stop_reason = code
+            return self._failed_source(
+                candidate, now, reason=code,
+                category="content_too_large", stage="size", limit_code=code,
+            )
         except UnsafeUrlError as exc:
             return self._failed_source(
                 candidate,
                 now,
                 reason=str(exc),
                 category=exc.category,
+                stage="fetch",
+                exception=exc,
             )
         except httpx.TimeoutException as exc:
             return self._failed_source(
@@ -189,6 +224,8 @@ class HttpSourceRetriever(SourceRetriever):
                 now,
                 reason=str(exc) or "Request timed out",
                 category="timeout",
+                stage="fetch",
+                exception=exc,
             )
         except httpx.HTTPStatusError as exc:
             return self._failed_source(
@@ -196,6 +233,9 @@ class HttpSourceRetriever(SourceRetriever):
                 now,
                 reason=str(exc),
                 category="http_error",
+                stage="fetch",
+                status=exc.response.status_code if exc.response is not None else None,
+                exception=exc,
             )
         except Exception as exc:  # noqa: BLE001
             return self._failed_source(
@@ -203,6 +243,8 @@ class HttpSourceRetriever(SourceRetriever):
                 now,
                 reason=str(exc),
                 category="other_retrieval_error",
+                stage="fetch",
+                exception=exc,
             )
 
         final_url = str(response.url)
@@ -217,6 +259,8 @@ class HttpSourceRetriever(SourceRetriever):
                 reason=f"HTTP {response.status_code} for {final_url}",
                 category="http_error",
                 content_type=content_type,
+                stage="fetch",
+                status=response.status_code,
             )
 
         navigation = _navigation_metadata(candidate)
@@ -247,6 +291,58 @@ class HttpSourceRetriever(SourceRetriever):
                 terminal.metadata["_http_chain"] = response.extensions.get("validated_redirect_chain", (candidate.url, final_url))
             return terminal
 
+        pdf_signature = body.startswith(b"%PDF-")
+        pdf_claimed = (
+            content_type == "application/pdf"
+            or pdf_signature
+            or urlsplit(final_url).path.casefold().endswith(".pdf")
+        )
+        if pdf_claimed:
+            redirect_chain = response.extensions.get("validated_redirect_chain", (candidate.url, final_url)) if isinstance(response, httpx.Response) else (candidate.url, final_url)
+
+            def failed_pdf(code: str, category: str, *, stage: str = "unknown", limit_code: str | None = None) -> Source:
+                source = self._failed_source(
+                    replace(candidate, url=final_url), now, reason=code,
+                    content_type=content_type, category=category, stage=stage,
+                    limit_code=limit_code,
+                )
+                source.metadata["_http_chain"] = redirect_chain
+                return source
+
+            declared_length = response.headers.get("content-length", "")
+            declared_oversized = (
+                declared_length.isascii() and declared_length.isdecimal()
+                and (len(declared_length) > 9 or int(declared_length) > MAX_PDF_BYTES)
+            )
+            if truncated or declared_oversized:
+                return failed_pdf("pdf_body_limit", "content_too_large", stage="size", limit_code="body_bytes")
+            if not pdf_signature or content_type not in {"application/pdf", "application/octet-stream", "binary/octet-stream", ""}:
+                return failed_pdf("pdf_mime_mismatch", "unsupported_content_type")
+            result = extract_pdf_text(body)
+            if result.error_code:
+                category = (
+                    "content_too_large" if result.error_code in {"pdf_body_limit", "pdf_page_limit", "pdf_stream_limit", "pdf_text_limit"}
+                    else "timeout" if result.error_code == "pdf_timeout"
+                    else "unsupported_content_type" if result.error_code in {"pdf_encrypted", "pdf_mime_mismatch", "pdf_runtime_unavailable"}
+                    else "other_retrieval_error"
+                )
+                return failed_pdf(result.error_code, category, stage="size" if category == "content_too_large" else "unknown")
+            return Source(
+                id="", project_id="", url=final_url, canonical_url=final_url,
+                title=candidate.title, retrieved_at=now,
+                source_type=candidate.source_type or "web", content_type="application/pdf",
+                retrieval_status=RetrievalStatus.ACQUIRED,
+                content_text=result.text, content_checksum=_content_checksum(result.text),
+                metadata={
+                    "pdf_page_count": result.page_count,
+                    "_http_chain": redirect_chain,
+                    "retrieval_diagnostic": _retrieval_diagnostic(stage="success"),
+                },
+                raw_content_checksum=hashlib.sha256(body).hexdigest(),
+                raw_checksum_kind="sha256-bytes",
+                extraction_revision=PDF_EXTRACTION_REVISION,
+            )
+
         if is_unsupported_spreadsheet_url(final_url) or content_type in {
             "application/vnd.ms-excel",
             "application/vnd.ms-excel.sheet.binary.macroenabled.12",
@@ -269,22 +365,6 @@ class HttpSourceRetriever(SourceRetriever):
             )
 
         if not any(content_type.startswith(item) for item in self._SUPPORTED_CONTENT_TYPES):
-            if content_type.startswith("application/pdf"):
-                return Source(
-                    id="",
-                    project_id="",
-                    url=final_url,
-                    canonical_url=final_url,
-                    title=candidate.title,
-                    retrieved_at=now,
-                    source_type=candidate.source_type or "web",
-                    content_type=content_type,
-                    retrieval_status=RetrievalStatus.UNSUPPORTED,
-                    metadata={
-                        "reason": "PDF retrieval deferred in DR-03 v1",
-                        "failure_category": "unsupported_content_type",
-                    },
-                )
             return Source(
                 id="",
                 project_id="",
@@ -328,6 +408,7 @@ class HttpSourceRetriever(SourceRetriever):
         if truncated:
             metadata["truncated"] = True
             metadata["failure_category"] = "content_too_large"
+        metadata["retrieval_diagnostic"] = _retrieval_diagnostic(stage="size" if truncated else "success", limit_code="body_bytes" if truncated else None, category="content_too_large" if truncated else None)
         checksum = _content_checksum(extracted)
         return Source(
             id="",
@@ -385,6 +466,7 @@ class HttpSourceRetriever(SourceRetriever):
             metadata["body_truncated"] = True
             metadata["failure_category"] = "content_too_large"
             metadata["workbook_truncated"] = True
+        metadata["retrieval_diagnostic"] = _retrieval_diagnostic(stage="xlsx", limit_code="body_bytes" if body_truncated else None, category="content_too_large" if body_truncated else None)
 
         if result.error == "encrypted_workbook":
             return Source(
@@ -401,6 +483,7 @@ class HttpSourceRetriever(SourceRetriever):
                     **metadata,
                     "reason": "encrypted_workbook",
                     "failure_category": "unsupported_content_type",
+                    "retrieval_diagnostic": _retrieval_diagnostic(stage="xlsx", category="unsupported_content_type"),
                 },
             )
 
@@ -419,6 +502,7 @@ class HttpSourceRetriever(SourceRetriever):
                     **metadata,
                     "reason": result.error,
                     "failure_category": "other_retrieval_error",
+                    "retrieval_diagnostic": _retrieval_diagnostic(stage="xlsx", category="other_retrieval_error"),
                 },
             )
 
@@ -437,6 +521,7 @@ class HttpSourceRetriever(SourceRetriever):
                     **metadata,
                     "reason": result.error,
                     "failure_category": "other_retrieval_error",
+                    "retrieval_diagnostic": _retrieval_diagnostic(stage="xlsx", category="other_retrieval_error"),
                 },
             )
 
@@ -456,6 +541,7 @@ class HttpSourceRetriever(SourceRetriever):
                     **metadata,
                     "reason": "no_renderable_cells",
                     "failure_category": "other_retrieval_error",
+                    "retrieval_diagnostic": _retrieval_diagnostic(stage="xlsx", category="other_retrieval_error"),
                 },
             )
 
@@ -468,6 +554,9 @@ class HttpSourceRetriever(SourceRetriever):
         if workbook_truncated:
             metadata["workbook_truncated"] = True
             metadata.setdefault("failure_category", "content_too_large")
+            metadata["retrieval_diagnostic"] = _retrieval_diagnostic(stage="xlsx", limit_code="body_bytes" if body_truncated else "workbook_truncated", category="content_too_large")
+        else:
+            metadata["retrieval_diagnostic"] = _retrieval_diagnostic(stage="success")
 
         checksum = _content_checksum(text)
         return Source(
@@ -493,6 +582,10 @@ class HttpSourceRetriever(SourceRetriever):
         reason: str,
         content_type: str = "",
         category: str = "other_retrieval_error",
+        stage: str = "unknown",
+        status: int | None = None,
+        limit_code: str | None = None,
+        exception: BaseException | None = None,
     ) -> Source:
         return Source(
             id="",
@@ -507,6 +600,7 @@ class HttpSourceRetriever(SourceRetriever):
             metadata={
                 "reason": reason,
                 "failure_category": category,
+                "retrieval_diagnostic": _retrieval_diagnostic(stage=stage, status=status, limit_code=limit_code, exception=exception, category=category),
             },
         )
 

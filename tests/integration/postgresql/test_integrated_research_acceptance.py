@@ -4,6 +4,7 @@ import json
 import tempfile
 import io
 import os
+import re
 from pathlib import Path
 from sqlalchemy import text
 from decimal import Decimal
@@ -192,6 +193,12 @@ class IntegratedResearchAcceptanceTests(http_fixture.CapabilityAcquisitionTests)
         project.research_brief = ResearchBrief(title="Синтетична чисельність населення", business_question="Population Ukraine",
             timeframe="2019–2021", language="uk")
         model = derived_design()
+        if incompatible_units:
+            model = replace(model, information_needs=tuple(
+                replace(n, evidence_coverage=replace(n.evidence_coverage, required_unit="thousands"))
+                if n.id == "in-pop" else n
+                for n in model.information_needs
+            ))
         if geography_conflict:
             model = replace(model, information_needs=tuple(replace(n, derivation=replace(n.derivation, geography="Poland")) if n.derivation else n for n in model.information_needs))
         project.current_research_design = replace(model, information_needs=(
@@ -299,8 +306,9 @@ class IntegratedResearchAcceptanceTests(http_fixture.CapabilityAcquisitionTests)
         _, pdf_data = container.project_deliverables_service.store.get(item.pdf.id)
         _, pptx_data = container.project_deliverables_service.store.get(item.pptx.id)
         pdf_text = "\n".join(page.extract_text() for page in PdfReader(BytesIO(pdf_data)).pages)
-        self.assertTrue(all(number in pdf_text for number in ("2019", "2020", "2021", "1000", "950", "900")))
-        self.assertTrue(all(number in pdf_text for number in ("-50 persons", "-5 percent", "-5,263158 percent", "-100 persons", "-10 percent")))
+        normalized_pdf_text = re.sub(r"\s+", " ", pdf_text)
+        self.assertTrue(all(number in normalized_pdf_text for number in ("2019", "2020", "2021", "1000", "950", "900")))
+        self.assertTrue(all(number in normalized_pdf_text for number in ("-50 persons", "-5 percent", "-5,263158 percent", "-100 persons", "-10 percent")))
         with ZipFile(BytesIO(pptx_data)) as package:
             self.assertTrue(any(name.startswith("ppt/charts/chart") for name in package.namelist()))
             self.assertTrue(any(b"<a:tbl>" in package.read(name) for name in package.namelist() if name.startswith("ppt/slides/slide") and name.endswith(".xml")))

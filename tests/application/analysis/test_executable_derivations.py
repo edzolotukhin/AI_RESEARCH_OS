@@ -5,7 +5,7 @@ import io
 import json
 import re
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from openpyxl import Workbook
 
 from domain.ai.llm_response import LLMResponse
@@ -21,7 +21,9 @@ from application.config import ApplicationConfig, ApplicationOverrides
 from application.analysis.analysis_factory import build_analysis_service
 from application.analysis.exceptions import AnalysisError
 from application.analysis.derivations import calculate_candidates, dependency_authority, validate_deterministic_derivation, DerivationRefused
+from application.analysis.numeric_integrity import project_numeric_evidence_for_design
 from application.evidence.evidence_factory import build_evidence_extraction_service
+from application.evidence.temporal_scope import qualify_evidence_with_temporal_decisions
 from application.ports.analysis_ports import FindingCandidate
 from infrastructure.persistence.memory.in_memory_source_repository import InMemorySourceRepository
 from infrastructure.persistence.memory.in_memory_evidence_repository import InMemoryEvidenceRepository
@@ -48,6 +50,8 @@ class ProviderFixture:
         self.semantic_statement="Population observations indicate a decline."
         self.reject_semantic=False
         self.fail_semantic=False
+        self.semantic_evidence_refs=None
+        self.semantic_entailment_refs=None
         self.calls=[]
 
     def generate(self,prompt,**kwargs):
@@ -58,7 +62,10 @@ class ProviderFixture:
                 candidate_id=block.splitlines()[0].strip()
                 refs=ast.literal_eval(re.search(r"evidence_refs=(\[[^\n]+\])",block)[1])
                 status="UNSUPPORTED" if self.reject_semantic and candidate_id.startswith("derived-") else "SUPPORTED"
-                verdicts.append(dict(candidate_id=candidate_id,status=status,supported_evidence_ids=refs if status=="SUPPORTED" else [],unsupported_claim_parts=[],rationale="Synthetic boundary verdict"))
+                supported=refs
+                if candidate_id.startswith("derived-") and self.semantic_entailment_refs is not None:
+                    supported=[ref for ref in refs if ref in set(self.semantic_entailment_refs)]
+                verdicts.append(dict(candidate_id=candidate_id,status=status,supported_evidence_ids=supported if status=="SUPPORTED" else [],unsupported_claim_parts=[],rationale="Synthetic boundary verdict"))
             return LLMResponse(json.dumps({"verdicts":verdicts}))
         if "An Insight" in prompt.system:
             refs=re.findall(r"^- id=(\S+) statement=",prompt.user,re.M)
@@ -72,10 +79,12 @@ class ProviderFixture:
             payload=json.loads(next(line.split(": ",1)[1] for line in prompt.user.splitlines() if line.startswith("explicit_derivation_contracts:")))
             target=payload[0]["id"]
             statement=self.semantic_statement
+            if self.semantic_evidence_refs is not None:
+                refs=list(self.semantic_evidence_refs)
         return LLMResponse(json.dumps({"findings":[{"statement":statement,"rationale":"Supported population observations.","evidence_refs":refs,"information_need_refs":[target]}]}))
 
 
-def setup_memory(model=None,series=((2019,1000),(2020,950),(2021,900)),unit="persons"):
+def setup_memory(model=None,series=((2019,1000),(2020,950),(2021,900)),unit="persons",timeframe="2019–2021"):
     model=model or derived_design()
     book=Workbook()
     book.active.append(["Year","Population","Unit","Geography"])
@@ -86,7 +95,7 @@ def setup_memory(model=None,series=((2019,1000),(2020,950),(2021,900)),unit="per
     sources=InMemorySourceRepository(); sources.create(source)
     evidence=InMemoryEvidenceRepository()
     findings=InMemoryFindingRepository(); insights=InMemoryInsightRepository()
-    brief=ResearchBrief(title="Population",business_question="Population",timeframe="2019–2021")
+    brief=ResearchBrief(title="Population",business_question="Population",timeframe=timeframe)
     template=WorkflowTemplate("template","Fixture",(),research_design_snapshot=model,research_brief_snapshot=brief)
     run=WorkflowRunFactory(task_factory=TaskFactory()).create(template=template,run_id="run",project_id="project")
     context=WorkflowContext(project=Project("project","Fixture"),workflow_template=template,workflow_run=run)
@@ -124,20 +133,118 @@ class DerivationContractTests(unittest.TestCase):
 
 
 class ExecutableDerivationTests(unittest.TestCase):
+    def test_ordinary_numeric_finding_excludes_f1_rejected_extra_evidence(self):
+        context,analysis,findings,evidence,sources,provider=setup_memory()
+        accepted=tuple(evidence.list_for_project("project"))
+        rejected=replace(accepted[0],id="rejected-fingerprint",
+            deduplication_key="rejected-fingerprint",metadata={
+                **accepted[0].metadata,
+                "semantic_assignment":{
+                    **accepted[0].metadata["semantic_assignment"],
+                    "subject_fingerprint":"incorrect-subject-fingerprint",
+                },
+            })
+        evidence.create(rejected)
+
+        analysis.analyze_for_context(context)
+
+        acquired=next(item for item in findings.list_for_project("project")
+            if item.information_need_refs==("in-pop",))
+        self.assertEqual(acquired.evidence_refs,tuple(sorted(item.id for item in accepted)))
+        self.assertNotIn(rejected.id,acquired.evidence_refs)
+
+    def test_rejected_required_dependency_fails_closed_without_finding(self):
+        context,analysis,findings,evidence,sources,provider=setup_memory(unit="thousands")
+
+        analysis.analyze_for_context(context)
+
+        self.assertEqual(findings.list_for_project("project"),[])
+        assessments=context.read_shared("analysis_derivations")["assessments"]
+        self.assertTrue(assessments)
+        self.assertTrue(all(item["status"]=="insufficient" for item in assessments))
+        self.assertTrue(all(item["reason"]=="rejected_required_dependency" for item in assessments))
+
     def test_recomputation_rejects_tampering_and_foreign_authority(self):
         context,analysis,findings,evidence,sources,provider=setup_memory()
         analysis.analyze_for_context(context)
         need=context.workflow_template.research_design_snapshot.information_needs[1]
         scope=dict(design=context.workflow_template.research_design_snapshot,project_id="project",workflow_run_id="run",allowed_runs=("run",),source_repository=sources)
         deps,inputs=dependency_authority(need,findings.list_for_project("project"),evidence.list_for_project("project"),brief=context.workflow_template.research_brief_snapshot,**scope)
-        candidate=calculate_candidates(need,inputs,deps,**scope)[0]
+        temporal=qualify_evidence_with_temporal_decisions(
+            design=scope["design"],evidence=inputs,
+            brief=context.workflow_template.research_brief_snapshot,
+            source_repository=sources,
+        )
+        candidate=calculate_candidates(need,inputs,deps,temporal_decisions=temporal.decisions,**scope)[0]
         altered=replace(candidate,metadata={**candidate.metadata,"derivation":{**candidate.metadata["derivation"],"raw_result":"42"}})
         with self.assertRaises(DerivationRefused):
-            validate_deterministic_derivation(altered,need,inputs,deps,brief=context.workflow_template.research_brief_snapshot,**scope)
+            validate_deterministic_derivation(altered,need,inputs,deps,brief=context.workflow_template.research_brief_snapshot,
+                temporal_decisions=temporal.decisions,**scope)
         for field in ("project_id","workflow_run_id","research_design_id","source_content_checksum"):
             foreign=tuple(replace(e,**{field:"foreign"}) for e in inputs)
             with self.assertRaises(DerivationRefused):
-                validate_deterministic_derivation(candidate,need,foreign,deps,brief=context.workflow_template.research_brief_snapshot,**scope)
+                validate_deterministic_derivation(candidate,need,foreign,deps,brief=context.workflow_template.research_brief_snapshot,
+                    temporal_decisions=temporal.decisions,**scope)
+
+    def test_numeric_derivation_requires_exact_positive_temporal_authority(self):
+        context,analysis,findings,evidence,sources,provider=setup_memory()
+        analysis.analyze_for_context(context)
+        need=context.workflow_template.research_design_snapshot.information_needs[1]
+        scope=dict(design=context.workflow_template.research_design_snapshot,project_id="project",workflow_run_id="run",allowed_runs=("run",),source_repository=sources)
+        deps,inputs=dependency_authority(need,findings.list_for_project("project"),evidence.list_for_project("project"),brief=context.workflow_template.research_brief_snapshot,**scope)
+        positive={(item.id,"in-pop"): "applicable_satisfied" for item in inputs}
+        self.assertTrue(calculate_candidates(need,inputs,deps,temporal_decisions=positive,**scope))
+        for decision in ("applicable_failed", "applicable_unresolved", "not_applicable",
+                         "no_explicit_temporal_constraint"):
+            with self.subTest(decision=decision), self.assertRaises(DerivationRefused):
+                calculate_candidates(need,inputs,deps,
+                    temporal_decisions={(item.id,"in-pop"): decision for item in inputs},**scope)
+        with self.assertRaises(DerivationRefused):
+            calculate_candidates(need,inputs,deps,
+                temporal_decisions={(item.id,"other"): "applicable_satisfied" for item in inputs},**scope)
+
+    def test_derived_provenance_contains_only_canonically_accepted_evidence(self):
+        context,analysis,findings,evidence,sources,provider=setup_memory()
+        analysis.analyze_for_context(context)
+        design=context.workflow_template.research_design_snapshot
+        need=design.information_needs[1]
+        valid=tuple(evidence.list_for_project("project"))
+        rejected=replace(valid[0],id="rejected-fingerprint",metadata={
+            **valid[0].metadata,
+            "semantic_assignment":{
+                **valid[0].metadata["semantic_assignment"],
+                "subject_fingerprint":"incorrect-subject-fingerprint",
+            },
+        })
+        dependency=next(
+            item for item in findings.list_for_project("project")
+            if "in-pop" in item.information_need_refs
+        )
+        dependency=replace(dependency,evidence_refs=tuple(
+            sorted((*dependency.evidence_refs,rejected.id))
+        ))
+        scope=dict(design=design,project_id="project",workflow_run_id="run",
+            allowed_runs=("run",),source_repository=sources)
+        deps,inputs=dependency_authority(
+            need,(dependency,),(*valid,rejected),
+            brief=context.workflow_template.research_brief_snapshot,**scope,
+        )
+        self.assertIn(rejected.id,{item.id for item in inputs})
+        temporal={(item.id,"in-pop"):"applicable_satisfied" for item in inputs}
+
+        candidates=calculate_candidates(
+            need,inputs,deps,temporal_decisions=temporal,**scope,
+        )
+
+        accepted_ids=tuple(sorted(item.id for item in valid))
+        self.assertTrue(candidates)
+        for candidate in candidates:
+            self.assertEqual(candidate.evidence_refs,accepted_ids)
+            self.assertEqual(
+                tuple(candidate.metadata["derivation"]["input_evidence_ids"]),
+                accepted_ids,
+            )
+            self.assertNotIn(rejected.id,candidate.evidence_refs)
 
     def test_conflicting_confirmed_observations_refuse_arithmetic(self):
         context,analysis,findings,evidence,sources,provider=setup_memory()
@@ -150,6 +257,13 @@ class ExecutableDerivationTests(unittest.TestCase):
         other=replace(workbook_source(stream.getvalue()),id="other",url="https://example.org/other.xlsx",canonical_url="https://example.org/other.xlsx")
         sources.create(other)
         build_evidence_extraction_service(config=ApplicationConfig(evidence_extractor="llm"),overrides=ApplicationOverrides(),evidence_repository=evidence,source_repository=sources,llm_client=Mock()).extract_for_source_ids(context,(other.id,),allow_empty=True)
+        from application.research_quality.research_readiness_service import ResearchReadinessService
+        from application.research_quality.deterministic_research_sufficiency_evaluator import DeterministicResearchSufficiencyEvaluator
+        readiness=ResearchReadinessService(
+            evaluator=DeterministicResearchSufficiencyEvaluator(),
+            evidence_repository=evidence,source_repository=sources,
+        ).evaluate_for_context(context)
+        self.assertNotIn("in-pop",readiness.analysis_eligible_information_need_ids)
         analysis.analyze_for_context(context)
         assessments=context.read_shared("analysis_derivations")["assessments"]
         self.assertTrue(all(a["status"]=="insufficient" and a["reason"].startswith("conflicting_values") for a in assessments))
@@ -201,6 +315,100 @@ class ExecutableDerivationTests(unittest.TestCase):
             derived=[f for f in findings.list_for_project("project") if f.metadata.get("derivation")]
             self.assertEqual(len(derived),0 if reject else 1)
             self.assertEqual(context.read_shared("analysis_derivations")["assessments"][0]["provider_attempts"],1)
+
+    def test_semantic_derivation_records_only_exact_supported_subset(self):
+        model=derived_design(operations=(DerivationOperation.TREND_CHARACTERIZATION,))
+        context,analysis,findings,evidence,sources,provider=setup_memory(model)
+        accepted=tuple(sorted(item.id for item in evidence.list_for_project("project")))
+        subset=accepted[:2]
+        provider.semantic_evidence_refs=subset
+        provider.semantic_entailment_refs=subset
+
+        analysis.analyze_for_context(context)
+
+        derived=next(item for item in findings.list_for_project("project")
+            if item.metadata.get("derivation"))
+        proof=derived.metadata["derivation"]
+        self.assertEqual(derived.evidence_refs,subset)
+        self.assertEqual(tuple(proof["input_evidence_ids"]),subset)
+        self.assertEqual(tuple(row["evidence_id"] for row in proof["source_revision_lineage"]),subset)
+
+    def test_semantic_derivation_fails_closed_on_unproven_support(self):
+        model=derived_design(operations=(DerivationOperation.TREND_CHARACTERIZATION,))
+        context,analysis,findings,evidence,sources,provider=setup_memory(model)
+        accepted=tuple(sorted(item.id for item in evidence.list_for_project("project")))
+        provider.semantic_evidence_refs=accepted[:2]
+        provider.semantic_entailment_refs=accepted[:1]
+
+        analysis.analyze_for_context(context)
+
+        self.assertFalse(any(item.metadata.get("derivation")
+            for item in findings.list_for_project("project")))
+        assessment=context.read_shared("analysis_derivations")["assessments"][0]
+        self.assertEqual(assessment["status"],"insufficient")
+
+    def test_semantic_derivation_requires_available_numeric_dependency(self):
+        model=derived_design(operations=(DerivationOperation.TREND_CHARACTERIZATION,))
+        model=replace(model,information_needs=tuple(
+            replace(item,evidence_coverage=replace(
+                item.evidence_coverage,required_periods=("2024","2025"),
+            )) if item.id=="in-pop" else
+            replace(item,derivation=replace(
+                item.derivation,required_periods=("2024","2025"),
+            )) if item.kind==InformationNeedKind.DERIVED else item
+            for item in model.information_needs
+        ))
+
+        context,analysis,findings,evidence,sources,provider=setup_memory(
+            model,series=((2024,1000),(2025,950)),timeframe="2024–2025",
+        )
+        analysis.analyze_for_context(context)
+        self.assertTrue(any(item.metadata.get("derivation")
+            for item in findings.list_for_project("project")))
+
+        context,analysis,findings,evidence,sources,provider=setup_memory(
+            model,series=((2024,1000),),timeframe="2024–2025",
+        )
+        analysis.analyze_for_context(context)
+        self.assertFalse(any(item.metadata.get("derivation")
+            for item in findings.list_for_project("project")))
+        assessment=context.read_shared("analysis_derivations")["assessments"][0]
+        self.assertEqual(assessment["status"],"insufficient")
+        self.assertEqual(assessment["reason"],"missing_required_observation")
+
+        context,analysis,findings,evidence,sources,provider=setup_memory(
+            model,series=((2024,1000),(2025,950)),timeframe="2024–2025",
+        )
+
+        def incomplete_projection(**kwargs):
+            projection=project_numeric_evidence_for_design(**kwargs)
+            qualification=projection.qualifications["in-pop"]
+            accepted=tuple(item for item in qualification.accepted_evidence
+                if item.metadata.get("observation_period")=="2024")
+            observations=tuple(item for item in qualification.observations
+                if item.period=="2024")
+            return replace(projection,qualifications={
+                **projection.qualifications,
+                "in-pop":replace(
+                    qualification,available=False,accepted_evidence=accepted,
+                    observations=observations,qualified_periods=("2024",),
+                    missing_periods=("2025",),
+                ),
+            })
+
+        with patch(
+            "application.analysis.analysis_service.project_numeric_evidence_for_design",
+            side_effect=incomplete_projection,
+        ):
+            analysis.analyze_for_context(context)
+
+        self.assertFalse(any(item.metadata.get("derivation")
+            for item in findings.list_for_project("project")))
+        assessment=context.read_shared("analysis_derivations")["assessments"][0]
+        self.assertEqual(assessment["status"],"insufficient")
+        self.assertEqual(
+            assessment["reason"],"numeric_dependency_qualification_unavailable",
+        )
 
     def test_cross_source_and_bounded_attempt_contract(self):
         model=derived_design(operations=(DerivationOperation.CROSS_SOURCE_COMPARISON,))

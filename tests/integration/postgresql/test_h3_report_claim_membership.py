@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import unittest
-from dataclasses import replace
+from dataclasses import fields, replace
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from uuid import uuid4
 import os
+import json
+from types import SimpleNamespace
 
 from alembic import command
 from alembic.config import Config
@@ -13,6 +17,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.pool import NullPool
 
 from application.ports.report_claim_repository import ReportClaimConflictError
+from application.report.claim_contract import authority_digest_v2, claim_digest_v2
 from domain.factories.project_factory import ProjectFactory
 from domain.reports.report import Report
 from infrastructure.persistence.postgresql.repositories.postgresql_project_repository import (
@@ -25,6 +30,8 @@ from infrastructure.persistence.postgresql.repositories.postgresql_report_reposi
     PostgreSQLReportRepository,
 )
 from tests.application.report.test_h3_claim_generation import _Fixture, _valid_response
+from tests.application.report.test_report_claim_contract import ReportClaimContractTests
+from tests.application.report.test_report_claim_v2_contract import ReportClaimV2ContractTests
 from application.report.h3_claim_generation import generate_h3_structural_claims
 from tests.integration.postgresql.helpers import (
     PostgreSQLIntegrationTestCase,
@@ -147,6 +154,153 @@ class PostgreSQLH3ReportClaimMembershipTests(PostgreSQLIntegrationTestCase):
         )
         return replace(result.claims[0], design_id="design-1")
 
+    def _v2_claim(self, claim_id: str):
+        source = ReportClaimV2ContractTests().claim()
+        values = {
+            item.name: getattr(source, item.name)
+            for item in fields(source)
+        }
+        values.update(
+            claim_id=claim_id,
+            project_id=self.project.id,
+            source_workflow_run_id="source-run",
+            report_workflow_run_id="report-run",
+            design_id="design-1",
+            authority_digest="",
+            claim_digest="",
+        )
+        draft = SimpleNamespace(**values)
+        values["authority_digest"] = authority_digest_v2(draft)
+        draft.authority_digest = values["authority_digest"]
+        values["claim_digest"] = claim_digest_v2(draft)
+        return source.__class__(**values)
+
+    def test_report_revision_lock_requires_owned_transaction_and_validates_revision(self) -> None:
+        report = self._report("lock-report", 1)
+        PostgreSQLReportRepository(self.session_factory).create(report)
+        reports = PostgreSQLReportRepository(self.session_factory)
+        with self.assertRaises(RuntimeError):
+            reports.lock_revision(report.id, expected_revision=1)
+        with self.session_factory.transaction():
+            locked = reports.lock_revision(report.id, expected_revision=1)
+            self.assertEqual(locked.id, report.id)
+            with self.assertRaises(ReportClaimConflictError):
+                reports.lock_revision(report.id, expected_revision=2)
+
+    def test_report_revision_lock_serializes_competing_writers_and_releases_on_rollback(self) -> None:
+        report = self._report("lock-contended", 1)
+        PostgreSQLReportRepository(self.session_factory).create(report)
+        entered = Event()
+        attempted = Event()
+        acquired = Event()
+        release = Event()
+
+        def holder() -> None:
+            factory = self.session_factory.__class__(self.engine)
+            with factory.transaction():
+                PostgreSQLReportRepository(factory).lock_revision(report.id, expected_revision=1)
+                entered.set()
+                release.wait(timeout=10)
+                raise RuntimeError("rollback lock holder")
+
+        def contender() -> str:
+            entered.wait(timeout=10)
+            factory = self.session_factory.__class__(self.engine)
+            attempted.set()
+            with factory.transaction():
+                PostgreSQLReportRepository(factory).lock_revision(report.id, expected_revision=1)
+            acquired.set()
+            return "acquired"
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(holder)
+            second = pool.submit(contender)
+            try:
+                self.assertTrue(entered.wait(timeout=10), "first writer did not acquire lock")
+                self.assertTrue(attempted.wait(timeout=10), "second writer did not attempt lock")
+                self.assertFalse(
+                    acquired.wait(timeout=0.5),
+                    "second writer completed while first transaction held the lock",
+                )
+            finally:
+                release.set()
+            with self.assertRaises(RuntimeError):
+                first.result(timeout=10)
+            self.assertEqual(second.result(timeout=10), "acquired")
+            self.assertTrue(acquired.is_set())
+
+    def test_successor_allocation_guard_requires_transaction_and_rejects_existing_child(self) -> None:
+        reports = PostgreSQLReportRepository(self.session_factory)
+        parent = self._report("successor-parent", 1)
+        successor = self._report("successor-child", 2, previous=parent.id)
+        reports.create(parent)
+        with self.assertRaises(RuntimeError):
+            reports.allocate_successor(parent.id, expected_revision=1, successor=successor)
+        with self.session_factory.transaction():
+            self.assertEqual(reports.allocate_successor(parent.id, expected_revision=1, successor=successor).id, parent.id)
+            reports.create(successor)
+        with self.session_factory.transaction():
+            with self.assertRaises(ReportClaimConflictError):
+                reports.allocate_successor(
+                    parent.id,
+                    expected_revision=1,
+                    successor=self._report("successor-other-id", 2, previous=parent.id),
+                )
+
+    def test_successor_allocation_guard_rejects_stale_parent_and_rolls_back(self) -> None:
+        reports = PostgreSQLReportRepository(self.session_factory)
+        parent = self._report("successor-stale-parent", 1)
+        reports.create(parent)
+        invalid = self._report("successor-invalid", 3, previous=parent.id)
+        with self.session_factory.transaction():
+            with self.assertRaises(ReportClaimConflictError):
+                reports.allocate_successor(parent.id, expected_revision=2, successor=invalid)
+        self.assertIsNone(reports.get_by_id(invalid.id))
+
+    def test_competing_successor_allocations_have_one_winner(self) -> None:
+        reports = PostgreSQLReportRepository(self.session_factory)
+        parent = self._report("successor-race-parent", 1)
+        reports.create(parent)
+        entered = Event()
+        attempted = Event()
+        release = Event()
+
+        def allocate(report_id: str) -> str:
+            factory = self.session_factory.__class__(self.engine)
+            repository = PostgreSQLReportRepository(factory)
+            try:
+                with factory.transaction():
+                    successor = self._report(report_id, 2, previous=parent.id)
+                    if not report_id.endswith("one"):
+                        attempted.set()
+                    repository.allocate_successor(parent.id, expected_revision=1, successor=successor)
+                    if report_id.endswith("one"):
+                        entered.set()
+                        release.wait(timeout=10)
+                    repository.create(successor)
+                return "won"
+            except ReportClaimConflictError:
+                return "lost"
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(allocate, "successor-one")
+            second = None
+            try:
+                self.assertTrue(entered.wait(timeout=10), "first writer did not acquire parent lock")
+                second = pool.submit(allocate, "successor-two")
+                self.assertTrue(attempted.wait(timeout=10), "second writer did not attempt allocation")
+                self.assertFalse(
+                    second.done(),
+                    "second writer completed while first transaction held the parent lock",
+                )
+            finally:
+                release.set()
+            self.assertIsNotNone(second)
+            outcomes = (first.result(timeout=10), second.result(timeout=10))
+        self.assertEqual(sorted(outcomes), ["lost", "won"])
+        children = PostgreSQLReportRepository(self.session_factory).list_for_project(self.project.id, workflow_run_id="report-run")
+        self.assertEqual([item.id for item in children if item.previous_report_id == parent.id], ["successor-one"])
+
     def test_h3_contract_and_revision_membership_round_trip(self) -> None:
         claim = self._claim()
         r1 = self._report("r1", 1)
@@ -160,6 +314,138 @@ class PostgreSQLH3ReportClaimMembershipTests(PostgreSQLIntegrationTestCase):
         with self.engine.connect() as conn:
             self.assertEqual(conn.execute(text("SELECT COUNT(*) FROM report_claims")).scalar_one(), 1)
             self.assertEqual(conn.execute(text("SELECT COUNT(*) FROM report_revision_claims")).scalar_one(), 2)
+
+    def test_mixed_claim_set_is_rejected_before_report_persistence(self) -> None:
+        h3_claim = self._claim()
+        v1_fixture = ReportClaimContractTests()
+        v1_fixture.setUp()
+        v1_claim = replace(
+            v1_fixture.claim(report_run="report-run"),
+            project_id=self.project.id,
+            source_workflow_run_id="source-run",
+            design_id="design-1",
+        )
+        report = replace(self._report("mixed-report", 1), metadata={})
+        with self.assertRaises(ReportClaimConflictError):
+            self.claims.create_with_report(report, (v1_claim, h3_claim))
+        with self.engine.connect() as connection:
+            self.assertEqual(connection.execute(text(
+                "SELECT COUNT(*) FROM reports WHERE id='mixed-report'"
+            )).scalar_one(), 0)
+            self.assertEqual(connection.execute(text(
+                "SELECT COUNT(*) FROM report_claims"
+            )).scalar_one(), 0)
+
+    def test_sequential_v1_then_v2_append_is_rejected_atomically(self) -> None:
+        v1_fixture = ReportClaimContractTests()
+        v1_fixture.setUp()
+        v1_claim = replace(
+            v1_fixture.claim(report_run="report-run"),
+            project_id=self.project.id,
+            source_workflow_run_id="source-run",
+            design_id="design-1",
+        )
+        v2_claim = self._v2_claim("sequential-v2")
+        report = replace(self._report("sequential-v1", 1), metadata={})
+        self.claims.create_with_report(report, (v1_claim,))
+        with self.assertRaises(ReportClaimConflictError):
+            self.claims.create_many((v2_claim,), report_id=report.id, report_revision=1)
+        self.assertEqual(len(self.claims.list_for_report(report.id, 1)), 1)
+
+    def test_sequential_v2_then_v1_append_is_rejected_atomically(self) -> None:
+        v1_fixture = ReportClaimContractTests()
+        v1_fixture.setUp()
+        v1_claim = replace(
+            v1_fixture.claim(report_run="report-run"),
+            project_id=self.project.id,
+            source_workflow_run_id="source-run",
+            design_id="design-1",
+        )
+        v2_claim = self._v2_claim("sequential-v2-reverse")
+        report = replace(self._report("sequential-v2", 1), metadata={})
+        self.claims.create_with_report(report, (v2_claim,))
+        with self.assertRaises(ReportClaimConflictError):
+            self.claims.create_many((v1_claim,), report_id=report.id, report_revision=1)
+        self.assertEqual(len(self.claims.list_for_report(report.id, 1)), 1)
+
+    def test_sequential_mixed_attachment_is_rejected(self) -> None:
+        v1_fixture = ReportClaimContractTests()
+        v1_fixture.setUp()
+        v1_claim = replace(
+            v1_fixture.claim(report_run="report-run"),
+            project_id=self.project.id,
+            source_workflow_run_id="source-run",
+            design_id="design-1",
+        )
+        v2_claim = self._v2_claim("attach-v2")
+        report = replace(self._report("attach-sequential", 1), metadata={})
+        self.claims.create_with_report(report, (v1_claim,))
+        with self.assertRaises(ReportClaimConflictError):
+            self.claims.attach_claims_to_report_revision(report, (v2_claim,))
+        self.assertEqual(len(self.claims.list_for_report(report.id, 1)), 1)
+
+    def test_concurrent_mixed_attachment_has_one_winner(self) -> None:
+        v1_fixture = ReportClaimContractTests()
+        v1_fixture.setUp()
+        v1_claim = replace(
+            v1_fixture.claim(report_run="report-run"),
+            project_id=self.project.id,
+            source_workflow_run_id="source-run",
+            design_id="design-1",
+        )
+        v2_claim = self._v2_claim("attach-concurrent-v2")
+        source_v1 = replace(self._report("attach-source-v1", 1), metadata={})
+        source_v2 = replace(self._report("attach-source-v2", 1), metadata={})
+        report = replace(self._report("attach-concurrent", 1), metadata={})
+        reports = PostgreSQLReportRepository(self.session_factory)
+        self.claims.create_with_report(source_v1, (v1_claim,))
+        self.claims.create_with_report(source_v2, (v2_claim,))
+        reports.create(report)
+
+        def attach(claim):
+            repository = PostgreSQLReportClaimRepository(self.session_factory)
+            try:
+                repository.attach_claims_to_report_revision(report, (claim,))
+                return True
+            except ReportClaimConflictError:
+                return False
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(attach, (v1_claim, v2_claim)))
+        self.assertEqual(sum(outcomes), 1)
+        stored = self.claims.list_for_report(report.id, report.revision_number)
+        self.assertEqual(len(stored), 1)
+
+    def test_reload_rejects_mixed_claim_membership(self) -> None:
+        h3_claim = self._claim()
+        v1_fixture = ReportClaimContractTests()
+        v1_fixture.setUp()
+        v1_claim = replace(
+            v1_fixture.claim(report_run="report-run"),
+            project_id=self.project.id,
+            source_workflow_run_id="source-run",
+            design_id="design-1",
+        )
+        report = replace(self._report("reload-mixed", 1), metadata={})
+        self.claims.create_with_report(report, (v1_claim,))
+        with self.engine.begin() as connection:
+            connection.execute(text(
+                "INSERT INTO report_claims "
+                "(id,report_id,report_revision,project_id,source_workflow_run_id,"
+                "report_workflow_run_id,research_design_id,contract_version,"
+                "claim_payload,authority_digest,created_at) VALUES "
+                "(:id,:report_id,1,:project,'source-run','report-run','design-1',"
+                ":contract_version,CAST(:payload AS jsonb),:authority_digest,CURRENT_TIMESTAMP)"
+            ), {
+                "id": h3_claim.claim_id,
+                "report_id": report.id,
+                "project": self.project.id,
+                "contract_version": h3_claim.contract_version,
+                "payload": json.dumps(h3_claim.to_dict()),
+                "authority_digest": h3_claim.authority_digest,
+            })
+        with self.assertRaises(ReportClaimConflictError):
+            self.claims.list_for_report(report.id, report.revision_number)
 
     def test_j2_revision_survives_repository_restart_without_new_claim_rows(self) -> None:
         claim = self._claim()

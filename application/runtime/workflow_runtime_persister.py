@@ -31,6 +31,7 @@ from application.executors.design_generation_executor import (
     DESIGN_GENERATION_DIAGNOSTIC_KEY,
 )
 from application.runtime.checkpoint_context import CHECKPOINT_FAILURE_HANDLER_KEY
+from application import research_funnel_telemetry as funnel
 
 
 class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
@@ -119,6 +120,7 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
             elif task.status == TaskStatus.FAILED and (
                 is_quantitative_diagnostic_stage(task.definition_id)
                 or has_evidence_failure_diagnostics(context)
+                or _has_source_acquisition_diagnostics(context)
                 or bool(context.shared_state.get("research_funnel_v1"))
                 or _has_report_failure_diagnostics(context)
                 or _has_design_generation_failure_diagnostics(context)
@@ -138,6 +140,26 @@ class WorkflowRuntimePersister(WorkflowRuntimeCheckpoint):
                         shared_state={
                             DESIGN_GENERATION_DIAGNOSTIC_KEY:
                                 context.shared_state[DESIGN_GENERATION_DIAGNOSTIC_KEY]
+                        },
+                    )
+                    self._task_results[task.id] = capture_task_result(
+                        diagnostic_context,
+                        task.id,
+                    )
+                elif (
+                    task.definition_id == "task-collect-evidence"
+                    and _has_source_acquisition_diagnostics(context)
+                ):
+                    diagnostic_context = replace(
+                        context,
+                        shared_state={
+                            key: context.shared_state[key]
+                            for key in (
+                                "source_acquisition",
+                                funnel.KEY,
+                                "research_product_outcome",
+                            )
+                            if key in context.shared_state
                         },
                     )
                     self._task_results[task.id] = capture_task_result(
@@ -241,6 +263,11 @@ def _has_report_failure_diagnostics(context: WorkflowContext) -> bool:
         key in context.shared_state
         for key in REPORT_FAILURE_DIAGNOSTIC_KEYS
     )
+
+
+def _has_source_acquisition_diagnostics(context: WorkflowContext) -> bool:
+    summary = context.shared_state.get("source_acquisition")
+    return isinstance(summary, dict) and bool(summary)
 
 
 def _has_design_generation_failure_diagnostics(context: WorkflowContext) -> bool:

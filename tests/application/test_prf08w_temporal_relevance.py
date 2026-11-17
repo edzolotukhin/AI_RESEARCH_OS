@@ -5,7 +5,12 @@ from datetime import date
 from unittest.mock import Mock
 from tests.helpers.citation_fixtures import sources_for
 
-from application.evidence.temporal_scope import observation_interval, qualifying_evidence
+from application.evidence.temporal_scope import (
+    NO_EXPLICIT_TEMPORAL_CONSTRAINT,
+    observation_interval,
+    qualify_evidence_with_temporal_decisions,
+    qualifying_evidence,
+)
 from application.evidence.provenance_validation import validate_candidate_provenance, InvalidProvenanceError
 from application.evidence.run_scoped_provenance import RunScopedSourceContext
 from application.ports.evidence_ports import EvidenceCandidate
@@ -102,6 +107,26 @@ class TemporalTests(unittest.TestCase):
     def test_explicit_year_boundary_is_bounded(self):
         self.assertTrue(self.qualified('2025',timeframe='2025'))
         self.assertFalse(self.qualified('2024',timeframe='2025'))
+
+    def test_canonical_decisions_are_scoped_and_distinguish_missing_authority(self):
+        fact = _evidence('e','s','2025',need='in-1')
+        repository = sources_for((fact,))
+        decided = qualify_evidence_with_temporal_decisions(
+            design=design(), evidence=(fact,), source_repository=repository,
+            brief=ResearchBrief(title='Meters',business_question='Meter counts',timeframe='2025'),
+        )
+        self.assertEqual(decided.decisions[('e','in-1')], 'applicable_satisfied')
+        self.assertNotIn(('e','in-2'), decided.decisions)
+
+        unconstrained = qualify_evidence_with_temporal_decisions(
+            design=design(), evidence=(fact,), source_repository=repository, brief=None,
+        )
+        unresolved = qualify_evidence_with_temporal_decisions(
+            design=design(), evidence=(fact,), source_repository=repository,
+            brief=ResearchBrief(title='Meters',business_question='Meter counts',timeframe='sometime'),
+        )
+        self.assertEqual(unconstrained.decisions[('e','in-1')], NO_EXPLICIT_TEMPORAL_CONSTRAINT)
+        self.assertEqual(unresolved.decisions[('e','in-1')], 'applicable_unresolved')
 
 
 class RelevanceTests(unittest.TestCase):

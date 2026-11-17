@@ -39,6 +39,23 @@ class PostgreSQLFindingRepository(FindingRepository):
                 return None
             return finding_from_model(model)
 
+    def lock_selected_for_authority(self, ids: tuple[str, ...]) -> tuple[Finding, ...]:
+        """Lock exactly the selected Finding rows for an owned authority read."""
+        from sqlalchemy import select
+
+        session = self._session_factory.require_write_transaction()
+        locked: list[Finding] = []
+        for finding_id in sorted(ids):
+            model = session.execute(
+                select(FindingModel)
+                .where(FindingModel.id == finding_id)
+                .with_for_update(read=True)
+            ).scalar_one_or_none()
+            if model is None:
+                raise ValueError("Selected Finding is missing")
+            locked.append(finding_from_model(model))
+        return tuple(locked)
+
     def get_by_deduplication_key(
         self,
         workflow_run_id: str,

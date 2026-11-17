@@ -1,0 +1,181 @@
+from tools.real_research_e2e import (
+    _acceptance_failure,
+    _mark_missing_source_acquisition_diagnostics,
+    _record_unhandled_error,
+    _source_acquisition_diagnostics,
+)
+import tools.real_research_e2e as real_e2e
+
+
+def test_failed_workflow_is_not_an_accepted_e2e_result():
+    assert _acceptance_failure({"workflow_status": "failed"}) == "workflow execution failed"
+
+
+def test_insufficient_outcome_is_not_an_accepted_e2e_result():
+    assert _acceptance_failure({"workflow_status": "completed", "outcome": "INSUFFICIENT"}) == (
+        "research outcome is INSUFFICIENT"
+    )
+
+
+def test_completed_result_with_outcome_is_accepted():
+    assert _acceptance_failure({"workflow_status": "completed", "outcome": "COMPLETED"}) is None
+
+
+def test_missing_outcome_is_not_an_accepted_e2e_result():
+    assert _acceptance_failure({"workflow_status": "completed"}) == (
+        "authoritative research outcome is missing"
+    )
+
+
+def test_ambiguous_outcome_is_only_expected_for_failed_workflow():
+    failed = {"workflow_status": "failed", "research_result_error": "Ambiguous durable research outcome"}
+    completed = {"workflow_status": "completed", "research_result_error": "Ambiguous durable research outcome"}
+    assert _acceptance_failure(failed) == "workflow execution failed"
+    assert _acceptance_failure(completed) == "authoritative research result is unavailable"
+
+
+def test_source_acquisition_diagnostics_aggregates_durable_summary_without_identifiers():
+    result = _source_acquisition_diagnostics({
+        "task_results": [{
+            "snapshot": {
+                "definition_id": "task-collect-evidence",
+                "shared_state": {
+                    "source_acquisition": {
+                        "candidate_count_raw": 12,
+                        "candidate_count_unique": 10,
+                        "candidates_attempted": 5,
+                        "acquired_count": 2,
+                        "failed_count": 3,
+                        "skipped_duplicate_count": 2,
+                        "skipped_budget_count": 3,
+                        "failure_category_counts": {"http_error": 2, "unsupported_content_type": 1},
+                        "selection_decisions": [
+                            {"canonical_url": "https://secret.example/a", "source_id": "private-id", "action": "fetch_failed", "reason": "http_error"},
+                            {"canonical_url": "https://secret.example/b", "source_id": "private-id-2", "action": "skipped_duplicate_content", "reason": "acquired_duplicate_content"},
+                        ],
+                    },
+                    "research_funnel_v1": {
+                        "events": [
+                            {"kind": "candidate", "url": "https://secret.example/a"},
+                            {"kind": "acquisition", "status": "failed", "source_id": "private-id", "reason": "http_error"},
+                        ],
+                    },
+                },
+            },
+        }],
+    })
+
+    assert result["summary"]["acquired_count"] == 2
+    assert result["summary"]["candidate_count_raw"] == 12
+    assert result["failure_category_counts"] == {"http_error": 2, "unsupported_content_type": 1}
+    assert result["selection_action_counts"] == {"fetch_failed": 1, "skipped_duplicate_content": 1}
+    assert result["funnel_event_counts"] == {"candidate": 1, "acquisition": 1}
+    serialized = str(result)
+    assert "secret.example" not in serialized
+    assert "private-id" not in serialized
+
+
+def test_bounded_attempt_projection_drops_injected_identifiers_and_payload():
+    result = _source_acquisition_diagnostics({"task_results": [{"snapshot": {
+        "definition_id": "task-collect-evidence", "shared_state": {"source_acquisition": {
+            "safe_attempt_diagnostics": [{
+                "action": "fetch_failed", "need_index": 2, "stage": "fetch",
+                "http_status_class": "5xx", "limit_code": "none",
+                "exception_class": "other", "failure_category": "http_error",
+                "terminal_reason": "https://private.example/SECRET",
+                "url": "https://private.example", "source_id": "secret-id",
+                "payload": "SECRET", "message": "SECRET",
+            }] * 40,
+        }}
+    }}]})
+    assert result["attempts"][0]["need_index"] == 2
+    assert len(result["attempts"]) == 32
+    assert result["attempts_truncated"] is True
+    assert result["attempts"][0]["terminal_reason"] == "other"
+    assert "private.example" not in str(result)
+    assert "secret-id" not in str(result)
+    assert "SECRET" not in str(result)
+
+
+def test_source_acquisition_diagnostics_rejects_ambiguous_search_snapshots():
+    snapshot = {
+        "definition_id": "task-collect-evidence",
+        "shared_state": {"source_acquisition": {"acquired_count": 2}},
+    }
+    import pytest
+    with pytest.raises(ValueError, match="ambiguous source acquisition"):
+        _source_acquisition_diagnostics({
+            "task_results": [
+                {"snapshot": snapshot},
+                {"snapshot": snapshot},
+            ],
+        })
+
+
+def test_source_acquisition_diagnostics_ignores_non_search_snapshot():
+    result = _source_acquisition_diagnostics({
+        "task_results": [
+            {"snapshot": {"definition_id": "task-assess-research-readiness",
+                           "shared_state": {"source_acquisition": {"acquired_count": 99}}}},
+            {"snapshot": {"definition_id": "task-collect-evidence",
+                           "shared_state": {"source_acquisition": {"acquired_count": 2}}}},
+        ],
+    })
+    assert result["summary"]["acquired_count"] == 2
+
+
+def test_unhandled_error_preserves_collected_diagnostics(tmp_path):
+    diagnostics = {
+        "workflow_run_id": "run-safe",
+        "workflow_status": "failed",
+        "source_acquisition_diagnostics": {"summary": {"acquired_count": 2}},
+    }
+    _record_unhandled_error(tmp_path, diagnostics, RuntimeError("late failure"))
+    saved = (tmp_path / "diagnostics.json").read_text(encoding="utf-8")
+    assert '"workflow_run_id": "run-safe"' in saved
+    assert '"acquired_count": 2' in saved
+    assert '"unhandled_error"' in saved
+    assert '"status": "failed"' in saved
+
+
+def test_missing_failed_search_snapshot_is_explicitly_diagnostic():
+    diagnostics = {
+        "workflow_status": "failed",
+        "task_statuses": [{
+            "definition_id": "task-collect-evidence",
+            "status": "failed",
+        }],
+    }
+    _mark_missing_source_acquisition_diagnostics(diagnostics, {
+        "task_results": [{
+            "snapshot": {
+                "definition_id": "task-collect-evidence",
+                "shared_state": {},
+            },
+        }],
+    })
+    assert diagnostics["source_acquisition_diagnostics_error"] == (
+        "missing_durable_acquisition_snapshot"
+    )
+
+
+def test_recovery2_entrypoint_requires_approved_desk_activation(monkeypatch, tmp_path):
+    class StopAtApprovedDeskActivation(Exception):
+        pass
+
+    monkeypatch.setattr(real_e2e, "_json_request", lambda *args, **kwargs: (201, {"id": "project-test"}))
+
+    def approved_run(project_id):
+        assert project_id == "project-test"
+        raise StopAtApprovedDeskActivation
+
+    monkeypatch.setattr(real_e2e, "_prepare_approved_desk_run", approved_run)
+    monkeypatch.setenv("RUN_REAL_E2E", "true")
+    monkeypatch.setenv("E2E_OUTPUT_DIR", str(tmp_path))
+    for key in ("E2E_API_BASE", "E2E_API_KEY", "OPENAI_API_KEY", "SEARCH_API_KEY"):
+        monkeypatch.setenv(key, "fixture")
+    for key in ("E2E_MAX_SECONDS", "LLM_MAX_CALLS_PER_RUN", "SOURCE_MAX_SOURCES_PER_RUN", "LLM_MAX_TOKENS"):
+        monkeypatch.setenv(key, "1")
+    import pytest
+    with pytest.raises(StopAtApprovedDeskActivation):
+        real_e2e.main()

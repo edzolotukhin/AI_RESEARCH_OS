@@ -162,7 +162,7 @@ class Prf08gCoverageTests(unittest.TestCase):
         self.assertEqual(list(grouped), ["https://example.org/page"])
         self.assertEqual(len(grouped["https://example.org/page"]), 2)
 
-    def test_current_http_retriever_screens_known_unreadable_pdf(self) -> None:
+    def test_http_retriever_allows_pdf_candidates_through_normal_selection(self) -> None:
         service = _service(HttpSourceRetriever())
         pdf = "https://example.org/report.PDF?download=1"
         html = "https://example.org/report.html"
@@ -173,12 +173,13 @@ class Prf08gCoverageTests(unittest.TestCase):
         eligible, decisions, skipped, _ = service._select_groups(
             grouped, design=_design(1), exhausted_pairs=frozenset(),
         )
-        self.assertEqual([item.canonical_url for item in eligible], [html])
-        self.assertEqual(skipped, 1)
-        self.assertTrue(any(
+        self.assertIn(pdf, [item.canonical_url for item in eligible])
+        self.assertEqual(skipped, 0)
+        self.assertFalse(any(
             item.get("reason") == "retriever_known_unsupported_url"
             for item in decisions
         ))
+        self.assertFalse(HttpSourceRetriever().known_unsupported_url(pdf))
         self.assertFalse(HttpSourceRetriever().known_unsupported_url(html))
 
     def test_foreign_titled_candidate_is_not_direct_for_requested_geography(self) -> None:

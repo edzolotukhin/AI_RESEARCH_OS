@@ -7,7 +7,10 @@ from application.execution.budget_utils import is_sufficiency_graceful_budget_st
 from application.execution.exceptions import BudgetExhaustedError
 from application.ports.evidence_ports import EvidenceRepository
 from application.ports.source_ports import SourceRepository
-from application.evidence.temporal_scope import qualifying_evidence
+from application.evidence.temporal_scope import (
+    qualify_evidence_with_temporal_decisions,
+    qualifying_evidence,
+)
 from application import research_funnel_telemetry as funnel
 from application.ports.research_quality_ports import ResearchSufficiencyEvaluator
 from application.research_quality.research_loop_state import (
@@ -94,15 +97,20 @@ class ResearchReadinessService:
         self._require_source_repository()
         design = self._require_design(context)
         evidence = self._evidence_for_context(context)
-        evidence = qualifying_evidence(
+        temporal = qualify_evidence_with_temporal_decisions(
             design=design, evidence=evidence,
             source_repository=self._source_repository,
             brief=(context.workflow_template.research_brief_snapshot if context.workflow_template else None),
         )
+        evidence = temporal.evidence
         previous = get_sufficiency_assessment_cache()
         bind_sufficiency_assessment_cache(context)
         try:
-            return self._evaluator.evaluate(design=design, evidence=evidence)
+            return self._evaluator.evaluate(
+                design=design,
+                evidence=evidence,
+                temporal_decisions=temporal.decisions,
+            )
         finally:
             persist_sufficiency_assessment_cache(context)
             reset_sufficiency_assessment_cache(previous)
@@ -245,15 +253,17 @@ class ResearchReadinessService:
         self._require_source_repository()
         design = self._require_design(context)
         cache_payload = context.read_shared(SHARED_SUFFICIENCY_CACHE_KEY)
+        temporal = qualify_evidence_with_temporal_decisions(
+            design=design,
+            source_repository=self._source_repository,
+            evidence=self._evidence_for_context(context),
+            brief=(context.workflow_template.research_brief_snapshot if context.workflow_template else None),
+        )
         reconciled = reconcile_terminal_readiness(
             design=design,
             source_repository=self._source_repository,
-            evidence=qualifying_evidence(
-                design=design,
-                source_repository=self._source_repository,
-            evidence=self._evidence_for_context(context),
-                brief=(context.workflow_template.research_brief_snapshot if context.workflow_template else None),
-            ),
+            evidence=temporal.evidence,
+            temporal_decisions=temporal.decisions,
             previous=candidate,
             cache_payload=(cache_payload if isinstance(cache_payload, dict) else None),
         )

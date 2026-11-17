@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from domain.evidence.evidence import Evidence
 from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
@@ -36,6 +36,8 @@ def reconcile_terminal_readiness(
     cache_payload: dict | None,
     max_evidence_items: int = DEFAULT_MAX_EVIDENCE_ITEMS,
     source_repository=None,
+    temporal_decisions: Mapping[tuple[str, str], str] | None = None,
+    numeric_qualifications=None,
 ) -> ResearchReadinessResult:
     """Build a truthful terminal snapshot without semantic or external calls.
 
@@ -45,10 +47,23 @@ def reconcile_terminal_readiness(
     completed semantic assessment but is explicitly marked non-current.
     """
     from application.research_quality.classified_readiness import classified, acquired_view, align_readiness
+    from application.analysis.numeric_integrity import project_numeric_evidence_for_design
+    decisions=temporal_decisions or {}
+    if numeric_qualifications is None:
+        projection=project_numeric_evidence_for_design(
+            design=design,evidence=evidence,source_repository=source_repository,
+            temporal_decisions=decisions,
+            allowed_workflow_run_ids=tuple(sorted({item.workflow_run_id for item in evidence})),
+        )
+        evidence=projection.evidence
+        numeric_qualifications=projection.qualifications
     if classified(design):
         acquired=reconcile_terminal_readiness(design=acquired_view(design),evidence=evidence,previous=previous,
-            cache_payload=cache_payload,max_evidence_items=max_evidence_items,source_repository=source_repository)
-        return align_readiness(design,evidence,acquired,source_repository)
+            cache_payload=cache_payload,max_evidence_items=max_evidence_items,source_repository=source_repository,
+            temporal_decisions=decisions,numeric_qualifications=numeric_qualifications)
+        return align_readiness(
+            design,evidence,acquired,source_repository,decisions,numeric_qualifications,
+        )
     signals_by_need = {
         item.information_need_id: item
         for item in DeterministicSufficiencyEvaluator().evaluate(
@@ -138,7 +153,12 @@ def reconcile_terminal_readiness(
         )
         for rq in sorted(design.research_questions, key=lambda item: item.id)
     )
-    return build_research_readiness_result(rq_assessments)
+    reconciled=build_research_readiness_result(rq_assessments)
+    if numeric_qualifications:
+        return align_readiness(
+            design,evidence,reconciled,source_repository,decisions,numeric_qualifications,
+        )
+    return reconciled
 
 
 def _research_question_for_need(

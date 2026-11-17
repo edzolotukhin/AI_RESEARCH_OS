@@ -421,12 +421,12 @@ class P1151XlsxContentAdapterTests(unittest.TestCase):
         self.assertIn("Hello world", source.content_text)
 
     @patch("infrastructure.retrieval.redirect_fetcher.validate_fetch_url")
-    def test_case_19_pdf_path_unchanged(self, _validate) -> None:
+    def test_case_19_incomplete_pdf_fails_closed(self, _validate) -> None:
         client = Mock()
         client.get.return_value = _mock_response(
             url="https://example.com/report.pdf",
             content_type="application/pdf",
-            content=b"%PDF-1.4",
+            content=b"%PDF",
         )
         source = HttpSourceRetriever(http_client=client).retrieve(
             SourceCandidate(
@@ -438,10 +438,10 @@ class P1151XlsxContentAdapterTests(unittest.TestCase):
                 rank=1,
             ),
         )
-        self.assertEqual(source.retrieval_status, RetrievalStatus.UNSUPPORTED)
+        self.assertEqual(source.retrieval_status, RetrievalStatus.FAILED)
         self.assertEqual(
             source.metadata.get("reason"),
-            "PDF retrieval deferred in DR-03 v1",
+            "pdf_mime_mismatch",
         )
 
     def test_case_20_p1_12_source_ranking_module_untouched_contract(self) -> None:

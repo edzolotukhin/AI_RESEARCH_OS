@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
 from domain.planning.evidence_expectation import EvidenceExpectation
+from domain.planning.evidence_nature import EvidenceNature
 from domain.planning.research_subject import ResearchSubject
 from domain.planning.derivation import InformationNeedKind, DerivationContract, validate_dependency_graph
 
@@ -57,6 +58,7 @@ class EvidenceCoverageContract:
     required_periods: tuple[str, ...] = ()
     required_observations: tuple[str, ...] = ()
     required_metric: str = ""
+    required_unit: str = ""
     required_authority_kinds: tuple[str, ...] = ()
     # Each inner tuple is an OR-group; all groups must be satisfied.  The
     # legacy flat field remains one OR-group for backward compatibility.
@@ -65,6 +67,12 @@ class EvidenceCoverageContract:
     geography: str = ""
     eligible_source_types: tuple[str, ...] = ()
     prohibited_source_patterns: tuple[str, ...] = ()
+    # Payloads created before required_unit existed remain loadable and retain
+    # their exact serialized identity.  Numeric qualification must still treat
+    # their empty required_unit as unavailable.
+    _legacy_required_unit_omitted: bool = field(
+        default=False, compare=False, repr=False,
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -81,6 +89,12 @@ class EvidenceCoverageContract:
         ):
             object.__setattr__(self, field_name, _tuple_of_str(getattr(self, field_name)))
         object.__setattr__(self, "required_metric", self.required_metric.strip())
+        if not isinstance(self.required_unit, str):
+            raise ValueError("required_unit must be a string")
+        normalized_unit = " ".join(self.required_unit.split())
+        if len(normalized_unit) > 200:
+            raise ValueError("required_unit exceeds 200 characters")
+        object.__setattr__(self, "required_unit", normalized_unit)
         object.__setattr__(self, "geography", self.geography.strip())
         if self.minimum_independent_sources < 1:
             raise ValueError("minimum_independent_sources must be >= 1")
@@ -93,7 +107,7 @@ class EvidenceCoverageContract:
         object.__setattr__(self, "required_authority_kind_groups", groups)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "temporal_granularity": self.temporal_granularity.value,
             "required_periods": list(self.required_periods),
             "required_observations": list(self.required_observations),
@@ -105,6 +119,9 @@ class EvidenceCoverageContract:
             "eligible_source_types": list(self.eligible_source_types),
             "prohibited_source_patterns": list(self.prohibited_source_patterns),
         }
+        if self.required_unit:
+            payload["required_unit"] = self.required_unit
+        return payload
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "EvidenceCoverageContract":
@@ -115,6 +132,7 @@ class EvidenceCoverageContract:
             required_periods=_tuple_of_str(payload.get("required_periods")),
             required_observations=_tuple_of_str(payload.get("required_observations")),
             required_metric=str(payload.get("required_metric", "")),
+            required_unit=payload.get("required_unit", ""),
             required_authority_kinds=_tuple_of_str(
                 payload.get("required_authority_kinds")
             ),
@@ -130,6 +148,7 @@ class EvidenceCoverageContract:
             prohibited_source_patterns=_tuple_of_str(
                 payload.get("prohibited_source_patterns")
             ),
+            _legacy_required_unit_omitted="required_unit" not in payload,
         )
 
 
@@ -165,6 +184,23 @@ class InformationNeed:
             raise ValueError("Only DERIVED may carry a derivation")
         if self.kind==InformationNeedKind.ACQUIRED and self.depends_on_information_need_ids:
             raise ValueError("ACQUIRED cannot depend on analysis results")
+        numeric_acquired = (
+            self.kind == InformationNeedKind.ACQUIRED
+            and self.evidence_coverage is not None
+            and self.evidence_expectation is not None
+            and (
+                self.evidence_expectation.nature == EvidenceNature.QUANTITATIVE
+                or self.evidence_expectation.requires_quantitative_evidence
+            )
+        )
+        if (
+            numeric_acquired
+            and not self.evidence_coverage.required_unit
+            and not self.evidence_coverage._legacy_required_unit_omitted
+        ):
+            raise ValueError(
+                "Numeric ACQUIRED evidence coverage requires explicit required_unit"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {

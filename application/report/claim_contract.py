@@ -4,7 +4,14 @@ import hashlib
 import json
 from typing import Any
 
-from domain.reports.report_claim import REPORT_CLAIM_VERSION, ClaimScope, NumericFact
+from domain.reports.report_claim import (
+    REPORT_CLAIM_VERSION,
+    ClaimScope,
+    NumericFact,
+    ReportClaim,
+    authority_digest_v2_payload,
+    claim_digest_v2_payload,
+)
 
 
 def canonical_digest(payload: Any) -> str:
@@ -14,6 +21,21 @@ def canonical_digest(payload: Any) -> str:
 
 def content_digest(payload: Any) -> str:
     return canonical_digest(payload)
+
+
+def component_digest_v2(payload: Any) -> str:
+    """Digest one already-canonicalized v2 authority component."""
+    return canonical_digest(payload)
+
+
+def authority_digest_v2(claim: ReportClaim | Any) -> str:
+    """Digest immutable authority from a ReportClaim or claim-shaped draft."""
+    return canonical_digest(authority_digest_v2_payload(claim))
+
+
+def claim_digest_v2(claim: ReportClaim | Any) -> str:
+    """Digest a complete v2 claim from a ReportClaim or claim-shaped draft."""
+    return canonical_digest(claim_digest_v2_payload(claim))
 
 
 def report_claim_compatibility(claims: tuple[Any, ...]) -> str:

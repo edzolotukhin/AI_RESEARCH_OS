@@ -298,7 +298,8 @@ class SourceAcquisitionServiceTests(unittest.TestCase):
         executor = SearchExecutor(source_acquisition_service=service)
         with self.assertRaises(SourceAcquisitionError):
             executor.run(context)
-        self.assertNotIn("source_acquisition", context.shared_state)
+        self.assertEqual(context.shared_state["source_acquisition"]["acquired_count"], 0)
+        self.assertGreater(context.shared_state["source_acquisition"]["failed_count"], 0)
 
 
 if __name__ == "__main__":

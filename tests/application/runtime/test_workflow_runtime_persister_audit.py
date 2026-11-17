@@ -237,6 +237,56 @@ class WorkflowRuntimePersisterAuditOrderingTests(unittest.TestCase):
 
         self.assertNotIn(task.id, persisted)
 
+    def test_failed_search_persists_all_safe_diagnostics(self) -> None:
+        task = self.workflow_run.tasks[0]
+        self.context.current_task = task
+        task.definition_id = "task-collect-evidence"
+        task.ready()
+        task.start()
+        task.fail()
+        self.context.shared_state["source_acquisition"] = {
+            "candidate_count_raw": 3,
+            "acquired_count": 1,
+            "failed_count": 2,
+            "selection_decisions": [{"action": "fetch_failed", "reason": "http_error"}],
+        }
+        self.context.shared_state["research_product_outcome"] = {
+            "outcome": "FAILED",
+            "reason": "SourceAcquisitionError",
+        }
+        self.context.shared_state["research_funnel_v1"] = {
+            "events": [{"phase": "acquisition", "status": "failed"}],
+        }
+        self.context.shared_state["provider_payload"] = {"raw": "must not persist"}
+        self.context.shared_state["credentials"] = "must not persist"
+        persisted = {}
+
+        def save(run, expected_version, **kwargs):
+            persisted.update(kwargs["task_results"])
+            return expected_version + 1
+
+        self.workflow_service.save_workflow_run.side_effect = save
+        persister = WorkflowRuntimePersister(
+            workflow_service=self.workflow_service,
+            audit=self.audit,
+            run_id=self.workflow_run.id,
+            initial_version=0,
+        )
+        persister.on_task_finished(self.context, error=RuntimeError("source minimum"))
+
+        snapshot = persisted[task.id]
+        self.assertEqual(snapshot["shared_state"]["source_acquisition"]["acquired_count"], 1)
+        self.assertEqual(
+            snapshot["shared_state"]["research_product_outcome"]["outcome"],
+            "FAILED",
+        )
+        self.assertEqual(
+            snapshot["shared_state"]["research_funnel_v1"]["events"][0]["phase"],
+            "acquisition",
+        )
+        self.assertNotIn("provider_payload", snapshot["shared_state"])
+        self.assertNotIn("credentials", snapshot["shared_state"])
+
 
 class WorkflowExecutionAuditResumeTests(unittest.TestCase):
 

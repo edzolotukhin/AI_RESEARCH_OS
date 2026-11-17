@@ -9,13 +9,23 @@ from __future__ import annotations
 
 import calendar
 import re
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import date
-from typing import Sequence
+from types import MappingProxyType
+from typing import Mapping, Sequence
 
 from domain.evidence.evidence import Evidence
 from domain.planning.research_design import InformationNeed, ResearchDesign
 from domain.research_brief import ResearchBrief
+
+
+@dataclass(frozen=True)
+class TemporalQualificationResult:
+    evidence: tuple[Evidence, ...]
+    decisions: Mapping[tuple[str, str], str]
+
+
+NO_EXPLICIT_TEMPORAL_CONSTRAINT = "no_explicit_temporal_constraint"
 
 _MONTHS = {name.casefold(): index for index, name in enumerate(calendar.month_name) if name}
 _MONTHS.update({name.casefold(): index for index, name in enumerate(calendar.month_abbr) if name})
@@ -223,30 +233,42 @@ def temporal_eligibility(
     }[status]
 
 
-def qualifying_evidence(
+def qualify_evidence_with_temporal_decisions(
     *,
     design: ResearchDesign,
     evidence: Sequence[Evidence],
     brief: ResearchBrief | None,
     source_repository=None,
-) -> tuple[Evidence, ...]:
-    """Shared citation gate, then unchanged temporal qualification; fail closed."""
-    from application.evidence.citation_integrity import citation_valid_evidence
-    evidence = citation_valid_evidence(evidence, source_repository)
+    citation_prequalified: bool = False,
+) -> TemporalQualificationResult:
+    """Return compatibility-filtered Evidence and canonical per-IN decisions."""
+    if not citation_prequalified:
+        from application.evidence.citation_integrity import citation_valid_evidence
+        evidence = citation_valid_evidence(evidence, source_repository)
     from application import research_funnel_telemetry as funnel
     cutoff = exact_observation_cutoff(brief)
     start = None
+    timeframe = brief.timeframe.strip() if brief is not None else ""
     if brief is not None:
         clause = re.split(r";|(?=\bsources?\s+(?:available|published|retrieved)\b)",
                           brief.timeframe, maxsplit=1, flags=re.I)[0].strip()
         boundary = observation_interval(clause)
         if boundary is not None:
             start, cutoff = boundary
+    decisions: dict[tuple[str, str], str] = {}
     if cutoff is None:
+        decision = (
+            NO_EXPLICIT_TEMPORAL_CONSTRAINT
+            if not timeframe else "applicable_unresolved"
+        )
         for item in evidence:
             for ref in item.information_need_refs:
+                decisions[(item.id, ref)] = decision
                 funnel.qualification(item.id, ref, True, "no_exact_cutoff")
-        return tuple(evidence)
+        return TemporalQualificationResult(
+            evidence=tuple(evidence),
+            decisions=MappingProxyType(decisions),
+        )
     # A dated frozen Brief is a run-wide observation contract. An omitted
     # per-need timeframe does not silently waive it.
     needs_by_id = {need.id: need for need in design.information_needs}
@@ -254,12 +276,39 @@ def qualifying_evidence(
     for item in evidence:
         kept = []
         for ref in item.information_need_refs:
-            reason = temporal_eligibility(item, needs_by_id[ref], cutoff, start=start) if ref in needs_by_id else "unknown_need_passthrough"
-            qualifies = reason in {"applicable_satisfied", "not_applicable", "unknown_need_passthrough"}
-            funnel.qualification(item.id, ref, qualifies, reason)
+            known_need = needs_by_id.get(ref)
+            reason = (
+                temporal_eligibility(item, known_need, cutoff, start=start)
+                if known_need is not None else "applicable_unresolved"
+            )
+            decisions[(item.id, ref)] = reason
+            qualifies = reason in {"applicable_satisfied", "not_applicable"} or known_need is None
+            funnel.qualification(
+                item.id, ref, qualifies,
+                reason if known_need is not None else "unknown_need_passthrough",
+            )
             if qualifies:
                 kept.append(ref)
         refs = tuple(kept)
         if refs:
             filtered.append(replace(item, information_need_refs=refs))
-    return tuple(filtered)
+    return TemporalQualificationResult(
+        evidence=tuple(filtered),
+        decisions=MappingProxyType(decisions),
+    )
+
+
+def qualifying_evidence(
+    *,
+    design: ResearchDesign,
+    evidence: Sequence[Evidence],
+    brief: ResearchBrief | None,
+    source_repository=None,
+) -> tuple[Evidence, ...]:
+    """Compatibility wrapper preserving existing nonnumeric filtering behavior."""
+    return qualify_evidence_with_temporal_decisions(
+        design=design,
+        evidence=evidence,
+        brief=brief,
+        source_repository=source_repository,
+    ).evidence

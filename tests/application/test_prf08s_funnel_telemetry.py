@@ -11,6 +11,7 @@ from application.ports.evidence_ports import EvidenceCandidate
 from application.ports.source_ports import SearchProvider, SourceRetriever
 from application.sources.source_acquisition_service import SourceAcquisitionService
 from application.sources.source_budget import SourceAcquisitionBudget
+from application.runtime.workflow_runtime_persister import WorkflowRuntimePersister
 from application.research_quality.research_readiness_service import ResearchReadinessService
 from application.research_quality.deterministic_research_sufficiency_evaluator import DeterministicResearchSufficiencyEvaluator
 from domain.planning.research_design import ResearchDesign, ResearchQuestion, InformationNeed
@@ -176,6 +177,40 @@ class FunnelTests(unittest.TestCase):
         self.assertGreaterEqual(sum(e["status"] == "valid_empty" for e in results), 2)
         self.assertEqual(sum(e["evidence_count"] for e in results), 1)
         self.assertEqual(sum(e["qualifying"] for e in self.events(on, "qualification")), 1)
+
+    def test_failed_acquisition_summary_is_in_failed_checkpoint(self):
+        context = run_fixture()[0]
+        task = context.current_task
+        task.ready()
+        task.start()
+        task.fail()
+        context.shared_state["source_acquisition"] = {
+            "candidate_count_raw": 3,
+            "candidates_attempted": 3,
+            "acquired_count": 2,
+            "failed_count": 1,
+            "skipped_duplicate_count": 0,
+            "skipped_budget_count": 0,
+            "selection_decisions": [{"action": "fetch_failed", "reason": "http_error"}],
+        }
+        persisted = {}
+        service = type("WorkflowService", (), {
+            "save_workflow_run": lambda self, run, expected_version, **kwargs: (
+                persisted.update(kwargs["task_results"]) or expected_version + 1
+            ),
+        })()
+        persister = WorkflowRuntimePersister(
+            workflow_service=service,
+            audit=None,
+            run_id=context.workflow_run.id,
+            initial_version=0,
+        )
+        persister.on_task_finished(context, error=RuntimeError("source minimum"))
+        snapshots = [item for item in persisted.values() if isinstance(item, dict)]
+        self.assertTrue(snapshots)
+        shared = snapshots[0]["shared_state"]
+        self.assertEqual(shared["source_acquisition"]["acquired_count"], 2)
+        self.assertEqual(shared["source_acquisition"]["failed_count"], 1)
 
     def test_no_raw_responses_or_secrets(self):
         with patch.dict("os.environ", {"OPENAI_API_KEY": "OPAQUE_TEST_SECRET"}):

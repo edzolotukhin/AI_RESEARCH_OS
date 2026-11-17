@@ -39,6 +39,23 @@ class PostgreSQLInsightRepository(InsightRepository):
                 return None
             return insight_from_model(model)
 
+    def lock_selected_for_authority(self, ids: tuple[str, ...]) -> tuple[Insight, ...]:
+        """Lock exactly the selected Insight rows for an owned authority read."""
+        from sqlalchemy import select
+
+        session = self._session_factory.require_write_transaction()
+        locked: list[Insight] = []
+        for insight_id in sorted(ids):
+            model = session.execute(
+                select(InsightModel)
+                .where(InsightModel.id == insight_id)
+                .with_for_update(read=True)
+            ).scalar_one_or_none()
+            if model is None:
+                raise ValueError("Selected Insight is missing")
+            locked.append(insight_from_model(model))
+        return tuple(locked)
+
     def get_by_deduplication_key(
         self,
         workflow_run_id: str,

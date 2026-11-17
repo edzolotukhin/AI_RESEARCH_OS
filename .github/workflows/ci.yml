@@ -59,7 +59,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends fonts-dejavu-core
-          python -m pip install pypdf==6.10.0
           echo "PDF_FONT_PATH=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf" >> "$GITHUB_ENV"
 
       - name: Set up pinned PPTX Node runtime

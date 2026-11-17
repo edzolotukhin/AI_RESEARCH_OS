@@ -5,6 +5,9 @@ from unittest.mock import patch
 import httpx
 from openpyxl import Workbook
 from application.sources.acquisition_capability import decide_acquisition, TABLE_EXTRACTION_CAPABILITY
+from application.sources.source_acquisition_service import _failure_category, _safe_attempt_diagnostics
+from infrastructure.retrieval.bounded_pdf_text_extractor import PdfTextResult
+from domain.planning.research_design import InformationNeed, ResearchDesign, ResearchQuestion
 from domain.sources.source import Source
 from domain.sources.source_candidate import SourceCandidate
 from infrastructure.retrieval.http_source_retriever import HttpSourceRetriever
@@ -60,6 +63,88 @@ class CapabilityNavigationTests(unittest.TestCase):
         source=self.retrieve(lambda r:httpx.Response(200,content=b"x"*100,headers={"content-type":"text/html"}),navigation_max_bytes="50")
         self.assertEqual(source.retrieval_status.value,"failed")
         self.assertEqual(source.metadata["navigation_diagnostics"]["stop_reason"],"byte_budget_exhausted")
+        self.assertEqual(source.metadata["failure_category"],"content_too_large")
+
+    def test_child_redirect_loop_continues_to_next_xlsx(self):
+        calls=[]
+        def handler(request):
+            calls.append(request.url.path)
+            if request.url.path == "/landing":
+                return httpx.Response(200,text='<a href="/a-loop">Download table</a><a href="/b-data.xlsx">Download table</a>',headers={"content-type":"text/html"})
+            if request.url.path == "/a-loop":
+                return httpx.Response(302,headers={"location":"/landing"})
+            if request.url.path == "/b-data.xlsx":
+                return httpx.Response(200,content=workbook(),headers={"content-type":"application/octet-stream"})
+            self.fail("unexpected request")
+        source=self.retrieve(handler)
+        self.assertEqual(source.retrieval_status.value,"acquired")
+        self.assertEqual(source.url,"https://example.org/b-data.xlsx")
+        self.assertEqual(calls,["/landing","/a-loop","/b-data.xlsx"])
+        self.assertTrue(source.metadata["structured_rows"])
+        events=source.metadata["navigation_diagnostics"]["events"]
+        self.assertTrue(any(event.get("reason")=="url_already_visited" for event in events))
+
+    def test_root_redirect_loop_is_failed_without_repeat_request(self):
+        calls=[]
+        def handler(request):
+            calls.append(request.url.path)
+            return httpx.Response(302,headers={"location":"/landing"})
+        source=self.retrieve(handler)
+        self.assertEqual(calls,["/landing"])
+        self.assertEqual(source.retrieval_status.value,"failed")
+        self.assertEqual(source.metadata["failure_category"],"other_retrieval_error")
+        self.assertEqual(source.metadata["retrieval_diagnostic"]["failure_category"],"other_retrieval_error")
+        self.assertEqual(source.metadata["retrieval_diagnostic"]["limit_code"],"url_already_visited")
+        self.assertEqual(source.metadata["navigation_diagnostics"]["requests"],1)
+
+    def test_table_html_without_structured_rows_remains_failed_with_category(self):
+        source=self.retrieve(lambda r:httpx.Response(200,text='<table><tr><td>2020</td><td>950</td></tr></table>',headers={"content-type":"text/html"}))
+        self.assertEqual(source.retrieval_status.value,"failed")
+        self.assertEqual(source.metadata["reason"],"required_terminal_not_found")
+        self.assertEqual(source.metadata["retrieval_diagnostic"]["terminal_reason"], "required_terminal_not_found")
+        self.assertEqual(source.metadata["failure_category"],"other_retrieval_error")
+        self.assertEqual(source.metadata["retrieval_diagnostic"]["failure_category"],"other_retrieval_error")
+        design=ResearchDesign(id="diagnostic-design",research_questions=(ResearchQuestion("rq","Population"),),
+            information_needs=(InformationNeed("need","rq","Population"),))
+        category=_failure_category(source)
+        records,truncated=_safe_attempt_diagnostics([{"action":"fetch_failed","information_need_id":"need",
+            "retrieval_diagnostic":source.metadata["retrieval_diagnostic"]}],design)
+        self.assertEqual(category,"other_retrieval_error")
+        self.assertEqual(records[0]["failure_category"],category)
+        self.assertEqual(records[0]["terminal_reason"], "required_terminal_not_found")
+        self.assertFalse(truncated)
+
+    def test_pdf_failure_safe_projection_omits_source_and_payload(self):
+        with patch("infrastructure.retrieval.http_source_retriever.extract_pdf_text",
+                   return_value=PdfTextResult(error_code="pdf_encrypted")):
+            source=self.retrieve(lambda r:httpx.Response(200,content=b"%PDF-1.4",headers={"content-type":"application/pdf"}),required_resource_kind="text")
+        design=ResearchDesign(id="diagnostic-design",research_questions=(ResearchQuestion("rq","Population"),),
+            information_needs=(InformationNeed("need","rq","Population"),))
+        records,truncated=_safe_attempt_diagnostics([{
+            "action":"fetch_failed","information_need_id":"need",
+            "canonical_url":"https://private.example/secret.pdf","source_id":"source-secret",
+            "provider_payload":"credential-secret","reason":source.metadata["reason"],
+            "retrieval_diagnostic":source.metadata["retrieval_diagnostic"],
+        }],design)
+        self.assertEqual(source.metadata["failure_category"],"unsupported_content_type")
+        self.assertEqual(records[0]["failure_category"],_failure_category(source))
+        self.assertFalse(truncated)
+        for secret in ("private.example","source-secret","credential-secret","pdf_encrypted"):
+            self.assertNotIn(secret,str(records))
+
+    def test_request_limit_remains_failed(self):
+        source=self.retrieve(lambda r:httpx.Response(302,headers={"location":"/next"+str(r.url.path)}),navigation_max_requests="1")
+        self.assertEqual(source.retrieval_status.value,"failed")
+        self.assertEqual(source.metadata["failure_category"],"content_too_large")
+        self.assertEqual(source.metadata["retrieval_diagnostic"]["limit_code"],"request_budget_exhausted")
+
+    def test_html_challenge_category_agrees_with_diagnostic(self):
+        source=self.retrieve(lambda r:httpx.Response(200,text="Just a moment. Verify you are human",headers={"content-type":"text/html"}),required_resource_kind="text")
+        self.assertEqual(source.retrieval_status.value,"failed")
+        self.assertEqual(source.metadata["reason"],"html_challenge")
+        self.assertEqual(source.metadata["retrieval_diagnostic"]["terminal_reason"], "html_challenge")
+        self.assertEqual(source.metadata["failure_category"],"other_retrieval_error")
+        self.assertEqual(source.metadata["retrieval_diagnostic"]["failure_category"],"other_retrieval_error")
 
     def test_loop_and_link_limit(self):
         source=self.retrieve(lambda r:httpx.Response(200,text='<a href="/landing">data loop</a><a href="/resource">resource</a>',headers={"content-type":"text/html"}),navigation_total_links="2")
@@ -103,7 +188,8 @@ class CapabilityNavigationTests(unittest.TestCase):
 
     def test_unsupported_format_is_controlled(self):
         source=self.retrieve(lambda r:httpx.Response(200,content=b"%PDF",headers={"content-type":"application/pdf"}))
-        self.assertEqual(source.retrieval_status.value,"unsupported")
+        self.assertEqual(source.retrieval_status.value,"failed")
+        self.assertEqual(source.metadata["reason"],"pdf_mime_mismatch")
 
     def test_depth_limit(self):
         source=self.retrieve(lambda r:httpx.Response(200,text='<a href="/resource/next">resource</a>',headers={"content-type":"text/html"}),navigation_max_depth="0")

@@ -75,6 +75,16 @@ from application import research_funnel_telemetry as funnel
 logger = logging.getLogger("ai_research_os.sources")
 
 _MAX_PROVENANCE_RETRIES = 5
+_MAX_SAFE_DIAGNOSTIC_RECORDS = 32
+_SAFE_REJECTION_REASONS = frozenset({
+    "retriever_known_unsupported_url", "zero_grounded_evidence_after_extraction",
+    "subject_irrelevant", "subject_unresolved_no_positive_signal",
+    "generic_local_overlap_without_parent_topic", "no_positive_topic_signal_unscored",
+})
+_SAFE_RETRIEVAL_STAGES = frozenset({"fetch", "navigation", "size", "xlsx", "success", "unknown"})
+_SAFE_STATUS_CLASSES = frozenset({"4xx", "5xx", "other", "none"})
+_SAFE_LIMIT_CODES = frozenset({"url_already_visited", "request_budget_exhausted", "byte_budget_exhausted", "link_budget_exhausted", "body_bytes", "workbook_truncated", "none"})
+_SAFE_EXCEPTION_CLASSES = frozenset({"TimeoutException", "HTTPStatusError", "ConnectError", "ReadError", "RemoteProtocolError", "DecodingError", "other", "none"})
 
 
 @dataclass(frozen=True)
@@ -105,6 +115,8 @@ class SourceAcquisitionSummary:
     skipped_exhausted_count: int = 0
     selection_decisions: tuple[dict[str, Any], ...] = ()
     retrieval_arm_call_counts: dict[str, int] = field(default_factory=dict)
+    safe_attempt_diagnostics: tuple[dict[str, Any], ...] = ()
+    safe_diagnostics_truncated: bool = False
 
     def __post_init__(self) -> None:
         if self.tavily_query_count == 0 and self.queries_executed:
@@ -144,6 +156,8 @@ class SourceAcquisitionSummary:
             "skipped_exhausted_count": self.skipped_exhausted_count,
             "selection_decisions": [dict(item) for item in self.selection_decisions],
             "retrieval_arm_call_counts": dict(self.retrieval_arm_call_counts),
+            "safe_attempt_diagnostics": [dict(item) for item in self.safe_attempt_diagnostics],
+            "safe_diagnostics_truncated": self.safe_diagnostics_truncated,
         }
 
 
@@ -265,6 +279,7 @@ class SourceAcquisitionService:
             coverage_complete_early_stop=coverage_complete_early_stop,
         )
 
+        safe_records, safe_truncated = _safe_attempt_diagnostics(selection_decisions, design)
         summary = SourceAcquisitionSummary(
             source_ids=tuple(source_ids),
             queries_executed=len(portfolio_queries),
@@ -291,6 +306,8 @@ class SourceAcquisitionService:
             skipped_ineligible_count=skipped_ineligible,
             skipped_exhausted_count=skipped_exhausted,
             selection_decisions=tuple(selection_decisions),
+            safe_attempt_diagnostics=safe_records,
+            safe_diagnostics_truncated=safe_truncated,
             retrieval_arm_call_counts=dict(
                 Counter(
                     (query.retrieval_arm or RetrievalArm.BASELINE).value
@@ -306,6 +323,12 @@ class SourceAcquisitionService:
                 **summary.to_dict(),
             },
         )
+
+        # Preserve the complete bounded acquisition summary before raising the
+        # minimum-source gate.  The executor writes this key only after a
+        # successful return, while the runtime persister can still checkpoint
+        # shared state for a failed task (including the funnel journal).
+        context.write_shared("source_acquisition", summary.to_dict())
 
         if acquired == 0:
             raise SourceAcquisitionError(
@@ -395,6 +418,7 @@ class SourceAcquisitionService:
         )
 
         elapsed = time.monotonic() - started
+        safe_records, safe_truncated = _safe_attempt_diagnostics(selection_decisions, design)
         return SourceAcquisitionSummary(
             source_ids=tuple(source_ids),
             queries_executed=len(queries),
@@ -421,6 +445,8 @@ class SourceAcquisitionService:
             skipped_ineligible_count=skipped_ineligible,
             skipped_exhausted_count=skipped_exhausted,
             selection_decisions=tuple(selection_decisions),
+            safe_attempt_diagnostics=safe_records,
+            safe_diagnostics_truncated=safe_truncated,
         )
 
     def _resolve_design(self, context: WorkflowContext) -> ResearchDesign:
@@ -841,6 +867,10 @@ class SourceAcquisitionService:
                 "provider_rank": group.best_rank,
                 "retrieval_status": resolved.retrieval_status.value,
             }
+            if did_fetch:
+                decision_payload["retrieval_diagnostic"] = dict(
+                    resolved.metadata.get("retrieval_diagnostic") or {}
+                )
             if group.decision is not None:
                 decision_payload.update(group.decision.to_dict())
             if is_successful_acquisition(resolved.retrieval_status):
@@ -1296,3 +1326,35 @@ def _failure_category(source: Source) -> str | None:
     if isinstance(category, str) and category:
         return category
     return "other_retrieval_error"
+
+
+def _safe_attempt_diagnostics(decisions: list[dict[str, Any]], design: ResearchDesign) -> tuple[tuple[dict[str, Any], ...], bool]:
+    need_indexes = {need.id: index + 1 for index, need in enumerate(design.information_needs)}
+    records: list[dict[str, Any]] = []
+    truncated = False
+    for decision in decisions:
+        action = decision.get("action")
+        if action not in {ACTION_REJECTED, ACTION_FETCH_FAILED, ACTION_SELECTED, ACTION_PROXY}:
+            continue
+        if len(records) >= _MAX_SAFE_DIAGNOSTIC_RECORDS:
+            truncated = True
+            continue
+        raw = decision.get("retrieval_diagnostic")
+        raw = raw if isinstance(raw, dict) else {}
+        reason = decision.get("reason")
+        need_index = need_indexes.get(decision.get("information_need_id"))
+        records.append({
+            "action": action,
+            "need_index": need_index,
+            "rejection_reason": reason if action == ACTION_REJECTED and reason in _SAFE_REJECTION_REASONS else "other" if action == ACTION_REJECTED else "none",
+            "stage": raw.get("stage") if raw.get("stage") in _SAFE_RETRIEVAL_STAGES else "unknown",
+            "http_status_class": raw.get("http_status_class") if raw.get("http_status_class") in _SAFE_STATUS_CLASSES else "none",
+            "limit_code": raw.get("limit_code") if raw.get("limit_code") in _SAFE_LIMIT_CODES else "none",
+            "exception_class": raw.get("exception_class") if raw.get("exception_class") in _SAFE_EXCEPTION_CLASSES else "none",
+            "failure_category": raw.get("failure_category") if raw.get("failure_category") in {
+                "dns_resolution_failed", "unsafe_address", "http_error", "timeout",
+                "unsupported_content_type", "content_too_large", "other_retrieval_error", "none",
+            } else "other_retrieval_error" if action == ACTION_FETCH_FAILED else "none",
+            "terminal_reason": raw.get("terminal_reason") if raw.get("terminal_reason") in {"required_terminal_not_found", "html_challenge", "none"} else "other",
+        })
+    return tuple(records), truncated

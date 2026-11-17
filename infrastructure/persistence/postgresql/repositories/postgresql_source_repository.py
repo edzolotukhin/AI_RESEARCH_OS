@@ -77,6 +77,21 @@ class PostgreSQLSourceRepository(SourceRepository):
                 return None
             return source_from_model(model)
 
+    def lock_selected_for_authority(self, ids: tuple[str, ...]) -> tuple[Source, ...]:
+        """Lock exactly the selected Source revisions for an owned authority read."""
+        session = self._session_factory.require_write_transaction()
+        locked: list[Source] = []
+        for source_id in sorted(ids):
+            model = session.execute(
+                select(SourceModel)
+                .where(SourceModel.id == source_id)
+                .with_for_update(read=True)
+            ).scalar_one_or_none()
+            if model is None:
+                raise ValueError("Selected Source revision is missing")
+            locked.append(source_from_model(model))
+        return tuple(locked)
+
     def get_by_canonical_url_for_project(
         self,
         project_id: str,

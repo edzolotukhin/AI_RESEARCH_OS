@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 
 from application.ports.report_claim_repository import ReportClaimConflictError, ReportClaimRepository
+from application.report.claim_set_policy import ClaimSetContractError, validate_homogeneous_append, validate_homogeneous_claim_set
 from domain.reports.report_claim import ReportClaim
 from domain.reports.report import Report
 from infrastructure.persistence.memory.in_memory_report_repository import InMemoryReportRepository
@@ -18,6 +19,7 @@ class InMemoryReportClaimRepository(ReportClaimRepository):
         if self._report_repository is None:
             raise ReportClaimConflictError("atomic Report repository is not configured")
         self._validate_membership(report, claims)
+        self._validate_claim_set(claims)
         claim_ids = [item.claim_id for item in claims]
         if len(claim_ids) != len(set(claim_ids)) or any(item in self._claims for item in claim_ids):
             raise ReportClaimConflictError("ReportClaim is immutable and already exists")
@@ -36,6 +38,12 @@ class InMemoryReportClaimRepository(ReportClaimRepository):
         self.create_many((claim,), report_id=report_id, report_revision=report_revision)
 
     def create_many(self, claims: tuple[ReportClaim, ...], *, report_id: str, report_revision: int) -> None:
+        existing_versions = [
+            self._claims[claim_id][2].contract_version
+            for rid, revision, claim_id in self._memberships
+            if rid == report_id and revision == report_revision
+        ]
+        self._validate_claim_append(existing_versions, claims)
         claim_ids = [item.claim_id for item in claims]
         if len(claim_ids) != len(set(claim_ids)):
             raise ReportClaimConflictError("ReportClaim is immutable and already exists")
@@ -60,10 +68,13 @@ class InMemoryReportClaimRepository(ReportClaimRepository):
             claim_id for rid, revision, claim_id in self._memberships
             if rid == report_id and revision == report_revision
         )
-        return [copy.deepcopy(self._claims[claim_id][2]) for claim_id in claim_ids]
+        claims = [copy.deepcopy(self._claims[claim_id][2]) for claim_id in claim_ids]
+        self._validate_claim_set(claims)
+        return claims
 
     def attach_claims_to_report_revision(self, report: Report, claims: tuple[ReportClaim, ...]) -> int:
         self._validate_membership(report, claims)
+        self._validate_claim_set(claims)
         existing = {
             claim_id for rid, revision, claim_id in self._memberships
             if rid == report.id and revision == report.revision_number
@@ -95,3 +106,17 @@ class InMemoryReportClaimRepository(ReportClaimRepository):
             for claim in claims
         ):
             raise ReportClaimConflictError("ReportClaim membership lineage mismatch")
+
+    @staticmethod
+    def _validate_claim_set(claims) -> None:
+        try:
+            validate_homogeneous_claim_set(claims)
+        except ClaimSetContractError as exc:
+            raise ReportClaimConflictError(str(exc)) from exc
+
+    @staticmethod
+    def _validate_claim_append(existing_versions, claims) -> None:
+        try:
+            validate_homogeneous_append(existing_versions, claims)
+        except ClaimSetContractError as exc:
+            raise ReportClaimConflictError(str(exc)) from exc

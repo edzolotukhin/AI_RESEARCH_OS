@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from application.ports.report_claim_repository import ReportClaimConflictError, ReportClaimRepository
+from application.report.claim_set_policy import ClaimSetContractError, validate_homogeneous_append, validate_homogeneous_claim_set
 from domain.reports.report_claim import ReportClaim
 from domain.reports.report import Report
 from infrastructure.persistence.postgresql.mappers.report_mapper import report_to_model
@@ -24,6 +25,7 @@ class PostgreSQLReportClaimRepository(ReportClaimRepository):
 
     def create_with_report(self, report: Report, claims: tuple[ReportClaim, ...]) -> int:
         self._validate_membership(report, claims)
+        self._validate_claim_set(claims)
         with self._session_factory.session() as session:
             try:
                 session.add(report_to_model(report, version=1))
@@ -46,12 +48,22 @@ class PostgreSQLReportClaimRepository(ReportClaimRepository):
         return 1
 
     def create_many(self, claims: tuple[ReportClaim, ...], *, report_id: str, report_revision: int) -> None:
+        self._validate_claim_set(claims)
         with self._session_factory.session() as session:
-            report = session.get(ReportModel, report_id)
+            report = session.get(ReportModel, report_id, with_for_update=True)
             if not claims:
                 return
             if report is None or report.revision_number != report_revision or any(report.project_id != claim.project_id or report.workflow_run_id != claim.report_workflow_run_id or report.research_design_id != claim.design_id for claim in claims):
                 raise ReportClaimConflictError("ReportClaim target revision ownership mismatch")
+            existing_versions = session.scalars(
+                select(ReportClaimModel.contract_version)
+                .join(ReportClaimMembershipModel, ReportClaimMembershipModel.report_claim_id == ReportClaimModel.id)
+                .where(
+                    ReportClaimMembershipModel.report_id == report_id,
+                    ReportClaimMembershipModel.report_revision == report_revision,
+                )
+            ).all()
+            self._validate_claim_append(existing_versions, claims)
             try:
                 session.add_all([report_claim_to_model(claim, report_id=report_id, report_revision=report_revision) for claim in claims])
                 session.flush()
@@ -78,18 +90,33 @@ class PostgreSQLReportClaimRepository(ReportClaimRepository):
                 )
                 .order_by(ReportClaimModel.id)
             ).all()
-            return [report_claim_from_model(item) for item in models]
+            claims = [report_claim_from_model(item) for item in models]
+            self._validate_claim_set(claims)
+            return claims
 
     def attach_claims_to_report_revision(self, report: Report, claims: tuple[ReportClaim, ...]) -> int:
         self._validate_membership(report, claims)
+        self._validate_claim_set(claims)
         expected = {claim.claim_id for claim in claims}
         with self._session_factory.session() as session:
+            locked_report = session.get(ReportModel, report.id, with_for_update=True)
+            if locked_report is None or locked_report.revision_number != report.revision_number:
+                raise ReportClaimConflictError("ReportClaim target revision is unavailable")
             existing = set(session.scalars(
                 select(ReportClaimMembershipModel.report_claim_id).where(
                     ReportClaimMembershipModel.report_id == report.id,
                     ReportClaimMembershipModel.report_revision == report.revision_number,
                 )
             ).all())
+            existing_versions = session.scalars(
+                select(ReportClaimModel.contract_version)
+                .join(ReportClaimMembershipModel, ReportClaimMembershipModel.report_claim_id == ReportClaimModel.id)
+                .where(
+                    ReportClaimMembershipModel.report_id == report.id,
+                    ReportClaimMembershipModel.report_revision == report.revision_number,
+                )
+            ).all()
+            self._validate_claim_append(existing_versions, claims)
             if existing and existing != expected:
                 raise ReportClaimConflictError("ReportClaim membership is partial or incompatible")
             session.add_all([
@@ -120,3 +147,17 @@ class PostgreSQLReportClaimRepository(ReportClaimRepository):
             for claim in claims
         ):
             raise ReportClaimConflictError("ReportClaim membership lineage mismatch")
+
+    @staticmethod
+    def _validate_claim_set(claims) -> None:
+        try:
+            validate_homogeneous_claim_set(claims)
+        except ClaimSetContractError as exc:
+            raise ReportClaimConflictError(str(exc)) from exc
+
+    @staticmethod
+    def _validate_claim_append(existing_versions, claims) -> None:
+        try:
+            validate_homogeneous_append(existing_versions, claims)
+        except ClaimSetContractError as exc:
+            raise ReportClaimConflictError(str(exc)) from exc
