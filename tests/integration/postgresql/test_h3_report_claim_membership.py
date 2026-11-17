@@ -229,6 +229,78 @@ class PostgreSQLH3ReportClaimMembershipTests(PostgreSQLIntegrationTestCase):
             self.assertEqual(second.result(timeout=10), "acquired")
             self.assertTrue(acquired.is_set())
 
+    def test_successor_allocation_guard_requires_transaction_and_rejects_existing_child(self) -> None:
+        reports = PostgreSQLReportRepository(self.session_factory)
+        parent = self._report("successor-parent", 1)
+        successor = self._report("successor-child", 2, previous=parent.id)
+        reports.create(parent)
+        with self.assertRaises(RuntimeError):
+            reports.allocate_successor(parent.id, expected_revision=1, successor=successor)
+        with self.session_factory.transaction():
+            self.assertEqual(reports.allocate_successor(parent.id, expected_revision=1, successor=successor).id, parent.id)
+            reports.create(successor)
+        with self.session_factory.transaction():
+            with self.assertRaises(ReportClaimConflictError):
+                reports.allocate_successor(
+                    parent.id,
+                    expected_revision=1,
+                    successor=self._report("successor-other-id", 2, previous=parent.id),
+                )
+
+    def test_successor_allocation_guard_rejects_stale_parent_and_rolls_back(self) -> None:
+        reports = PostgreSQLReportRepository(self.session_factory)
+        parent = self._report("successor-stale-parent", 1)
+        reports.create(parent)
+        invalid = self._report("successor-invalid", 3, previous=parent.id)
+        with self.session_factory.transaction():
+            with self.assertRaises(ReportClaimConflictError):
+                reports.allocate_successor(parent.id, expected_revision=2, successor=invalid)
+        self.assertIsNone(reports.get_by_id(invalid.id))
+
+    def test_competing_successor_allocations_have_one_winner(self) -> None:
+        reports = PostgreSQLReportRepository(self.session_factory)
+        parent = self._report("successor-race-parent", 1)
+        reports.create(parent)
+        entered = Event()
+        attempted = Event()
+        release = Event()
+
+        def allocate(report_id: str) -> str:
+            factory = self.session_factory.__class__(self.engine)
+            repository = PostgreSQLReportRepository(factory)
+            try:
+                with factory.transaction():
+                    successor = self._report(report_id, 2, previous=parent.id)
+                    if not report_id.endswith("one"):
+                        attempted.set()
+                    repository.allocate_successor(parent.id, expected_revision=1, successor=successor)
+                    if report_id.endswith("one"):
+                        entered.set()
+                        release.wait(timeout=10)
+                    repository.create(successor)
+                return "won"
+            except ReportClaimConflictError:
+                return "lost"
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(allocate, "successor-one")
+            second = None
+            try:
+                self.assertTrue(entered.wait(timeout=10), "first writer did not acquire parent lock")
+                second = pool.submit(allocate, "successor-two")
+                self.assertTrue(attempted.wait(timeout=10), "second writer did not attempt allocation")
+                self.assertFalse(
+                    second.done(),
+                    "second writer completed while first transaction held the parent lock",
+                )
+            finally:
+                release.set()
+            self.assertIsNotNone(second)
+            outcomes = (first.result(timeout=10), second.result(timeout=10))
+        self.assertEqual(sorted(outcomes), ["lost", "won"])
+        children = PostgreSQLReportRepository(self.session_factory).list_for_project(self.project.id, workflow_run_id="report-run")
+        self.assertEqual([item.id for item in children if item.previous_report_id == parent.id], ["successor-one"])
+
     def test_h3_contract_and_revision_membership_round_trip(self) -> None:
         claim = self._claim()
         r1 = self._report("r1", 1)

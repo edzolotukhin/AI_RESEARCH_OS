@@ -49,7 +49,11 @@ class PostgreSQLReportRepository(ReportRepository):
             return report_from_model(model)
 
     def lock_revision(self, report_id: str, *, expected_revision: int) -> Report:
-        """Lock and validate a parent revision inside an owned write transaction."""
+        """Lock and validate a parent revision inside an owned write transaction.
+
+        This serializes only callers that use the same parent-lock protocol; it
+        is not a database-enforced successor uniqueness guarantee.
+        """
         from sqlalchemy import select
 
         session = self._session_factory.require_write_transaction()
@@ -61,6 +65,44 @@ class PostgreSQLReportRepository(ReportRepository):
         if model is None or model.revision_number != expected_revision:
             raise ReportClaimConflictError("Report revision is stale or unavailable")
         return report_from_model(model)
+
+    def allocate_successor(
+        self,
+        parent_report_id: str,
+        *,
+        expected_revision: int,
+        successor: Report,
+    ) -> Report:
+        """Reserve an immediate successor slot after locking its parent.
+
+        The returned parent remains locked until the caller-owned transaction
+        ends. The caller must persist ``successor`` before leaving that same
+        transaction. Writers bypassing this protocol are outside the guarantee.
+        """
+        from sqlalchemy import select
+
+        parent = self.lock_revision(
+            parent_report_id,
+            expected_revision=expected_revision,
+        )
+        if (
+            successor.previous_report_id != parent.id
+            or successor.project_id != parent.project_id
+            or successor.revision_number != parent.revision_number + 1
+        ):
+            raise ReportClaimConflictError("Report successor identity mismatch")
+        session = self._session_factory.require_write_transaction()
+        existing = session.execute(
+            select(ReportModel.id)
+            .where(
+                ReportModel.previous_report_id == parent.id,
+                ReportModel.revision_number == successor.revision_number,
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        if existing is not None:
+            raise ReportClaimConflictError("Report successor already exists")
+        return parent
 
     def get_by_deduplication_key(
         self,
