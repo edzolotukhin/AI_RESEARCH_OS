@@ -18,6 +18,36 @@ from tests.integration.postgresql.helpers import PostgreSQLIntegrationTestCase, 
 
 @unittest.skipUnless(integration_tests_enabled(), "Disposable PostgreSQL integration disabled")
 class CitationIntegrityPostgreSQLTests(PostgreSQLIntegrationTestCase):
+    def test_observation_period_source_round_trips_through_postgresql(self):
+        project = ProjectFactory().create("ARK-04 temporal metadata")
+        PostgreSQLProjectRepository(self.session_factory).create(project)
+        sources = PostgreSQLSourceRepository(self.session_factory)
+        evidence = PostgreSQLEvidenceRepository(self.session_factory)
+        text = "Population recorded on 2018 01-01 was 100."
+        checksum = sha256(text.encode()).hexdigest()
+        source = Source(str(uuid4()), project.id, "https://example.test/temporal",
+                        "https://example.test/temporal", "Synthetic", "2026-01-01",
+                        content_text=text, content_checksum=checksum)
+        sources.create(source)
+        item = Evidence(
+            id=str(uuid4()), project_id=project.id, source_id=source.id,
+            source_content_checksum=checksum, workflow_run_id="offline-ark04",
+            research_design_id="offline-ark04", statement=text,
+            source_excerpt=text,
+            source_locator=verify_grounding(source_text=text, excerpt=text).to_dict(),
+            created_at="2026-01-01T00:00:00+00:00",
+            deduplication_key="temporal-round-trip", information_need_refs=("IN1",),
+            research_question_refs=("RQ1",), metadata={
+                "observation_period": "2018-01-01",
+                "observation_period_source": "2018 01-01",
+            },
+        )
+        evidence.create(item)
+        loaded = evidence.get_by_id(item.id)
+        self.assertIsNotNone(loaded)
+        self.assertEqual(loaded.metadata["observation_period"], "2018-01-01")
+        self.assertEqual(loaded.metadata["observation_period_source"], "2018 01-01")
+
     def test_invalid_persisted_span_is_nonqualifying_and_unchanged(self):
         project = ProjectFactory().create("ARK-04 synthetic citations")
         PostgreSQLProjectRepository(self.session_factory).create(project)

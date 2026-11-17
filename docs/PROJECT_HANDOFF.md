@@ -2,9 +2,9 @@
 
 ## Current state
 
-- Production baseline: `8d9876fbff9539abef641921ee5ab73f121c2b1f` (Merge #37).
+- Current integration baseline from `origin/main`: `3223e41b28def1da16db008822f71526f122e802`.
 - Active integration branch: `codex/r1-temporal-integration`.
-- R1 scope: grounded observation-period normalization in Evidence extraction/temporal qualification.
+- Original R1 scope: grounded observation-period normalization in Evidence extraction/temporal qualification; the branch also contains the subsequently reviewed Recovery 2 and F1–F4 work.
 - Production is not changed; no deployment or real research run is authorized by this handoff.
 
 ## Architecture constraints
@@ -19,7 +19,7 @@
 
 - R1 targeted regression: 46 passed, 18 subtests.
 - Structured extraction regressions: 28 passed.
-- R1 changes are limited to the two temporal/extraction modules and their focused test file.
+- The original temporal correction is limited to the temporal/extraction modules and focused regression coverage; this integration branch has a broader, separately reviewed history.
 - Controlled local E2E previously proved Findings, DERIVED Findings, Insights and PDF/PPTX; production case still requires durable diagnostics.
 
 ## Current blocker
@@ -38,7 +38,7 @@ Workflow integration readiness (2026-11-13): PR #38 moved `main` to `856e8bccf35
 
 ## Next milestone — Recovery 2
 
-Run a controlled, non-production E2E qualification of the R1 integration with a 2015–2021 fixture once isolated PostgreSQL/Docker is available; separately obtain explicit approval and an enabled, bounded provider budget before any real public-source/AI execution. Then classify the production case from existing durable diagnostics before any further code change.
+Complete review and integration of this branch with the current `origin/main`, then run only the explicitly authorized staging qualification. Any further provider-backed execution still requires explicit approval and bounded provider budgets.
 
 ## Recovery 2 launch correction (2026-11-13)
 

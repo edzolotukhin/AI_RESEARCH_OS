@@ -9,9 +9,11 @@ import unittest
 from application.evidence.citation_integrity import citation_is_valid
 from application.evidence.grounding import normalize_source_text, verify_grounding
 from application.evidence.temporal_scope import (
+    exact_observation_cutoff,
     normalize_observation_period,
     observation_interval,
     observation_eligibility,
+    qualify_evidence_with_temporal_decisions,
     qualifying_evidence,
 )
 from application.execution.execution_budget_context import execution_budget_scope
@@ -30,6 +32,164 @@ def pair(text="Prefix. Citation text. End.", excerpt="Citation text."):
         source_locator=verify_grounding(source_text=text, excerpt=excerpt).to_dict(),
         information_need_refs=("in",))
     return item, source
+
+
+class LegacyObservationPeriodRegressionTests(unittest.TestCase):
+    # Synthetic grounded fixtures use the four observed production spellings.
+    # These tests establish Temporal eligibility, not numeric sufficiency.
+    periods = ("2018 01-01", "2017 01-01", "2019 01-01", "2016 12-01")
+
+    def setUp(self):
+        from domain.planning.research_design import InformationNeed, ResearchQuestion
+        from domain.planning.evidence_expectation import EvidenceExpectation
+        from domain.planning.evidence_nature import EvidenceNature
+        from domain.research_brief import ResearchBrief
+        self.design = ResearchDesign(
+            id="offline-design",
+            research_questions=(ResearchQuestion("RQ1", "Annual population observations?"),),
+            information_needs=(InformationNeed(
+                id="IN1", research_question_id="RQ1",
+                description="Annual population observations",
+                evidence_expectation=EvidenceExpectation(
+                    nature=EvidenceNature.QUANTITATIVE,
+                    requires_quantitative_evidence=True,
+                ),
+            ),),
+        )
+        self.brief = ResearchBrief(
+            title="Synthetic annual series", business_question="Annual population observations?",
+            timeframe="2015–2021",
+        )
+
+    def fact(self, period, *, identifier="fact", excerpt=None, metadata=None):
+        from tests.application.research_quality.test_prf08c_research_integrity import _evidence
+        item = _evidence(
+            identifier, "source", period,
+            excerpt=excerpt or f"Population recorded on {period} was 100.",
+        )
+        return replace(item, metadata=metadata) if metadata is not None else item
+
+    def qualify(self, items):
+        from tests.helpers.citation_fixtures import sources_for
+        sources = sources_for(items)
+        self.assertTrue(all(citation_is_valid(e, sources.get_by_id(e.source_id)) for e in items))
+        before = deepcopy(items)
+        decisions = qualify_evidence_with_temporal_decisions(
+            design=self.design, evidence=items, brief=self.brief,
+            source_repository=sources,
+        )
+        compatible = qualifying_evidence(
+            design=self.design, evidence=items, brief=self.brief,
+            source_repository=sources,
+        )
+        self.assertEqual(compatible, decisions.evidence)
+        self.assertEqual(items, before)
+        return decisions
+
+    def test_four_grounded_legacy_periods_qualify_in_frozen_year_interval(self):
+        self.assertIsNone(exact_observation_cutoff(self.brief))
+        self.assertEqual(observation_interval(self.brief.timeframe),
+                         (date(2015, 1, 1), date(2021, 12, 31)))
+        items = tuple(self.fact(p, identifier=f"dated-{i}") for i, p in enumerate(self.periods))
+        result = self.qualify(items)
+        self.assertEqual(len(result.evidence), 4)
+        self.assertEqual(set(result.decisions.values()), {"applicable_satisfied"})
+        for period in self.periods:
+            with self.subTest(period=period):
+                expected = date.fromisoformat(period.replace(" ", "-"))
+                self.assertEqual(observation_interval(period), (expected, expected))
+
+    def test_four_dated_and_four_missing_periods_remain_distinct(self):
+        dated = tuple(self.fact(p, identifier=f"dated-{i}") for i, p in enumerate(self.periods))
+        missing = tuple(self.fact(None, identifier=f"missing-{i}",
+                                  excerpt="Population observations have no stated date.")
+                        for i in range(4))
+        result = self.qualify(dated + missing)
+        self.assertEqual({e.id for e in result.evidence}, {e.id for e in dated})
+        for item in dated:
+            self.assertEqual(result.decisions[(item.id, "IN1")], "applicable_satisfied")
+        for item in missing:
+            self.assertEqual(result.decisions[(item.id, "IN1")], "applicable_unresolved")
+
+    def test_invalid_legacy_calendar_dates_remain_unresolved(self):
+        for period in ("2017 02-29", "2018 02-30", "2019 04-31", "2018 13-01", "2018 01-00"):
+            with self.subTest(period=period):
+                self.assertIsNone(observation_interval(period))
+                result = self.qualify((self.fact(period),))
+                self.assertFalse(result.evidence)
+                self.assertEqual(result.decisions[("fact", "IN1")], "applicable_unresolved")
+
+    def test_normalization_does_not_authorize_ungrounded_or_mismatched_period(self):
+        scenarios = (
+            ("Population recorded on 2017 01-01 was 100.",
+             {"observation_period": "2018 01-01"}),
+            ("Population recorded on 2017 01-01 was 100.",
+             {"observation_period": "2018-01-01", "observation_period_source": "2017 01-01"}),
+            ("Population recorded on 2018 01-01 was 100.",
+             {"observation_period": "2018-01-01", "observation_period_source": "2017 01-01"}),
+        )
+        for excerpt, metadata in scenarios:
+            with self.subTest(metadata=metadata):
+                result = self.qualify((self.fact(None, excerpt=excerpt, metadata=metadata),))
+                self.assertFalse(result.evidence)
+                self.assertEqual(result.decisions[("fact", "IN1")], "applicable_unresolved")
+
+    def test_legacy_publication_and_forecast_periods_remain_unresolved(self):
+        for excerpt in ("Published on 2018 01-01. Population observations unavailable.",
+                        "Forecast population for 2018 01-01 was 100."):
+            for normalized in (False, True):
+                with self.subTest(excerpt=excerpt, normalized=normalized):
+                    metadata = {"observation_period": "2018 01-01"}
+                    if normalized:
+                        metadata.update(observation_period="2018-01-01",
+                                        observation_period_source="2018 01-01")
+                    result = self.qualify((self.fact(None, excerpt=excerpt, metadata=metadata),))
+                    self.assertFalse(result.evidence)
+                    self.assertEqual(result.decisions[("fact", "IN1")], "applicable_unresolved")
+
+    def test_legacy_dates_outside_frozen_interval_remain_failed(self):
+        for period in ("2014 12-31", "2022 01-01"):
+            with self.subTest(period=period):
+                result = self.qualify((self.fact(period),))
+                self.assertFalse(result.evidence)
+                self.assertEqual(result.decisions[("fact", "IN1")], "applicable_failed")
+
+    def test_extraction_preserves_original_spelling_and_grounding_after_normalization(self):
+        from unittest.mock import Mock
+        from application.evidence.evidence_extraction_service import EvidenceExtractionService
+        from application.ports.evidence_ports import EvidenceCandidate
+        from tests.helpers.citation_fixtures import sources_for
+        for raw in self.periods:
+            with self.subTest(period=raw):
+                original = self.fact(raw)
+                sources = sources_for((original,))
+                repo = Mock()
+                repo.get_by_deduplication_key.return_value = None
+                service = EvidenceExtractionService(
+                    evidence_extractor=Mock(), evidence_repository=repo,
+                    source_repository=sources,
+                )
+                candidate = EvidenceCandidate(
+                    statement=original.statement, source_excerpt=original.source_excerpt,
+                    evidence_type="direct_excerpt", information_need_refs=("IN1",),
+                    research_question_refs=("RQ1",), metadata={"observation_period": raw},
+                )
+                source = sources.get_by_id(original.source_id)
+                service._persist_candidate(
+                    candidate=candidate, source=source, project_id=original.project_id,
+                    workflow_run_id=original.workflow_run_id, research_design_id=self.design.id,
+                )
+                persisted = repo.create.call_args.args[0]
+                self.assertEqual(persisted.metadata["observation_period"], raw.replace(" ", "-"))
+                self.assertEqual(persisted.metadata["observation_period_source"], raw)
+                self.assertEqual(persisted.source_excerpt, original.source_excerpt)
+                self.assertTrue(citation_is_valid(persisted, source))
+                result = qualify_evidence_with_temporal_decisions(
+                    design=self.design, evidence=(persisted,), brief=self.brief,
+                    source_repository=sources,
+                )
+                self.assertEqual(result.decisions[(persisted.id, "IN1")], "applicable_satisfied")
+                self.assertEqual(len(result.evidence), 1)
 
 
 class CitationIntegrityTests(unittest.TestCase):
