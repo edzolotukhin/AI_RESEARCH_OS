@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from dataclasses import fields, replace
 from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from uuid import uuid4
 import os
 import json
@@ -173,6 +174,60 @@ class PostgreSQLH3ReportClaimMembershipTests(PostgreSQLIntegrationTestCase):
         draft.authority_digest = values["authority_digest"]
         values["claim_digest"] = claim_digest_v2(draft)
         return source.__class__(**values)
+
+    def test_report_revision_lock_requires_owned_transaction_and_validates_revision(self) -> None:
+        report = self._report("lock-report", 1)
+        PostgreSQLReportRepository(self.session_factory).create(report)
+        reports = PostgreSQLReportRepository(self.session_factory)
+        with self.assertRaises(RuntimeError):
+            reports.lock_revision(report.id, expected_revision=1)
+        with self.session_factory.transaction():
+            locked = reports.lock_revision(report.id, expected_revision=1)
+            self.assertEqual(locked.id, report.id)
+            with self.assertRaises(ReportClaimConflictError):
+                reports.lock_revision(report.id, expected_revision=2)
+
+    def test_report_revision_lock_serializes_competing_writers_and_releases_on_rollback(self) -> None:
+        report = self._report("lock-contended", 1)
+        PostgreSQLReportRepository(self.session_factory).create(report)
+        entered = Event()
+        attempted = Event()
+        acquired = Event()
+        release = Event()
+
+        def holder() -> None:
+            factory = self.session_factory.__class__(self.engine)
+            with factory.transaction():
+                PostgreSQLReportRepository(factory).lock_revision(report.id, expected_revision=1)
+                entered.set()
+                release.wait(timeout=10)
+                raise RuntimeError("rollback lock holder")
+
+        def contender() -> str:
+            entered.wait(timeout=10)
+            factory = self.session_factory.__class__(self.engine)
+            attempted.set()
+            with factory.transaction():
+                PostgreSQLReportRepository(factory).lock_revision(report.id, expected_revision=1)
+            acquired.set()
+            return "acquired"
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(holder)
+            second = pool.submit(contender)
+            try:
+                self.assertTrue(entered.wait(timeout=10), "first writer did not acquire lock")
+                self.assertTrue(attempted.wait(timeout=10), "second writer did not attempt lock")
+                self.assertFalse(
+                    acquired.wait(timeout=0.5),
+                    "second writer completed while first transaction held the lock",
+                )
+            finally:
+                release.set()
+            with self.assertRaises(RuntimeError):
+                first.result(timeout=10)
+            self.assertEqual(second.result(timeout=10), "acquired")
+            self.assertTrue(acquired.is_set())
 
     def test_h3_contract_and_revision_membership_round_trip(self) -> None:
         claim = self._claim()

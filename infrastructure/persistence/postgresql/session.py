@@ -128,6 +128,13 @@ class DatabaseSessionFactory:
             for callback in callbacks:
                 callback()
 
+    def require_write_transaction(self) -> Session:
+        """Return the caller-owned write session, failing closed otherwise."""
+        session = self._active.get()
+        if session is None or self._active_mode.get() == "consistent_read":
+            raise RuntimeError("a caller-owned write transaction is required")
+        return session
+
     @contextmanager
     def consistent_read(self) -> Iterator[Session]:
         """Run repository reads in one PostgreSQL repeatable-read snapshot.

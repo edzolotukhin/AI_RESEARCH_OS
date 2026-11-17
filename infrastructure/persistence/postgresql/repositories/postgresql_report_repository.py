@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy.exc import IntegrityError
 
 from application.ports.report_ports import ReportRepository
+from application.ports.report_claim_repository import ReportClaimConflictError
 from application.report.exceptions import DuplicateReportError
 from domain.reports.report import Report
 
@@ -46,6 +47,20 @@ class PostgreSQLReportRepository(ReportRepository):
             if model is None:
                 return None
             return report_from_model(model)
+
+    def lock_revision(self, report_id: str, *, expected_revision: int) -> Report:
+        """Lock and validate a parent revision inside an owned write transaction."""
+        from sqlalchemy import select
+
+        session = self._session_factory.require_write_transaction()
+        model = session.execute(
+            select(ReportModel)
+            .where(ReportModel.id == report_id)
+            .with_for_update()
+        ).scalar_one_or_none()
+        if model is None or model.revision_number != expected_revision:
+            raise ReportClaimConflictError("Report revision is stale or unavailable")
+        return report_from_model(model)
 
     def get_by_deduplication_key(
         self,
