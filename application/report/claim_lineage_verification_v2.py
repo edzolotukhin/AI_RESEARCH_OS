@@ -262,6 +262,93 @@ def verify_persisted_claim_v2_snapshot_consistent_read(
         raise ClaimLineageVerificationV2Error("consistent-read authority verification failed") from exc
 
 
+def verify_persisted_claim_v2_snapshot_write_transaction(
+    *,
+    session_factory: Any,
+    report_id: str,
+    claim_id: str,
+    report_repository: Any,
+    report_claim_repository: Any,
+    finding_repository: Any,
+    insight_repository: Any,
+    evidence_repository: Any,
+    source_repository: Any,
+    workflow_run_repository: Any,
+    workflow_template_repository: Any,
+) -> VerifiedClaimLineageV2Snapshot:
+    """Verify v2 authority inside an already-owned repeatable-read write tx."""
+    active_mode = getattr(session_factory, "_active_mode", None)
+    if active_mode is None or active_mode.get() != "repeatable_read_write":
+        raise ClaimLineageVerificationV2Error(
+            "repeatable-read write transaction is required"
+        )
+    session_factory.require_write_transaction()
+    repositories = (
+        report_repository, report_claim_repository, finding_repository,
+        insight_repository, evidence_repository, source_repository,
+        workflow_run_repository, workflow_template_repository,
+    )
+    if any(getattr(repository, "_session_factory", None) is not session_factory for repository in repositories):
+        raise ClaimLineageVerificationV2Error("repositories must share the active session factory")
+
+    try:
+        report = report_repository.get_by_id(report_id)
+        claim = report_claim_repository.get_by_id(claim_id)
+        if report is None or claim is None or claim.claim_id != claim_id:
+            raise ClaimLineageVerificationV2Error("Report or ReportClaim is missing")
+        members = report_claim_repository.list_for_report(report.id, report.revision_number)
+        matching = [member for member in members if member.claim_id == claim_id]
+        if len(matching) != 1 or len({member.claim_id for member in members}) != len(members):
+            raise ClaimLineageVerificationV2Error("ReportClaim membership is missing or ambiguous")
+
+        selected = {
+            "finding_ids": claim.finding_ids,
+            "insight_ids": claim.insight_ids,
+            "evidence_ids": claim.evidence_ids,
+            "source_ids": claim.source_ids,
+        }
+        for label, identifiers in selected.items():
+            if (
+                not identifiers
+                or len(identifiers) > 256
+                or any(not isinstance(item, str) or not item.strip() for item in identifiers)
+            ):
+                raise ClaimLineageVerificationV2Error(f"malformed {label}")
+            if len(set(identifiers)) != len(identifiers):
+                raise ClaimLineageVerificationV2Error(f"duplicate {label}")
+
+        # Locks are acquired in a fixed repository order; each repository also
+        # sorts its IDs before issuing FOR SHARE.
+        locked_findings = finding_repository.lock_selected_for_authority(tuple(selected["finding_ids"]))
+        locked_insights = insight_repository.lock_selected_for_authority(tuple(selected["insight_ids"]))
+        locked_evidence = evidence_repository.lock_selected_for_authority(tuple(selected["evidence_ids"]))
+        locked_sources = source_repository.lock_selected_for_authority(tuple(selected["source_ids"]))
+        for label, expected, actual in (
+            ("Finding", selected["finding_ids"], locked_findings),
+            ("Insight", selected["insight_ids"], locked_insights),
+            ("Evidence", selected["evidence_ids"], locked_evidence),
+            ("Source", selected["source_ids"], locked_sources),
+        ):
+            if tuple(sorted(expected)) != tuple(sorted(item.id for item in actual)):
+                raise ClaimLineageVerificationV2Error(f"locked {label} set is inconsistent")
+        return verify_persisted_claim_v2_snapshot(
+            claim=claim,
+            report=report,
+            finding_repository=finding_repository,
+            insight_repository=insight_repository,
+            evidence_repository=evidence_repository,
+            source_repository=source_repository,
+            workflow_run_repository=workflow_run_repository,
+            workflow_template_repository=workflow_template_repository,
+        )
+    except ClaimLineageVerificationV2Error:
+        raise
+    except Exception as exc:
+        raise ClaimLineageVerificationV2Error(
+            "write-transaction authority verification failed"
+        ) from exc
+
+
 def _load_exact(repository: Any, identifiers: tuple[str, ...], label: str) -> tuple[Any, ...]:
     loaded = []
     for identifier in identifiers:

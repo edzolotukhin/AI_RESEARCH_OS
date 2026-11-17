@@ -4,6 +4,9 @@ from dataclasses import replace
 import json
 from types import SimpleNamespace
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+import time
 
 from sqlalchemy import text
 
@@ -14,6 +17,7 @@ from application.report.claim_lineage_v2 import build_claim_lineage_v2
 from application.report.claim_lineage_verification_v2 import (
     ClaimLineageVerificationV2Error,
     verify_persisted_claim_v2_snapshot_consistent_read,
+    verify_persisted_claim_v2_snapshot_write_transaction,
     verify_persisted_claim_v2,
 )
 from domain.factories.project_factory import ProjectFactory
@@ -35,6 +39,7 @@ from infrastructure.persistence.postgresql.repositories.postgresql_report_reposi
 from infrastructure.persistence.postgresql.repositories.postgresql_source_repository import PostgreSQLSourceRepository
 from infrastructure.persistence.postgresql.repositories.postgresql_workflow_run_repository import PostgreSQLWorkflowRunRepository
 from infrastructure.persistence.postgresql.repositories.postgresql_workflow_template_repository import PostgreSQLWorkflowTemplateRepository
+from infrastructure.persistence.postgresql.session import DatabaseSessionFactory
 import tests.application.analysis.test_numeric_integrity as numeric_fixtures
 from tests.application.research_quality.test_evidence_completeness_diagnostics import evidence as evidence_fixture
 from tests.application.research_quality.test_evidence_completeness_diagnostics import source as source_fixture
@@ -246,6 +251,261 @@ class PostgreSQLReportClaimV2VerificationTests(PostgreSQLIntegrationTestCase):
             with self.session_factory.transaction():
                 self.verify_fresh_snapshot()
 
+    def test_write_transaction_verification_locks_and_returns_detached_snapshot(self) -> None:
+        repositories = (
+            ("report", PostgreSQLReportRepository(self.session_factory)),
+            ("claims", self.claims),
+            ("findings", self.findings),
+            ("insights", self.insights),
+            ("evidence", self.evidence_repo),
+            ("sources", self.sources),
+            ("runs", self.runs),
+            ("templates", self.templates),
+        )
+        for name, repository in repositories:
+            with self.subTest(repository=name):
+                self.assertIs(getattr(repository, "_session_factory", None), self.session_factory)
+        with self.session_factory.repeatable_read_transaction():
+            snapshot = verify_persisted_claim_v2_snapshot_write_transaction(
+                session_factory=self.session_factory,
+                report_id=self.report.id,
+                claim_id=self.claim.claim_id,
+                report_repository=repositories[0][1],
+                report_claim_repository=self.claims,
+                finding_repository=self.findings,
+                insight_repository=self.insights,
+                evidence_repository=self.evidence_repo,
+                source_repository=self.sources,
+                workflow_run_repository=self.runs,
+                workflow_template_repository=self.templates,
+            )
+        self.assertEqual(snapshot.claim.claim_id, self.claim.claim_id)
+
+    def test_write_transaction_verification_rejects_malformed_ids_and_wrong_transaction(self) -> None:
+        repositories = dict(
+            session_factory=self.session_factory,
+            report_id=self.report.id,
+            claim_id=self.claim.claim_id,
+            report_repository=PostgreSQLReportRepository(self.session_factory),
+            report_claim_repository=self.claims,
+            finding_repository=self.findings,
+            insight_repository=self.insights,
+            evidence_repository=self.evidence_repo,
+            source_repository=self.sources,
+            workflow_run_repository=self.runs,
+            workflow_template_repository=self.templates,
+        )
+        with self.assertRaises(ClaimLineageVerificationV2Error):
+            verify_persisted_claim_v2_snapshot_write_transaction(**repositories)
+        original = self.claim
+
+        class MalformedClaim:
+            def __init__(self, claim):
+                self._claim = claim
+                self.claim_id = claim.claim_id
+                self.evidence_ids = ("",)
+
+            def __getattr__(self, name):
+                return getattr(self._claim, name)
+
+        malformed = MalformedClaim(original)
+
+        class MalformedClaims(type(self.claims)):
+            def get_by_id(self, claim_id):
+                return malformed
+
+            def list_for_report(self, report_id, report_revision):
+                return [malformed]
+
+        repositories["report_claim_repository"] = MalformedClaims(self.session_factory)
+        with self.session_factory.repeatable_read_transaction():
+            with self.assertRaises(ClaimLineageVerificationV2Error):
+                verify_persisted_claim_v2_snapshot_write_transaction(**repositories)
+
+    def test_membership_trigger_rejects_direct_update_and_delete(self) -> None:
+        with self.engine.connect() as connection:
+            count = connection.execute(text(
+                "SELECT COUNT(*) FROM report_revision_claims "
+                "WHERE report_id=:report_id AND report_claim_id=:claim_id"
+            ), {"report_id": self.report.id, "claim_id": self.claim.claim_id}).scalar_one()
+            trigger = connection.execute(text(
+                "SELECT tgenabled FROM pg_trigger "
+                "WHERE tgrelid='report_revision_claims'::regclass "
+                "AND tgname='trg_report_revision_claims_immutable'"
+            )).scalar_one_or_none()
+        self.assertEqual(count, 1)
+        self.assertEqual(trigger, "O")
+        with self.assertRaises(Exception):
+            with self.engine.begin() as connection:
+                try:
+                    connection.execute(text(
+                    "UPDATE report_revision_claims SET report_revision=2 "
+                    "WHERE report_id=:report_id AND report_claim_id=:claim_id"
+                    ), {"report_id": self.report.id, "claim_id": self.claim.claim_id})
+                except Exception as exc:
+                    self.assertIn("report_revision_claims are immutable", str(exc))
+                    raise
+        with self.assertRaises(Exception):
+            with self.engine.begin() as connection:
+                try:
+                    connection.execute(text(
+                    "DELETE FROM report_revision_claims "
+                    "WHERE report_id=:report_id AND report_claim_id=:claim_id"
+                    ), {"report_id": self.report.id, "claim_id": self.claim.claim_id})
+                except Exception as exc:
+                    self.assertIn("report_revision_claims are immutable", str(exc))
+                    raise
+
+    def test_write_verifier_locks_source_until_commit_then_writer_proceeds(self) -> None:
+        entered, attempted, completed, release = Event(), Event(), Event(), Event()
+        writer_pid = {}
+
+        def verifier_holder() -> None:
+            try:
+                with self.session_factory.repeatable_read_transaction():
+                    verify_persisted_claim_v2_snapshot_write_transaction(
+                        session_factory=self.session_factory,
+                        report_id=self.report.id,
+                        claim_id=self.claim.claim_id,
+                        report_repository=PostgreSQLReportRepository(self.session_factory),
+                        report_claim_repository=self.claims,
+                        finding_repository=self.findings,
+                        insight_repository=self.insights,
+                        evidence_repository=self.evidence_repo,
+                        source_repository=self.sources,
+                        workflow_run_repository=self.runs,
+                        workflow_template_repository=self.templates,
+                    )
+                    entered.set()
+                    release.wait(timeout=10)
+            finally:
+                release.set()
+
+        def source_writer() -> None:
+            factory = DatabaseSessionFactory(self.engine)
+            repository = PostgreSQLSourceRepository(factory)
+            with factory.transaction() as session:
+                current = repository.get_by_id(self.source.id)
+                session.execute(text("SET LOCAL lock_timeout='5s'"))
+                writer_pid["value"] = session.execute(text("SELECT pg_backend_pid()")).scalar_one()
+                attempted.set()
+                updated = replace(
+                    current,
+                    metadata={**current.metadata, "discovery_records": ("concurrent",)},
+                )
+                repository.save(updated, expected_version=current.version)
+            completed.set()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            verifier = pool.submit(verifier_holder)
+            self.assertTrue(entered.wait(timeout=10))
+            writer = pool.submit(source_writer)
+            try:
+                self.assertTrue(attempted.wait(timeout=10))
+                deadline = time.monotonic() + 10
+                blocked = False
+                while time.monotonic() < deadline:
+                    with self.engine.connect() as connection:
+                        blocked = bool(connection.execute(
+                            text("SELECT cardinality(pg_blocking_pids(:pid)) > 0"),
+                            {"pid": writer_pid["value"]},
+                        ).scalar_one())
+                    if blocked:
+                        break
+                    self.assertFalse(completed.is_set())
+                    time.sleep(0.05)
+                self.assertTrue(blocked, "writer never became PostgreSQL-blocked")
+            finally:
+                release.set()
+            verifier.result(timeout=10)
+            writer.result(timeout=10)
+        self.assertTrue(completed.is_set())
+
+    def test_write_verifier_source_lock_releases_after_rollback(self) -> None:
+        entered, attempted, completed, release = Event(), Event(), Event(), Event()
+        writer_pid = {}
+
+        def holder() -> None:
+            try:
+                with self.session_factory.repeatable_read_transaction():
+                    verify_persisted_claim_v2_snapshot_write_transaction(
+                        session_factory=self.session_factory,
+                        report_id=self.report.id, claim_id=self.claim.claim_id,
+                        report_repository=PostgreSQLReportRepository(self.session_factory),
+                        report_claim_repository=self.claims, finding_repository=self.findings,
+                        insight_repository=self.insights, evidence_repository=self.evidence_repo,
+                        source_repository=self.sources, workflow_run_repository=self.runs,
+                        workflow_template_repository=self.templates,
+                    )
+                    entered.set()
+                    release.wait(timeout=10)
+                    raise ValueError("rollback authority transaction")
+            finally:
+                release.set()
+
+        def writer() -> None:
+            factory = DatabaseSessionFactory(self.engine)
+            repository = PostgreSQLSourceRepository(factory)
+            with factory.transaction() as session:
+                current = repository.get_by_id(self.source.id)
+                session.execute(text("SET LOCAL lock_timeout='5s'"))
+                writer_pid["value"] = session.execute(text("SELECT pg_backend_pid()")).scalar_one()
+                attempted.set()
+                repository.save(
+                    replace(
+                        current,
+                        metadata={**current.metadata, "discovery_records": ("rollback",)},
+                    ),
+                    expected_version=current.version,
+                )
+            completed.set()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(holder)
+            self.assertTrue(entered.wait(timeout=10))
+            second = pool.submit(writer)
+            try:
+                self.assertTrue(attempted.wait(timeout=10))
+                deadline = time.monotonic() + 10
+                blocked = False
+                while time.monotonic() < deadline:
+                    with self.engine.connect() as connection:
+                        blocked = bool(connection.execute(
+                            text("SELECT cardinality(pg_blocking_pids(:pid)) > 0"),
+                            {"pid": writer_pid["value"]},
+                        ).scalar_one())
+                    if blocked:
+                        break
+                    self.assertFalse(completed.is_set())
+                    time.sleep(0.05)
+                self.assertTrue(blocked, "writer never became PostgreSQL-blocked")
+            finally:
+                release.set()
+            with self.assertRaises(ValueError):
+                first.result(timeout=10)
+            second.result(timeout=10)
+        self.assertTrue(completed.is_set())
+
+    def test_write_verifier_does_not_persist_successor_report_or_claim(self) -> None:
+        before_reports = len(PostgreSQLReportRepository(self.session_factory).list_for_project(self.project.id))
+        before_claims = len(self.claims.list_for_report(self.report.id, self.report.revision_number))
+        with self.session_factory.repeatable_read_transaction():
+            verify_persisted_claim_v2_snapshot_write_transaction(
+                session_factory=self.session_factory,
+                report_id=self.report.id,
+                claim_id=self.claim.claim_id,
+                report_repository=PostgreSQLReportRepository(self.session_factory),
+                report_claim_repository=self.claims,
+                finding_repository=self.findings,
+                insight_repository=self.insights,
+                evidence_repository=self.evidence_repo,
+                source_repository=self.sources,
+                workflow_run_repository=self.runs,
+                workflow_template_repository=self.templates,
+            )
+        self.assertEqual(before_reports, len(PostgreSQLReportRepository(self.session_factory).list_for_project(self.project.id)))
+        self.assertEqual(before_claims, len(self.claims.list_for_report(self.report.id, self.report.revision_number)))
+
     def test_changed_finding_is_rejected(self) -> None:
         with self.engine.begin() as connection:
             connection.execute(text("UPDATE findings SET statement='changed' WHERE id='finding-v2'"))
@@ -263,6 +523,21 @@ class PostgreSQLReportClaimV2VerificationTests(PostgreSQLIntegrationTestCase):
             connection.execute(text("UPDATE sources SET content_checksum=:checksum WHERE id='source-1'"), {"checksum": "0" * 64})
         with self.assertRaises(ClaimLineageVerificationV2Error):
             self.verify_fresh()
+
+    def test_write_verifier_rejects_pinned_source_checksum_mismatch(self) -> None:
+        with self.engine.begin() as connection:
+            connection.execute(text("UPDATE sources SET content_checksum=:checksum WHERE id=:id"), {"checksum": "f" * 64, "id": self.source.id})
+        with self.session_factory.repeatable_read_transaction():
+            with self.assertRaises(ClaimLineageVerificationV2Error):
+                verify_persisted_claim_v2_snapshot_write_transaction(
+                    session_factory=self.session_factory,
+                    report_id=self.report.id, claim_id=self.claim.claim_id,
+                    report_repository=PostgreSQLReportRepository(self.session_factory),
+                    report_claim_repository=self.claims, finding_repository=self.findings,
+                    insight_repository=self.insights, evidence_repository=self.evidence_repo,
+                    source_repository=self.sources, workflow_run_repository=self.runs,
+                    workflow_template_repository=self.templates,
+                )
 
     def test_missing_insight_is_rejected(self) -> None:
         with self.engine.begin() as connection:
