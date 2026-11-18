@@ -8,6 +8,10 @@ import unittest
 from application.planner.deterministic_design_response import (
     build_deterministic_design_response,
 )
+from application.factories.research_design_factory import ResearchDesignFactory
+from application.parsers.research_design_parser import ResearchDesignParser
+from application.planner.design_service import PlannerDesignServiceImpl
+from application.research.design_validator import validate_subject_for_approval
 from application.planner.project_planning_profile import (
     PROJECT_PLANNING_PROFILE_KEY,
     ProjectPlanningProfile,
@@ -25,7 +29,7 @@ from tests.helpers.executor_catalog import make_test_executor_catalog
 
 
 class DeterministicDesignResponseTests(unittest.TestCase):
-    def _project_prompt(self, methods, objectives=None):
+    def _project(self, methods, objectives=None):
         brief = sample_research_brief(
             objectives=objectives or ["Оцінити потенціал ринку."],
             geography=["Україна"],
@@ -34,6 +38,10 @@ class DeterministicDesignResponseTests(unittest.TestCase):
         )
         project = Project(id="pf02", name="Проєкт", selected_methods=methods)
         project.research_brief = brief
+        return project
+
+    def _project_prompt(self, methods, objectives=None):
+        project = self._project(methods, objectives)
         context = WorkflowContext(workflow_run=WorkflowRun(id="plan"), project=project)
         context.execution_metadata[PROJECT_PLANNING_PROFILE_KEY] = (
             ProjectPlanningProfile(methods=methods, language="uk").to_metadata()
@@ -89,9 +97,8 @@ class DeterministicDesignResponseTests(unittest.TestCase):
         self.assertIn("Source strategy must follow those needs", combined)
 
     def test_quantitative_project_response_is_ukrainian_and_not_desk_centric(self):
-        payload = json.loads(build_deterministic_design_response(
-            self._project_prompt(("QUANTITATIVE",))
-        ))
+        prompt = self._project_prompt(("QUANTITATIVE",))
+        payload = json.loads(build_deterministic_design_response(prompt))
         rendered = json.dumps(payload, ensure_ascii=False).lower()
         self.assertEqual(payload["language"], "uk")
         self.assertIn("первинні структуровані дані", rendered)
@@ -100,6 +107,17 @@ class DeterministicDesignResponseTests(unittest.TestCase):
         self.assertNotIn("no primary survey", rendered)
         self.assertNotIn("what evidence is required", rendered)
         self.assertNotIn("derived from brief", rendered)
+        for need in payload["information_needs"]:
+            self.assertEqual(need["evidence_expectation"]["nature"], "mixed")
+            self.assertFalse(
+                need["evidence_expectation"]["requires_quantitative_evidence"]
+            )
+            self.assertNotIn("evidence_coverage", need)
+        design = PlannerDesignServiceImpl(
+            response_parser=ResearchDesignParser(),
+            design_factory=ResearchDesignFactory(),
+        ).create_design(self._project(("QUANTITATIVE",)), payload)
+        validate_subject_for_approval(design)
 
     def test_desk_and_mixed_project_responses_reflect_selected_methods(self):
         desk = json.loads(build_deterministic_design_response(
@@ -112,6 +130,11 @@ class DeterministicDesignResponseTests(unittest.TestCase):
         mixed_sources = " ".join(mixed["source_strategy"])
         self.assertIn("відкриті джерела", mixed_sources)
         self.assertIn("структуровані дані респондентів", mixed_sources)
+        self.assertTrue(all(
+            not need["evidence_expectation"]["requires_quantitative_evidence"]
+            and "evidence_coverage" not in need
+            for need in mixed["information_needs"]
+        ))
 
     def test_multiple_objectives_are_materially_decomposed(self):
         objectives = [

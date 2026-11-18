@@ -104,7 +104,7 @@ def build_deterministic_design_response(prompt: Prompt) -> str:
                     ],
                     "geography": geo_label,
                     "timeframe": time_label,
-                    "requires_quantitative_evidence": "QUANTITATIVE" in methods,
+                    "requires_quantitative_evidence": False,
                 },
             }
         )
@@ -234,7 +234,11 @@ def _deliverables(aspects, uk):
 
 def _evidence_nature(methods: list[str]) -> str:
     if methods == ["QUANTITATIVE"]:
-        return "quantitative"
+        # This high-level deterministic planner does not possess an
+        # authoritative metric or unit. Detailed quantitative requirements
+        # belong to the downstream method flow, so do not claim numeric
+        # ACQUIRED authority without an evidence_coverage contract.
+        return "mixed"
     if methods == ["DESK"]:
         return "qualitative"
     return "mixed"
