@@ -58,7 +58,12 @@ class ResearchDesignFactory:
             preferred_source_types=dto.preferred_source_types,
             timeframe=dto.timeframe,
             geography=dto.geography,
-            evidence_expectation=_create_expectation(dto.evidence_expectation),
+            evidence_expectation=_create_expectation(dto.evidence_expectation) if dto.evidence_expectation is not None else None,
+            evidence_coverage=dto.evidence_coverage,
+            kind=dto.kind,
+            depends_on_information_need_ids=dto.depends_on_information_need_ids,
+            derivation=dto.derivation,
+            output_format=dto.output_format,
         )
 
 

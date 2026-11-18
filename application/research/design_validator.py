@@ -91,6 +91,18 @@ def validate_research_design(
 
 
 def validate_subject_for_approval(design: ResearchDesign) -> None:
+    from application.analysis.numeric_integrity import is_numeric_acquired_need
+
+    for need in design.information_needs:
+        if is_numeric_acquired_need(need):
+            coverage = need.evidence_coverage
+            if (coverage is None or not coverage.required_metric
+                    or not coverage.required_unit or not coverage.required_periods
+                    or not (coverage.geography or need.geography)):
+                raise ValidationError(
+                    f"InformationNeed '{need.id}': numeric_requirements_unavailable; "
+                    "declare metric, unit, periods and geography before approval."
+                )
     subject = design.research_subject
     if subject is None:
         raise ValidationError(
