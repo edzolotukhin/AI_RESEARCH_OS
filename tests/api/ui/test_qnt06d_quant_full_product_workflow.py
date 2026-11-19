@@ -55,6 +55,31 @@ class Qnt06dQuantFullProductWorkflowTests(ApiTestCase):
         ).status_code, 303)
         drain_background_runs(self.container)
         project = self.container.project_service.get_project(project_id)
+        design = project.current_research_design
+        acquired = [
+            need for need in design.information_needs
+            if need.kind.value == "ACQUIRED"
+        ]
+        self.assertTrue(acquired)
+        confirmation = {"expected_design_id": design.id}
+        for index, need in enumerate(acquired):
+            if index == 0:
+                confirmation.update({
+                    f"intent__{need.id}": "numeric",
+                    f"metric__{need.id}": "Observed measure",
+                    f"unit__{need.id}": "units",
+                    f"periods__{need.id}": "2026",
+                    f"geography__{need.id}": "Synthetic market",
+                })
+            else:
+                confirmation[f"intent__{need.id}"] = "non_numeric"
+        confirmed = self.client.post(
+            f"/ui/projects/{project_id}/design/confirm-numeric-intent",
+            data=confirmation,
+            follow_redirects=False,
+        )
+        self.assertEqual(confirmed.status_code, 303, confirmed.text)
+        project = self.container.project_service.get_project(project_id)
         self.assertEqual(self.client.post(
             f"/ui/projects/{project_id}/design/approve",
             data={"design_id": project.current_research_design.id},
