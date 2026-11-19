@@ -32,6 +32,13 @@ class CandidateRejectionReason(str, Enum):
     LOCAL_NEED_RELEVANCE_FAILURE = "local_need_relevance_failure"
     INVALID_NEED_REF = "invalid_need_ref"
     PROVENANCE = "provenance"
+    CONTRACT_VERSION = "contract_version"
+    ASPECT_SCOPE = "aspect_scope"
+    SUBJECT_BINDING = "subject_binding"
+    SEMANTIC_JUSTIFICATION = "semantic_justification"
+    GEOGRAPHY_SCOPE = "geography_scope"
+    SUBJECT_EXCLUSION = "subject_exclusion"
+    STATEMENT_EXCERPT_MISMATCH = "statement_excerpt_mismatch"
     GROUNDING = "grounding"
     EMPTY_OR_INVALID = "empty_or_invalid"
     DEDUP = "dedup"
@@ -589,6 +596,24 @@ def classify_grounding_failure(
 
 def classify_provenance_rejection(message: str) -> str:
     lowered = message.lower()
+    if "contract version" in lowered:
+        return CandidateRejectionReason.CONTRACT_VERSION.value
+    if "required aspect" in lowered or "aspect scope" in lowered:
+        return CandidateRejectionReason.ASPECT_SCOPE.value
+    if "explicit researchsubject exclusion" in lowered:
+        return CandidateRejectionReason.SUBJECT_EXCLUSION.value
+    if "unsupported by its grounded excerpt" in lowered:
+        return CandidateRejectionReason.STATEMENT_EXCERPT_MISMATCH.value
+    if (
+        "researchsubject" in lowered
+        or "subject binding" in lowered
+        or "supporting relation" in lowered
+    ):
+        return CandidateRejectionReason.SUBJECT_BINDING.value
+    if "semantic justification" in lowered:
+        return CandidateRejectionReason.SEMANTIC_JUSTIFICATION.value
+    if "geography applicability" in lowered:
+        return CandidateRejectionReason.GEOGRAPHY_SCOPE.value
     if "local information-need relevance" in lowered:
         return CandidateRejectionReason.LOCAL_NEED_RELEVANCE_FAILURE.value
     if "subject continuity" in lowered:

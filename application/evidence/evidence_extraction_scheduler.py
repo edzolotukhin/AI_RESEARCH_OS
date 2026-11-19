@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import hashlib
 
 from domain.planning.research_design import ResearchDesign
 from domain.sources.source import Source
@@ -13,8 +14,10 @@ from application.evidence.run_scoped_provenance import (
     RunScopedSourceContext,
     resolve_run_scoped_context,
 )
+from domain.sources.retrieval_status import RetrievalStatus
 
 PHASE_FIRST_OPPORTUNITY = "first_opportunity"
+MAX_STRUCTURED_OUTER_CHARS = 200_000
 PHASE_DEPTH = "depth"
 EXTRACTION_ORDERING_COVERAGE_BEFORE_DEPTH = "coverage_before_depth_need_fair"
 SELECTION_FIRST_OPPORTUNITY = "first_opportunity"
@@ -49,6 +52,9 @@ class SourceOutcomeState:
     consecutive_empty_depth: int = 0
     first_opportunity_completed: bool = False
     last_outcome: str = "unobserved"
+    last_primary_need_id: str = ""
+    last_content_identity: str = ""
+    valid_empty_retry_counts: dict[str, int] = field(default_factory=dict)
 
     @property
     def repeated_zero_yield(self) -> bool:
@@ -65,6 +71,9 @@ class SourceOutcomeState:
             "consecutive_empty_depth": self.consecutive_empty_depth,
             "first_opportunity_completed": self.first_opportunity_completed,
             "last_outcome": self.last_outcome,
+            "last_primary_need_id": self.last_primary_need_id,
+            "last_content_identity": self.last_content_identity,
+            "valid_empty_retry_counts": dict(self.valid_empty_retry_counts),
             "repeated_zero_yield": self.repeated_zero_yield,
         }
 
@@ -75,9 +84,13 @@ def record_source_outcome(
     phase: str,
     persisted_evidence: int,
     valid_empty: bool,
+    primary_need_id: str = "",
+    content_identity: str = "",
 ) -> None:
     """Record an executed outcome without predicting any unexecuted chunk."""
     state.calls_attempted += 1
+    state.last_primary_need_id = primary_need_id
+    state.last_content_identity = content_identity
     if phase == PHASE_FIRST_OPPORTUNITY:
         state.first_opportunity_completed = True
     else:
@@ -89,11 +102,61 @@ def record_source_outcome(
         state.last_outcome = "productive"
     elif valid_empty:
         state.valid_empty_calls += 1
+        retry_key = extraction_retry_key(primary_need_id, content_identity)
+        if retry_key:
+            state.valid_empty_retry_counts[retry_key] = (
+                state.valid_empty_retry_counts.get(retry_key, 0) + 1
+            )
         if phase == PHASE_DEPTH:
             state.consecutive_empty_depth += 1
         state.last_outcome = "valid_empty"
     else:
         state.last_outcome = "non_productive_other"
+
+
+def suppress_repeated_truncated_depth(
+    work_item: EvidenceExtractionWorkItem,
+    *,
+    state: SourceOutcomeState,
+) -> bool:
+    """Suppress unchanged truncated depth after two valid-empty calls."""
+    source = work_item.source
+    truncated = (
+        source.retrieval_status is RetrievalStatus.TRUNCATED
+        or source.metadata.get("truncated") is True
+    )
+    identity = extraction_retry_identity(source)
+    retry_key = extraction_retry_key(work_item.primary_need_id, identity)
+    return bool(
+        work_item.phase == PHASE_DEPTH
+        and truncated
+        and identity
+        and retry_key
+        and state.valid_empty_retry_counts.get(retry_key, 0) >= 2
+        and state.last_outcome == "valid_empty"
+        and state.last_primary_need_id == work_item.primary_need_id
+        and state.last_content_identity == identity
+    )
+
+
+def extraction_retry_identity(source: Source) -> str:
+    """Identity for retry decisions, including bounded truncated snapshots."""
+    checksum = str(source.content_checksum or "").strip()
+    if not checksum:
+        return ""
+    return ":".join((
+        checksum,
+        str(source.content_revision),
+        str(source.extraction_revision or ""),
+    ))
+
+
+def extraction_retry_key(primary_need_id: str, content_identity: str) -> str:
+    if not primary_need_id or not content_identity:
+        return ""
+    return hashlib.sha256(
+        f"{primary_need_id}\0{content_identity}".encode("utf-8"),
+    ).hexdigest()
 
 
 def adaptive_depth_selection_key(
@@ -216,10 +279,24 @@ def _prepare_sources(
         if not run_context.information_need_ids:
             continue
         primary_need_id = sorted(run_context.information_need_ids)[0]
+        # Structured rows are already bounded by the workbook adapter and carry
+        # exact cell locators.  Splitting their canonical row excerpts across
+        # outer text chunks can silently lose an otherwise valid observation.
+        # Keep one source-level opportunity; qualitative extraction remains
+        # bounded by the composite extractor's own inner chunking.
+        structured = bool(source.metadata.get("structured_tables_v2"))
+        # Structured rows are bounded by the adapter contract. Keep one outer
+        # opportunity for the whole bounded payload, but never turn a source
+        # length into an unbounded extraction request.
+        if structured and len(source.content_text) > MAX_STRUCTURED_OUTER_CHARS:
+            # Do not split a structured row across outer chunks. A partial
+            # payload would be more dangerous than an explicit bounded no-op.
+            continue
+        structured_chunk_chars = min(max(chunk_chars, len(source.content_text)), MAX_STRUCTURED_OUTER_CHARS)
         chunks = split_normalized_source_content(
             source.content_text,
-            chunk_chars=chunk_chars,
-            overlap_chars=overlap_chars,
+            chunk_chars=structured_chunk_chars if structured else chunk_chars,
+            overlap_chars=0 if structured else overlap_chars,
         )
         if not chunks:
             continue

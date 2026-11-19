@@ -2,6 +2,7 @@
 import unittest
 import time
 from dataclasses import replace
+from unittest.mock import patch
 
 from application.evidence.content_identity_queue import distinct_content_queue
 from application.evidence.evidence_extraction_scheduler import build_need_fair_extraction_queue
@@ -34,6 +35,48 @@ def queue(sources):
 
 
 class ContentIdentityTests(unittest.TestCase):
+    def test_truncated_valid_empty_source_stops_before_remaining_depth(self):
+        class EmptyExtractor:
+            def __init__(self):
+                self.calls = 0
+
+            def extract(self, **kwargs):
+                self.calls += 1
+                return ()
+
+        template = _template(_design())
+        run = WorkflowRunFactory(task_factory=TaskFactory()).create(template=template)
+        run.id = "run-1"
+        context = WorkflowContext(
+            project=Project(id="project-1", name="Synthetic"),
+            workflow_template=template,
+            workflow_run=run,
+        )
+        context.current_task = run.tasks[0]
+        sources = InMemorySourceRepository()
+        long_source = replace(
+            source("truncated", "Population observations. " * 2000),
+            retrieval_status=RetrievalStatus.TRUNCATED,
+            metadata={"truncated": True},
+        )
+        sources.create(long_source)
+        extractor = EmptyExtractor()
+        service = EvidenceExtractionService(
+            evidence_extractor=extractor,
+            source_repository=sources,
+            evidence_repository=InMemoryEvidenceRepository(),
+        )
+
+        with patch.object(
+            EvidenceExtractionService, "_trace_is_valid_empty", return_value=True,
+        ):
+            summary = service.extract_for_source_ids(
+                context, ("truncated",), allow_empty=True,
+            )
+
+        self.assertEqual(extractor.calls, 2)
+        self.assertEqual(len(summary.diagnostics.work_items), 2)
+
     def test_whitespace_unicode_aliases_match_not_url_or_claimed_hash(self):
         self.assertEqual(acquired_content_identity(source("a", "Café  report\n2026")),
                          acquired_content_identity(source("b", "Cafe\u0301 report 2026")))

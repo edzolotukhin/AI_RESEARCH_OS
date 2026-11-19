@@ -66,6 +66,42 @@ def context():
 
 
 class StructuredProductionTests(unittest.TestCase):
+    def test_hierarchical_footnoted_year_rows_preserve_authority(self):
+        book=Workbook()
+        sheet=book.active
+        sheet.title="Population"
+        sheet.merge_cells("A1:C1"); sheet["A1"]="Population"
+        sheet.merge_cells("A2:C2"); sheet["A2"]="(as of 1 January; thsd.)"
+        sheet["B3"]="Total resident population"; sheet["B4"]="total"
+        sheet["C3"]="Total present population"; sheet["C4"]="total"
+        sheet.append([])
+        sheet.append(["20152",42759.7,42929.3])
+        sheet.append(["20162",42590.9,42760.5])
+        sheet.append(["2 Excluding the temporarily occupied territories."])
+        output=io.BytesIO(); book.save(output)
+        parsed=extract_xlsx_text(output.getvalue())
+        item=source(output.getvalue())
+        base=design(); need=base.information_needs[0]
+        geography="2 Excluding the temporarily occupied territories."
+        need=replace(need,geography=geography,
+            evidence_expectation=replace(need.evidence_expectation,geography=geography),
+            evidence_coverage=replace(need.evidence_coverage,
+                required_metric="Total resident population",
+                required_unit="(as of 1 January; thsd.)",
+                required_periods=("2015","2016"),geography=geography))
+        model=replace(base,information_needs=(need,))
+
+        candidates=StructuredEvidenceExtractor().extract(source=item,design=model,run_context=context())
+
+        self.assertEqual([c.metadata["observation_period"] for c in candidates],["2015","2016"])
+        self.assertEqual([c.metadata["numeric_value"] for c in candidates],[42759.7,42590.9])
+        for candidate in candidates:
+            provenance=candidate.metadata["workbook_provenance"]
+            self.assertIn(provenance["period_cell"],{"A6","A7"})
+            self.assertEqual(provenance["unit_cells"],["A2"])
+            self.assertEqual(provenance["geography_cells"],["A8"])
+            self.assertIn(candidate.source_excerpt,parsed.text)
+
     def test_exact_rows_and_v2_validation(self):
         item=source()
         candidates=StructuredEvidenceExtractor().extract(source=item,design=design(),run_context=context())
