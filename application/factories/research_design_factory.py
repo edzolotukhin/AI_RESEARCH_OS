@@ -64,6 +64,7 @@ class ResearchDesignFactory:
             depends_on_information_need_ids=dto.depends_on_information_need_ids,
             derivation=dto.derivation,
             output_format=dto.output_format,
+            numeric_observation_required=dto.numeric_observation_required,
         )
 
 

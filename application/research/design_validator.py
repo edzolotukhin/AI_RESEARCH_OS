@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from domain.common.exceptions import ValidationError
 from domain.planning.research_design import ResearchDesign
+from domain.planning.research_design import numeric_intent_confirmation_digest
+from domain.planning.derivation import InformationNeedKind
+from domain.planning.evidence_nature import EvidenceNature
+from domain.research_method import QUANTITATIVE
 from domain.research_brief import ResearchBrief, normalize_objective_text
 
 from application.planner.objective_coverage import (
@@ -146,11 +152,100 @@ def validate_subject_for_approval(design: ResearchDesign) -> None:
             )
 
 
+def validate_numeric_intent_for_approval(
+    design: ResearchDesign,
+    methods: tuple[str, ...],
+    *,
+    expected_owner_id: str | None,
+    enforce_quantitative_minimum: bool = True,
+) -> None:
+    """Validate explicit owner-confirmed numeric intent for the current revision."""
+    from application.analysis.numeric_integrity import is_numeric_acquired_need
+
+    acquired = tuple(
+        need for need in design.information_needs
+        if need.kind == InformationNeedKind.ACQUIRED
+    )
+    quantitative_project = QUANTITATIVE in methods
+    confirmation = design.numeric_intent_confirmation
+    if quantitative_project:
+        owner_id = expected_owner_id if isinstance(expected_owner_id, str) else ""
+        if not owner_id or owner_id != owner_id.strip():
+            raise ValidationError("numeric_intent_owner_unavailable")
+        timestamp_valid = False
+        if confirmation is not None:
+            try:
+                confirmed_at = datetime.fromisoformat(confirmation.confirmed_at)
+                timestamp_valid = (
+                    confirmed_at.tzinfo is not None
+                    and confirmed_at.utcoffset() is not None
+                )
+            except (TypeError, ValueError):
+                timestamp_valid = False
+        if (
+            confirmation is None
+            or confirmation.version != "numeric-intent-confirmation-v1"
+            or confirmation.confirmed_design_id != design.id
+            or confirmation.source_design_id != design.previous_design_id
+            or confirmation.confirmed_by != owner_id
+            or not timestamp_valid
+            or confirmation.integrity_digest != numeric_intent_confirmation_digest(
+                design,
+                version=confirmation.version,
+                source_design_id=confirmation.source_design_id,
+                confirmed_design_id=confirmation.confirmed_design_id,
+                confirmed_by=confirmation.confirmed_by,
+                confirmed_at=confirmation.confirmed_at,
+            )
+        ):
+            raise ValidationError(
+                "numeric_intent_unresolved; confirm every ACQUIRED Information Need "
+                "for the current Design revision before approval."
+            )
+        if any(need.numeric_observation_required is None for need in acquired):
+            raise ValidationError(
+                "numeric_intent_unresolved; confirm every ACQUIRED Information Need "
+                "for the current Design revision before approval."
+            )
+        if (
+            enforce_quantitative_minimum
+            and not any(need.numeric_observation_required is True for need in acquired)
+        ):
+            raise ValidationError(
+                "quantitative_observation_required; a QUANTITATIVE Design must "
+                "confirm at least one numeric ACQUIRED Information Need."
+            )
+
+    for need in acquired:
+        expectation = need.evidence_expectation
+        legacy_numeric = is_numeric_acquired_need(need)
+        if need.numeric_observation_required is False and expectation is not None and (
+            expectation.nature == EvidenceNature.QUANTITATIVE
+            or expectation.requires_quantitative_evidence
+        ):
+            raise ValidationError(
+                f"InformationNeed '{need.id}': numeric_intent_conflict."
+            )
+        numeric = need.numeric_observation_required is True or (
+            need.numeric_observation_required is None and legacy_numeric
+        )
+        if numeric:
+            coverage = need.evidence_coverage
+            if (coverage is None or not coverage.required_metric
+                    or not coverage.required_unit or not coverage.required_periods
+                    or not (coverage.geography or need.geography)):
+                raise ValidationError(
+                    f"InformationNeed '{need.id}': numeric_requirements_unavailable; "
+                    "declare metric, unit, periods and geography before approval."
+                )
+
+
 # Re-export objective traceability helpers for existing imports.
 __all__ = [
     "find_invalid_objective_refs",
     "find_orphan_questions",
     "find_uncovered_objectives",
+    "validate_numeric_intent_for_approval",
     "validate_research_design",
 ]
 

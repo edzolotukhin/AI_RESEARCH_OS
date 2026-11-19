@@ -39,6 +39,9 @@ class InformationNeedDTO:
     depends_on_information_need_ids: tuple[str, ...] = ()
     derivation: DerivationContract | None = None
     output_format: str = ""
+    # Planner output is never authoritative for this field. It remains None
+    # until the authenticated owner confirmation boundary creates a revision.
+    numeric_observation_required: bool | None = None
 
 
 @dataclass(frozen=True)

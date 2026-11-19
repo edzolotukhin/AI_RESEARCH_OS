@@ -94,12 +94,19 @@ class NumericIntegrityError(ValueError):
 
 def is_numeric_acquired_need(need: Any) -> bool:
     expectation = getattr(need, "evidence_expectation", None)
+    confirmed_intent = getattr(need, "numeric_observation_required", None)
     return bool(
         getattr(need, "kind", None) == InformationNeedKind.ACQUIRED
-        and expectation is not None
         and (
-            expectation.nature == EvidenceNature.QUANTITATIVE
-            or expectation.requires_quantitative_evidence
+            confirmed_intent is True
+            or (
+                confirmed_intent is None
+                and expectation is not None
+                and (
+                    expectation.nature == EvidenceNature.QUANTITATIVE
+                    or expectation.requires_quantitative_evidence
+                )
+            )
         )
     )
 

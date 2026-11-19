@@ -116,6 +116,9 @@ class ResearchDesignParser:
             depends_on_information_need_ids=self._optional_string_list(data, "depends_on_information_need_ids"),
             derivation=DerivationContract.from_dict(dict(derivation)) if derivation is not None else None,
             output_format=self._optional_string(data, "output_format"),
+            # Deliberately ignore any Planner-supplied True/False. Numeric
+            # intent becomes authoritative only through owner confirmation.
+            numeric_observation_required=None,
         )
 
     def _parse_evidence_expectation(

@@ -8,6 +8,8 @@ from api.ui.pdf_csrf import token as pdf_csrf_token, valid as valid_pdf_csrf
 from api.ui.project_workspace_facade import build_project_workspace_facade
 from application.persistence.exceptions import AccessDeniedError, EntityNotFoundError, AuthenticationRequiredError
 from application.quantitative.ui_service import QuantitativeUiError
+from application.services.project_planning_service import NumericIntentConfirmationEntry
+from domain.planning.research_design import EvidenceCoverageContract
 from application.authority_extension.selected_workflow import ExtensionContractError
 from api.routers.authority_extensions import (
     AuthorityExtensionRequest,
@@ -232,6 +234,61 @@ def project_design_approve(request: Request, project_id: str, design_id: str = F
     except ValueError as exc:
         facade = _facade(request); project = facade.project_for_design(project_id)
         return templates.TemplateResponse(request, "projects/design.html", {"request": request, "project": project, "view": facade.get_workspace(project_id), "error": str(exc)}, status_code=409)
+
+
+@router.post("/{project_id}/design/confirm-numeric-intent", include_in_schema=False)
+async def project_design_confirm_numeric_intent(request: Request, project_id: str):
+    facade = _facade(request)
+    try:
+        form = await request.form()
+        expected_design_id = str(form.get("expected_design_id", "")).strip()
+        project = facade.project_for_design(project_id)
+        design = project.current_research_design
+        if design is None:
+            raise ValueError("Дизайн не знайдено")
+        entries: dict[str, NumericIntentConfirmationEntry] = {}
+        for need in design.information_needs:
+            if need.kind.value != "ACQUIRED":
+                continue
+            raw = form.get(f"intent__{need.id}")
+            if raw not in {"numeric", "non_numeric"}:
+                raise ValueError(
+                    "numeric_intent_map_invalid; classify every ACQUIRED Information Need"
+                )
+            numeric = raw == "numeric"
+            coverage = None
+            if numeric:
+                periods = tuple(
+                    item.strip()
+                    for item in str(form.get(f"periods__{need.id}", "")).replace("\n", ",").split(",")
+                    if item.strip()
+                )
+                coverage = EvidenceCoverageContract(
+                    required_metric=str(form.get(f"metric__{need.id}", "")),
+                    required_unit=str(form.get(f"unit__{need.id}", "")),
+                    required_periods=periods,
+                    geography=str(form.get(f"geography__{need.id}", "")),
+                )
+            entries[need.id] = NumericIntentConfirmationEntry(numeric, coverage)
+        facade.confirm_numeric_intent(
+            project_id,
+            expected_design_id=expected_design_id,
+            entries=entries,
+        )
+        return RedirectResponse(f"/ui/projects/{project_id}/design", status_code=303)
+    except (AccessDeniedError, EntityNotFoundError):
+        return templates.TemplateResponse(
+            request, "projects/error.html",
+            {"request": request, "message": "Проєкт не знайдено"}, status_code=404,
+        )
+    except ValueError as exc:
+        project = facade.project_for_design(project_id)
+        return templates.TemplateResponse(
+            request, "projects/design.html",
+            {"request": request, "project": project,
+             "view": facade.get_workspace(project_id), "error": str(exc)},
+            status_code=409,
+        )
 
 @router.post("/{project_id}/methods", include_in_schema=False)
 def project_method_add(request: Request, project_id: str, method: str = Form("")):
