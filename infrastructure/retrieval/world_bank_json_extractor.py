@@ -1,4 +1,4 @@
-﻿"""Bounded parser for the World Bank indicator API response shape only."""
+"""Bounded parser for the World Bank indicator API response shape only."""
 from __future__ import annotations
 
 import math
