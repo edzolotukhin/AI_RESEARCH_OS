@@ -23,6 +23,14 @@ RESEARCH_DESIGN_PAYLOAD_SCHEMA = """
       "preferred_source_types": ["string"],
       "timeframe": "string",
       "geography": "string",
+      "kind": "ACQUIRED",
+      "depends_on_information_need_ids": [],
+      "evidence_coverage": {
+        "required_metric": "explicit metric",
+        "required_unit": "explicit unit",
+        "required_periods": ["explicit observation period"],
+        "geography": "explicit observation geography"
+      },
       "evidence_expectation": {
         "nature": "quantitative|qualitative|mixed",
         "required_aspects": ["stable_snake_case_identifier"],
@@ -70,6 +78,26 @@ RESEARCH_DESIGN_PAYLOAD_SCHEMA = """
   "language": "string"
 }
 """.strip()
+
+RESEARCH_DESIGN_PAYLOAD_SCHEMA += """
+
+Choose kind from ACQUIRED, DERIVED, OUTPUT for each Information Need.
+ACQUIRED requires evidence_expectation. For quantitative ACQUIRED or when
+requires_quantitative_evidence is true, declare authoritative evidence_coverage
+with required_metric, required_unit, required_periods and geography from the Brief.
+Do not infer missing units from future Evidence. Mark unresolved requirements in
+limitations so approval can request clarification.
+DERIVED requires depends_on_information_need_ids and a derivation object using
+version "derivation-v1", operation_type, metric, input_unit, geography,
+required_periods, decimal_places, max_inputs, max_provider_attempts and method.
+Allowed operations are YEAR_OVER_YEAR_ABSOLUTE_CHANGE, YEAR_OVER_YEAR_PERCENT_CHANGE,
+CUMULATIVE_ABSOLUTE_CHANGE, CUMULATIVE_PERCENT_CHANGE, TREND_CHARACTERIZATION,
+CROSS_SOURCE_COMPARISON and LIMITATION_SYNTHESIS.
+Semantic operations require an explicit method. Calculation periods are ordered years.
+OUTPUT declares dependencies and may declare output_format "table" or "chart".
+DERIVED and OUTPUT can omit evidence_expectation and evidence_coverage.
+Dependencies must reference current Information Need IDs and form an acyclic graph.
+"""
 
 
 PLANNER_PAYLOAD_SCHEMA = RESEARCH_DESIGN_PAYLOAD_SCHEMA

@@ -106,12 +106,113 @@ class Pf02MethodSelectionDesignGateTests(ApiTestCase):
         ]
         self.assertEqual(len(current_design_runs), 1)
         self.assertEqual(current_design_runs[0].status, WorkflowStatus.COMPLETED)
+        if "QUANTITATIVE" in methods:
+            confirmation = {"expected_design_id": project.current_research_design.id}
+            acquired_index = 0
+            for need in project.current_research_design.information_needs:
+                if need.kind.value == "ACQUIRED":
+                    if acquired_index == 0:
+                        confirmation.update({
+                            f"intent__{need.id}": "numeric",
+                            f"metric__{need.id}": "Observed measure",
+                            f"unit__{need.id}": "units",
+                            f"periods__{need.id}": "2026",
+                            f"geography__{need.id}": "Ukraine",
+                        })
+                    else:
+                        confirmation[f"intent__{need.id}"] = "non_numeric"
+                    acquired_index += 1
+            response = self.client.post(
+                f"/ui/projects/{project_id}/design/confirm-numeric-intent",
+                data=confirmation,
+                follow_redirects=False,
+            )
+            self.assertEqual(response.status_code, 303)
+            project = self.container.project_service.get_project(project_id)
         response = self.client.post(
             f"/ui/projects/{project_id}/design/approve",
             data={"design_id": project.current_research_design.id},
             follow_redirects=False,
         )
         self.assertEqual(response.status_code, 303)
+
+    def test_quantitative_ui_confirmation_creates_revision_and_approves(self):
+        project_id = self.create(("QUANTITATIVE",))
+        from tests.application.planner.test_numeric_intent_confirmation import design
+
+        project = self.container.project_service.get_project(project_id)
+        project.current_research_design = design()
+        project.research_design_status = "DRAFT"
+        project.research_design_input_fingerprint = (
+            self.container.project_planning_service.input_fingerprint(
+                None, ("QUANTITATIVE",),
+            )
+        )
+        self.container.project_service.save_project(project)
+        original = self.container.project_service.get_project(project_id)
+        source_design = original.current_research_design
+        acquired = [need for need in source_design.information_needs
+                    if need.kind.value == "ACQUIRED"]
+        self.assertTrue(acquired)
+        data = {"expected_design_id": source_design.id}
+        for index, need in enumerate(acquired):
+            if index == 0:
+                data.update({
+                    f"intent__{need.id}": "numeric",
+                    f"metric__{need.id}": "Population",
+                    f"unit__{need.id}": "persons",
+                    f"periods__{need.id}": "2019, 2020, 2021",
+                    f"geography__{need.id}": "Ukraine",
+                })
+            else:
+                data[f"intent__{need.id}"] = "non_numeric"
+        response = self.client.post(
+            f"/ui/projects/{project_id}/design/confirm-numeric-intent",
+            data=data, follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 303)
+        repeated = self.client.post(
+            f"/ui/projects/{project_id}/design/confirm-numeric-intent",
+            data=data, follow_redirects=False,
+        )
+        self.assertEqual(repeated.status_code, 409)
+        confirmed_project = self.container.project_service.get_project(project_id)
+        confirmed = confirmed_project.current_research_design
+        self.assertNotEqual(confirmed.id, source_design.id)
+        self.assertIsNone(source_design.numeric_intent_confirmation)
+        self.assertEqual(confirmed.previous_design_id, source_design.id)
+        self.assertEqual(confirmed.numeric_intent_confirmation.confirmed_by, self.owner_id)
+
+        response = self.client.post(
+            f"/ui/projects/{project_id}/design/approve",
+            data={"design_id": confirmed.id}, follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(
+            self.container.project_service.get_project(project_id).research_design_status,
+            "APPROVED",
+        )
+
+    def test_numeric_confirmation_ui_rejects_non_owner(self):
+        project_id = self.create(("QUANTITATIVE",))
+        from tests.application.planner.test_numeric_intent_confirmation import design
+
+        project = self.container.project_service.get_project(project_id)
+        project.current_research_design = design()
+        project.research_design_status = "DRAFT"
+        project.research_design_input_fingerprint = (
+            self.container.project_planning_service.input_fingerprint(
+                None, ("QUANTITATIVE",),
+            )
+        )
+        project.owner_principal_id = "different-owner"
+        self.container.project_service.save_project(project)
+        response = self.client.post(
+            f"/ui/projects/{project_id}/design/confirm-numeric-intent",
+            data={"expected_design_id": "design-source"},
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 404)
 
     def fail_run(self, run):
         run.ready(); run.start(); run.fail()

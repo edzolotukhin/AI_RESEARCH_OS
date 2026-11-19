@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
 from enum import StrEnum
+import hashlib
+import json
 from typing import Any
 from uuid import uuid4
 
@@ -169,8 +171,13 @@ class InformationNeed:
     depends_on_information_need_ids: tuple[str, ...] = ()
     derivation: DerivationContract | None = None
     output_format: str = ""
+    numeric_observation_required: bool | None = None
 
     def __post_init__(self):
+        if self.numeric_observation_required is not None and not isinstance(
+            self.numeric_observation_required, bool
+        ):
+            raise ValueError("numeric_observation_required must be bool or None")
         if self.output_format and (self.kind != InformationNeedKind.OUTPUT or self.output_format not in {"table", "chart"}):
             raise ValueError("Explicit output format must be table or chart on OUTPUT")
         object.__setattr__(self,"kind",InformationNeedKind(self.kind))
@@ -224,6 +231,8 @@ class InformationNeed:
             payload["derivation"]=self.derivation.to_dict()
         if self.output_format:
             payload["output_format"] = self.output_format
+        if self.numeric_observation_required is not None:
+            payload["numeric_observation_required"] = self.numeric_observation_required
         return payload
 
     @classmethod
@@ -256,7 +265,47 @@ class InformationNeed:
             depends_on_information_need_ids=tuple(payload.get("depends_on_information_need_ids",())),
             derivation=DerivationContract.from_dict(payload["derivation"]) if payload.get("derivation") is not None else None,
             output_format=str(payload.get("output_format", "")),
+            numeric_observation_required=(
+                payload["numeric_observation_required"]
+                if isinstance(payload.get("numeric_observation_required"), bool)
+                else None
+            ),
         )
+
+
+@dataclass(frozen=True)
+class NumericIntentConfirmation:
+    version: str
+    source_design_id: str
+    confirmed_design_id: str
+    confirmed_by: str
+    confirmed_at: str
+    integrity_digest: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "version": self.version,
+            "source_design_id": self.source_design_id,
+            "confirmed_design_id": self.confirmed_design_id,
+            "confirmed_by": self.confirmed_by,
+            "confirmed_at": self.confirmed_at,
+            "integrity_digest": self.integrity_digest,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Any) -> NumericIntentConfirmation | None:
+        if not isinstance(payload, dict):
+            return None
+        names = (
+            "version", "source_design_id", "confirmed_design_id", "confirmed_by",
+            "confirmed_at", "integrity_digest",
+        )
+        if any(not isinstance(payload.get(name), str) for name in names):
+            return None
+        values = {name: payload[name].strip() for name in names}
+        if not all(values.values()):
+            return None
+        return cls(**values)
 
 
 @dataclass(frozen=True)
@@ -277,13 +326,15 @@ class ResearchDesign:
     limitations: tuple[str, ...] = ()
     language: str = "en"
     research_subject: ResearchSubject | None = None
+    previous_design_id: str = ""
+    numeric_intent_confirmation: NumericIntentConfirmation | None = None
 
     def __post_init__(self):
         if any(n.kind!=InformationNeedKind.ACQUIRED or n.depends_on_information_need_ids for n in self.information_needs):
             validate_dependency_graph(self)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "id": self.id,
             "research_questions": [
                 question.to_dict() for question in self.research_questions
@@ -301,6 +352,13 @@ class ResearchDesign:
                 self.research_subject.to_dict() if self.research_subject is not None else None
             ),
         }
+        if self.previous_design_id:
+            payload["previous_design_id"] = self.previous_design_id
+        if self.numeric_intent_confirmation is not None:
+            payload["numeric_intent_confirmation"] = (
+                self.numeric_intent_confirmation.to_dict()
+            )
+        return payload
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any] | None) -> ResearchDesign | None:
@@ -323,7 +381,47 @@ class ResearchDesign:
             limitations=_tuple_of_str(payload.get("limitations")),
             language=str(payload.get("language", "en") or "en"),
             research_subject=ResearchSubject.from_dict(payload.get("research_subject")),
+            previous_design_id=(
+                payload.get("previous_design_id", "").strip()
+                if isinstance(payload.get("previous_design_id", ""), str)
+                else ""
+            ),
+            numeric_intent_confirmation=NumericIntentConfirmation.from_dict(
+                payload.get("numeric_intent_confirmation")
+            ),
         )
+
+
+def numeric_intent_confirmation_digest(
+    design: ResearchDesign,
+    *,
+    version: str,
+    source_design_id: str,
+    confirmed_design_id: str,
+    confirmed_by: str,
+    confirmed_at: str,
+) -> str:
+    """Tamper-evident checksum of Design content and confirmation provenance.
+
+    Authentication and authorization remain separate service-layer checks; this
+    digest is not treated as proof of who confirmed the revision.
+    """
+    design_payload = design.to_dict()
+    design_payload.pop("numeric_intent_confirmation", None)
+    payload = {
+        "design": design_payload,
+        "confirmation": {
+            "version": version,
+            "source_design_id": source_design_id,
+            "confirmed_design_id": confirmed_design_id,
+            "confirmed_by": confirmed_by,
+            "confirmed_at": confirmed_at,
+        },
+    }
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _tuple_of_str(value: Any) -> tuple[str, ...]:

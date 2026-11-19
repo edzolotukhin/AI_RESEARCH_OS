@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from domain.planning.derivation import DerivationContract, InformationNeedKind
+from domain.planning.research_design import EvidenceCoverageContract
 
 
 @dataclass(frozen=True)
@@ -31,7 +33,15 @@ class InformationNeedDTO:
     preferred_source_types: tuple[str, ...]
     timeframe: str
     geography: str
-    evidence_expectation: EvidenceExpectationDTO
+    evidence_expectation: EvidenceExpectationDTO | None
+    evidence_coverage: EvidenceCoverageContract | None = None
+    kind: InformationNeedKind = InformationNeedKind.ACQUIRED
+    depends_on_information_need_ids: tuple[str, ...] = ()
+    derivation: DerivationContract | None = None
+    output_format: str = ""
+    # Planner output is never authoritative for this field. It remains None
+    # until the authenticated owner confirmation boundary creates a revision.
+    numeric_observation_required: bool | None = None
 
 
 @dataclass(frozen=True)

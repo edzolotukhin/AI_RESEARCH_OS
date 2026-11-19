@@ -7,6 +7,7 @@ from application.query.project_workspace_query_service import ProjectWorkspaceQu
 from application.query.project_outputs_query_service import ProjectOutputsQueryService
 from application.quantitative.workflow import build_quantitative_workflow_template
 from application.quantitative.ui_service import QuantitativeUiError
+from application.services.project_planning_service import NumericIntentConfirmationEntry
 from domain.research_brief import ResearchBrief
 from domain.research_method import canonicalize_research_methods
 
@@ -191,6 +192,21 @@ class ProjectWorkspaceFacade:
         project = self.authorization.require_project(self.principal, project_id)
         return self.container.project_planning_service.approve_design(
             project, actor_id=self.owner_id, expected_design_id=design_id,
+        )
+
+    def confirm_numeric_intent(
+        self,
+        project_id: str,
+        *,
+        expected_design_id: str,
+        entries: dict[str, NumericIntentConfirmationEntry],
+    ):
+        project, _ = self._project_owner(project_id, mutate=True, owner=True)
+        return self.container.project_planning_service.confirm_numeric_intent(
+            project,
+            actor_id=self.owner_id,
+            expected_design_id=expected_design_id,
+            entries=entries,
         )
 
     def add_method(self, project_id: str, method: str):

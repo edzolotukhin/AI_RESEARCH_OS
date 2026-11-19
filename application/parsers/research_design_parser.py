@@ -13,6 +13,8 @@ from application.exceptions.planner_parser_error import PlannerParserError
 from domain.common.exceptions import ValidationError
 from domain.planning.aspect_identifiers import canonical_aspect_ids
 from domain.planning.evidence_nature import EvidenceNature
+from domain.planning.derivation import DerivationContract, InformationNeedKind
+from domain.planning.research_design import EvidenceCoverageContract
 
 
 class ResearchDesignParser:
@@ -84,6 +86,13 @@ class ResearchDesignParser:
     def _parse_need(self, data: Mapping[str, Any]) -> InformationNeedDTO:
         self._require_mapping(data, "information_need")
         need_id = self._require_string(data, "id")
+        kind = InformationNeedKind(data.get("kind", "ACQUIRED"))
+        coverage = data.get("evidence_coverage")
+        derivation = data.get("derivation")
+        if coverage is not None:
+            self._require_mapping(coverage, "evidence_coverage")
+        if derivation is not None:
+            self._require_mapping(derivation, "derivation")
         return InformationNeedDTO(
             id=need_id,
             research_question_id=self._require_string(
@@ -101,7 +110,15 @@ class ResearchDesignParser:
             evidence_expectation=self._parse_evidence_expectation(
                 data,
                 need_id=need_id,
-            ),
+            ) if kind == InformationNeedKind.ACQUIRED or data.get("evidence_expectation") is not None else None,
+            kind=kind,
+            evidence_coverage=EvidenceCoverageContract.from_dict(dict(coverage)) if coverage is not None else None,
+            depends_on_information_need_ids=self._optional_string_list(data, "depends_on_information_need_ids"),
+            derivation=DerivationContract.from_dict(dict(derivation)) if derivation is not None else None,
+            output_format=self._optional_string(data, "output_format"),
+            # Deliberately ignore any Planner-supplied True/False. Numeric
+            # intent becomes authoritative only through owner confirmation.
+            numeric_observation_required=None,
         )
 
     def _parse_evidence_expectation(

@@ -82,6 +82,7 @@ def _method_boundary_issues(
         *(
             aspect
             for need in design.information_needs
+            if need.evidence_expectation is not None
             for aspect in need.evidence_expectation.required_aspects
         ),
         *design.analysis_plan, *design.deliverable_plan,

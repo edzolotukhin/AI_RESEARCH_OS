@@ -5,7 +5,6 @@ from hashlib import sha256
 import json
 import time
 
-from application.evidence.temporal_scope import qualifying_evidence
 from application.execution.execution_budget_context import (
     execution_stage_scope, get_evidence_call_purpose, set_evidence_call_purpose,
 )
@@ -85,15 +84,21 @@ class DeskAdapter:
         checkpoint.on_task_progress(self.context)
 
     def qualified(self):
-        return qualifying_evidence(design=self.design,
-            source_repository=self.primitives.extraction._source_repository,
-            evidence=self.evidence.list_for_project(self.context.project.id, workflow_run_id=self.context.workflow_run.id),
-            brief=self.context.workflow_template.research_brief_snapshot)
+        return self.readiness.qualification_for_context(self.context)[1].evidence
 
     def observe(self, state):
         self.state = state
-        evidence = self.qualified()
-        digest = fingerprint([e.to_dict() for e in evidence])
+        temporal, projection = self.readiness.qualification_for_context(self.context)
+        evidence = projection.evidence
+        sources = self.primitives.extraction._source_repository
+        digest = fingerprint({
+            "design": self.design.to_dict(),
+            "evidence": [e.to_dict() for e in temporal.evidence],
+            "sources": [sources.get_by_id(identifier).to_dict()
+                        for identifier in sorted({e.source_id for e in temporal.evidence})],
+            "temporal": sorted((eid, need, decision)
+                              for (eid, need), decision in temporal.decisions.items()),
+        })
         saved = self.context.shared_state.get(ASSESSMENT, {})
         if saved.get("fingerprint") == digest:
             result = ResearchReadinessResult.from_dict(saved["result"])
@@ -101,7 +106,9 @@ class DeskAdapter:
             prior = (ResearchReadinessResult.from_dict(saved["result"]) if saved.get("result") else
                      DeterministicResearchSufficiencyEvaluator().evaluate(design=self.design, evidence=()))
             result = reconcile_terminal_readiness(design=self.design, evidence=evidence, previous=prior,
-                cache_payload=self.context.shared_state.get(SHARED_SUFFICIENCY_CACHE_KEY))
+                cache_payload=self.context.shared_state.get(SHARED_SUFFICIENCY_CACHE_KEY),
+                source_repository=sources, temporal_decisions=temporal.decisions,
+                numeric_qualifications=projection.qualifications)
         self.last_result = result
         counts = Counter(need for e in evidence for need in e.information_need_refs)
         gaps = tuple(Gap(n.information_need_id, n.status.value, index,

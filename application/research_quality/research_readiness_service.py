@@ -115,6 +115,25 @@ class ResearchReadinessService:
             persist_sufficiency_assessment_cache(context)
             reset_sufficiency_assessment_cache(previous)
 
+    def qualification_for_context(self, context: WorkflowContext):
+        """Canonical numeric projection on the same authorized scope as readiness."""
+        from application.analysis.numeric_integrity import project_numeric_evidence_for_design
+
+        self._require_source_repository()
+        design = self._require_design(context)
+        temporal = qualify_evidence_with_temporal_decisions(
+            design=design, evidence=self._evidence_for_context(context),
+            source_repository=self._source_repository,
+            brief=context.workflow_template.research_brief_snapshot,
+        )
+        projection = project_numeric_evidence_for_design(
+            design=design, evidence=temporal.evidence,
+            source_repository=self._source_repository,
+            temporal_decisions=temporal.decisions,
+            allowed_workflow_run_ids=tuple(sorted({e.workflow_run_id for e in temporal.evidence})),
+        )
+        return temporal, projection
+
     @staticmethod
     def _restore_loop_state(context: WorkflowContext) -> ResearchLoopState:
         payload = context.read_shared(SHARED_LOOP_STATE_KEY)
@@ -289,7 +308,6 @@ class ResearchReadinessService:
                             attempted_strategies=prior_by_need[item.information_need_id].attempted_strategies,
                             remaining_strategies=prior_by_need[item.information_need_id].remaining_strategies,
                             stop_reason=prior_by_need[item.information_need_id].stop_reason,
-                            analysis_eligible=prior_by_need[item.information_need_id].analysis_eligible,
                         )
                         if item.information_need_id in prior_by_need else item
                         for item in rq.information_need_assessments

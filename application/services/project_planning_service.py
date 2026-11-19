@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
+from collections.abc import Mapping
 import heapq
 import hashlib
 import json
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from application.persistence.exceptions import EntityNotFoundError
 from application.planner.project_planning_profile import (
@@ -14,7 +15,17 @@ from application.planner.project_planning_profile import (
     PROJECT_PLANNING_PROFILE_KEY,
     ProjectPlanningProfile,
 )
-from application.research.design_validator import validate_research_design, validate_subject_for_approval
+from application.research.design_validator import (
+    validate_numeric_intent_for_approval,
+    validate_research_design,
+    validate_subject_for_approval,
+)
+from domain.planning.derivation import InformationNeedKind
+from domain.planning.research_design import (
+    EvidenceCoverageContract,
+    NumericIntentConfirmation,
+    numeric_intent_confirmation_digest,
+)
 from domain.project import Project
 from domain.common.exceptions import ValidationError
 from domain.research_brief import ResearchBrief
@@ -45,6 +56,18 @@ class DesignGenerationResolution:
     current_attempt: WorkflowRun | None
     current_design: object | None
     historical_attempts: tuple[WorkflowRun, ...]
+
+
+@dataclass(frozen=True)
+class NumericIntentConfirmationEntry:
+    numeric_observation_required: bool
+    evidence_coverage: EvidenceCoverageContract | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.numeric_observation_required, bool):
+            raise ValueError("numeric_observation_required must be a boolean")
+        if not self.numeric_observation_required and self.evidence_coverage is not None:
+            raise ValueError("non-numeric intent cannot declare numeric coverage")
 
 
 class ProjectPlanningError(ValueError):
@@ -329,14 +352,33 @@ class ProjectPlanningService:
         )
         if project.research_design_input_fingerprint != expected:
             raise ProjectPlanningError("Дизайн потребує оновлення")
+        methods = self.explicit_or_inferred_methods(project)
+        if project.research_design_status == "APPROVED":
+            # Historical snapshots remain readable through persistence/query
+            # paths. At the mutation boundary every QUANTITATIVE approval or
+            # re-approval fails closed without current confirmation authority;
+            # no status/field-shape heuristic is used to infer legacy identity.
+            if QUANTITATIVE in methods:
+                try:
+                    validate_numeric_intent_for_approval(
+                        design,
+                        methods,
+                        expected_owner_id=project.owner_principal_id,
+                    )
+                except (ValidationError, ValueError) as exc:
+                    raise ProjectPlanningError(str(exc)) from exc
+            return project
         try:
             validate_research_design(design, brief=project.research_brief)
-            if DESK in self.explicit_or_inferred_methods(project):
+            validate_numeric_intent_for_approval(
+                design,
+                methods,
+                expected_owner_id=project.owner_principal_id,
+            )
+            if DESK in methods:
                 validate_subject_for_approval(design)
         except (ValidationError, ValueError) as exc:
             raise ProjectPlanningError(str(exc)) from exc
-        if project.research_design_status == "APPROVED":
-            return project
         if design.research_subject is not None and design.research_subject.resolution_status.value != "unresolved":
             project.current_research_design = replace(
                 design,
@@ -348,6 +390,109 @@ class ProjectPlanningService:
         project.status = ProjectStatus.APPROVED
         self.projects.save_project(project)
         return project
+
+    def confirm_numeric_intent(
+        self,
+        project: Project,
+        *,
+        actor_id: str,
+        expected_design_id: str,
+        entries: Mapping[str, NumericIntentConfirmationEntry],
+    ):
+        """Create an owner-confirmed immutable Design revision."""
+        design = project.current_research_design
+        if design is None or design.id != expected_design_id:
+            raise ProjectPlanningError("Дизайн змінився; оновіть сторінку")
+        if design.numeric_intent_confirmation is not None:
+            raise ProjectPlanningError("numeric_intent_already_confirmed")
+        owner_id = (
+            project.owner_principal_id
+            if isinstance(project.owner_principal_id, str) else ""
+        )
+        principal_id = actor_id if isinstance(actor_id, str) else ""
+        if (
+            not owner_id
+            or owner_id != owner_id.strip()
+            or not principal_id
+            or principal_id != principal_id.strip()
+            or owner_id != principal_id
+        ):
+            raise ProjectPlanningError("Лише власник проєкту може підтвердити класифікацію")
+        methods = self.explicit_or_inferred_methods(project)
+        if QUANTITATIVE not in methods:
+            raise ProjectPlanningError("Кількісний метод не обрано для цього проєкту")
+        if project.research_design_status != "DRAFT":
+            raise ProjectPlanningError("Підтвердження доступне лише для чернетки дизайну")
+        acquired = tuple(
+            need for need in design.information_needs
+            if need.kind == InformationNeedKind.ACQUIRED
+        )
+        expected_ids = {need.id for need in acquired}
+        if set(entries) != expected_ids:
+            raise ProjectPlanningError(
+                "numeric_intent_map_invalid; provide every and only ACQUIRED Information Need"
+            )
+        revised_needs = []
+        for need in design.information_needs:
+            if need.kind != InformationNeedKind.ACQUIRED:
+                revised_needs.append(need)
+                continue
+            entry = entries[need.id]
+            if not isinstance(entry, NumericIntentConfirmationEntry):
+                raise ProjectPlanningError("numeric_intent_map_invalid")
+            coverage = entry.evidence_coverage if entry.numeric_observation_required else None
+            revised_needs.append(replace(
+                need,
+                numeric_observation_required=entry.numeric_observation_required,
+                evidence_coverage=coverage,
+            ))
+        revised_id = str(uuid4())
+        revised_tuple = tuple(revised_needs)
+        unsigned_revision = replace(
+            design,
+            id=revised_id,
+            information_needs=revised_tuple,
+            previous_design_id=design.id,
+            numeric_intent_confirmation=None,
+        )
+        confirmation_version = "numeric-intent-confirmation-v1"
+        confirmed_at = datetime.now(UTC).isoformat()
+        integrity_digest = numeric_intent_confirmation_digest(
+            unsigned_revision,
+            version=confirmation_version,
+            source_design_id=design.id,
+            confirmed_design_id=revised_id,
+            confirmed_by=principal_id,
+            confirmed_at=confirmed_at,
+        )
+        confirmation = NumericIntentConfirmation(
+            version=confirmation_version,
+            source_design_id=design.id,
+            confirmed_design_id=revised_id,
+            confirmed_by=principal_id,
+            confirmed_at=confirmed_at,
+            integrity_digest=integrity_digest,
+        )
+        revised = replace(
+            unsigned_revision,
+            numeric_intent_confirmation=confirmation,
+        )
+        try:
+            validate_numeric_intent_for_approval(
+                revised,
+                methods,
+                expected_owner_id=project.owner_principal_id,
+                enforce_quantitative_minimum=False,
+            )
+        except (ValidationError, ValueError) as exc:
+            raise ProjectPlanningError(str(exc)) from exc
+        project.current_research_design = revised
+        project.research_design_status = "DRAFT"
+        project.research_design_approved_by = None
+        project.research_design_approved_at = None
+        project.status = ProjectStatus.RESEARCH_DESIGN
+        self.projects.save_project(project)
+        return revised
 
     def activate_desk(self, project: Project):
         if self.file_activation_unavailable:
