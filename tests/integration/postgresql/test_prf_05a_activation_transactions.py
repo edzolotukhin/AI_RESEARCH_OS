@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 
 from application.composition_root import create_application_container
 from application.config import ApplicationOverrides
+from application.services.project_planning_service import NumericIntentConfirmationEntry
+from domain.planning.research_design import EvidenceCoverageContract
 from domain.research_brief import ResearchBrief
 from domain.workflow_status import WorkflowStatus
 from tests.helpers.brief_aligned_planner_llm import create_brief_aligned_llm_mock
@@ -48,8 +50,39 @@ class ActivationTransactions(TestCase):
         ))
         planner.generate_design(service.get_project(project.id))
         project = service.get_project(project.id)
+        if method == "QUANTITATIVE":
+            design = project.current_research_design
+            acquired = [
+                need for need in design.information_needs
+                if need.kind.value == "ACQUIRED"
+            ]
+            self.assertTrue(acquired)
+            entries = {}
+            for index, need in enumerate(acquired):
+                if index == 0:
+                    entries[need.id] = NumericIntentConfirmationEntry(
+                        True,
+                        EvidenceCoverageContract(
+                            required_metric="Observed measure",
+                            required_unit="units",
+                            required_periods=("2026",),
+                            geography=need.geography or "Ukraine",
+                        ),
+                    )
+                else:
+                    entries[need.id] = NumericIntentConfirmationEntry(False)
+            confirmed = planner.confirm_numeric_intent(
+                project,
+                actor_id="owner",
+                expected_design_id=design.id,
+                entries=entries,
+            )
+            project = service.get_project(project.id)
+            expected_design_id = confirmed.id
+        else:
+            expected_design_id = project.current_research_design.id
         planner.approve_design(
-            project, actor_id="owner", expected_design_id=project.current_research_design.id,
+            project, actor_id="owner", expected_design_id=expected_design_id,
         )
         return service.get_project(project.id)
 
