@@ -7,6 +7,8 @@ from dataclasses import replace
 from threading import Barrier, Event
 
 from sqlalchemy import text
+from sqlalchemy import create_engine
+from sqlalchemy.pool import NullPool
 from sqlalchemy.exc import DBAPIError, OperationalError
 
 from application.report.claim_lineage_verification_v2 import ClaimLineageVerificationV2Error
@@ -112,19 +114,29 @@ class PostgreSQLClaimRevisionOrchestrationV2Tests(PostgreSQLIntegrationTestCase)
             finally:
                 release.set()
 
-        def attempt() -> tuple[str, str | None]:
-            factory = DatabaseSessionFactory(self.engine)
+        def attempt(worker_number: int) -> tuple[str, str | None]:
+            worker_engine = create_engine(
+                self.engine.url,
+                future=True,
+                poolclass=NullPool,
+                connect_args={
+                    "application_name": f"claim-orchestration-attempt-{worker_number}",
+                },
+            )
+            factory = DatabaseSessionFactory(worker_engine)
             try:
                 entered.wait(timeout=10)
                 self.invoke(factory=factory, report=self.successor("concurrent-successor"))
                 return "won", None
             except (ClaimLineageVerificationV2Error, ReportClaimConflictError, OperationalError, DBAPIError) as exc:
                 return "lost", type(exc).__name__
+            finally:
+                worker_engine.dispose()
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
             lock_holder = pool.submit(holder)
             self.assertTrue(lock_held.wait(timeout=10))
-            futures = [pool.submit(attempt), pool.submit(attempt)]
+            futures = [pool.submit(attempt, 1), pool.submit(attempt, 2)]
             try:
                 for future in futures:
                     # Both workers must reach the call before the parent lock
@@ -136,7 +148,8 @@ class PostgreSQLClaimRevisionOrchestrationV2Tests(PostgreSQLIntegrationTestCase)
                     while time.monotonic() < deadline:
                         blocked = bool(connection.execute(text(
                             "SELECT COUNT(*) FROM pg_stat_activity "
-                            "WHERE wait_event_type='Lock' AND state='active' "
+                            "WHERE application_name LIKE 'claim-orchestration-attempt-%' "
+                            "AND wait_event_type='Lock' "
                             "AND :holder_pid = ANY(pg_blocking_pids(pid))"
                         ), {"holder_pid": holder_pid["value"]}).scalar_one())
                         if blocked:
