@@ -18,11 +18,16 @@ from application.evidence.evidence_extraction_scheduler import (
     adaptive_depth_selection_key,
     record_source_outcome,
     select_next_adaptive_depth,
+    suppress_repeated_truncated_depth,
+    extraction_retry_identity,
+    build_need_fair_extraction_queue,
 )
 from application.evidence.run_scoped_provenance import RunScopedSourceContext
 from application.execution.execution_budget import ExecutionBudget
 from application.execution.exceptions import BudgetExhaustedError
 from domain.sources.source import Source
+from domain.sources.retrieval_status import RetrievalStatus
+from tests.application.evidence.test_structured_production import design
 
 
 def _item(source_id: str, need_id: str, chunk: int = 1) -> EvidenceExtractionWorkItem:
@@ -66,6 +71,46 @@ def _state(source_id: str, outcomes: tuple[tuple[int, bool, str], ...]) -> Sourc
 
 
 class P1291EvidenceBudgetProductivityCoverageAllocationTests(unittest.TestCase):
+    def test_structured_workbook_uses_one_canonical_outer_opportunity(self) -> None:
+        item = _item("structured", "in-pop", 0).source
+        item.content_text = "x" * 25000
+        item.metadata["structured_tables_v2"] = [{"row": 1}]
+        item.workflow_run_refs = ("run",)
+        item.research_design_refs = ("design",)
+        item.information_need_refs = ("in-pop",)
+        item.research_question_refs = ("rq-pop",)
+
+        queue = build_need_fair_extraction_queue(
+            [item], design=design(), workflow_run_id="run",
+            research_design_id="design", chunk_chars=8000, overlap_chars=500,
+        )
+
+        self.assertEqual(len(queue), 1)
+        self.assertEqual(len(queue[0].chunk.text), 25000)
+
+    def test_truncated_unchanged_content_stops_after_two_valid_empty_calls(self) -> None:
+        item = _item("truncated", "IN1", 3)
+        item.source.retrieval_status = RetrievalStatus.TRUNCATED
+        item.source.content_checksum = "stable-checksum"
+        identity = extraction_retry_identity(item.source)
+        state = SourceOutcomeState(source_id="truncated")
+        for phase in (PHASE_FIRST_OPPORTUNITY, PHASE_DEPTH):
+            record_source_outcome(
+                state, phase=phase, persisted_evidence=0, valid_empty=True,
+                primary_need_id="IN1", content_identity=identity,
+            )
+        self.assertTrue(suppress_repeated_truncated_depth(item, state=state))
+
+    def test_truncated_retry_remains_available_for_new_need_or_content(self) -> None:
+        item = _item("truncated", "IN2", 3)
+        item.source.retrieval_status = RetrievalStatus.TRUNCATED
+        item.source.content_checksum = "new-checksum"
+        state = SourceOutcomeState(
+            source_id="truncated", valid_empty_calls=2,
+            last_primary_need_id="IN1", last_content_identity="old-content",
+        )
+        self.assertFalse(suppress_repeated_truncated_depth(item, state=state))
+
     def test_case_01_first_opportunity_state_is_explicit(self) -> None:
         state = _state("a", ((0, True, PHASE_FIRST_OPPORTUNITY),))
         self.assertTrue(state.first_opportunity_completed)

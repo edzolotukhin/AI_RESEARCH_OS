@@ -343,6 +343,34 @@ class HttpSourceRetriever(SourceRetriever):
                 extraction_revision=PDF_EXTRACTION_REVISION,
             )
 
+        if content_type == "application/json" and urlsplit(final_url).hostname == "api.worldbank.org":
+            from infrastructure.retrieval.world_bank_json_extractor import parse_world_bank_population_json
+            try:
+                parsed_json = parse_world_bank_population_json(body, url=final_url)
+            except ValueError as exc:
+                return self._failed_source(
+                    candidate, now, reason=str(exc), content_type=content_type,
+                    category="unsupported_content_type", stage="size" if truncated else "fetch",
+                )
+            rendered = "\n".join(row["excerpt"] for row in parsed_json["rows"])
+            metadata = {
+                "structured_tables_v2": parsed_json["rows"],
+                "world_bank_indicator": parsed_json["indicator_id"],
+                "world_bank_country_iso3": parsed_json["country_iso3"],
+                "retrieval_diagnostic": _retrieval_diagnostic(stage="success"),
+            }
+            if isinstance(response, httpx.Response):
+                metadata["_http_chain"] = response.extensions.get("validated_redirect_chain", (candidate.url, final_url))
+            return Source(
+                id="", project_id="", url=final_url, canonical_url=final_url,
+                title=candidate.title, retrieved_at=now,
+                source_type=candidate.source_type or "web", content_type=content_type,
+                retrieval_status=RetrievalStatus.ACQUIRED,
+                content_text=rendered, content_checksum=_content_checksum(rendered),
+                metadata=metadata, raw_content_checksum=hashlib.sha256(body).hexdigest(),
+                raw_checksum_kind="sha256-bytes", extraction_revision="world-bank-json-v1",
+            )
+
         if is_unsupported_spreadsheet_url(final_url) or content_type in {
             "application/vnd.ms-excel",
             "application/vnd.ms-excel.sheet.binary.macroenabled.12",

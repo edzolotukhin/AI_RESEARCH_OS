@@ -6,6 +6,7 @@ P1-15.1: no LLM, no formula execution, no macros/external links.
 from __future__ import annotations
 
 import io
+import zipfile
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
@@ -113,9 +114,19 @@ def extract_xlsx_text(
         meta["parse_error"] = "not_zip_container"
         return XlsxExtractionResult(error="workbook_parse_failed", metadata=meta)
 
+    workbook_data = data
+    try:
+        workbook_data, archive_member = _unwrap_single_xlsx(data)
+        if archive_member:
+            meta["archive_member"] = archive_member
+            meta["archive_container"] = "zip"
+    except ValueError as exc:
+        meta["parse_error"] = str(exc)
+        return XlsxExtractionResult(error="workbook_parse_failed", metadata=meta)
+
     try:
         workbook = load_workbook(
-            filename=io.BytesIO(data),
+            filename=io.BytesIO(workbook_data),
             read_only=False,
             data_only=True,
             keep_vba=False,
@@ -134,19 +145,26 @@ def extract_xlsx_text(
         # Formula-aware second view supplies coordinates without evaluating or
         # accepting cached formula values as observed data.
         from infrastructure.retrieval.structured_workbook import explicit_tables
-        formula_view = load_workbook(io.BytesIO(data), read_only=False, data_only=False, keep_vba=False, keep_links=False)
+        formula_view = load_workbook(io.BytesIO(workbook_data), read_only=False, data_only=False, keep_vba=False, keep_links=False)
         try:
             rows = explicit_tables(formula_view, bounds)
         finally:
             formula_view.close()
         result.metadata["structured_tables_v2"] = []
+        structured_parts = []
+        structured_chars = 0
+        structured_budget = bounds.max_rendered_chars // 2
         for row in rows:
             addition = "\n" + row["excerpt"]
-            if len(result.text) + len(addition) > bounds.max_rendered_chars:
+            if structured_chars + len(addition) > structured_budget:
                 result.metadata["workbook_truncated"] = True
                 break
-            result.text += addition
+            structured_parts.append(addition)
+            structured_chars += len(addition)
             result.metadata["structured_tables_v2"].append(row)
+        if structured_parts:
+            narrative_budget = bounds.max_rendered_chars - structured_chars
+            result.text = result.text[:narrative_budget] + "".join(structured_parts)
         result.metadata["rendered_chars"] = len(result.text)
         return result
     except Exception as exc:  # noqa: BLE001
@@ -157,6 +175,42 @@ def extract_xlsx_text(
             workbook.close()
         except Exception:  # noqa: BLE001
             pass
+
+
+def _unwrap_single_xlsx(data: bytes) -> tuple[bytes, str | None]:
+    """Accept a bounded public ZIP containing exactly one XLSX workbook.
+
+    XLSX is itself a ZIP container.  A package with the workbook content-types
+    marker is returned unchanged.  Generic archives are accepted only when
+    they contain one safe, non-encrypted XLSX member and no other files.
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            names = archive.namelist()
+            if "[Content_Types].xml" in names:
+                return data, None
+            files = [item for item in archive.infolist() if not item.is_dir()]
+            if len(files) != 1:
+                raise ValueError("archive_requires_single_xlsx_member")
+            item = files[0]
+            normalized = item.filename.replace("\\", "/")
+            parts = [part for part in normalized.split("/") if part]
+            if (not normalized.casefold().endswith(".xlsx") or not parts
+                    or any(part in {".", ".."} for part in parts)
+                    or normalized.startswith("/") or ":" in parts[0]):
+                raise ValueError("archive_member_unsafe_or_unsupported")
+            if item.flag_bits & 0x1:
+                raise ValueError("encrypted_workbook")
+            if item.file_size <= 0 or item.file_size > 2_000_000:
+                raise ValueError("archive_member_size_limit")
+            if item.compress_size <= 0 or item.file_size / item.compress_size > 100:
+                raise ValueError("archive_member_compression_limit")
+            payload = archive.read(item)
+            if len(payload) != item.file_size or payload[:2] != b"PK":
+                raise ValueError("archive_member_invalid")
+            return payload, normalized
+    except zipfile.BadZipFile as exc:
+        raise ValueError("not_zip_container") from exc
 
 
 def _render_workbook(

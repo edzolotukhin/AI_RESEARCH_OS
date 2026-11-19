@@ -53,6 +53,30 @@ def _mock_response(*, url: str, content_type: str, content: bytes, status: int =
 
 
 class P1151XlsxContentAdapterTests(unittest.TestCase):
+    def test_single_xlsx_member_archive_is_parsed_with_member_identity(self) -> None:
+        workbook = _xlsx_bytes(lambda wb: wb.active.append(["Year", "Population"]))
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as package:
+            package.writestr("official/population.xlsx", workbook)
+
+        result = extract_xlsx_text(archive.getvalue(), content_type="application/zip")
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.metadata["archive_member"], "official/population.xlsx")
+        self.assertEqual(result.metadata["archive_container"], "zip")
+
+    def test_archive_with_multiple_files_fails_closed(self) -> None:
+        workbook = _xlsx_bytes(lambda wb: wb.active.append(["Year", "Population"]))
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as package:
+            package.writestr("population.xlsx", workbook)
+            package.writestr("readme.txt", "not workbook authority")
+
+        result = extract_xlsx_text(archive.getvalue(), content_type="application/zip")
+
+        self.assertEqual(result.error, "workbook_parse_failed")
+        self.assertEqual(result.metadata["parse_error"], "archive_requires_single_xlsx_member")
+
     def test_case_01_simple_single_sheet_parses(self) -> None:
         def build(wb: Workbook) -> None:
             ws = wb.active

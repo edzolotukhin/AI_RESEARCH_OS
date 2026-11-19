@@ -316,6 +316,23 @@ def test_stale_subject_identity_or_fingerprint_is_rejected(field):
         _validate(_candidate(**values))
 
 
+@pytest.mark.parametrize(
+    ("message", "reason"),
+    (
+        ("Unsupported Evidence candidate contract version", "contract_version"),
+        ("V2 required aspect is outside the assigned information need", "aspect_scope"),
+        ("V2 candidate has a stale or unknown ResearchSubject", "subject_binding"),
+        ("V2 semantic justification is missing or excessive", "semantic_justification"),
+        ("V2 geography applicability contradicts the assigned need", "geography_scope"),
+        ("V2 candidate matches an explicit ResearchSubject exclusion", "subject_exclusion"),
+        ("V2 statement is unsupported by its grounded excerpt", "statement_excerpt_mismatch"),
+    ),
+)
+def test_provenance_diagnostic_uses_bounded_predicate_code(message, reason):
+    from application.evidence.evidence_extraction_diagnostics import classify_provenance_rejection
+    assert classify_provenance_rejection(message) == reason
+
+
 def test_lexical_diagnostic_failure_is_non_blocking_for_v2():
     result = _validate(
         _candidate(statement="Employee compensation increased by 8 percent."),

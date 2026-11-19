@@ -9,7 +9,8 @@ from application.evidence.evidence_extraction_diagnostics import (
 )
 from application.evidence.evidence_extraction_scheduler import (
     build_need_fair_extraction_queue, SourceOutcomeState, record_source_outcome,
-    adaptive_depth_selection_key, PHASE_FIRST_OPPORTUNITY,
+    adaptive_depth_selection_key, suppress_repeated_truncated_depth,
+    extraction_retry_identity, PHASE_FIRST_OPPORTUNITY,
 )
 from application.sources.source_acquisition_service import _PendingCandidate
 from application.sources.retrieval_portfolio import derive_initial_retrieval_portfolio
@@ -119,7 +120,16 @@ class DeskPrimitives:
         queue = distinct_content_queue(queue)
         outcomes = context.shared_state.get("ark_source_outcomes", {})
         first = [item for item in queue if item.phase == PHASE_FIRST_OPPORTUNITY]
-        depth = [item for item in queue if item.phase != PHASE_FIRST_OPPORTUNITY]
+        depth = [
+            item for item in queue
+            if item.phase != PHASE_FIRST_OPPORTUNITY
+            and not suppress_repeated_truncated_depth(
+                item,
+                state=SourceOutcomeState(**outcomes.get(
+                    item.source.id, {"source_id": item.source.id},
+                )),
+            )
+        ]
         depth.sort(key=lambda item: adaptive_depth_selection_key(item,
             state=SourceOutcomeState(**outcomes.get(item.source.id, {"source_id": item.source.id})),
             evidence_counts_by_need=counts or {}))
@@ -148,7 +158,9 @@ class DeskPrimitives:
             state = SourceOutcomeState(**outcomes.get(item.source.id, {"source_id": item.source.id}))
             record_source_outcome(state, phase=item.phase, persisted_evidence=summary.evidence_extracted,
                 valid_empty=bool(diagnostics.work_items) and all(
-                    self.extraction._trace_is_valid_empty(trace) for trace in diagnostics.work_items))
+                    self.extraction._trace_is_valid_empty(trace) for trace in diagnostics.work_items),
+                primary_need_id=item.primary_need_id,
+                content_identity=extraction_retry_identity(item.source))
             outcomes[item.source.id] = asdict(state)
             return summary
         finally:

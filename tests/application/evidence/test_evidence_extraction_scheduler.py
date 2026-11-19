@@ -71,6 +71,36 @@ def _source(
 
 
 class EvidenceExtractionSchedulerTests(unittest.TestCase):
+    def test_structured_outer_chunk_is_bounded(self) -> None:
+        design = _design()
+        source = _source(
+            "structured-large", need_id="IN1", rq_id="rq-1",
+            content="X" * 180_000,
+        )
+        source.metadata["structured_tables_v2"] = [{"cells": []}]
+        queue = build_need_fair_extraction_queue(
+            [source], design=design, workflow_run_id="run-1",
+            research_design_id="design-1", chunk_chars=40, overlap_chars=0,
+        )
+        self.assertTrue(queue)
+        self.assertLessEqual(max(len(item.chunk.text) for item in queue), 200_000)
+
+    def test_oversized_structured_payload_fails_closed_without_partial_row(self) -> None:
+        design = _design()
+        source = _source(
+            "structured-oversized", need_id="IN1", rq_id="rq-1",
+            content=("prefix " * 28_600) + "ROW_PROVENANCE_BOUNDARY " + ("suffix " * 2_000),
+        )
+        source.metadata["structured_tables_v2"] = [{
+            "cells": [{"cell": "records[0].value", "value": "ROW_PROVENANCE_BOUNDARY"}],
+        }]
+        self.assertGreater(len(source.content_text), 200_000)
+        queue = build_need_fair_extraction_queue(
+            [source], design=design, workflow_run_id="run-1",
+            research_design_id="design-1", chunk_chars=40, overlap_chars=0,
+        )
+        self.assertEqual(queue, [])
+
     def test_round_robin_interleaves_first_chunks_across_needs(self) -> None:
         design = _design()
         chunk_chars = 40

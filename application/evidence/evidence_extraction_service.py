@@ -40,6 +40,8 @@ from application.evidence.evidence_extraction_scheduler import (
     build_need_fair_extraction_queue,
     record_source_outcome,
     select_next_adaptive_depth,
+    suppress_repeated_truncated_depth,
+    extraction_retry_identity,
 )
 from application.evidence.evidence_extraction_diagnostics import (
     CandidateOutcome,
@@ -497,6 +499,14 @@ class EvidenceExtractionService:
         )
         queue_index = 0
         while first_pending or depth_pending:
+            depth_pending = [
+                item for item in depth_pending
+                if not suppress_repeated_truncated_depth(
+                    item, state=states[item.source.id],
+                )
+            ]
+            if not first_pending and not depth_pending:
+                break
             if first_pending:
                 work_item = first_pending.pop(0)
                 selection_reason = SELECTION_FIRST_OPPORTUNITY
@@ -612,6 +622,8 @@ class EvidenceExtractionService:
                 phase=work_item.phase,
                 persisted_evidence=len(persisted_outcomes),
                 valid_empty=valid_empty,
+                primary_need_id=work_item.primary_need_id,
+                content_identity=extraction_retry_identity(work_item.source),
             )
             for outcome in persisted_outcomes:
                 for need_id in outcome.information_need_refs:

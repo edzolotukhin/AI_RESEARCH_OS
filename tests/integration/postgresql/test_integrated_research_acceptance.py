@@ -28,6 +28,7 @@ from application.evidence.grounding import verify_grounding
 from application.evidence.citation_integrity import citation_is_valid
 from infrastructure.persistence.postgresql.repositories.postgresql_evidence_repository import PostgreSQLEvidenceRepository
 from infrastructure.retrieval.http_source_retriever import HttpSourceRetriever
+from application.sources.exceptions import SourceAcquisitionError
 from tests.api.helpers import drain_background_runs
 from tests.application.analysis.test_executable_derivations import derived_design, ProviderFixture
 from tests.application.evidence.test_structured_production import workbook_rows
@@ -101,6 +102,10 @@ class IntegratedResearchAcceptanceTests(http_fixture.CapabilityAcquisitionTests)
     def test_full_research_production_container(self):
         self.execute_pipeline()
 
+    def test_real_official_population_archive_does_not_bypass_source_minimum(self):
+        with self.assertRaises(SourceAcquisitionError):
+            self.execute_pipeline(official_archive=True)
+
     def test_missing_required_year_is_insufficient_without_report(self):
         self.execute_pipeline(missing_year=True)
 
@@ -139,8 +144,21 @@ class IntegratedResearchAcceptanceTests(http_fixture.CapabilityAcquisitionTests)
             connection.execute(text("CREATE TRIGGER patch7_reject_finding BEFORE INSERT ON findings FOR EACH ROW EXECUTE FUNCTION patch7_reject_finding()"))
         self.execute_pipeline(persistence_failure=True)
 
-    def execute_pipeline(self, *, missing_year=False, technical_failure=False, incompatible_units=False, persistence_failure=False, geography_conflict=False):
-        self.body = workbook_rows()
+    def execute_pipeline(self, *, missing_year=False, technical_failure=False, incompatible_units=False, persistence_failure=False, geography_conflict=False, official_archive=False):
+        official_series = (("2015",Decimal("42759.7")),("2016",Decimal("42590.9")),
+            ("2017",Decimal("42414.9")),("2018",Decimal("42216.8")),
+            ("2019",Decimal("41983.6")),("2020",Decimal("41732.8")),
+            ("2021",Decimal("41418.7")))
+        if official_archive:
+            path = (Path(__file__).resolve().parents[3] / "artifacts" / "acceptance" /
+                "live_e2e_post_p1_real_source" / "population_1990_2021_official.zip")
+            if not path.is_file():
+                self.skipTest("optional real-source fixture missing: official population archive")
+            self.body = path.read_bytes()
+            self.assertEqual(sha256(self.body).hexdigest(),
+                "8ebec6377cdd6e1c5856ae f97f91e8e89e36b0038b4a6498c05e2b626821fcc4".replace(" ", ""))
+        else:
+            self.body = workbook_rows()
         if missing_year:
             book = load_workbook(io.BytesIO(self.body))
             book.active.delete_rows(3)
@@ -156,7 +174,7 @@ class IntegratedResearchAcceptanceTests(http_fixture.CapabilityAcquisitionTests)
                 owner.hits.append(inner.path)
                 key = inner.path.rsplit("/", 1)[-1]
                 if inner.path.startswith("/download/"):
-                    body, mime = owner.body, "application/octet-stream"
+                    body, mime = owner.body, "application/zip" if official_archive else "application/octet-stream"
                 else:
                     target = "resource" if inner.path.startswith("/landing/") else "download"
                     body = f'<a href="/{target}/{key}">Population Ukraine 2019 2020 2021 XLSX table download</a>'.encode()
@@ -175,8 +193,11 @@ class IntegratedResearchAcceptanceTests(http_fixture.CapabilityAcquisitionTests)
             def search(self, query):
                 if query.information_need_id != "in-pop":
                     return []
-                return [SourceCandidate("synthetic-search", owner.origin + f"/landing/{index}", "Population Ukraine 2019 2020 2021",
-                    "Population Ukraine annual table", query.id, index) for index in range(1, 4)]
+                count = 1 if official_archive else 3
+                return [SourceCandidate("official-search" if official_archive else "synthetic-search",
+                    owner.origin + f"/landing/{index}", "Population Ukraine 2015 2016 2017 2018 2019 2020 2021",
+                    "Official population annual table" if official_archive else "Population Ukraine annual table",
+                    query.id, index) for index in range(1, count + 1)]
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         config = replace(postgresql_application_config(evidence_extractor="llm", analysis_engine="llm",
@@ -190,9 +211,26 @@ class IntegratedResearchAcceptanceTests(http_fixture.CapabilityAcquisitionTests)
         self.addCleanup(container.shutdown)
         container.agency.initialize()
         project = container.project_service.get_project(self.project.id)
-        project.research_brief = ResearchBrief(title="Синтетична чисельність населення", business_question="Population Ukraine",
-            timeframe="2019–2021", language="uk")
+        project.research_brief = ResearchBrief(title="Чисельність постійного населення України", business_question="Population Ukraine",
+            timeframe="2015–2021" if official_archive else "2019–2021", language="uk")
         model = derived_design()
+        if official_archive:
+            metric = "Чисельність постійного населення/Total resident population / всього/total"
+            unit = "(на 1 січня; тис. осіб/as of 1 January; thsd.)"
+            geography = "Excluding the temporarily occupied territories of the Autonomous Republic of Crimea, and the city of Sevastopol."
+            periods = tuple(period for period,_ in official_series)
+            revised = []
+            for need in model.information_needs:
+                if need.id == "in-pop":
+                    need = replace(need, geography=geography,
+                        evidence_expectation=replace(need.evidence_expectation,geography=geography),
+                        evidence_coverage=replace(need.evidence_coverage,required_metric=metric,
+                            required_unit=unit,required_periods=periods,geography=geography))
+                elif need.derivation is not None:
+                    need = replace(need, derivation=replace(need.derivation,metric=metric,
+                        input_unit=unit,geography=geography,required_periods=periods))
+                revised.append(need)
+            model = replace(model, information_needs=tuple(revised))
         if incompatible_units:
             model = replace(model, information_needs=tuple(
                 replace(n, evidence_coverage=replace(n.evidence_coverage, required_unit="thousands"))
@@ -258,18 +296,20 @@ class IntegratedResearchAcceptanceTests(http_fixture.CapabilityAcquisitionTests)
         self.assertTrue(any(p.diagnostics.get("capability_decision") == "REFETCH" for p in paths))
         self.assertTrue(all(len(p.navigation_chain) == 3 for p in paths))
         findings = container.finding_service.list_findings_for_project(project.id, workflow_run_id=run.id)
-        self.assertEqual(len(findings), 7)
+        self.assertEqual(len(findings), 15 if official_archive else 7)
         derived = [f for f in findings if f.metadata.get("derivation")]
-        self.assertEqual(len(derived), 6)
+        self.assertEqual(len(derived), 14 if official_archive else 6)
         values = {(f.metadata["derivation"]["operation_type"], f.metadata["derivation"]["parameters"]["to_period"]):
             Decimal(f.metadata["derivation"]["rounded_result"]) for f in derived}
         expected = {("YEAR_OVER_YEAR_ABSOLUTE_CHANGE", "2020"): Decimal(-50), ("YEAR_OVER_YEAR_ABSOLUTE_CHANGE", "2021"): Decimal(-50),
             ("YEAR_OVER_YEAR_PERCENT_CHANGE", "2020"): Decimal(-5), ("YEAR_OVER_YEAR_PERCENT_CHANGE", "2021"): Decimal("-5.263158"),
             ("CUMULATIVE_ABSOLUTE_CHANGE", "2021"): Decimal(-100), ("CUMULATIVE_PERCENT_CHANGE", "2021"): Decimal(-10)}
-        self.assertEqual(values, expected)
+        if not official_archive:
+            self.assertEqual(values, expected)
         evidence = container.evidence_service.list_evidence_for_project(project.id, workflow_run_id=run.id)
-        self.assertEqual({(e.metadata["observation_period"], Decimal(str(e.metadata["normalized_numeric_value"]))) for e in evidence},
-            {("2019", Decimal(1000)), ("2020", Decimal(950)), ("2021", Decimal(900))})
+        expected_series = set(official_series) if official_archive else {
+            ("2019", Decimal(1000)), ("2020", Decimal(950)), ("2021", Decimal(900))}
+        self.assertEqual({(e.metadata["observation_period"], Decimal(str(e.metadata["normalized_numeric_value"]))) for e in evidence},expected_series)
         self.assertTrue(all(e.source_locator["structured"]["cell"] and e.source_locator["structured"]["header_checksum"] for e in evidence))
         self.assertTrue(all(f.metadata["validation_status"] == "validated" and f.metadata["derivation"]["dependency_finding_ids"] for f in derived))
         insights = container.insight_service.list_insights_for_project(project.id, workflow_run_id=run.id)
@@ -289,13 +329,15 @@ class IntegratedResearchAcceptanceTests(http_fixture.CapabilityAcquisitionTests)
                             and set(c.support_evidence_ids) <= {e.id for e in evidence} for c in claims))
         self.assertEqual({ref for c in claims for ref in c.information_need_ids},
                          {n.id for n in project.current_research_design.information_needs if n.kind != InformationNeedKind.OUTPUT})
-        confirmed_values = {Decimal(str(e.metadata["normalized_numeric_value"])) for e in evidence} | set(expected.values())
+        confirmed_values = {Decimal(str(e.metadata["normalized_numeric_value"])) for e in evidence} | set(values.values())
         self.assertTrue(all(Decimal(f.value) in confirmed_values for c in claims for f in c.scope.numeric_facts))
         self.assertTrue(all(t.status.value == "completed" for t in stored.tasks if t.executor_id in {"review", "revision", "finalization"}))
         self.assertEqual(report.metadata["output_obligations"]["verification_state"], "verified")
         materials = report.metadata["output_materials"]
-        self.assertEqual(materials["tables"][0]["rows"], [["2019", "1000", "persons"], ["2020", "950", "persons"], ["2021", "900", "persons"]])
-        self.assertEqual(materials["charts"][0]["values"], [1000.0, 950.0, 900.0])
+        expected_unit = unit if official_archive else "persons"
+        expected_rows = [[period,format(value,"f"),expected_unit] for period,value in (official_series if official_archive else (("2019",Decimal(1000)),("2020",Decimal(950)),("2021",Decimal(900))))]
+        self.assertEqual(materials["tables"][0]["rows"], expected_rows)
+        self.assertEqual(materials["charts"][0]["values"], [float(value) for _,value in (official_series if official_archive else (("2019",Decimal(1000)),("2020",Decimal(950)),("2021",Decimal(900))))])
         catalog = container.project_deliverables_service.catalog(project.id, owner_id=project.owner_principal_id)
         item = next(item for item in catalog.desk if item.document.source_id == report.id)
         self.assertIsNotNone(item.pdf)
@@ -307,15 +349,17 @@ class IntegratedResearchAcceptanceTests(http_fixture.CapabilityAcquisitionTests)
         _, pptx_data = container.project_deliverables_service.store.get(item.pptx.id)
         pdf_text = "\n".join(page.extract_text() for page in PdfReader(BytesIO(pdf_data)).pages)
         normalized_pdf_text = re.sub(r"\s+", " ", pdf_text)
-        self.assertTrue(all(number in normalized_pdf_text for number in ("2019", "2020", "2021", "1000", "950", "900")))
-        self.assertTrue(all(number in normalized_pdf_text for number in ("-50 persons", "-5 percent", "-5,263158 percent", "-100 persons", "-10 percent")))
+        display_numbers = tuple(value.replace(".",",") for row in expected_rows for value in row[:2])
+        self.assertTrue(all(number in normalized_pdf_text for number in display_numbers))
+        if not official_archive:
+            self.assertTrue(all(number in normalized_pdf_text for number in ("-50 persons", "-5 percent", "-5,263158 percent", "-100 persons", "-10 percent")))
         with ZipFile(BytesIO(pptx_data)) as package:
             self.assertTrue(any(name.startswith("ppt/charts/chart") for name in package.namelist()))
             self.assertTrue(any(b"<a:tbl>" in package.read(name) for name in package.namelist() if name.startswith("ppt/slides/slide") and name.endswith(".xml")))
             from xml.etree import ElementTree
             chart_values = {element.text for name in package.namelist() if name.startswith("ppt/charts/chart") and name.endswith(".xml")
                 for element in ElementTree.fromstring(package.read(name)).iter("{http://schemas.openxmlformats.org/drawingml/2006/chart}v")}
-            self.assertTrue({"2019", "2020", "2021", "1000", "950", "900"} <= chart_values)
+            self.assertTrue({value for row in expected_rows for value in row[:2]} <= chart_values)
         fresh = create_application_container(config=config, overrides=ApplicationOverrides(llm_client=provider))
         self.addCleanup(fresh.shutdown)
         self.assertEqual(fresh.workflow_service.get_task_results(run.id), snapshots)
