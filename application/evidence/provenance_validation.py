@@ -25,6 +25,17 @@ from application.research_scope.authoritative_scope import (
 class InvalidProvenanceError(ValueError):
     """Raised when extractor output references IDs outside the run/design scope."""
 
+    def __init__(self, message: str, *, rejection_code: str | None = None) -> None:
+        super().__init__(message)
+        # Explicit validator codes are preferred; this compatibility fallback
+        # keeps legacy exits typed until each call site is independently split.
+        if rejection_code is None:
+            from application.evidence.evidence_extraction_diagnostics import (
+                classify_provenance_rejection,
+            )
+            rejection_code = classify_provenance_rejection(message)
+        self.rejection_code = rejection_code
+
 
 def validate_candidate_provenance(
     candidate: EvidenceCandidate,

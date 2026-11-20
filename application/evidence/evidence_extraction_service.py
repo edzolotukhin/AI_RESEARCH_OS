@@ -53,10 +53,12 @@ from application.evidence.evidence_extraction_diagnostics import (
     classify_grounding_failure,
     classify_extraction_exception,
     classify_provenance_rejection,
+    candidate_operation_id,
     deactivate_diagnostics,
     reset_active_work_item,
     set_active_work_item,
 )
+
 from application.evidence.run_scoped_provenance import resolve_run_scoped_context
 from application.execution.budget_utils import (
     EVIDENCE_INITIAL_PARTITION_REASON,
@@ -88,6 +90,45 @@ from application.sources.provenance_merge import is_successful_acquisition
 from runtime.workflow_context import WorkflowContext
 
 _MAX_DEDUP_RETRIES = 5
+
+
+def _record_candidate_rejection(
+    diagnostics: EvidenceExtractionDiagnostics | None,
+    *,
+    source: Source,
+    workflow_run_id: str,
+    candidate: EvidenceCandidate,
+    candidate_index: int,
+    validation_phase: str,
+    rejection_code: str,
+    chunk_metadata: dict | None,
+) -> None:
+    if diagnostics is None:
+        return
+    refs = tuple(sorted({str(value) for value in candidate.information_need_refs if isinstance(value, str)}))
+    need_ids = refs or ("")
+    content_identity = extraction_retry_identity(source)
+    start = chunk_metadata.get("chunk_normalized_start") if chunk_metadata else None
+    end = chunk_metadata.get("chunk_normalized_end") if chunk_metadata else None
+    for information_need_id in need_ids[:8]:
+        operation_id = candidate_operation_id(
+            workflow_run_id=workflow_run_id,
+            source_id=source.id,
+            information_need_id=information_need_id,
+            content_identity=content_identity,
+            phase=validation_phase,
+            chunk_start=start,
+            chunk_end=end,
+        )
+        diagnostics.record_candidate_rejection(
+            source_id=source.id,
+            information_need_id=information_need_id,
+            operation_id=operation_id,
+            candidate_index=candidate_index,
+            validation_phase=validation_phase,
+            rejection_code=rejection_code,
+            contract_version=candidate.contract_version,
+        )
 
 
 @dataclass(frozen=True)
@@ -893,6 +934,16 @@ class EvidenceExtractionService:
                 failures += 1
                 if diagnostics is not None:
                     diagnostics.rejected_empty_or_invalid_candidate += 1
+                _record_candidate_rejection(
+                    diagnostics,
+                    source=source,
+                    workflow_run_id=workflow_run_id,
+                    candidate=candidate,
+                    candidate_index=candidate_index,
+                    validation_phase="candidate",
+                    rejection_code="empty_or_invalid_candidate",
+                    chunk_metadata=chunk_metadata,
+                )
                 if trace is not None:
                     trace.record_failure_category(
                         EvidenceWorkItemFailureCategory.INVALID_RESPONSE.value,
@@ -932,7 +983,17 @@ class EvidenceExtractionService:
                 )
             except InvalidProvenanceError as exc:
                 failures += 1
-                reason = classify_provenance_rejection(str(exc))
+                reason = exc.rejection_code or classify_provenance_rejection(str(exc))
+                _record_candidate_rejection(
+                    diagnostics,
+                    source=source,
+                    workflow_run_id=workflow_run_id,
+                    candidate=candidate,
+                    candidate_index=candidate_index,
+                    validation_phase="provenance",
+                    rejection_code=reason,
+                    chunk_metadata=chunk_metadata,
+                )
                 if reason == CandidateRejectionReason.INVALID_NEED_REF.value:
                     if diagnostics is not None:
                         diagnostics.rejected_invalid_or_missing_need_ref += 1
@@ -974,6 +1035,16 @@ class EvidenceExtractionService:
                 )
                 if diagnostics is not None:
                     diagnostics.rejected_grounding += 1
+                _record_candidate_rejection(
+                    diagnostics,
+                    source=source,
+                    workflow_run_id=workflow_run_id,
+                    candidate=candidate,
+                    candidate_index=candidate_index,
+                    validation_phase="grounding",
+                    rejection_code=f"grounding_{grounding_detail}",
+                    chunk_metadata=chunk_metadata,
+                )
                 if trace is not None:
                     trace.record_failure_category(
                         EvidenceWorkItemFailureCategory.GROUNDING_REJECTION.value,

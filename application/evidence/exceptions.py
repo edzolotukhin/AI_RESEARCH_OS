@@ -26,6 +26,10 @@ class DuplicateEvidenceError(Exception):
 class UngroundedEvidenceError(ValueError):
     """Raised when an excerpt cannot be verified against source content."""
 
+    def __init__(self, message: str, *, rejection_code: str = "excerpt_not_found") -> None:
+        super().__init__(message)
+        self.rejection_code = rejection_code
+
 
 class EvidenceConfigurationError(RuntimeError):
     """Raised when evidence extraction is invoked without required configuration."""

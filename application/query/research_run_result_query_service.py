@@ -56,6 +56,9 @@ from application.research_quality.workflow_task_ids import (
     DOWNSTREAM_TASK_DEFINITION_IDS,
     TASK_ASSESS_RESEARCH_READINESS,
 )
+from application.evidence.evidence_result_codec import (
+    extract_candidate_rejection_diagnostics,
+)
 from application.sources.provenance_merge import is_successful_acquisition
 from domain.evidence.evidence import Evidence
 from domain.findings.finding import Finding
@@ -218,6 +221,9 @@ class ResearchRunResultQueryService:
             artifact_status=artifact_status,
             provenance_summary=provenance,
             correlation_id=self._correlation_id(workflow_run, task_results),
+            evidence_rejection_diagnostics=extract_candidate_rejection_diagnostics(
+                task_results,
+            ),
         )
 
     def get_detail_for_run(self, run_id: str) -> ResearchRunResultDetail:
