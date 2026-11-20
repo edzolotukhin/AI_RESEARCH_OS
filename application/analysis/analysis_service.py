@@ -191,7 +191,43 @@ class AnalysisService:
             temporal_decisions=temporal.decisions,
             allowed_workflow_run_ids=allowed_workflow_run_ids,
         )
-        evidence_items = list(temporal.evidence)
+        # Analysis must consume the same canonical authority projection used by
+        # Readiness. Keeping the broader temporal set for a typed numeric need
+        # would let an F1/F2-rejected observation influence the provider prompt
+        # even when it is later removed from persisted Finding provenance.
+        # Historical untyped numeric snapshots have no EvidenceCoverageContract
+        # from which F1 can establish observation authority; preserve their
+        # existing read/analysis compatibility without weakening new typed INs.
+        numeric_need_by_id = {
+            need.id: need for need in design.information_needs
+            if is_numeric_acquired_need(need)
+        }
+        enforced_numeric_need_ids = {
+            need_id for need_id, need in numeric_need_by_id.items()
+            if need.evidence_coverage is not None
+        }
+        accepted_numeric_ids = {
+            need_id: {item.id for item in result.accepted_evidence}
+            for need_id, result in numeric_projection.qualifications.items()
+            if need_id in enforced_numeric_need_ids
+        }
+        evidence_items = []
+        for item in temporal.evidence:
+            refs = tuple(
+                ref for ref in item.information_need_refs
+                if ref not in enforced_numeric_need_ids
+                or item.id in accepted_numeric_ids.get(ref, set())
+            )
+            if not item.information_need_refs or refs:
+                evidence_items.append(
+                    item if refs == item.information_need_refs
+                    else replace(item, information_need_refs=refs)
+                )
+        numeric_projection_empty = bool(
+            enforced_numeric_need_ids
+            and temporal.evidence
+            and not evidence_items
+        )
         if eligible_need_ids is not None:
             eligible = set(eligible_need_ids)
             evidence_items = [
@@ -199,6 +235,23 @@ class AnalysisService:
                 if eligible.intersection(item.information_need_refs)
             ]
         if not evidence_items:
+            if numeric_projection_empty:
+                if explicit_kinds:
+                    self._record_unavailable_derivation_authority(
+                        context=context,
+                        design=design,
+                        numeric_qualifications=numeric_projection.qualifications,
+                    )
+                return AnalysisSummary(
+                    finding_ids=(),
+                    insight_ids=(),
+                    evidence_batches_processed=0,
+                    finding_candidates_rejected=0,
+                    insight_candidates_rejected=0,
+                    batch_failures=0,
+                    entailment_diagnostics=FindingEntailmentDiagnostics(),
+                    methodological_zero_findings=True,
+                )
             raise AnalysisError(
                 f"No run-scoped evidence available for analysis in run {workflow_run_id}",
             )
