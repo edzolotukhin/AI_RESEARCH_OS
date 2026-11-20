@@ -7,6 +7,7 @@ from application.research_scope.authoritative_scope import SCOPE_KEY, combine_ev
 from domain.evidence.evidence import Evidence
 from domain.findings.finding import Finding
 from domain.planning.research_design import ResearchDesign
+from domain.planning.derivation import InformationNeedKind
 from domain.reports.report_claim import ClaimScope
 from domain.research_authority import ComposedResearchAuthority
 
@@ -39,16 +40,37 @@ class ClaimAuthority:
     composition_digest: str | None = None
 
 
-def derive_claim_authority(*, project_id: str, source_workflow_run_id: str, report_workflow_run_id: str, design: ResearchDesign, findings: tuple[Finding, ...], evidence_by_id: dict[str, Evidence]) -> ClaimAuthority:
+def derive_claim_authority(*, project_id: str, source_workflow_run_id: str, report_workflow_run_id: str, design: ResearchDesign, findings: tuple[Finding, ...], evidence_by_id: dict[str, Evidence], require_validated_findings: bool = False, authority_findings: tuple[Finding, ...] | None = None, brief=None, source_repository=None) -> ClaimAuthority:
     if not findings:
         raise ClaimAuthorityError("at least one validated Finding is required")
     allowed_rqs = {item.id for item in design.research_questions}
     allowed_needs = {item.id for item in design.information_needs}
     finding_ids, evidence_ids, rq_ids, need_ids = set(), set(), set(), set()
+    all_findings = {item.id: item for item in (authority_findings or findings)}
+    needs_by_id = {item.id: item for item in design.information_needs}
+    dependency_needs_by_finding: dict[str, set[str]] = {}
     for finding in findings:
         if finding.project_id != project_id or finding.workflow_run_id != source_workflow_run_id or finding.research_design_id != design.id:
             raise ClaimAuthorityError("Finding lineage is foreign")
+        if require_validated_findings and finding.metadata.get("validation_status") != "validated":
+            raise ClaimAuthorityError("Finding is not a persisted canonical analysis result")
         finding_ids.add(finding.id); rq_ids.update(finding.research_question_refs); need_ids.update(finding.information_need_refs)
+        derived_dependencies: set[str] = set()
+        for need_id in finding.information_need_refs:
+            need = needs_by_id.get(need_id)
+            if need is None or need.kind != InformationNeedKind.DERIVED:
+                continue
+            if brief is None or source_repository is None:
+                raise ClaimAuthorityError("derived Finding authority context is incomplete")
+            from application.analysis.typed_coverage import supports_need
+            if not supports_need(
+                finding, need, project_id=project_id, design=design,
+                findings=all_findings, evidence_by_id=evidence_by_id,
+                brief=brief, source_repository=source_repository,
+            ):
+                raise ClaimAuthorityError("Derived Finding derivation authority is invalid")
+            derived_dependencies.update(need.depends_on_information_need_ids)
+        dependency_needs_by_finding[finding.id] = derived_dependencies
         evidence_ids.update(finding.evidence_refs)
     if not rq_ids or not need_ids or not rq_ids <= allowed_rqs or not need_ids <= allowed_needs:
         raise ClaimAuthorityError("Finding RQ/IN lineage is invalid")
@@ -57,7 +79,10 @@ def derive_claim_authority(*, project_id: str, source_workflow_run_id: str, repo
         item = evidence_by_id.get(evidence_id)
         if item is None or item.project_id != project_id or item.workflow_run_id != source_workflow_run_id or item.research_design_id != design.id:
             raise ClaimAuthorityError("Evidence lineage is foreign or unreachable")
-        if not set(item.research_question_refs) <= rq_ids or not set(item.information_need_refs) <= need_ids:
+        reachable_needs = set(need_ids)
+        for finding in findings:
+            reachable_needs.update(dependency_needs_by_finding.get(finding.id, ()))
+        if not set(item.research_question_refs) <= rq_ids or not set(item.information_need_refs) <= reachable_needs:
             raise ClaimAuthorityError("Evidence is outside Finding RQ/IN reachability")
         evidence.append(item)
     # Scope is combined only from the selected Findings' cited authoritative Evidence.

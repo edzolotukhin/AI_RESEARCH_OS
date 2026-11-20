@@ -174,6 +174,16 @@ class ClaimFirstReportService(ReportService):
                 citation_id_by_source=source_to_citation,
                 candidate_provider=self._claim_candidate_provider,
                 correction_provider=self._claim_correction_provider,
+                # Canonical analysis runs carry readiness/coverage projections.
+                # Preserve historical claim-only callers that predate those
+                # projections while making the integrated path fail closed.
+                require_validated_findings=(
+                    context.read_shared("research_readiness") is not None
+                    or context.read_shared("analysis_coverage") is not None
+                ),
+                authority_findings=tuple(findings),
+                brief=brief,
+                source_repository=self._source_repository,
             )
             rendered = render_validated_claims(claims=claims, design=design)
         except (ClaimGenerationError, ClaimRenderingError, ValueError) as exc:
