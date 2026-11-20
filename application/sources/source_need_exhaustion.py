@@ -41,6 +41,9 @@ _TECHNICAL_WORK_ITEM_STATUSES = frozenset(
     }
 )
 _TECHNICAL_INNER_STATUSES = frozenset({"exception", "budget_stop"})
+_LOW_VALUE_REJECTION_CATEGORIES = frozenset(
+    {"grounding_rejection", "provenance_rejection"}
+)
 # Mirror EvidenceResponseClassification failure outcomes; do not import evidence
 # internals into the acquisition boundary.
 _FAILURE_CLASSIFICATIONS = frozenset(
@@ -84,6 +87,64 @@ def work_item_is_valid_zero_yield(item: Mapping[str, Any]) -> bool:
     if _has_technical_inner_failure(item):
         return False
     return status == "no_candidates"
+
+
+def work_item_is_completed_low_value(item: Mapping[str, Any]) -> bool:
+    """True for a completed identical attempt that cannot justify redispatch."""
+    if work_item_is_valid_zero_yield(item):
+        return True
+    status = str(item.get("extractor_status") or "pending")
+    if status != "success" or item.get("exception_class"):
+        return False
+    categories = {
+        str(value) for value in item.get("failure_categories") or ()
+        if isinstance(value, str)
+    }
+    if not categories.intersection(_LOW_VALUE_REJECTION_CATEGORIES):
+        return False
+    if categories.intersection(
+        {"provider_exception", "invalid_response", "budget_stop", "budget_exhausted"}
+    ):
+        return False
+    return not any(
+        isinstance(outcome, Mapping) and outcome.get("outcome") == "persisted"
+        for outcome in item.get("candidate_outcomes") or ()
+    )
+
+
+def completed_low_value_operation_ids(
+    shared_state: Mapping[str, Any] | None,
+) -> frozenset[str]:
+    """Durable exact-attempt keys safe to suppress after checkpoint reload."""
+    return frozenset(
+        operation_id
+        for item in _work_items(shared_state)
+        if work_item_is_completed_low_value(item)
+        for operation_id in (str(item.get("operation_id") or "").strip(),)
+        if operation_id
+    )
+
+
+def completed_low_value_source_need_identities(
+    shared_state: Mapping[str, Any] | None,
+) -> frozenset[tuple[str, str, str]]:
+    """Return persisted source revision/IN identities with completed low value."""
+    values: set[tuple[str, str, str]] = set()
+    for item in _work_items(shared_state):
+        if not work_item_is_completed_low_value(item):
+            continue
+        source_id = str(item.get("source_id") or "").strip()
+        retry_identity = str(item.get("source_retry_identity") or "").strip()
+        if not source_id or not retry_identity:
+            continue
+        primary = str(item.get("primary_need_id") or "").strip()
+        need_ids = (primary,) if primary else tuple(_need_ids(item))
+        values.update(
+            (source_id, need_id, retry_identity)
+            for need_id in need_ids
+            if need_id
+        )
+    return frozenset(values)
 
 
 def qualifying_zero_yield_source_need_pairs(
@@ -163,6 +224,17 @@ def _work_items(shared_state: Mapping[str, Any] | None) -> list[Mapping[str, Any
     items.extend(
         _items_from_extraction_block(shared_state.get(SHARED_REMEDIATION_EXTRACTION_KEY)),
     )
+    loop_state = shared_state.get("research_loop_state")
+    if isinstance(loop_state, Mapping):
+        for history_item in loop_state.get("history") or ():
+            if not isinstance(history_item, Mapping):
+                continue
+            diagnostics = history_item.get("remediation_attempt_diagnostics")
+            if not isinstance(diagnostics, Mapping):
+                continue
+            for item in diagnostics.get("completed_low_value_attempts") or ():
+                if isinstance(item, Mapping):
+                    items.append(item)
     return items
 
 

@@ -19,7 +19,11 @@ from application.evidence.deduplication import compute_deduplication_key
 from application.evidence.content_identity_queue import distinct_content_queue
 from application import research_funnel_telemetry as funnel
 from application.sources.content_identity import acquired_content_identity
-from application.sources.source_need_exhaustion import extraction_work_items, work_item_is_valid_zero_yield
+from application.sources.source_need_exhaustion import (
+    completed_low_value_operation_ids,
+    extraction_work_items,
+    work_item_is_valid_zero_yield,
+)
 from application.evidence.exceptions import (
     DuplicateEvidenceError,
     EvidenceExtractionError,
@@ -214,6 +218,19 @@ class EvidenceExtractionService:
         previous_queue = queue
         queue = distinct_content_queue(queue)
         funnel.queue_dedup(previous_queue, queue)
+        completed_operation_ids = completed_low_value_operation_ids(
+            context.shared_state,
+        )
+        if completed_operation_ids:
+            previous_queue = queue
+            queue = [
+                item for item in queue
+                if self._work_item_operation_id(
+                    item,
+                    workflow_run_id=workflow_run_id,
+                ) not in completed_operation_ids
+            ]
+            funnel.queue_dedup(previous_queue, queue)
         diagnostics.queue_items = len(queue)
         diagnostics.outer_chunks = len(queue)
         diagnostics.extraction_ordering = EXTRACTION_ORDERING_COVERAGE_BEFORE_DEPTH
@@ -315,6 +332,19 @@ class EvidenceExtractionService:
         previous_queue = queue
         queue = distinct_content_queue(queue)
         funnel.queue_dedup(previous_queue, queue)
+        completed_operation_ids = completed_low_value_operation_ids(
+            context.shared_state,
+        )
+        if completed_operation_ids:
+            previous_queue = queue
+            queue = [
+                item for item in queue
+                if self._work_item_operation_id(
+                    item,
+                    workflow_run_id=workflow_run_id,
+                ) not in completed_operation_ids
+            ]
+            funnel.queue_dedup(previous_queue, queue)
         # A URL alias does not buy another extraction of already attempted
         # identical material for the same need. Same-source depth/retry remains
         # governed by the existing scheduler and per-attempt bounds.
@@ -597,6 +627,11 @@ class EvidenceExtractionService:
                 selection_reason=selection_reason,
                 budget_remaining_before=self._evidence_budget_remaining(),
                 source_outcome_before=state.to_dict(),
+                operation_id=self._work_item_operation_id(
+                    work_item,
+                    workflow_run_id=workflow_run_id,
+                ),
+                source_retry_identity=extraction_retry_identity(work_item.source),
             )
             diagnostics.work_items.append(trace)
             work_item_token = set_active_work_item(trace)
@@ -743,6 +778,22 @@ class EvidenceExtractionService:
             for need_id in evidence.information_need_refs:
                 counts[need_id] = counts.get(need_id, 0) + 1
         return counts
+
+    @staticmethod
+    def _work_item_operation_id(
+        work_item: EvidenceExtractionWorkItem,
+        *,
+        workflow_run_id: str,
+    ) -> str:
+        return candidate_operation_id(
+            workflow_run_id=workflow_run_id,
+            source_id=work_item.source.id,
+            information_need_id=work_item.primary_need_id,
+            content_identity=extraction_retry_identity(work_item.source),
+            phase=work_item.phase,
+            chunk_start=work_item.chunk.original_normalized_start,
+            chunk_end=work_item.chunk.original_normalized_end,
+        )
 
     @staticmethod
     def _trace_is_valid_empty(trace: WorkItemTrace) -> bool:
@@ -903,7 +954,7 @@ class EvidenceExtractionService:
                 trace.exception_message = str(exc)
                 trace.failure_phase = getattr(exc, "failure_phase", "unknown")
                 trace.retry_ambiguous = bool(getattr(exc, "retry_ambiguous", False))
-                trace.operation_id = getattr(exc, "operation_id", None)
+                trace.operation_id = getattr(exc, "operation_id", None) or trace.operation_id
                 trace.record_failure_category(classify_extraction_exception(exc))
             if diagnostics is not None:
                 diagnostics.extractor_failures += 1

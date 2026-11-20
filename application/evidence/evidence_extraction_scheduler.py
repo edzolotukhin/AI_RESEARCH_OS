@@ -15,6 +15,7 @@ from application.evidence.run_scoped_provenance import (
     resolve_run_scoped_context,
 )
 from domain.sources.retrieval_status import RetrievalStatus
+from application.research_quality.evidence_gap_priority import design_priority_by_need
 
 PHASE_FIRST_OPPORTUNITY = "first_opportunity"
 MAX_STRUCTURED_OUTER_CHARS = 200_000
@@ -237,10 +238,16 @@ def _dedupe_eligible_sources(sources: list[Source]) -> list[Source]:
 
 def _round_robin_need_buckets(
     buckets: dict[str, list[EvidenceExtractionWorkItem]],
+    *,
+    need_order: dict[str, tuple[int, int, int, str]] | None = None,
 ) -> list[EvidenceExtractionWorkItem]:
     if not buckets:
         return []
-    need_ids = sorted(buckets.keys())
+    priorities = need_order or {}
+    need_ids = sorted(
+        buckets.keys(),
+        key=lambda need_id: priorities.get(need_id, (3, 1, 1, need_id)),
+    )
     indices = {need_id: 0 for need_id in need_ids}
     queue: list[EvidenceExtractionWorkItem] = []
     while True:
@@ -267,6 +274,7 @@ def _prepare_sources(
     overlap_chars: int,
 ) -> list[_PreparedSource]:
     prepared: list[_PreparedSource] = []
+    priorities = design_priority_by_need(design)
     for source in _dedupe_eligible_sources(sources):
         if not str(source.content_text or "").strip():
             continue
@@ -278,7 +286,10 @@ def _prepare_sources(
         )
         if not run_context.information_need_ids:
             continue
-        primary_need_id = sorted(run_context.information_need_ids)[0]
+        primary_need_id = min(
+            run_context.information_need_ids,
+            key=lambda need_id: priorities.get(need_id, (3, 1, 1, need_id)),
+        )
         # Structured rows are already bounded by the workbook adapter and carry
         # exact cell locators.  Splitting their canonical row excerpts across
         # outer text chunks can silently lose an otherwise valid observation.
@@ -359,7 +370,8 @@ def build_need_fair_extraction_queue(
                 primary_need_id=item.primary_need_id,
             ),
         )
-    phase1 = _round_robin_need_buckets(first_buckets)
+    need_order = design_priority_by_need(design)
+    phase1 = _round_robin_need_buckets(first_buckets, need_order=need_order)
 
     depth_buckets: dict[str, list[EvidenceExtractionWorkItem]] = {}
     for item in prepared:
@@ -375,5 +387,5 @@ def build_need_fair_extraction_queue(
                     primary_need_id=item.primary_need_id,
                 ),
             )
-    phase2 = _round_robin_need_buckets(depth_buckets)
+    phase2 = _round_robin_need_buckets(depth_buckets, need_order=need_order)
     return phase1 + phase2

@@ -62,9 +62,12 @@ from application.sources.search_query_builder import SearchQueryBuilder
 from application.sources.retrieval_portfolio import derive_initial_retrieval_portfolio
 from application.sources.source_budget import SourceAcquisitionBudget
 from application.sources.source_need_exhaustion import (
+    completed_low_value_source_need_identities,
     exhausted_canonical_urls_for_need,
     extraction_work_items,
 )
+from application.evidence.evidence_extraction_scheduler import extraction_retry_identity
+from application.research_quality.evidence_gap_priority import design_priority_by_need
 from application.sources.url_canonicalizer import canonicalize_url
 from application.sources.content_identity import acquired_content_identity
 from application.sources.query_opportunities import KEY as QUERY_HISTORY, fingerprint
@@ -78,6 +81,7 @@ _MAX_PROVENANCE_RETRIES = 5
 _MAX_SAFE_DIAGNOSTIC_RECORDS = 32
 _SAFE_REJECTION_REASONS = frozenset({
     "retriever_known_unsupported_url", "zero_grounded_evidence_after_extraction",
+    "unchanged_low_value_extraction",
     "subject_irrelevant", "subject_unresolved_no_positive_signal",
     "generic_local_overlap_without_parent_topic", "no_positive_topic_signal_unscored",
 })
@@ -213,6 +217,14 @@ class SourceAcquisitionService:
         workflow_run_id = context.workflow_run.id
         brief = context.project.research_brief
         queries = self._query_builder.build_queries(design, brief=brief)
+        acquired_need_ids = {
+            need.id for need in design.information_needs
+            if need.kind.value == "ACQUIRED"
+        }
+        queries = [
+            query for query in queries
+            if query.information_need_id in acquired_need_ids
+        ]
         extension_plan = context.read_shared("authority_extension_plan")
         minimum_sources_per_need = (
             2
@@ -300,7 +312,7 @@ class SourceAcquisitionService:
             coverage_target_satisfied=coverage_target_satisfied,
             coverage_complete_early_stop=coverage_complete_early_stop,
             information_needs_covered_count=len(covered_needs),
-            information_needs_total=len(design.information_needs),
+            information_needs_total=len(acquired_need_ids),
             failure_category_counts=dict(failure_categories),
             limitations=tuple(limitations),
             skipped_ineligible_count=skipped_ineligible,
@@ -374,6 +386,9 @@ class SourceAcquisitionService:
             execution_history=context.shared_state.setdefault(QUERY_HISTORY, []))
         unique_count = len(grouped)
         exhausted_pairs = self._exhausted_pairs_for_queries(context, queries)
+        low_value_identities = completed_low_value_source_need_identities(
+            context.shared_state,
+        )
         exhausted_content = {
             (acquired_content_identity(source), query.information_need_id)
             for source in self._source_repository.list_for_project(project_id, workflow_run_id=workflow_run_id)
@@ -387,6 +402,7 @@ class SourceAcquisitionService:
                 design=design,
                 brief=brief,
                 exhausted_pairs=exhausted_pairs,
+                low_value_identities=low_value_identities,
                 project_id=project_id,
             )
         )
@@ -439,7 +455,10 @@ class SourceAcquisitionService:
             coverage_target_satisfied=coverage_target_satisfied,
             coverage_complete_early_stop=coverage_complete_early_stop,
             information_needs_covered_count=len(covered_needs),
-            information_needs_total=len(design.information_needs),
+            information_needs_total=sum(
+                need.kind.value == "ACQUIRED"
+                for need in design.information_needs
+            ),
             failure_category_counts=dict(failure_categories),
             limitations=(),
             skipped_ineligible_count=skipped_ineligible,
@@ -550,6 +569,7 @@ class SourceAcquisitionService:
         design: ResearchDesign,
         brief: ResearchBrief | None = None,
         exhausted_pairs: frozenset[tuple[str, str]],
+        low_value_identities: frozenset[tuple[str, str, str]] = frozenset(),
         project_id: str | None = None,
     ) -> tuple[list[_CandidateGroup], list[dict[str, Any]], int, int]:
         need_by_id = {need.id: need for need in design.information_needs}
@@ -595,6 +615,27 @@ class SourceAcquisitionService:
                     and item.candidate.metadata.get("required_resource_kind") == "table"
                     and capability.action in {"REFETCH", "REEXTRACT"}
                     and evaluate_candidate(build_relevance_context(design, need, brief=brief), item.candidate, canonical_url=canonical).is_fetch_eligible)
+                unchanged_low_value = bool(
+                    known is not None
+                    and extraction_retry_identity(known)
+                    and (
+                        known.id,
+                        need_id,
+                        extraction_retry_identity(known),
+                    ) in low_value_identities
+                )
+                if unchanged_low_value and not can_upgrade:
+                    exhausted_hits += 1
+                    decisions.append({
+                        "canonical_url": canonical,
+                        "information_need_id": need_id,
+                        "provider_rank": item.candidate.rank,
+                        "title": item.candidate.title,
+                        "action": ACTION_EXHAUSTED,
+                        "eligibility": ELIGIBILITY_INELIGIBLE,
+                        "reason": "unchanged_low_value_extraction",
+                    })
+                    continue
                 if (canonical, need_id) in exhausted_pairs and not can_upgrade:
                     exhausted_hits += 1
                     decisions.append(
@@ -768,6 +809,7 @@ class SourceAcquisitionService:
                     "content_identity": acquired_content_identity(known)})
         attempted_needs: set[str] = set()
         evidence_counts: Counter[str] = Counter()
+        design_priorities = design_priority_by_need(design)
         if self._evidence_repository is not None:
             for row in self._evidence_repository.list_for_project(project_id, workflow_run_id=workflow_run_id):
                 evidence_counts.update(row.information_need_refs)
@@ -775,6 +817,18 @@ class SourceAcquisitionService:
         def evidence_priority(group: _CandidateGroup) -> int:
             return min((evidence_counts[item.query.information_need_id]
                         for item in group.items), default=0)
+
+        def need_priority(group: _CandidateGroup) -> tuple[int, int, int]:
+            return min(
+                (
+                    design_priorities.get(
+                        item.query.information_need_id,
+                        (3, 1, 1, item.query.information_need_id),
+                    )[:3]
+                    for item in group.items
+                ),
+                default=(3, 1, 1),
+            )
 
         def category_mismatch(group: _CandidateGroup) -> bool:
             # Legacy thin-context discovery retains its established fail-open
@@ -827,6 +881,7 @@ class SourceAcquisitionService:
                 range(len(pending)),
                 key=lambda index: (known_duplicate(pending[index]),
                                    category_mismatch(pending[index]),
+                                   need_priority(pending[index]),
                                    evidence_priority(pending[index]),
                                    coverage_tier(pending[index]), index),
             )
@@ -921,6 +976,7 @@ class SourceAcquisitionService:
                     len(source_authority_by_need.get(need.id, ()))
                     >= minimum_sources_per_need
                     for need in design.information_needs
+                    if need.kind.value == "ACQUIRED"
                 )
                 and distinct_acquired >= self._budget.min_successful_sources
             ):
@@ -1233,7 +1289,10 @@ class SourceAcquisitionService:
         covered_needs: set[str],
         covered_questions: set[str],
     ) -> bool:
-        all_needs = {need.id for need in design.information_needs}
+        all_needs = {
+            need.id for need in design.information_needs
+            if need.kind.value == "ACQUIRED"
+        }
         if not all_needs:
             return True
 
@@ -1284,7 +1343,10 @@ class SourceAcquisitionService:
                 f"({self._budget.max_sources_per_run})",
             )
 
-        all_needs = {need.id for need in design.information_needs}
+        all_needs = {
+            need.id for need in design.information_needs
+            if need.kind.value == "ACQUIRED"
+        }
         missing_needs = sorted(all_needs - covered_needs)
         if missing_needs and acquired >= self._budget.min_successful_sources:
             if budget_exhausted or skipped_budget > 0:
@@ -1334,7 +1396,10 @@ def _safe_attempt_diagnostics(decisions: list[dict[str, Any]], design: ResearchD
     truncated = False
     for decision in decisions:
         action = decision.get("action")
-        if action not in {ACTION_REJECTED, ACTION_FETCH_FAILED, ACTION_SELECTED, ACTION_PROXY}:
+        if action not in {
+            ACTION_REJECTED, ACTION_FETCH_FAILED, ACTION_SELECTED,
+            ACTION_PROXY, ACTION_EXHAUSTED,
+        }:
             continue
         if len(records) >= _MAX_SAFE_DIAGNOSTIC_RECORDS:
             truncated = True
@@ -1343,6 +1408,25 @@ def _safe_attempt_diagnostics(decisions: list[dict[str, Any]], design: ResearchD
         raw = raw if isinstance(raw, dict) else {}
         reason = decision.get("reason")
         need_index = need_indexes.get(decision.get("information_need_id"))
+        retrieval_status = str(decision.get("retrieval_status") or "")
+        failure_category = str(
+            raw.get("failure_category") or decision.get("failure_category") or ""
+        )
+        if action == ACTION_FETCH_FAILED:
+            source_eligibility = (
+                "unsupported"
+                if retrieval_status == RetrievalStatus.UNSUPPORTED.value
+                or failure_category == "unsupported_content_type"
+                else "retrieval_failed"
+            )
+        elif retrieval_status == RetrievalStatus.TRUNCATED.value:
+            source_eligibility = "acquired_truncated"
+        elif retrieval_status == RetrievalStatus.ACQUIRED.value:
+            source_eligibility = "acquired_complete"
+        elif action == ACTION_REJECTED:
+            source_eligibility = "content_absent"
+        else:
+            source_eligibility = "content_eligible"
         records.append({
             "action": action,
             "need_index": need_index,
@@ -1356,5 +1440,6 @@ def _safe_attempt_diagnostics(decisions: list[dict[str, Any]], design: ResearchD
                 "unsupported_content_type", "content_too_large", "other_retrieval_error", "none",
             } else "other_retrieval_error" if action == ACTION_FETCH_FAILED else "none",
             "terminal_reason": raw.get("terminal_reason") if raw.get("terminal_reason") in {"required_terminal_not_found", "html_challenge", "none"} else "other",
+            "source_eligibility": source_eligibility,
         })
     return tuple(records), truncated

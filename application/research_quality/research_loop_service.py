@@ -11,7 +11,10 @@ from application.ports.research_quality_ports import ResearchSufficiencyEvaluato
 from application.ports.source_ports import SourceRepository
 from application.execution.execution_budget_context import get_execution_budget
 from application.research_quality.gap_scheduler import decide_next_actionable_gap
-from application.research_quality.evidence_gap_priority import evidence_priority_by_need
+from application.research_quality.evidence_gap_priority import (
+    design_priority_by_need,
+    evidence_priority_by_need,
+)
 from application.research_quality.gap_selection import select_actionable_gaps
 from application.research_quality.research_loop_checkpoint import checkpoint_loop_progress
 from application.research_quality.research_loop_state import (
@@ -188,6 +191,7 @@ class ResearchLoopService:
                     evidence_priority_by_need=self._evidence_priority_by_need(
                         context, design,
                     ),
+                    design_priority_by_need=design_priority_by_need(design),
                 )
                 request = decision.selected
                 if request is None:

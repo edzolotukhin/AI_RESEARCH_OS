@@ -241,6 +241,7 @@ class WorkItemTrace:
     failure_phase: str | None = None
     retry_ambiguous: bool = False
     operation_id: str | None = None
+    source_retry_identity: str = ""
 
     def record_failure_category(self, category: str) -> None:
         if category not in self.failure_categories:
@@ -296,6 +297,8 @@ class WorkItemTrace:
             safe_operation_id = _safe_operation_id(self.operation_id)
             if safe_operation_id is not None:
                 payload["operation_id"] = safe_operation_id
+        if self.source_retry_identity:
+            payload["source_retry_identity"] = self.source_retry_identity[:256]
         if self.grounding_search_start is not None:
             payload["grounding_search_start"] = self.grounding_search_start
         if self.grounding_search_end is not None:
