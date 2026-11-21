@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from application.persistence.exceptions import EntityNotFoundError
+from application.persistence.exceptions import AccessDeniedError, EntityNotFoundError
+from application.report.h3_editorial_delivery import H3EditorialError, load_approved_h3_delivery
+from application.research_quality.product_completion import (
+    ProductCompletionFacts,
+    ProductCompletionProjection,
+    evaluate_product_completion,
+)
 from application.persistence.records import ArtifactRecord
 from application.ports.analysis_ports import FindingRepository, InsightRepository
 from application.ports.artifact_repository import ArtifactRepository
@@ -93,6 +99,9 @@ class ResearchRunResultQueryService:
         report_repository: ReportRepository,
         review_repository: ReviewRepository,
         artifact_repository: ArtifactRepository,
+        project_service=None,
+        deliverables_service=None,
+        report_claim_repository=None,
     ) -> None:
         self._workflow_run_repository = workflow_run_repository
         self._source_repository = source_repository
@@ -102,6 +111,113 @@ class ResearchRunResultQueryService:
         self._report_repository = report_repository
         self._review_repository = review_repository
         self._artifact_repository = artifact_repository
+        self._project_service = project_service
+        self._deliverables_service = deliverables_service
+        self._report_claim_repository = report_claim_repository
+
+    def product_completion(
+        self, run_id: str, *, evaluated_at: str | None = None,
+    ) -> ProductCompletionProjection:
+        """Return delivery readiness from persisted, read-only projections."""
+        run = self._workflow_run_repository.get_by_id(run_id)
+        if run is None:
+            raise EntityNotFoundError(f"WorkflowRun not found: {run_id}")
+        result = self.get_for_run(run_id) if run.is_terminal else None
+        reports = [item for item in self._report_repository.list_for_project(
+            run.project_id, workflow_run_id=run_id,
+        )]
+        report = max(reports, key=lambda item: item.revision_number) if reports else None
+        claims = ()
+        reviews = ()
+        h3_valid = False
+        review_approved = False
+        review_revision_aligned = False
+        provenance_valid = False
+        authority_diagnostic_code = None
+        if report is not None and self._report_claim_repository is not None:
+            claims = tuple(self._report_claim_repository.list_for_report(
+                report.id, report.revision_number,
+            ))
+            reviews = tuple(self._review_repository.list_for_project(
+                run.project_id, workflow_run_id=run_id, report_id=report.id,
+            ))
+            approved = next((item for item in reviews
+                             if getattr(getattr(item, "verdict", None), "value", item.verdict)
+                             == "approve"), None)
+            review_approved = approved is not None
+            review_revision_aligned = bool(
+                approved is not None
+                and int(approved.metadata.get("report_revision", 0)) == report.revision_number
+            )
+            if approved is not None:
+                try:
+                    editorial = load_approved_h3_delivery(
+                        report=report, review=approved, claims=claims,
+                    )
+                    h3_valid = True
+                    provenance_valid = (
+                        editorial.provenance.report_id == report.id
+                        and editorial.provenance.report_workflow_run_id == run_id
+                        and report.project_id == run.project_id
+                    )
+                except H3EditorialError as exc:
+                    # The existing H3 authority is fail-closed; the projection
+                    # reports NOT_READY rather than replacing its diagnostics.
+                    h3_valid = False
+                    authority_diagnostic_code = exc.code
+
+        pdf_terminal = pdf_integrity = pdf_provenance = False
+        pptx_terminal = pptx_integrity = pptx_provenance = False
+        if (report is not None and self._project_service is not None
+                and self._deliverables_service is not None):
+            try:
+                project = self._project_service.get_project(run.project_id)
+                item = self._deliverables_service.source(
+                    run.project_id, "DESK", report.id,
+                    owner_id=project.owner_principal_id,
+                )
+                if item.pdf is not None:
+                    record, data = self._deliverables_service.download(
+                        run.project_id, "DESK", report.id, item.pdf.id,
+                        owner_id=project.owner_principal_id,
+                    )
+                    pdf_terminal = record.state == "completed"
+                    pdf_integrity = len(data) == record.byte_size
+                    pdf_provenance = record.approved_delivery_provenance is not None
+                if item.pptx is not None and item.presentation_job is not None:
+                    record, data = self._deliverables_service.download_presentation(
+                        run.project_id, "DESK", report.id, item.pptx.id,
+                        owner_id=project.owner_principal_id,
+                    )
+                    pptx_terminal = item.presentation_job.state in {
+                        "completed", "finalization_complete",
+                    }
+                    pptx_integrity = len(data) == record.byte_size
+                    pptx_provenance = record.approved_delivery_provenance is not None
+            except AccessDeniedError:
+                pass
+
+        facts = ProductCompletionFacts(
+            run_id=run.id, project_id=run.project_id,
+            report_id=report.id if report else None,
+            report_revision=report.revision_number if report else None,
+            workflow_terminal=run.is_terminal,
+            workflow_failed=run.status.value == "failed",
+            research_outcome=result.outcome.value if result is not None else None,
+            report_claims_valid=bool(claims),
+            review_approved=review_approved,
+            review_revision_aligned=review_revision_aligned,
+            h3_authority_valid=h3_valid,
+            provenance_valid=provenance_valid,
+            pdf_terminal=pdf_terminal,
+            pdf_integrity_valid=pdf_integrity,
+            pdf_provenance_valid=pdf_provenance,
+            pptx_terminal_success=pptx_terminal,
+            pptx_integrity_valid=pptx_integrity,
+            pptx_provenance_valid=pptx_provenance,
+            authority_diagnostic_code=authority_diagnostic_code,
+        )
+        return evaluate_product_completion(facts, evaluated_at=evaluated_at)
 
     def available_outputs_for_run(self, run_id: str) -> dict:
         """Availability is independent of outcome and works for ambiguous/running runs."""
