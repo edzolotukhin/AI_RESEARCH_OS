@@ -354,7 +354,7 @@ class PilotDeployment:
         else:
             for service in RUNTIME_IMAGE_SERVICES:
                 image = self.runner.run(compose_command("images", "--quiet", service))
-                self.built_images[service] = image.splitlines()[0] if image else ""
+                self.built_images[service] = "sha256:" + image.splitlines()[0].removeprefix("sha256:") if image else ""
         self.verify()
         print(f"DEPLOYMENT PASS release={self.release_sha} alembic_head={self.expected_head or 'verify-only'}")
 
