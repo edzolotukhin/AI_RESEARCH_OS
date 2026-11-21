@@ -90,6 +90,24 @@ class StructuredOutputGeneratorTests(unittest.TestCase):
         self.assertEqual(len(payload["stages"]), 1)
         self.assertEqual(self.llm_client.generate.call_count, 2)
 
+    def test_final_contract_failure_keeps_reason_and_excludes_raw_response(self):
+        raw = '{"name": "invalid", "secret": "DO_NOT_PERSIST"}'
+        self.llm_client.generate.side_effect = [
+            LLMResponse(content=raw),
+            LLMResponse(content=raw),
+            LLMResponse(content=raw),
+        ]
+
+        with self.assertRaises(StructuredOutputError) as ctx:
+            self.generator.generate(self.prompt, payload_contract=self.contract)
+
+        error = ctx.exception
+        self.assertEqual(error.attempts, 3)
+        self.assertTrue(error.contract_validation_error)
+        self.assertIn(error.contract_validation_error, str(error))
+        self.assertNotIn("DO_NOT_PERSIST", str(error))
+        self.assertEqual(self.llm_client.generate.call_count, 3)
+
     def test_three_malformed_attempts_raise_structured_output_error(self):
         self.llm_client.generate.side_effect = [
             LLMResponse(content="{ broken"),

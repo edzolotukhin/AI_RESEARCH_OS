@@ -217,6 +217,33 @@ class StructuredOutputPlannerPipelineTests(unittest.TestCase):
             )
             self.assertGreaterEqual(len(data["research_questions"]), 1)
 
+    def test_contract_failure_preserves_bounded_reason_without_raw_response(self):
+        raw = '{"research_questions": [], "raw_secret": "DO_NOT_PERSIST"}'
+        contract = ResearchDesignPayloadContract()
+        with self.assertRaises(StructuredOutputError) as ctx:
+            self.parser.parse(raw, payload_contract=contract)
+
+        error = ctx.exception
+        self.assertEqual(error.stage, "contract")
+        self.assertTrue(error.contract_validation_error)
+        self.assertLessEqual(len(error.contract_validation_error), 256)
+        self.assertNotIn("DO_NOT_PERSIST", str(error))
+        self.assertNotIn("DO_NOT_PERSIST", error.contract_validation_error)
+
+    def test_contract_failure_reason_survives_attempt_context(self):
+        contract = ResearchDesignPayloadContract()
+        with self.assertRaises(StructuredOutputError) as ctx:
+            self.parser.parse(
+                '{"research_questions": [],}',
+                payload_contract=contract,
+            )
+
+        enriched = ctx.exception.with_attempt_context(attempts=3)
+        self.assertEqual(
+            enriched.contract_validation_error,
+            ctx.exception.contract_validation_error,
+        )
+
 
 class StructuredOutputArchitectureTests(unittest.TestCase):
 
