@@ -201,6 +201,11 @@ class ProjectPlanningService:
             )],
             research_brief_snapshot=project.research_brief,
         )
+        existing_template = self._reuse_existing_design_template(
+            project, template,
+        )
+        if existing_template is not None:
+            template = existing_template
         if self.durable_workflow is None:
             return self._generate_new_design(project, methods=methods, fingerprint=fingerprint)
         return self.durable_workflow.submit_research(
@@ -211,6 +216,30 @@ class ProjectPlanningService:
                 }
             },
         ).workflow_run
+
+    def _reuse_existing_design_template(
+        self, project: Project, expected: WorkflowTemplate,
+    ) -> WorkflowTemplate | None:
+        """Reuse an immutable same-input snapshot, never overwrite it."""
+        project_templates = self.workflows.list_templates_for_project(project.id)
+        existing = next(
+            (item for item in project_templates if item.id == expected.id),
+            None,
+        )
+        if existing is not None:
+            if existing != expected:
+                raise ProjectPlanningError(
+                    "Существующий шаблон дизайна не соответствует ожидаемому содержимому"
+                )
+            return existing
+
+        try:
+            foreign = self.workflows.get_template(expected.id)
+        except (EntityNotFoundError, KeyError):
+            return None
+        if foreign is not None:
+            raise ProjectPlanningError("Шаблон дизайна принадлежит другому проекту")
+        return None
 
     def resolve_design_generation(self, project: Project) -> DesignGenerationResolution:
         """Resolve the one current-input generation attempt and its durable history."""

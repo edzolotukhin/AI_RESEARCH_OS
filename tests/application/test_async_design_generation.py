@@ -1,7 +1,10 @@
 import unittest
 from types import SimpleNamespace
 
-from application.services.project_planning_service import ProjectPlanningService
+from application.services.project_planning_service import (
+    ProjectPlanningError,
+    ProjectPlanningService,
+)
 from application.executors.design_generation_executor import DesignGenerationExecutor
 from application.persistence.exceptions import ConcurrentModificationError
 from domain.project import Project
@@ -22,6 +25,9 @@ class _WorkflowService:
     def list_workflow_runs_for_project(self, project_id):
         return list(self.runs)
 
+    def list_templates_for_project(self, project_id):
+        return list(self.templates.values())
+
     def get_template(self, template_id):
         return self.templates[template_id]
 
@@ -36,9 +42,10 @@ class _Durable:
 
 
 class AsyncDesignGenerationTests(unittest.TestCase):
-    def _service(self, durable, runs=()):
+    def _service(self, durable, runs=(), templates=()):
         return ProjectPlanningService(
-            project_service=SimpleNamespace(), workflow_service=_WorkflowService(runs),
+            project_service=SimpleNamespace(),
+            workflow_service=_WorkflowService(runs, templates),
             planner_agent=SimpleNamespace(), workflow_mapper=SimpleNamespace(),
             agency=SimpleNamespace(), quantitative_ui_service=None,
             durable_workflow_service=durable,
@@ -330,6 +337,51 @@ class AsyncDesignGenerationTests(unittest.TestCase):
         retry = self._service(durable, [failed]).schedule_design_generation(project)
         self.assertEqual(retry.id, "queued-design")
         self.assertEqual(len(durable.calls), 1)
+
+    def test_failed_retry_reuses_immutable_template_and_creates_new_run(self):
+        project = self._project()
+        first_durable = _Durable()
+        self._service(first_durable).schedule_design_generation(project)
+        existing_template = first_durable.calls[0][1]
+        fingerprint = ProjectPlanningService.input_fingerprint(
+            project.research_brief, ("DESK",),
+        )
+        failed = SimpleNamespace(
+            id="failed", workflow_template_id=existing_template.id,
+            is_terminal=True, status=WorkflowStatus.FAILED,
+        )
+        retry_durable = _Durable()
+        result = self._service(
+            retry_durable, [failed], [existing_template],
+        ).schedule_design_generation(project)
+
+        self.assertEqual(result.id, "queued-design")
+        self.assertIs(retry_durable.calls[0][1], existing_template)
+        self.assertEqual(
+            retry_durable.calls[0][2]["design_generation"]["input_fingerprint"],
+            fingerprint,
+        )
+
+    def test_same_fingerprint_template_content_conflict_is_rejected(self):
+        project = self._project()
+        first_durable = _Durable()
+        self._service(first_durable).schedule_design_generation(project)
+        expected = first_durable.calls[0][1]
+        conflicting = WorkflowTemplate(
+            id=expected.id,
+            name="tampered design generation",
+            task_definitions=expected.task_definitions,
+            research_brief_snapshot=expected.research_brief_snapshot,
+        )
+        failed = SimpleNamespace(
+            id="failed", workflow_template_id=expected.id,
+            is_terminal=True, status=WorkflowStatus.FAILED,
+        )
+
+        with self.assertRaisesRegex(ProjectPlanningError, "не соответствует"):
+            self._service(
+                _Durable(), [failed], [conflicting],
+            ).schedule_design_generation(project)
 
     def test_changed_brief_uses_new_generation_identity(self):
         project = self._project()
