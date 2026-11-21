@@ -801,7 +801,7 @@ class IR6GlobalPostgreSQLAcceptanceTests(
     def test_h3_tampered_claim_set_digest_rejects_delivery(self):
         def mutate(report, review):
             # PostgreSQL immutability is itself an acceptance assertion.
-            from sqlalchemy.exc import InternalError
+            from sqlalchemy.exc import DBAPIError
 
             with self.session_factory.session() as session:
                 claim = session.query(ReportClaimModel).filter_by(
@@ -810,7 +810,7 @@ class IR6GlobalPostgreSQLAcceptanceTests(
                 ).first()
                 self.assertIsNotNone(claim)
                 claim.authority_digest = "0" * 64
-                with self.assertRaisesRegex(InternalError, "report_claims are immutable"):
+                with self.assertRaisesRegex(DBAPIError, "report_claims are immutable"):
                     session.flush()
                 session.rollback()
             # Model tampering through the permitted JSON metadata seam; the
