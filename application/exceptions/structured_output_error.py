@@ -28,6 +28,9 @@ class StructuredOutputError(Exception):
         visible_output_length: int | None = None,
         reasoning_budget_exhausted: bool = False,
         attempts: int = 1,
+        contract_validation_error: str = "",
+        contract_validation_code: str = "",
+        contract_validation_reason: str = "",
     ) -> None:
         details = [
             f"stage={stage}",
@@ -81,6 +84,9 @@ class StructuredOutputError(Exception):
         if candidate_length:
             details.append(f"candidate_length={candidate_length}")
 
+        if contract_validation_error:
+            details.append(f"contract_error={contract_validation_error!r}")
+
         preview = candidate_preview or source_preview
 
         if preview:
@@ -109,6 +115,11 @@ class StructuredOutputError(Exception):
         self.visible_output_length = visible_output_length
         self.reasoning_budget_exhausted = reasoning_budget_exhausted
         self.attempts = attempts
+        self.contract_validation_error = " ".join(
+            str(contract_validation_error).split()
+        )[:256]
+        self.contract_validation_code = contract_validation_code
+        self.contract_validation_reason = contract_validation_reason
 
     def with_attempt_context(
         self,
@@ -179,4 +190,7 @@ class StructuredOutputError(Exception):
                 else reasoning_budget_exhausted
             ),
             attempts=attempts,
+            contract_validation_error=self.contract_validation_error,
+            contract_validation_code=self.contract_validation_code,
+            contract_validation_reason=self.contract_validation_reason,
         )

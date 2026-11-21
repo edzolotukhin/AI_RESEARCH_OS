@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from application.persistence.records import ExecutionLogEntry
+from application.exceptions.structured_output_error import StructuredOutputError
 from application.ports.execution_log_store import ExecutionLogStore
 from application.scheduling.scheduling_result import SchedulingResult
 from domain.value_objects.task_status import TaskStatus
@@ -88,8 +89,11 @@ class WorkflowExecutionAudit:
         task_id: str,
         *,
         reason: str | None = None,
+        diagnostic: dict[str, Any] | None = None,
     ) -> None:
         payload = {"reason": reason} if reason else {}
+        if diagnostic:
+            payload["diagnostic"] = diagnostic
         self.append(
             event_id=f"{run_id}:task_failed:{task_id}",
             run_id=run_id,
@@ -154,9 +158,17 @@ class WorkflowExecutionAudit:
 
         if task.status == TaskStatus.FAILED:
             reason = recovery_reason
+            diagnostic: dict[str, Any] = {}
             if error is not None and reason is None:
                 reason = type(error).__name__
-            self.task_failed(run_id, task.id, reason=reason)
+            if isinstance(error, StructuredOutputError) and error.stage == "contract":
+                diagnostic = {
+                    "diagnostic_code": error.contract_validation_code
+                    or "planner_payload_contract_invalid",
+                    "safe_reason": error.contract_validation_reason
+                    or "planner payload failed the contract",
+                }
+            self.task_failed(run_id, task.id, reason=reason, diagnostic=diagnostic)
             return
 
         if task.status == TaskStatus.SKIPPED:

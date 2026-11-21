@@ -7,6 +7,7 @@ from typing import Any
 from application.exceptions.structured_output_error import StructuredOutputError
 
 from .contracts import StructuredPayloadContract
+from .contract_diagnostics import classify_contract_validation_error
 from .json_extractor import JsonExtractor
 from .json_repair import JsonRepair
 from .json_validator import JsonValidationResult, JsonValidator
@@ -119,13 +120,25 @@ class StructuredOutputParser:
             return dict(contract_valid_mappings[-1])
 
         if syntax_valid_mappings and contract_checker is not self._accept_all:
+            contract_validation_error = ""
+            if payload_contract is not None and candidate_validator is None:
+                contract_validation_error = getattr(
+                    payload_contract,
+                    "last_validation_error",
+                    "",
+                )
+            contract_validation_code, contract_validation_reason = (
+                classify_contract_validation_error(contract_validation_error)
+            )
             raise StructuredOutputError(
                 "No JSON candidate satisfies the payload contract.",
                 stage="contract",
                 candidate_count=len(candidates),
                 syntax_valid_count=len(syntax_valid_mappings),
                 contract_valid_count=0,
-                source_preview=self._preview(cleaned),
+                contract_validation_error=contract_validation_error,
+                contract_validation_code=contract_validation_code,
+                contract_validation_reason=contract_validation_reason,
                 is_truncated=self._resolve_truncated(
                     llm_truncated,
                     parse_results,

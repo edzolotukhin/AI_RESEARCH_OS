@@ -13,6 +13,10 @@ from application.structured_output.json_extractor import JsonExtractor
 from application.structured_output.json_repair import JsonRepair
 from application.structured_output.json_validator import JsonValidator
 from application.structured_output.parser import StructuredOutputParser
+from application.structured_output.contract_diagnostics import (
+    GENERIC_CONTRACT_DIAGNOSTIC_CODE,
+    classify_contract_validation_error,
+)
 from application.structured_output.response_cleaner import ResponseCleaner
 
 from tests.fixtures.planner_responses import (
@@ -216,6 +220,46 @@ class StructuredOutputPlannerPipelineTests(unittest.TestCase):
                 payload_contract=design_contract,
             )
             self.assertGreaterEqual(len(data["research_questions"]), 1)
+
+    def test_contract_failure_preserves_bounded_reason_without_raw_response(self):
+        raw = '{"research_questions": [], "raw_secret": "DO_NOT_PERSIST"}'
+        contract = ResearchDesignPayloadContract()
+        with self.assertRaises(StructuredOutputError) as ctx:
+            self.parser.parse(raw, payload_contract=contract)
+
+        error = ctx.exception
+        self.assertEqual(error.stage, "contract")
+        self.assertTrue(error.contract_validation_error)
+        self.assertLessEqual(len(error.contract_validation_error), 256)
+        self.assertNotIn("DO_NOT_PERSIST", str(error))
+        self.assertNotIn("DO_NOT_PERSIST", error.contract_validation_error)
+
+    def test_contract_failure_reason_survives_attempt_context(self):
+        contract = ResearchDesignPayloadContract()
+        with self.assertRaises(StructuredOutputError) as ctx:
+            self.parser.parse(
+                '{"research_questions": [],}',
+                payload_contract=contract,
+            )
+
+        enriched = ctx.exception.with_attempt_context(attempts=3)
+        self.assertEqual(
+            enriched.contract_validation_error,
+            ctx.exception.contract_validation_error,
+        )
+
+    def test_contract_diagnostic_classification_is_fixed_and_content_free(self):
+        code, reason = classify_contract_validation_error(
+            "Duplicate research question id: 'sensitive-user-id'",
+        )
+        self.assertEqual(code, "duplicate_research_question_id")
+        self.assertNotIn("sensitive-user-id", reason)
+
+        code, reason = classify_contract_validation_error(
+            "unknown validator text with research brief content",
+        )
+        self.assertEqual(code, GENERIC_CONTRACT_DIAGNOSTIC_CODE)
+        self.assertNotIn("research brief content", reason)
 
 
 class StructuredOutputArchitectureTests(unittest.TestCase):
