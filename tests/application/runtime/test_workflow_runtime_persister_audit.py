@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 from application.persistence.exceptions import CheckpointPersistenceError
 from application.report.exceptions import ReportError
 from application.runtime.workflow_execution_audit import WorkflowExecutionAudit
 from application.runtime.workflow_runtime_persister import WorkflowRuntimePersister
+from application.exceptions.structured_output_error import StructuredOutputError
 from application.quantitative.execution_diagnostics import SEMANTIC_LEDGER_KEY
 from domain.project import Project
 from domain.value_objects.task_status import TaskStatus
@@ -321,6 +323,54 @@ class WorkflowExecutionAuditResumeTests(unittest.TestCase):
             resumed,
             ["run-resume:workflow_resumed:4", "run-resume:workflow_resumed:5"],
         )
+
+
+class StructuredOutputContractAuditDiagnosticsTests(unittest.TestCase):
+    def test_contract_failure_persists_safe_typed_diagnostic(self) -> None:
+        store = InMemoryExecutionLogStore()
+        audit = WorkflowExecutionAudit(store)
+        context = SimpleNamespace(
+            workflow_run=SimpleNamespace(id="run-contract"),
+            current_task=SimpleNamespace(id="task-design", status=TaskStatus.FAILED),
+        )
+        error = StructuredOutputError(
+            "contract failure",
+            stage="contract",
+            contract_validation_error="Duplicate research question id: secret-id",
+            contract_validation_code="duplicate_research_question_id",
+            contract_validation_reason="duplicate research question id",
+        )
+
+        audit.record_task_outcome(context, error=error)
+        entry = store.list_for_run("run-contract")[0]
+
+        self.assertEqual(entry.payload["reason"], "StructuredOutputError")
+        self.assertEqual(
+            entry.payload["diagnostic"],
+            {
+                "diagnostic_code": "duplicate_research_question_id",
+                "safe_reason": "duplicate research question id",
+            },
+        )
+        self.assertNotIn("secret-id", repr(entry.payload))
+
+    def test_unknown_contract_failure_uses_generic_diagnostic(self) -> None:
+        store = InMemoryExecutionLogStore()
+        audit = WorkflowExecutionAudit(store)
+        context = SimpleNamespace(
+            workflow_run=SimpleNamespace(id="run-generic"),
+            current_task=SimpleNamespace(id="task-design", status=TaskStatus.FAILED),
+        )
+        error = StructuredOutputError(
+            "contract failure",
+            stage="contract",
+            contract_validation_error="brief secret content",
+        )
+
+        audit.record_task_outcome(context, error=error)
+        diagnostic = store.list_for_run("run-generic")[0].payload["diagnostic"]
+        self.assertEqual(diagnostic["diagnostic_code"], "planner_payload_contract_invalid")
+        self.assertEqual(diagnostic["safe_reason"], "planner payload failed the contract")
 
 
 if __name__ == "__main__":

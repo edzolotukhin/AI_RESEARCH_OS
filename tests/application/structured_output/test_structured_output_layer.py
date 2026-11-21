@@ -13,6 +13,10 @@ from application.structured_output.json_extractor import JsonExtractor
 from application.structured_output.json_repair import JsonRepair
 from application.structured_output.json_validator import JsonValidator
 from application.structured_output.parser import StructuredOutputParser
+from application.structured_output.contract_diagnostics import (
+    GENERIC_CONTRACT_DIAGNOSTIC_CODE,
+    classify_contract_validation_error,
+)
 from application.structured_output.response_cleaner import ResponseCleaner
 
 from tests.fixtures.planner_responses import (
@@ -243,6 +247,19 @@ class StructuredOutputPlannerPipelineTests(unittest.TestCase):
             enriched.contract_validation_error,
             ctx.exception.contract_validation_error,
         )
+
+    def test_contract_diagnostic_classification_is_fixed_and_content_free(self):
+        code, reason = classify_contract_validation_error(
+            "Duplicate research question id: 'sensitive-user-id'",
+        )
+        self.assertEqual(code, "duplicate_research_question_id")
+        self.assertNotIn("sensitive-user-id", reason)
+
+        code, reason = classify_contract_validation_error(
+            "unknown validator text with research brief content",
+        )
+        self.assertEqual(code, GENERIC_CONTRACT_DIAGNOSTIC_CODE)
+        self.assertNotIn("research brief content", reason)
 
 
 class StructuredOutputArchitectureTests(unittest.TestCase):

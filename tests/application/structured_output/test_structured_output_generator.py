@@ -89,6 +89,7 @@ class StructuredOutputGeneratorTests(unittest.TestCase):
 
         self.assertEqual(len(payload["stages"]), 1)
         self.assertEqual(self.llm_client.generate.call_count, 2)
+        self.assertIn("details=", self.llm_client.generate.call_args_list[1].args[0].user)
 
     def test_final_contract_failure_keeps_reason_and_excludes_raw_response(self):
         raw = '{"name": "invalid", "secret": "DO_NOT_PERSIST"}'

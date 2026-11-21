@@ -29,6 +29,8 @@ class StructuredOutputError(Exception):
         reasoning_budget_exhausted: bool = False,
         attempts: int = 1,
         contract_validation_error: str = "",
+        contract_validation_code: str = "",
+        contract_validation_reason: str = "",
     ) -> None:
         details = [
             f"stage={stage}",
@@ -116,6 +118,8 @@ class StructuredOutputError(Exception):
         self.contract_validation_error = " ".join(
             str(contract_validation_error).split()
         )[:256]
+        self.contract_validation_code = contract_validation_code
+        self.contract_validation_reason = contract_validation_reason
 
     def with_attempt_context(
         self,
@@ -187,4 +191,6 @@ class StructuredOutputError(Exception):
             ),
             attempts=attempts,
             contract_validation_error=self.contract_validation_error,
+            contract_validation_code=self.contract_validation_code,
+            contract_validation_reason=self.contract_validation_reason,
         )
