@@ -100,6 +100,32 @@ class PilotDeployGuardTests(unittest.TestCase):
         with self.assertRaisesRegex(DeploymentGuardError, "worker"):
             deployment.build()
 
+    def test_verify_only_normalizes_compose_image_ids(self):
+        from tools.pilot_deploy import PilotDeployment
+
+        class FakeRunner:
+            dry_run = False
+
+            def run(self, command, *, mutate=False):
+                assert not mutate
+                service = command[-1]
+                if service == "api":
+                    return "a" * 64
+                if service == "worker":
+                    return "sha256:" + "b" * 64
+                raise AssertionError(command)
+
+        deployment = PilotDeployment(
+            root=Path.cwd(), release_sha="a" * 40, runner=FakeRunner(),
+        )
+        deployment.preflight = lambda: None
+        deployment.verify = lambda: None
+
+        deployment.execute(verify_only=True)
+
+        self.assertEqual("sha256:" + "a" * 64, deployment.built_images["api"])
+        self.assertEqual("sha256:" + "b" * 64, deployment.built_images["worker"])
+
     def test_deployment_json_uses_fail_closed_central_decoder(self):
         self.assertEqual({"name": "app"}, decode_json_document(
             '{"name": "app"}', context="compose",
