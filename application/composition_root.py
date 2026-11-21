@@ -250,6 +250,9 @@ def create_application_container(
         report_repository=report_repository,
         review_repository=review_repository,
         artifact_repository=persistence.artifact_repository,
+        project_service=project_service,
+        deliverables_service=project_deliverables_service,
+        report_claim_repository=report_claim_repository,
     )
     research_status_query_service = ResearchStatusQueryService(
         workflow_run_repository=workflow_run_repository,

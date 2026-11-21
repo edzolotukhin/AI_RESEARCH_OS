@@ -34,6 +34,10 @@ def generate_validated_claims(
     evidence_by_id: dict[str, Evidence], citation_id_by_source: dict[str, str],
     candidate_provider: ClaimCandidateProvider | None = None,
     correction_provider: ClaimCandidateProvider | None = None,
+    require_validated_findings: bool = False,
+    authority_findings: tuple[Finding, ...] | None = None,
+    brief=None,
+    source_repository=None,
 ) -> tuple[ReportClaim, ...]:
     prepared: list[tuple[Finding, ClaimAuthority, dict[str, Any], FactCatalog]] = []
     for finding in findings:
@@ -44,6 +48,10 @@ def generate_validated_claims(
             design=design,
             findings=(finding,),
             evidence_by_id=evidence_by_id,
+            require_validated_findings=require_validated_findings,
+            authority_findings=authority_findings,
+            brief=brief,
+            source_repository=source_repository,
         )
         envelope = _candidate_payload(
             authority=authority, finding=finding, insights=insights,

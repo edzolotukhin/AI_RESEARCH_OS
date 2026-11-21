@@ -253,6 +253,7 @@ class ResearchRunResult:
     artifact_status: ArtifactStatusProjection
     provenance_summary: ProvenanceSummary
     correlation_id: str | None = None
+    evidence_rejection_diagnostics: tuple[dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -277,6 +278,9 @@ class ResearchRunResult:
             ),
             "artifact_status": self.artifact_status.to_dict(),
             "provenance_summary": self.provenance_summary.to_dict(),
+            "evidence_rejection_diagnostics": [
+                dict(item) for item in self.evidence_rejection_diagnostics
+            ],
         }
 
 

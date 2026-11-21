@@ -19,7 +19,11 @@ from application.evidence.deduplication import compute_deduplication_key
 from application.evidence.content_identity_queue import distinct_content_queue
 from application import research_funnel_telemetry as funnel
 from application.sources.content_identity import acquired_content_identity
-from application.sources.source_need_exhaustion import extraction_work_items, work_item_is_valid_zero_yield
+from application.sources.source_need_exhaustion import (
+    completed_low_value_operation_ids,
+    extraction_work_items,
+    work_item_is_valid_zero_yield,
+)
 from application.evidence.exceptions import (
     DuplicateEvidenceError,
     EvidenceExtractionError,
@@ -53,10 +57,12 @@ from application.evidence.evidence_extraction_diagnostics import (
     classify_grounding_failure,
     classify_extraction_exception,
     classify_provenance_rejection,
+    candidate_operation_id,
     deactivate_diagnostics,
     reset_active_work_item,
     set_active_work_item,
 )
+
 from application.evidence.run_scoped_provenance import resolve_run_scoped_context
 from application.execution.budget_utils import (
     EVIDENCE_INITIAL_PARTITION_REASON,
@@ -88,6 +94,45 @@ from application.sources.provenance_merge import is_successful_acquisition
 from runtime.workflow_context import WorkflowContext
 
 _MAX_DEDUP_RETRIES = 5
+
+
+def _record_candidate_rejection(
+    diagnostics: EvidenceExtractionDiagnostics | None,
+    *,
+    source: Source,
+    workflow_run_id: str,
+    candidate: EvidenceCandidate,
+    candidate_index: int,
+    validation_phase: str,
+    rejection_code: str,
+    chunk_metadata: dict | None,
+) -> None:
+    if diagnostics is None:
+        return
+    refs = tuple(sorted({str(value) for value in candidate.information_need_refs if isinstance(value, str)}))
+    need_ids = refs or ("")
+    content_identity = extraction_retry_identity(source)
+    start = chunk_metadata.get("chunk_normalized_start") if chunk_metadata else None
+    end = chunk_metadata.get("chunk_normalized_end") if chunk_metadata else None
+    for information_need_id in need_ids[:8]:
+        operation_id = candidate_operation_id(
+            workflow_run_id=workflow_run_id,
+            source_id=source.id,
+            information_need_id=information_need_id,
+            content_identity=content_identity,
+            phase=validation_phase,
+            chunk_start=start,
+            chunk_end=end,
+        )
+        diagnostics.record_candidate_rejection(
+            source_id=source.id,
+            information_need_id=information_need_id,
+            operation_id=operation_id,
+            candidate_index=candidate_index,
+            validation_phase=validation_phase,
+            rejection_code=rejection_code,
+            contract_version=candidate.contract_version,
+        )
 
 
 @dataclass(frozen=True)
@@ -173,6 +218,19 @@ class EvidenceExtractionService:
         previous_queue = queue
         queue = distinct_content_queue(queue)
         funnel.queue_dedup(previous_queue, queue)
+        completed_operation_ids = completed_low_value_operation_ids(
+            context.shared_state,
+        )
+        if completed_operation_ids:
+            previous_queue = queue
+            queue = [
+                item for item in queue
+                if self._work_item_operation_id(
+                    item,
+                    workflow_run_id=workflow_run_id,
+                ) not in completed_operation_ids
+            ]
+            funnel.queue_dedup(previous_queue, queue)
         diagnostics.queue_items = len(queue)
         diagnostics.outer_chunks = len(queue)
         diagnostics.extraction_ordering = EXTRACTION_ORDERING_COVERAGE_BEFORE_DEPTH
@@ -274,6 +332,19 @@ class EvidenceExtractionService:
         previous_queue = queue
         queue = distinct_content_queue(queue)
         funnel.queue_dedup(previous_queue, queue)
+        completed_operation_ids = completed_low_value_operation_ids(
+            context.shared_state,
+        )
+        if completed_operation_ids:
+            previous_queue = queue
+            queue = [
+                item for item in queue
+                if self._work_item_operation_id(
+                    item,
+                    workflow_run_id=workflow_run_id,
+                ) not in completed_operation_ids
+            ]
+            funnel.queue_dedup(previous_queue, queue)
         # A URL alias does not buy another extraction of already attempted
         # identical material for the same need. Same-source depth/retry remains
         # governed by the existing scheduler and per-attempt bounds.
@@ -556,6 +627,11 @@ class EvidenceExtractionService:
                 selection_reason=selection_reason,
                 budget_remaining_before=self._evidence_budget_remaining(),
                 source_outcome_before=state.to_dict(),
+                operation_id=self._work_item_operation_id(
+                    work_item,
+                    workflow_run_id=workflow_run_id,
+                ),
+                source_retry_identity=extraction_retry_identity(work_item.source),
             )
             diagnostics.work_items.append(trace)
             work_item_token = set_active_work_item(trace)
@@ -702,6 +778,22 @@ class EvidenceExtractionService:
             for need_id in evidence.information_need_refs:
                 counts[need_id] = counts.get(need_id, 0) + 1
         return counts
+
+    @staticmethod
+    def _work_item_operation_id(
+        work_item: EvidenceExtractionWorkItem,
+        *,
+        workflow_run_id: str,
+    ) -> str:
+        return candidate_operation_id(
+            workflow_run_id=workflow_run_id,
+            source_id=work_item.source.id,
+            information_need_id=work_item.primary_need_id,
+            content_identity=extraction_retry_identity(work_item.source),
+            phase=work_item.phase,
+            chunk_start=work_item.chunk.original_normalized_start,
+            chunk_end=work_item.chunk.original_normalized_end,
+        )
 
     @staticmethod
     def _trace_is_valid_empty(trace: WorkItemTrace) -> bool:
@@ -862,7 +954,7 @@ class EvidenceExtractionService:
                 trace.exception_message = str(exc)
                 trace.failure_phase = getattr(exc, "failure_phase", "unknown")
                 trace.retry_ambiguous = bool(getattr(exc, "retry_ambiguous", False))
-                trace.operation_id = getattr(exc, "operation_id", None)
+                trace.operation_id = getattr(exc, "operation_id", None) or trace.operation_id
                 trace.record_failure_category(classify_extraction_exception(exc))
             if diagnostics is not None:
                 diagnostics.extractor_failures += 1
@@ -893,6 +985,16 @@ class EvidenceExtractionService:
                 failures += 1
                 if diagnostics is not None:
                     diagnostics.rejected_empty_or_invalid_candidate += 1
+                _record_candidate_rejection(
+                    diagnostics,
+                    source=source,
+                    workflow_run_id=workflow_run_id,
+                    candidate=candidate,
+                    candidate_index=candidate_index,
+                    validation_phase="candidate",
+                    rejection_code="empty_or_invalid_candidate",
+                    chunk_metadata=chunk_metadata,
+                )
                 if trace is not None:
                     trace.record_failure_category(
                         EvidenceWorkItemFailureCategory.INVALID_RESPONSE.value,
@@ -932,7 +1034,17 @@ class EvidenceExtractionService:
                 )
             except InvalidProvenanceError as exc:
                 failures += 1
-                reason = classify_provenance_rejection(str(exc))
+                reason = exc.rejection_code or classify_provenance_rejection(str(exc))
+                _record_candidate_rejection(
+                    diagnostics,
+                    source=source,
+                    workflow_run_id=workflow_run_id,
+                    candidate=candidate,
+                    candidate_index=candidate_index,
+                    validation_phase="provenance",
+                    rejection_code=reason,
+                    chunk_metadata=chunk_metadata,
+                )
                 if reason == CandidateRejectionReason.INVALID_NEED_REF.value:
                     if diagnostics is not None:
                         diagnostics.rejected_invalid_or_missing_need_ref += 1
@@ -974,6 +1086,16 @@ class EvidenceExtractionService:
                 )
                 if diagnostics is not None:
                     diagnostics.rejected_grounding += 1
+                _record_candidate_rejection(
+                    diagnostics,
+                    source=source,
+                    workflow_run_id=workflow_run_id,
+                    candidate=candidate,
+                    candidate_index=candidate_index,
+                    validation_phase="grounding",
+                    rejection_code=f"grounding_{grounding_detail}",
+                    chunk_metadata=chunk_metadata,
+                )
                 if trace is not None:
                     trace.record_failure_category(
                         EvidenceWorkItemFailureCategory.GROUNDING_REJECTION.value,

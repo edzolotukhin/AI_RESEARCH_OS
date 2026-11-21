@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
+import hashlib
 from typing import Any
 
 from application.evidence.evidence_extractor_response_shape import ResponseShapeDiagnostics
@@ -60,6 +61,8 @@ SUPPORTED_FAILURE_PHASES = frozenset({
     "before_dispatch", "after_dispatch", "unknown",
 })
 MAX_OPERATION_ID_LENGTH = 128
+MAX_DIAGNOSTIC_ID_LENGTH = 128
+MAX_CANDIDATE_REJECTION_DIAGNOSTICS = 500
 
 
 def _safe_category(value: object) -> str:
@@ -80,6 +83,35 @@ def _safe_operation_id(value: object) -> str | None:
     if not isinstance(value, str) or not value:
         return None
     return value[:MAX_OPERATION_ID_LENGTH]
+
+
+def _safe_identifier(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.strip()[:MAX_DIAGNOSTIC_ID_LENGTH]
+
+
+def candidate_operation_id(
+    *,
+    workflow_run_id: str,
+    source_id: str,
+    information_need_id: str,
+    content_identity: str = "",
+    phase: str = "",
+    chunk_start: int | None = None,
+    chunk_end: int | None = None,
+) -> str:
+    """Stable bounded attempt identity without source or candidate text."""
+    material = "\0".join((
+        _safe_identifier(workflow_run_id),
+        _safe_identifier(source_id),
+        _safe_identifier(information_need_id),
+        _safe_identifier(content_identity),
+        _safe_identifier(phase),
+        "" if chunk_start is None else str(int(chunk_start)),
+        "" if chunk_end is None else str(int(chunk_end)),
+    ))
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 @dataclass
@@ -149,6 +181,32 @@ class CandidateOutcome:
         return payload
 
 
+@dataclass(frozen=True)
+class CandidateRejectionDiagnostic:
+    """Sanitized candidate rejection; never contains candidate text."""
+
+    workflow_run_id: str
+    source_id: str
+    information_need_id: str
+    operation_id: str
+    candidate_index: int
+    validation_phase: str
+    rejection_code: str
+    contract_version: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "workflow_run_id": _safe_identifier(self.workflow_run_id),
+            "source_id": _safe_identifier(self.source_id),
+            "information_need_id": _safe_identifier(self.information_need_id),
+            "operation_id": _safe_operation_id(self.operation_id) or "",
+            "candidate_index": self.candidate_index,
+            "validation_phase": self.validation_phase[:MAX_DIAGNOSTIC_ID_LENGTH],
+            "rejection_code": self.rejection_code[:MAX_DIAGNOSTIC_ID_LENGTH],
+            "contract_version": self.contract_version[:MAX_DIAGNOSTIC_ID_LENGTH],
+        }
+
+
 @dataclass
 class WorkItemTrace:
     queue_index: int
@@ -183,6 +241,7 @@ class WorkItemTrace:
     failure_phase: str | None = None
     retry_ambiguous: bool = False
     operation_id: str | None = None
+    source_retry_identity: str = ""
 
     def record_failure_category(self, category: str) -> None:
         if category not in self.failure_categories:
@@ -238,6 +297,8 @@ class WorkItemTrace:
             safe_operation_id = _safe_operation_id(self.operation_id)
             if safe_operation_id is not None:
                 payload["operation_id"] = safe_operation_id
+        if self.source_retry_identity:
+            payload["source_retry_identity"] = self.source_retry_identity[:256]
         if self.grounding_search_start is not None:
             payload["grounding_search_start"] = self.grounding_search_start
         if self.grounding_search_end is not None:
@@ -293,6 +354,49 @@ class EvidenceExtractionDiagnostics:
     first_opportunity_work_items: int = 0
     depth_work_items: int = 0
     first_opportunity_sources: int = 0
+    candidate_rejection_diagnostics: list[CandidateRejectionDiagnostic] = field(
+        default_factory=list,
+    )
+
+    def record_candidate_rejection(
+        self,
+        *,
+        source_id: str,
+        information_need_id: str,
+        operation_id: str,
+        candidate_index: int,
+        validation_phase: str,
+        rejection_code: str,
+        contract_version: str | None,
+    ) -> None:
+        item = CandidateRejectionDiagnostic(
+            workflow_run_id=self.workflow_run_id,
+            source_id=source_id,
+            information_need_id=information_need_id,
+            operation_id=operation_id,
+            candidate_index=candidate_index,
+            validation_phase=validation_phase,
+            rejection_code=rejection_code,
+            contract_version=contract_version or "legacy",
+        )
+        key = item.to_dict()
+        if any(existing.to_dict() == key for existing in self.candidate_rejection_diagnostics):
+            return
+        if len(self.candidate_rejection_diagnostics) >= MAX_CANDIDATE_REJECTION_DIAGNOSTICS:
+            return
+        self.candidate_rejection_diagnostics.append(item)
+        self.candidate_rejection_diagnostics.sort(
+            key=lambda value: (
+                value.workflow_run_id,
+                value.source_id,
+                value.information_need_id,
+                value.operation_id,
+                value.candidate_index,
+                value.validation_phase,
+                value.rejection_code,
+                value.contract_version,
+            ),
+        )
 
     def record_response_classification(self, classification: str | None) -> None:
         if not classification:
@@ -434,6 +538,10 @@ class EvidenceExtractionDiagnostics:
             "first_opportunity_work_items": self.first_opportunity_work_items,
             "depth_work_items": self.depth_work_items,
             "first_opportunity_sources": self.first_opportunity_sources,
+            "candidate_rejection_diagnostics": [
+                item.to_dict()
+                for item in self.candidate_rejection_diagnostics[:MAX_CANDIDATE_REJECTION_DIAGNOSTICS]
+            ],
             "remediation_attempt_calls_consumed": self.remediation_attempt_calls_consumed,
             "remediation_attempt_capped": self.remediation_attempt_capped,
         }
@@ -596,6 +704,36 @@ def classify_grounding_failure(
 
 def classify_provenance_rejection(message: str) -> str:
     lowered = message.lower()
+    if "no information needs are linked" in lowered:
+        return "no_run_scoped_needs"
+    if "is not in the run design" in lowered:
+        return "reference_outside_design"
+    if "unknown research question" in lowered:
+        return "unknown_research_question"
+    if "requires exactly one valid information need" in lowered:
+        return "multiple_information_needs"
+    if "duplicate or excessive" in lowered:
+        return "invalid_required_aspect_refs"
+    if "requires an executable researchsubject" in lowered:
+        return "missing_research_subject"
+    if "subject_binding must be an object" in lowered:
+        return "invalid_subject_binding"
+    if "stale or unknown researchsubject" in lowered:
+        return "stale_subject_binding"
+    if "cannot name a relation" in lowered:
+        return "invalid_canonical_subject_relation"
+    if "requires a relation id" in lowered:
+        return "missing_supporting_relation"
+    if "supporting relation is outside" in lowered:
+        return "supporting_relation_out_of_scope"
+    if "subject binding type is invalid" in lowered:
+        return "invalid_subject_binding_type"
+    if "semantic justification is missing or excessive" in lowered:
+        return "invalid_semantic_justification"
+    if "geography applicability is duplicate or excessive" in lowered:
+        return "invalid_geography_applicability"
+    if "geography applicability contradicts" in lowered:
+        return "geography_applicability_conflict"
     if "contract version" in lowered:
         return CandidateRejectionReason.CONTRACT_VERSION.value
     if "required aspect" in lowered or "aspect scope" in lowered:

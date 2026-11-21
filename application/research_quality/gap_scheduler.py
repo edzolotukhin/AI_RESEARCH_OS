@@ -30,6 +30,7 @@ class GapSchedulerDecision:
     stalled_need_ids: tuple[str, ...]
     prior_improved_need_ids: tuple[str, ...]
     evidence_priority_by_need: dict[str, int]
+    design_priority_by_need: dict[str, tuple[int, int, int, str]]
 
     def to_dict(self) -> dict[str, Any]:
         selected_id = (
@@ -50,6 +51,10 @@ class GapSchedulerDecision:
             "stalled_need_ids": list(self.stalled_need_ids),
             "prior_improved_need_ids": list(self.prior_improved_need_ids),
             "evidence_priority_by_need": dict(self.evidence_priority_by_need),
+            "design_priority_by_need": {
+                need_id: list(value)
+                for need_id, value in self.design_priority_by_need.items()
+            },
         }
 
 
@@ -62,11 +67,13 @@ def decide_next_actionable_gap(
     remaining_remediation_evidence_calls: int | None = None,
     prior_improved_need_ids: set[str] | None = None,
     evidence_priority_by_need: dict[str, int] | None = None,
+    design_priority_by_need: dict[str, tuple[int, int, int, str]] | None = None,
 ) -> GapSchedulerDecision:
     """Choose first-opportunity gaps by Evidence state, then deterministic ID."""
     improved = tuple(sorted(prior_improved_need_ids or ()))
     stalled = tuple(sorted(stalled_need_ids))
     priorities = evidence_priority_by_need or {}
+    design_priorities = design_priority_by_need or {}
 
     eligible: list[TargetedResearchRequest] = []
     for request in gaps:
@@ -78,6 +85,10 @@ def decide_next_actionable_gap(
         eligible.append(request)
 
     eligible.sort(key=lambda request: (
+        design_priorities.get(
+            request.information_need_id,
+            (0, 1, 1, request.information_need_id),
+        )[:3],
         priorities.get(request.information_need_id, 2),
         *_tie_break_key(request),
     ))
@@ -129,6 +140,13 @@ def decide_next_actionable_gap(
         prior_improved_need_ids=improved,
         evidence_priority_by_need={
             request.information_need_id: priorities.get(request.information_need_id, 2)
+            for request in eligible
+        },
+        design_priority_by_need={
+            request.information_need_id: design_priorities.get(
+                request.information_need_id,
+                (0, 1, 1, request.information_need_id),
+            )
             for request in eligible
         },
     )

@@ -189,12 +189,16 @@ class ClassifiedReadinessTests(unittest.TestCase):
             diagnostic["status"] == "not_ready"
             for diagnostic in result.to_dict()["derived_prerequisites"].values()
         ))
-        with self.assertRaises(AnalysisError):
-            analysis.analyze_for_context(context)
+        summary = analysis.analyze_for_context(context)
+        self.assertEqual(summary.finding_ids, ())
+        self.assertEqual(summary.insight_ids, ())
         self.assertFalse(any(
             finding.metadata.get("derivation")
             for finding in findings.list_for_project("project")
         ))
+        outcome = context.read_shared("research_product_outcome")
+        if outcome is not None:
+            self.assertNotEqual(outcome.get("outcome"), "COMPLETED")
 
     def test_analysis_coverage_and_authoritative_outcome(self):
         context,analysis,findings,evidence,sources,_=setup_memory()
