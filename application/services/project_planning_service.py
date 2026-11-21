@@ -204,12 +204,14 @@ class ProjectPlanningService:
         existing_template = self._reuse_existing_design_template(
             project, template,
         )
+        reused_template = existing_template is not None
         if existing_template is not None:
             template = existing_template
         if self.durable_workflow is None:
             return self._generate_new_design(project, methods=methods, fingerprint=fingerprint)
         return self.durable_workflow.submit_research(
-            project, template, initial_task_results={
+            project, template, publish_template=not reused_template,
+            initial_task_results={
                 "design_generation": {
                     "version": 1, "project_id": project.id,
                     "input_fingerprint": fingerprint, "status": "queued",

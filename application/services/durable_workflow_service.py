@@ -115,12 +115,14 @@ class DurableWorkflowService:
         *,
         run_id: str | None = None,
         initial_task_results: dict | None = None,
+        publish_template: bool = True,
     ) -> WorkflowContext:
         """Persist a runnable workflow run without executing it."""
-        self._workflow_service.publish_template_snapshot(
-            workflow_template,
-            project_id=project.id,
-        )
+        if publish_template:
+            self._workflow_service.publish_template_snapshot(
+                workflow_template,
+                project_id=project.id,
+            )
         workflow_run = self._workflow_service.create_workflow_run(
             workflow_template,
             project_id=project.id,
