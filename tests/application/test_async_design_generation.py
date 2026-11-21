@@ -36,8 +36,10 @@ class _Durable:
     def __init__(self):
         self.calls = []
 
-    def submit_research(self, project, template, *, initial_task_results):
-        self.calls.append((project, template, initial_task_results))
+    def submit_research(
+        self, project, template, *, initial_task_results, publish_template=True,
+    ):
+        self.calls.append((project, template, initial_task_results, publish_template))
         return SimpleNamespace(workflow_run=SimpleNamespace(id="queued-design"))
 
 
@@ -94,6 +96,7 @@ class AsyncDesignGenerationTests(unittest.TestCase):
         self.assertEqual(result.id, "queued-design")
         self.assertEqual(len(durable.calls), 1)
         self.assertEqual(durable.calls[0][1].task_definitions[0].executor_id, "design_generation")
+        self.assertTrue(durable.calls[0][3])
 
     def test_active_generation_is_reused(self):
         project = self._project()
@@ -357,6 +360,7 @@ class AsyncDesignGenerationTests(unittest.TestCase):
 
         self.assertEqual(result.id, "queued-design")
         self.assertIs(retry_durable.calls[0][1], existing_template)
+        self.assertFalse(retry_durable.calls[0][3])
         self.assertEqual(
             retry_durable.calls[0][2]["design_generation"]["input_fingerprint"],
             fingerprint,
