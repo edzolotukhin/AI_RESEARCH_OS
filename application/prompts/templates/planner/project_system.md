@@ -48,6 +48,11 @@ describe the semantic concepts of its referenced aspects.
 - Preserve exact brief objective text only in `objective_refs`.
 - Do not browse, conduct research, fabricate findings, or invent specific data.
 
+For DERIVED InformationNeeds, `max_inputs` limits the number of input
+Evidence/Findings, not the number of time periods. `required_periods` is the
+ordered set of mandatory annual observation years. One Evidence may cover
+multiple required periods, so the number of periods may exceed `max_inputs`.
+
 # OUTPUT CONTRACT
 
 Return only valid JSON matching this schema:
