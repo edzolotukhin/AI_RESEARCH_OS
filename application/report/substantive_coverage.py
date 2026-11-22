@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from domain.findings.finding import Finding
 from domain.findings.insight import Insight
+from domain.common.exceptions import ValidationError
 from domain.planning.research_design import ResearchDesign, ResearchQuestion
 from domain.reports.report_section import ReportSection
 
@@ -58,12 +59,15 @@ def objective_tokens(
     *,
     design: ResearchDesign | None = None,
     brief: ResearchBrief | None = None,
+    legacy_context: bool = False,
 ) -> set[str]:
     parts = [question.question, question.rationale or ""]
     if design is not None:
         parts.extend(resolve_objective_reference_texts(brief, design, question.objective_refs))
-    else:
+    elif legacy_context:
         parts.extend(question.objective_refs or ())
+    else:
+        raise ValidationError("objective_tokens requires Design for contract resolution")
     return _tokens(" ".join(parts))
 
 
@@ -110,7 +114,12 @@ def section_substantively_covers_question(
     title_lower = section.title.lower()
     if question.id.lower() in title_lower:
         return True
-    objectives = objective_tokens(question, design=design, brief=brief)
+    objectives = objective_tokens(
+        question,
+        design=design,
+        brief=brief,
+        legacy_context=design is None,
+    )
     if not objectives:
         return False
     content_tokens = _tokens(f"{section.title} {section.content}")

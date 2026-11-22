@@ -69,6 +69,13 @@ class ObjectiveReferenceResolutionTests(TestCase):
         legacy = replace(design, objective_reference_contract="legacy_text_v1")
         self.assertTrue(objective_tokens(legacy.research_questions[0], design=legacy))
 
+    def test_corrupt_registry_text_fingerprint_is_rejected_on_reload(self):
+        brief, _ = self._brief_and_design()
+        payload = brief.to_dict()
+        payload["objective_registry"][0]["text_fingerprint"] = "0" * 64
+        with self.assertRaises(ValueError):
+            ResearchBrief.from_dict(payload)
+
     def test_legacy_text_refs_remain_unchanged(self):
         brief, design = self._brief_and_design()
         legacy = replace(design, objective_reference_contract="legacy_text_v1")

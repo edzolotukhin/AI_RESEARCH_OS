@@ -43,11 +43,16 @@ class BriefObjective:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "BriefObjective":
+        text = str(payload["text"])
+        expected_fingerprint = hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
+        stored_fingerprint = str(payload["text_fingerprint"])
+        if stored_fingerprint != expected_fingerprint:
+            raise ValueError("Brief objective text_fingerprint does not match text")
         return cls(
             objective_id=str(payload["objective_id"]),
             ordinal=int(payload["ordinal"]),
-            text=str(payload["text"]),
-            text_fingerprint=str(payload["text_fingerprint"]),
+            text=text,
+            text_fingerprint=stored_fingerprint,
         )
 
 

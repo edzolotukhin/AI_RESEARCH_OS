@@ -12,6 +12,7 @@ class ObjectiveCoverageFailure:
     uncovered_objectives: tuple[str, ...]
     invalid_objective_refs: tuple[tuple[str, str], ...]
     brief_fingerprint_mismatch: bool = False
+    registry_identity_mismatch: bool = False
 
     @property
     def uncovered_objective_count(self) -> int:
@@ -23,6 +24,7 @@ class ObjectiveCoverageFailure:
             self.uncovered_objectives
             or self.invalid_objective_refs
             or self.brief_fingerprint_mismatch
+            or self.registry_identity_mismatch
         )
 
 
@@ -58,6 +60,8 @@ class ObjectiveCoverageValidationError(ValidationError):
             )
         if failure.brief_fingerprint_mismatch:
             parts.append("ResearchDesign brief_fingerprint does not match the current Brief")
+        if failure.registry_identity_mismatch:
+            parts.append("ResearchDesign objective_registry_identity does not match the current Brief")
         message = " ".join(parts) if parts else "Objective coverage validation failed."
         return cls(
             message,
@@ -156,16 +160,30 @@ def evaluate_objective_coverage(
 
     uncovered = find_uncovered_objectives(brief, design)
     invalid_refs = find_invalid_objective_refs(brief, design)
+    registry_identity_mismatch = (
+        design.objective_reference_contract == "objective_ids_v1"
+        and (
+            brief.objective_registry is None
+            or not design.objective_registry_identity
+            or design.objective_registry_identity != brief.objective_registry_identity
+        )
+    )
     fingerprint_mismatch = (
         design.objective_reference_contract == "objective_ids_v1"
         and expected_brief_fingerprint is not None
         and design.brief_fingerprint != expected_brief_fingerprint
     )
-    if not uncovered and not invalid_refs and not fingerprint_mismatch:
+    if (
+        not uncovered
+        and not invalid_refs
+        and not fingerprint_mismatch
+        and not registry_identity_mismatch
+    ):
         return None
 
     return ObjectiveCoverageFailure(
         uncovered_objectives=uncovered,
         invalid_objective_refs=invalid_refs,
         brief_fingerprint_mismatch=fingerprint_mismatch,
+        registry_identity_mismatch=registry_identity_mismatch,
     )

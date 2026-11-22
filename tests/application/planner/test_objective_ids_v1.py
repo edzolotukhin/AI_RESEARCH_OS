@@ -101,6 +101,13 @@ class ObjectiveIdsV1Tests(TestCase):
         self.assertIsNotNone(failure)
         self.assertTrue(failure.brief_fingerprint_mismatch)
 
+    def test_missing_v2_registry_identity_fails_closed(self):
+        project = self._project()
+        design = replace(self._design(project), objective_registry_identity="")
+        failure = evaluate_objective_coverage(project.research_brief, design)
+        self.assertIsNotNone(failure)
+        self.assertTrue(failure.registry_identity_mismatch)
+
     def test_incomplete_id_coverage_fails_closed(self):
         project = self._project()
         design = self._design(project)
