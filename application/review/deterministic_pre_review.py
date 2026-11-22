@@ -7,6 +7,7 @@ from domain.findings.finding import Finding
 from domain.planning.research_design import ResearchDesign
 from domain.reports.report import Report
 from domain.reports.report_claim import ReportClaim
+from domain.research_brief import ResearchBrief
 from domain.reviews.review_issue import ReviewIssue, ReviewIssueSeverity, ReviewIssueType
 
 from application.report.report_assembly import (
@@ -36,6 +37,7 @@ def run_deterministic_pre_review(
     insights: list,
     coverage_contract: ReportCoverageContract | None = None,
     report_claims: tuple[ReportClaim, ...] = (),
+    brief: ResearchBrief | None = None,
 ) -> tuple[ReviewIssue, ...]:
     """Tier-1 deterministic checks before bounded semantic LLM review."""
     issues: list[ReviewIssue] = []
@@ -58,6 +60,7 @@ def run_deterministic_pre_review(
         findings=findings,
         insights=insights,
         design=design,
+        brief=brief,
         evidence_counts_by_rq=evidence_counts,
         section_batch_map=section_batch_map,
         required_research_question_ids=coverage_contract.required_rq_ids,

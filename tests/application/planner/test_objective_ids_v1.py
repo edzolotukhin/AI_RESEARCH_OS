@@ -90,6 +90,17 @@ class ObjectiveIdsV1Tests(TestCase):
         with self.assertRaises(ObjectiveCoverageValidationError):
             self._design_from_payload(project, duplicate)
 
+    def test_stale_v2_fingerprint_fails_even_with_same_registry(self):
+        project = self._project()
+        design = self._design(project)
+        failure = evaluate_objective_coverage(
+            project.research_brief,
+            replace(design, brief_fingerprint="v2:stale"),
+            expected_brief_fingerprint="v2:current",
+        )
+        self.assertIsNotNone(failure)
+        self.assertTrue(failure.brief_fingerprint_mismatch)
+
     def test_incomplete_id_coverage_fails_closed(self):
         project = self._project()
         design = self._design(project)

@@ -52,8 +52,14 @@ class PlannerDesignServiceImpl(PlannerDesignService):
                 ),
                 objective_registry_identity=brief.objective_registry_identity,
             )
+        expected_fingerprint = None
+        if brief is not None:
+            expected_fingerprint = ProjectPlanningService.input_fingerprint(
+                brief, tuple(project.selected_methods or ())
+            )
         validate_research_design(
             design,
             brief=project.research_brief,
+            expected_brief_fingerprint=expected_fingerprint,
         )
         return design

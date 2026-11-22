@@ -665,6 +665,7 @@ class ReportService:
             findings=findings,
             insights=insights,
             design=design,
+            brief=brief,
             section_batch_map=section_batch_map,
             required_research_question_ids=(allowed_rq_ids if limited else None),
         )
@@ -730,6 +731,7 @@ class ReportService:
                         findings=findings,
                         insights=insights,
                         design=design,
+                        brief=brief,
                         section_batch_map=section_batch_map,
                         required_research_question_ids=allowed_rq_ids,
                     ),

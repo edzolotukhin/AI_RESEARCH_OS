@@ -402,7 +402,13 @@ class ProjectPlanningService:
                     raise ProjectPlanningError(str(exc)) from exc
             return project
         try:
-            validate_research_design(design, brief=project.research_brief)
+            validate_research_design(
+                design,
+                brief=project.research_brief,
+                expected_brief_fingerprint=self.input_fingerprint(
+                    project.research_brief, methods
+                ),
+            )
             validate_numeric_intent_for_approval(
                 design,
                 methods,
@@ -677,7 +683,11 @@ class ProjectPlanningService:
         if method == DESK:
             try:
                 validate_research_design(
-                    project.current_research_design, brief=project.research_brief,
+                    project.current_research_design,
+                    brief=project.research_brief,
+                    expected_brief_fingerprint=self.input_fingerprint(
+                        project.research_brief, self.explicit_or_inferred_methods(project)
+                    ),
                 )
                 validate_subject_for_approval(project.current_research_design)
                 if not project.current_research_design.research_subject.executable:

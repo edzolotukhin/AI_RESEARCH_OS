@@ -378,6 +378,7 @@ class ReviewService:
                 insights=insights,
                 coverage_contract=coverage_contract,
                 report_claims=report_claims,
+                brief=brief,
             )
 
             structural_issues = run_structural_review(

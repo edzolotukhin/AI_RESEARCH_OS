@@ -11,6 +11,7 @@ from domain.research_brief import ResearchBrief, normalize_objective_text
 class ObjectiveCoverageFailure:
     uncovered_objectives: tuple[str, ...]
     invalid_objective_refs: tuple[tuple[str, str], ...]
+    brief_fingerprint_mismatch: bool = False
 
     @property
     def uncovered_objective_count(self) -> int:
@@ -18,7 +19,11 @@ class ObjectiveCoverageFailure:
 
     @property
     def is_correctable(self) -> bool:
-        return bool(self.uncovered_objectives or self.invalid_objective_refs)
+        return bool(
+            self.uncovered_objectives
+            or self.invalid_objective_refs
+            or self.brief_fingerprint_mismatch
+        )
 
 
 class ObjectiveCoverageValidationError(ValidationError):
@@ -51,6 +56,8 @@ class ObjectiveCoverageValidationError(ValidationError):
                     for question_id, ref in failure.invalid_objective_refs
                 ),
             )
+        if failure.brief_fingerprint_mismatch:
+            parts.append("ResearchDesign brief_fingerprint does not match the current Brief")
         message = " ".join(parts) if parts else "Objective coverage validation failed."
         return cls(
             message,
@@ -141,16 +148,24 @@ def find_uncovered_objectives(
 def evaluate_objective_coverage(
     brief: ResearchBrief | None,
     design: ResearchDesign,
+    *,
+    expected_brief_fingerprint: str | None = None,
 ) -> ObjectiveCoverageFailure | None:
     if brief is None or not brief.objectives:
         return None
 
     uncovered = find_uncovered_objectives(brief, design)
     invalid_refs = find_invalid_objective_refs(brief, design)
-    if not uncovered and not invalid_refs:
+    fingerprint_mismatch = (
+        design.objective_reference_contract == "objective_ids_v1"
+        and expected_brief_fingerprint is not None
+        and design.brief_fingerprint != expected_brief_fingerprint
+    )
+    if not uncovered and not invalid_refs and not fingerprint_mismatch:
         return None
 
     return ObjectiveCoverageFailure(
         uncovered_objectives=uncovered,
         invalid_objective_refs=invalid_refs,
+        brief_fingerprint_mismatch=fingerprint_mismatch,
     )

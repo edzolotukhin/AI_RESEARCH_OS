@@ -22,6 +22,7 @@ def validate_research_design(
     design: ResearchDesign,
     *,
     brief: ResearchBrief | None = None,
+    expected_brief_fingerprint: str | None = None,
 ) -> None:
     """Semantic validation for desk research design."""
     if not design.research_questions:
@@ -91,7 +92,11 @@ def validate_research_design(
         raise ValidationError("ResearchDesign.deliverable_plan must not be empty.")
 
     if brief is not None:
-        failure = evaluate_objective_coverage(brief, design)
+        failure = evaluate_objective_coverage(
+            brief,
+            design,
+            expected_brief_fingerprint=expected_brief_fingerprint,
+        )
         if failure is not None:
             raise ObjectiveCoverageValidationError.from_failure(failure)
 

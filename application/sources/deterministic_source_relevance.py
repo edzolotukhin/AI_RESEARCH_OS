@@ -35,6 +35,9 @@ from domain.sources.source_candidate import SourceCandidate
 
 from application.sources.expectation_aware_query_intent import render_aspect_query_terms
 from application.sources.category_subject import resolve_category_subject
+from application.planner.objective_reference_resolution import (
+    resolve_objective_reference_texts,
+)
 from application.sources.url_canonicalizer import normalize_query_text
 from application.evidence.subject_relevance import (
     SUBJECT_IRRELEVANT, SUBJECT_RELEVANT, SUBJECT_UNRESOLVED,
@@ -462,8 +465,11 @@ def build_relevance_context(
     question = _question_for_need(design, need)
     rq_text_parts = []
     if question is not None:
+        objective_texts = resolve_objective_reference_texts(
+            brief, design, question.objective_refs,
+        )
         rq_text_parts.extend(
-            [question.question, question.rationale, " ".join(question.objective_refs)]
+            [question.question, question.rationale, " ".join(objective_texts)]
         )
     rq_tokens = tokenize(" ".join(rq_text_parts))
 
