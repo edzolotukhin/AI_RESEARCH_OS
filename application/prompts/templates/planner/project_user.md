@@ -9,6 +9,9 @@ Business Question:
 Objectives:
 {objectives}
 
+Objective Registry:
+{objective_registry}
+
 Geography:
 {geography}
 
@@ -48,7 +51,9 @@ and decompose the objectives into substantive, answerable research questions,
 concrete information needs, an evidence strategy, an analysis plan, and
 question-aligned deliverables.
 
-Cover every objective with exact objective text in `objective_refs`. Do not
+For `objective_ids_v1`, put only registry IDs in `objective_refs`; for
+`legacy_text_v1`, preserve exact historical objective text. Cover every
+objective. Do not
 assign executors, create workflow tasks, conduct research, or define detailed
 downstream method execution.
 

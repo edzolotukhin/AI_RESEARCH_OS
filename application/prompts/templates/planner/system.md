@@ -46,7 +46,10 @@ Always start from the brief objectives.
 
 Every research question must connect to the client's objectives where applicable.
 
-Use `objective_refs` to cite exact brief objective text.
+For a Brief with an objective registry, set `objective_reference_contract` to
+`objective_ids_v1` and use only the registry's stable objective IDs in
+`objective_refs`. For legacy Briefs, set `legacy_text_v1` and cite exact brief
+objective text.
 
 ---
 
@@ -92,7 +95,9 @@ Requirements:
 
 - At least one research question.
 - Every research question must have a unique id and non-empty question text.
-- `objective_refs` must cite brief objectives verbatim where applicable.
+- `objective_refs` must use only the declared objective reference contract:
+  registry IDs for `objective_ids_v1`, or exact brief objective text for
+  `legacy_text_v1`.
 - Cover every brief objective with at least one research question.
 - Consolidate overlapping objectives into shared research questions (multiple `objective_refs` per question when appropriate).
 - Obey these maximum counts (hard limits):

@@ -67,6 +67,36 @@ def find_invalid_objective_refs(
     if not brief.objectives:
         return ()
 
+    if design.objective_reference_contract == "objective_ids_v1":
+        if brief.objective_registry is None:
+            return tuple(
+                (question.id, ref)
+                for question in design.research_questions
+                for ref in question.objective_refs
+            )
+        if design.brief_fingerprint and design.brief_fingerprint != "":
+            expected_identity = brief.objective_registry_identity
+            if design.objective_registry_identity != expected_identity:
+                return tuple(
+                    (question.id, ref)
+                    for question in design.research_questions
+                    for ref in question.objective_refs
+                )
+        valid_ids = {item.objective_id for item in brief.objective_registry}
+        seen: set[str] = set()
+        duplicates: list[tuple[str, str]] = []
+        for question in design.research_questions:
+            for ref in question.objective_refs:
+                if ref in seen:
+                    duplicates.append((question.id, ref))
+                seen.add(ref)
+        return tuple(
+            (question.id, ref)
+            for question in design.research_questions
+            for ref in question.objective_refs
+            if ref not in valid_ids
+        ) + tuple(duplicates)
+
     valid = set(brief.normalized_objectives())
     invalid: list[tuple[str, str]] = []
     for question in design.research_questions:
@@ -83,6 +113,18 @@ def find_uncovered_objectives(
     """Return brief objectives not referenced by any research question."""
     if not brief.objectives:
         return ()
+
+    if design.objective_reference_contract == "objective_ids_v1":
+        if brief.objective_registry is None:
+            return brief.objectives
+        covered = {
+            ref for question in design.research_questions
+            for ref in question.objective_refs
+        }
+        return tuple(
+            item.text for item in brief.objective_registry
+            if item.objective_id not in covered
+        )
 
     covered: set[str] = set()
     for question in design.research_questions:

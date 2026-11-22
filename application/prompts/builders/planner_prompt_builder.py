@@ -67,6 +67,7 @@ class PlannerPromptBuilder(PromptBuilder):
             "title": brief.title,
             "business_question": brief.business_question,
             "objectives": _format_list(brief.objectives),
+            "objective_registry": _format_objective_registry(brief),
             "geography": _format_list(brief.geography),
             "market": brief.market or "Not specified",
             "target_entities": _format_list(brief.target_entities),
@@ -122,3 +123,12 @@ def _format_list(items: tuple[str, ...]) -> str:
     if not items:
         return "None specified"
     return "\n".join(f"- {item}" for item in items)
+
+
+def _format_objective_registry(brief) -> str:
+    if brief.objective_registry is None:
+        return "None specified (use legacy_text_v1 objective references)"
+    return "\n".join(
+        f"- {item.objective_id} | ordinal={item.ordinal} | exact_text={item.text}"
+        for item in brief.objective_registry
+    )

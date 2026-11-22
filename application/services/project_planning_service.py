@@ -143,6 +143,8 @@ class ProjectPlanningService:
         return project
 
     def save_brief(self, project: Project, brief: ResearchBrief) -> Project:
+        if brief.objective_registry is None:
+            brief = brief.materialize_objective_registry()
         if self._has_any_activation(project.id) and project.research_brief != brief:
             raise ProjectPlanningError("Бриф не можна змінити після активації методу")
         if project.research_brief == brief:
@@ -659,7 +661,10 @@ class ProjectPlanningService:
             "planning_profile_version": PROJECT_PLANNING_PROFILE_VERSION,
         }
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        if getattr(brief, "objective_registry", None) is not None:
+            return f"v2:{digest}"
+        return digest
 
     def _require_activation(self, project: Project, method: str) -> None:
         if method not in self.explicit_or_inferred_methods(project):

@@ -55,3 +55,4 @@ class ResearchDesignDTO:
     limitations: tuple[str, ...]
     language: str
     research_subject_proposal: dict | None = None
+    objective_reference_contract: str = "legacy_text_v1"

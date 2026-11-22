@@ -45,7 +45,10 @@ describe the semantic concepts of its referenced aspects.
 - Evidence strategy must follow those information needs and selected methods.
 - Analysis steps must explain how planned evidence answers the questions.
 - Deliverables must reflect the questions and analysis, not a fixed list.
-- Preserve exact brief objective text only in `objective_refs`.
+- For a supplied Objective Registry, set `objective_reference_contract` to
+  `objective_ids_v1` and preserve only registry IDs in `objective_refs`.
+  Use `legacy_text_v1` and exact objective text only when no registry is
+  supplied.
 - Do not browse, conduct research, fabricate findings, or invent specific data.
 
 For DERIVED InformationNeeds, `max_inputs` limits the number of input
