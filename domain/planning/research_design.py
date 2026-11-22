@@ -13,6 +13,10 @@ from domain.planning.research_subject import ResearchSubject
 from domain.planning.derivation import InformationNeedKind, DerivationContract, validate_dependency_graph
 
 
+OBJECTIVE_REFERENCE_CONTRACT_IDS_V1 = "objective_ids_v1"
+OBJECTIVE_REFERENCE_CONTRACT_LEGACY_V1 = "legacy_text_v1"
+
+
 @dataclass(frozen=True)
 class ResearchQuestion:
     """Semantic research question within a desk research design."""
@@ -328,8 +332,16 @@ class ResearchDesign:
     research_subject: ResearchSubject | None = None
     previous_design_id: str = ""
     numeric_intent_confirmation: NumericIntentConfirmation | None = None
+    brief_fingerprint: str = ""
+    objective_reference_contract: str = "legacy_text_v1"
+    objective_registry_identity: str = ""
 
     def __post_init__(self):
+        if self.objective_reference_contract not in {
+            OBJECTIVE_REFERENCE_CONTRACT_IDS_V1,
+            OBJECTIVE_REFERENCE_CONTRACT_LEGACY_V1,
+        }:
+            raise ValueError("Unsupported objective reference contract")
         if any(n.kind!=InformationNeedKind.ACQUIRED or n.depends_on_information_need_ids for n in self.information_needs):
             validate_dependency_graph(self)
 
@@ -358,6 +370,12 @@ class ResearchDesign:
             payload["numeric_intent_confirmation"] = (
                 self.numeric_intent_confirmation.to_dict()
             )
+        if self.brief_fingerprint:
+            payload["brief_fingerprint"] = self.brief_fingerprint
+        if self.objective_reference_contract != "legacy_text_v1":
+            payload["objective_reference_contract"] = self.objective_reference_contract
+        if self.objective_registry_identity:
+            payload["objective_registry_identity"] = self.objective_registry_identity
         return payload
 
     @classmethod
@@ -388,6 +406,13 @@ class ResearchDesign:
             ),
             numeric_intent_confirmation=NumericIntentConfirmation.from_dict(
                 payload.get("numeric_intent_confirmation")
+            ),
+            brief_fingerprint=str(payload.get("brief_fingerprint", "")),
+            objective_reference_contract=str(
+                payload.get("objective_reference_contract", "legacy_text_v1")
+            ),
+            objective_registry_identity=str(
+                payload.get("objective_registry_identity", "")
             ),
         )
 

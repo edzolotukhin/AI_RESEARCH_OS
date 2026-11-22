@@ -27,7 +27,7 @@ def build_deterministic_design_response(prompt: Prompt) -> str:
     objectives = _parse_bullet_list(
         prompt.user,
         heading="Objectives:",
-        stop_before=("Geography:", "Market:", "Timeframe:"),
+        stop_before=("Objective Registry:", "Geography:", "Market:", "Timeframe:"),
     )
     geography = _parse_bullet_list(
         prompt.user,
@@ -73,16 +73,27 @@ def build_deterministic_design_response(prompt: Prompt) -> str:
                           "objective_coverage", objective))
     specs = specs[:6]
 
-    questions = [
-        {
+    has_registry = (
+        "Objective Registry:" in prompt.user
+        and "None specified" not in prompt.user.split("Objective Registry:", 1)[1].split("Geography:", 1)[0]
+    )
+    covered_registry_objectives: set[str] = set()
+    questions = []
+    for index, spec in enumerate(specs, start=1):
+        objective = _objective_for_spec(spec, objectives)
+        if has_registry:
+            objective_id = f"obj-{objectives.index(objective) + 1:03d}"
+            refs = [] if objective_id in covered_registry_objectives else [objective_id]
+            covered_registry_objectives.add(objective_id)
+        else:
+            refs = [objective]
+        questions.append({
             "id": f"rq-{index}",
             "question": spec[0],
-            "objective_refs": [_objective_for_spec(spec, objectives)],
+            "objective_refs": refs,
             "priority": min(index, 5),
             "rationale": spec[1],
-        }
-        for index, spec in enumerate(specs, start=1)
-    ]
+        })
 
     needs = []
     for question, spec in zip(questions, specs):
@@ -126,6 +137,10 @@ def build_deterministic_design_response(prompt: Prompt) -> str:
             "exclusions": [],
         },
     }
+    if "Objective Registry:" in prompt.user and "None specified" not in prompt.user.split("Objective Registry:", 1)[1].split("Geography:", 1)[0]:
+        payload["objective_reference_contract"] = "objective_ids_v1"
+    else:
+        payload["objective_reference_contract"] = "legacy_text_v1"
     if project_profile:
         payload.update(_project_level_sections(
             methods=methods, language=language, specs=specs, objectives=objectives,

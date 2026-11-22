@@ -103,6 +103,13 @@ class StructuredOutputCorrectionPromptBuilder:
         payload_schema: str = RESEARCH_DESIGN_PAYLOAD_SCHEMA,
     ) -> Prompt:
         bounds = planner_bounds or PlannerBounds.from_env()
+        uses_registry = bool(getattr(brief, "objective_registry", None))
+        reference_instruction = (
+            "Use only objective IDs from the supplied Objective Registry in "
+            "objective_refs and set objective_reference_contract to objective_ids_v1."
+            if uses_registry
+            else "Use exact brief objective text verbatim in every objective_refs entry."
+        )
         sections = [
             original_prompt.user,
             "OBJECTIVE COVERAGE CORRECTION",
@@ -111,7 +118,7 @@ class StructuredOutputCorrectionPromptBuilder:
                     "The previous ResearchDesign JSON is syntactically valid but fails "
                     "brief objective coverage validation.",
                     "Repair objective_refs while staying within planner output limits.",
-                    "Use exact brief objective text verbatim in every objective_refs entry.",
+                    reference_instruction,
                     "Do not invent objectives that are not listed in the brief.",
                     "Consolidate overlapping objectives into shared research questions "
                     "with multiple objective_refs when needed.",
@@ -147,7 +154,18 @@ class StructuredOutputCorrectionPromptBuilder:
                 ]
             )
 
-        if brief.objectives:
+        if uses_registry:
+            sections.extend(
+                [
+                    "CANONICAL OBJECTIVE REGISTRY",
+                    "objective_refs must cite these IDs only:",
+                    *[
+                        f"- {item.objective_id} | ordinal={item.ordinal} | exact_text={item.text}"
+                        for item in brief.objective_registry
+                    ],
+                ]
+            )
+        elif brief.objectives:
             sections.extend(
                 [
                     "CANONICAL BRIEF OBJECTIVES",

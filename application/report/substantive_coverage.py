@@ -5,11 +5,14 @@ from dataclasses import dataclass
 
 from domain.findings.finding import Finding
 from domain.findings.insight import Insight
+from domain.common.exceptions import ValidationError
 from domain.planning.research_design import ResearchDesign, ResearchQuestion
 from domain.reports.report_section import ReportSection
 
 from application.ports.report_ports import ReportSectionCandidate
 from application.report.coverage_validation import section_supports_question
+from application.planner.objective_reference_resolution import resolve_objective_reference_texts
+from domain.research_brief import ResearchBrief
 
 _WHITESPACE = re.compile(r"\s+")
 _TOKEN = re.compile(r"[a-z0-9]{4,}", re.IGNORECASE)
@@ -51,9 +54,20 @@ def _tokens(text: str) -> set[str]:
     return {match.group(0).lower() for match in _TOKEN.finditer(text)}
 
 
-def objective_tokens(question: ResearchQuestion) -> set[str]:
+def objective_tokens(
+    question: ResearchQuestion,
+    *,
+    design: ResearchDesign | None = None,
+    brief: ResearchBrief | None = None,
+    legacy_context: bool = False,
+) -> set[str]:
     parts = [question.question, question.rationale or ""]
-    parts.extend(question.objective_refs or ())
+    if design is not None:
+        parts.extend(resolve_objective_reference_texts(brief, design, question.objective_refs))
+    elif legacy_context:
+        parts.extend(question.objective_refs or ())
+    else:
+        raise ValidationError("objective_tokens requires Design for contract resolution")
     return _tokens(" ".join(parts))
 
 
@@ -79,7 +93,9 @@ def section_substantively_covers_question(
     section: ReportSection | ReportSectionCandidate,
     question: ResearchQuestion,
     *,
+    design: ResearchDesign | None = None,
     findings: tuple[Finding, ...] | list[Finding],
+    brief: ResearchBrief | None = None,
     batch_question_id: str | None = None,
     min_token_overlap: int = 2,
 ) -> bool:
@@ -98,7 +114,12 @@ def section_substantively_covers_question(
     title_lower = section.title.lower()
     if question.id.lower() in title_lower:
         return True
-    objectives = objective_tokens(question)
+    objectives = objective_tokens(
+        question,
+        design=design,
+        brief=brief,
+        legacy_context=design is None,
+    )
     if not objectives:
         return False
     content_tokens = _tokens(f"{section.title} {section.content}")
@@ -109,11 +130,13 @@ def section_substantively_covers_question(
 def compute_rq_coverage_metrics(
     *,
     question: ResearchQuestion,
+    design: ResearchDesign | None = None,
     sections: tuple[ReportSection, ...] | list[ReportSection],
     findings: tuple[Finding, ...] | list[Finding],
     insights: tuple[Insight, ...] | list[Insight],
     evidence_count: int,
     section_batch_map: dict[str, str | None] | None = None,
+    brief: ResearchBrief | None = None,
 ) -> RQCoverageMetrics:
     section_batch_map = section_batch_map or {}
     rq_findings = [f for f in findings if question.id in f.research_question_refs]
@@ -127,7 +150,9 @@ def compute_rq_coverage_metrics(
         if section_substantively_covers_question(
             s,
             question,
+            design=design,
             findings=findings,
+            brief=brief,
             batch_question_id=section_batch_map.get(getattr(s, "id", "")),
         )
     ]
@@ -172,6 +197,7 @@ def missing_substantive_research_question_ids(
     min_substantive_sections: int = DEFAULT_MIN_SUBSTANTIVE_SECTIONS_PER_RQ,
     min_finding_ratio: float = DEFAULT_MIN_FINDING_COVERAGE_RATIO,
     required_research_question_ids: tuple[str, ...] | None = None,
+    brief: ResearchBrief | None = None,
 ) -> tuple[str, ...]:
     missing: list[str] = []
     evidence_counts_by_rq = evidence_counts_by_rq or {}
@@ -181,11 +207,13 @@ def missing_substantive_research_question_ids(
             continue
         metrics = compute_rq_coverage_metrics(
             question=question,
+            design=design,
             sections=sections,
             findings=findings,
             insights=insights,
             evidence_count=evidence_counts_by_rq.get(question.id, 0),
             section_batch_map=section_batch_map,
+            brief=brief,
         )
         if not metrics.passes_substantive_gate(
             min_substantive_sections=min_substantive_sections,
@@ -204,6 +232,7 @@ def validate_two_dimensional_coverage(
     evidence_counts_by_rq: dict[str, int] | None = None,
     section_batch_map: dict[str, str | None] | None = None,
     required_research_question_ids: tuple[str, ...] | None = None,
+    brief: ResearchBrief | None = None,
 ) -> tuple[str, ...]:
     """Return error codes if structural or substantive coverage fails."""
     from application.report.coverage_validation import missing_research_question_ids
@@ -224,6 +253,7 @@ def validate_two_dimensional_coverage(
         design=design,
         evidence_counts_by_rq=evidence_counts_by_rq,
         section_batch_map=section_batch_map,
+        brief=brief,
         required_research_question_ids=required_research_question_ids,
     )
     for rq_id in substantive_missing:

@@ -9,6 +9,9 @@ Business Question:
 Objectives:
 {objectives}
 
+Objective Registry:
+{objective_registry}
+
 Geography:
 {geography}
 
@@ -54,7 +57,8 @@ Do not assign executors or define runtime workflow tasks.
 # REQUIREMENTS
 
 - Cover every brief objective with at least one research question.
-- Link questions to objectives using exact objective text in `objective_refs`.
+- For `objective_ids_v1`, link questions using only IDs from the Objective
+  Registry; use exact text only for `legacy_text_v1` snapshots.
 - Consolidate related objectives instead of creating one question per objective.
 - Define concrete information needs for each major question within the configured limits.
 - For every information need, define an `evidence_expectation` that states what evidence must establish before the need can be considered answered.

@@ -36,6 +36,7 @@ class ResearchDesignFactory:
             limitations=dto.limitations,
             language=dto.language,
             research_subject=research_subject,
+            objective_reference_contract=dto.objective_reference_contract,
         )
 
     @staticmethod

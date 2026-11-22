@@ -14,6 +14,7 @@ RESEARCH_DESIGN_PAYLOAD_SCHEMA = """
       "rationale": "string"
     }
   ],
+  "objective_reference_contract": "objective_ids_v1|legacy_text_v1",
   "information_needs": [
     {
       "id": "string",

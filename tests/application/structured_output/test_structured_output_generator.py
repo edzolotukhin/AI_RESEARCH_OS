@@ -257,6 +257,44 @@ class StructuredOutputCorrectionPromptBuilderTests(unittest.TestCase):
         self.assertIn("research_questions: at most", correction.user)
         self.assertIn("Reduce count and verbosity", correction.user)
 
+    def test_generic_correction_prompt_does_not_require_brief_context(self):
+        correction = self.builder.build(
+            original_prompt=Prompt(system="System", user="Objective Registry:\nobj-001"),
+            invalid_response=LLMResponse(content="not json"),
+            error=self.error,
+            payload_schema=PLANNER_PAYLOAD_SCHEMA,
+            truncated=False,
+        )
+        self.assertIn("CORRECTION REQUEST", correction.user)
+
+    def test_objective_coverage_correction_supports_registry_and_legacy(self):
+        from application.planner.objective_coverage import ObjectiveCoverageFailure
+        from domain.research_brief import ResearchBrief
+
+        failure = ObjectiveCoverageFailure(
+            uncovered_objectives=("Measure population",),
+            invalid_objective_refs=(("rq-1", "obj-999"),),
+        )
+        registry_brief = ResearchBrief(
+            "P", "Q", objectives=("Measure population",),
+        ).materialize_objective_registry()
+        registry_prompt = self.builder.build_objective_coverage_correction(
+            original_prompt=self.prompt,
+            brief=registry_brief,
+            failure=failure,
+            previous_design_json="{}",
+        )
+        self.assertIn("objective_ids_v1", registry_prompt.user)
+        self.assertIn("obj-001", registry_prompt.user)
+
+        legacy_prompt = self.builder.build_objective_coverage_correction(
+            original_prompt=self.prompt,
+            brief=ResearchBrief("P", "Q", objectives=("Measure population",)),
+            failure=failure,
+            previous_design_json="{}",
+        )
+        self.assertIn("exact strings only", legacy_prompt.user)
+
 
 if __name__ == "__main__":
     unittest.main()

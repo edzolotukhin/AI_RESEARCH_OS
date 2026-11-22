@@ -10,6 +10,7 @@ from application.research.design_validator import validate_research_design
 from domain.planning.research_design import ResearchDesign
 from domain.project import Project
 from application.research.subject_resolution import resolve_subject_proposal
+from application.services.project_planning_service import ProjectPlanningService
 
 from .contracts import PlannerDesignService
 
@@ -38,8 +39,27 @@ class PlannerDesignServiceImpl(PlannerDesignService):
             design=design,
         ) if project.research_brief is not None else None
         design = replace(design, research_subject=subject)
+        brief = project.research_brief
+        if (
+            brief is not None
+            and brief.objective_registry is not None
+            and design.objective_reference_contract == "objective_ids_v1"
+        ):
+            design = replace(
+                design,
+                brief_fingerprint=ProjectPlanningService.input_fingerprint(
+                    brief, tuple(project.selected_methods or ())
+                ),
+                objective_registry_identity=brief.objective_registry_identity,
+            )
+        expected_fingerprint = None
+        if brief is not None:
+            expected_fingerprint = ProjectPlanningService.input_fingerprint(
+                brief, tuple(project.selected_methods or ())
+            )
         validate_research_design(
             design,
             brief=project.research_brief,
+            expected_brief_fingerprint=expected_fingerprint,
         )
         return design

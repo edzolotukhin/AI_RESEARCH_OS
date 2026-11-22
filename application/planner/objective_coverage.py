@@ -11,6 +11,8 @@ from domain.research_brief import ResearchBrief, normalize_objective_text
 class ObjectiveCoverageFailure:
     uncovered_objectives: tuple[str, ...]
     invalid_objective_refs: tuple[tuple[str, str], ...]
+    brief_fingerprint_mismatch: bool = False
+    registry_identity_mismatch: bool = False
 
     @property
     def uncovered_objective_count(self) -> int:
@@ -18,7 +20,12 @@ class ObjectiveCoverageFailure:
 
     @property
     def is_correctable(self) -> bool:
-        return bool(self.uncovered_objectives or self.invalid_objective_refs)
+        return bool(
+            self.uncovered_objectives
+            or self.invalid_objective_refs
+            or self.brief_fingerprint_mismatch
+            or self.registry_identity_mismatch
+        )
 
 
 class ObjectiveCoverageValidationError(ValidationError):
@@ -51,6 +58,10 @@ class ObjectiveCoverageValidationError(ValidationError):
                     for question_id, ref in failure.invalid_objective_refs
                 ),
             )
+        if failure.brief_fingerprint_mismatch:
+            parts.append("ResearchDesign brief_fingerprint does not match the current Brief")
+        if failure.registry_identity_mismatch:
+            parts.append("ResearchDesign objective_registry_identity does not match the current Brief")
         message = " ".join(parts) if parts else "Objective coverage validation failed."
         return cls(
             message,
@@ -66,6 +77,36 @@ def find_invalid_objective_refs(
     """Refs that do not resolve to a brief objective after normalization."""
     if not brief.objectives:
         return ()
+
+    if design.objective_reference_contract == "objective_ids_v1":
+        if brief.objective_registry is None:
+            return tuple(
+                (question.id, ref)
+                for question in design.research_questions
+                for ref in question.objective_refs
+            )
+        if design.brief_fingerprint and design.brief_fingerprint != "":
+            expected_identity = brief.objective_registry_identity
+            if design.objective_registry_identity != expected_identity:
+                return tuple(
+                    (question.id, ref)
+                    for question in design.research_questions
+                    for ref in question.objective_refs
+                )
+        valid_ids = {item.objective_id for item in brief.objective_registry}
+        seen: set[str] = set()
+        duplicates: list[tuple[str, str]] = []
+        for question in design.research_questions:
+            for ref in question.objective_refs:
+                if ref in seen:
+                    duplicates.append((question.id, ref))
+                seen.add(ref)
+        return tuple(
+            (question.id, ref)
+            for question in design.research_questions
+            for ref in question.objective_refs
+            if ref not in valid_ids
+        ) + tuple(duplicates)
 
     valid = set(brief.normalized_objectives())
     invalid: list[tuple[str, str]] = []
@@ -84,6 +125,18 @@ def find_uncovered_objectives(
     if not brief.objectives:
         return ()
 
+    if design.objective_reference_contract == "objective_ids_v1":
+        if brief.objective_registry is None:
+            return brief.objectives
+        covered = {
+            ref for question in design.research_questions
+            for ref in question.objective_refs
+        }
+        return tuple(
+            item.text for item in brief.objective_registry
+            if item.objective_id not in covered
+        )
+
     covered: set[str] = set()
     for question in design.research_questions:
         for ref in question.objective_refs:
@@ -99,16 +152,38 @@ def find_uncovered_objectives(
 def evaluate_objective_coverage(
     brief: ResearchBrief | None,
     design: ResearchDesign,
+    *,
+    expected_brief_fingerprint: str | None = None,
 ) -> ObjectiveCoverageFailure | None:
     if brief is None or not brief.objectives:
         return None
 
     uncovered = find_uncovered_objectives(brief, design)
     invalid_refs = find_invalid_objective_refs(brief, design)
-    if not uncovered and not invalid_refs:
+    registry_identity_mismatch = (
+        design.objective_reference_contract == "objective_ids_v1"
+        and (
+            brief.objective_registry is None
+            or not design.objective_registry_identity
+            or design.objective_registry_identity != brief.objective_registry_identity
+        )
+    )
+    fingerprint_mismatch = (
+        design.objective_reference_contract == "objective_ids_v1"
+        and expected_brief_fingerprint is not None
+        and design.brief_fingerprint != expected_brief_fingerprint
+    )
+    if (
+        not uncovered
+        and not invalid_refs
+        and not fingerprint_mismatch
+        and not registry_identity_mismatch
+    ):
         return None
 
     return ObjectiveCoverageFailure(
         uncovered_objectives=uncovered,
         invalid_objective_refs=invalid_refs,
+        brief_fingerprint_mismatch=fingerprint_mismatch,
+        registry_identity_mismatch=registry_identity_mismatch,
     )

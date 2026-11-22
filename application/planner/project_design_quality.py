@@ -7,6 +7,9 @@ from domain.common.exceptions import ValidationError
 from domain.planning.research_design import ResearchDesign
 from domain.research_brief import ResearchBrief
 from domain.research_method import DESK, QUANTITATIVE
+from application.planner.objective_reference_resolution import (
+    resolve_objective_reference_texts,
+)
 
 
 _GENERIC_TOKENS = {
@@ -41,10 +44,11 @@ def validate_project_design_depth(
     methods: tuple[str, ...] = (),
 ) -> None:
     issues: list[ProjectDesignQualityIssue] = []
-    objectives = {_normalize(item): item for item in brief.objectives}
     questions = {item.id: item for item in design.research_questions}
     for question in design.research_questions:
-        refs = [objectives.get(_normalize(ref), ref) for ref in question.objective_refs]
+        refs = resolve_objective_reference_texts(
+            brief, design, question.objective_refs,
+        )
         if refs and any(_is_mechanical(question.question, ref) for ref in refs):
             issues.append(ProjectDesignQualityIssue(
                 "research_question", question.id,

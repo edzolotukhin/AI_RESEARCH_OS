@@ -67,6 +67,9 @@ class ResearchDesignParser:
                     if isinstance(response.get("research_subject"), Mapping)
                     else None
                 ),
+                objective_reference_contract=self._optional_string(
+                    response, "objective_reference_contract"
+                ) or "legacy_text_v1",
             )
         except PlannerParserError:
             raise
