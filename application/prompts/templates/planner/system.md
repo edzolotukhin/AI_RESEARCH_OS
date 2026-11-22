@@ -105,6 +105,10 @@ Requirements:
 - `evidence_expectation.required_aspects` must be a non-empty list of stable snake_case identifiers naming answer dimensions the evidence must establish. Do not use numeric evidence-count thresholds as a substitute.
 - `requires_quantitative_evidence` must be a boolean. Omit `minimum_independent_sources` unless a specific integer >= 1 is justified.
 - An empty, null, or missing `evidence_expectation` is invalid.
+For a `DERIVED` information need, `max_inputs` is the maximum number of input
+Evidence/Findings, not a period count. `required_periods` is the ordered set
+of mandatory annual observation years and may be longer than `max_inputs` when
+one input source contains multiple years.
 - Use high-level source types only (e.g. official statistics, company reports, industry associations, regulator/government, reputable media, academic research).
 - Do not include search queries, URLs, or executor IDs.
 - Treat the explicit Market field as the authoritative final canonical subject.

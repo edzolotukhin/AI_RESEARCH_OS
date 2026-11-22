@@ -49,8 +49,6 @@ class DerivationContract:
         if not 0<=self.decimal_places<=12 or not 1<=self.max_inputs<=100 or not 1<=self.max_provider_attempts<=2:
             raise ValueError("Invalid derivation bounds")
         periods=self.required_periods
-        if len(periods)>self.max_inputs:
-            raise ValueError("Required periods exceed input bound")
         if len(set(periods))!=len(periods) or any(not re.fullmatch(r"(?:19|20)\d{2}",p) for p in periods) or tuple(sorted(periods))!=periods:
             raise ValueError("Derivation periods must be unique ordered explicit years")
         if self.operation_type.deterministic and len(periods)<2:

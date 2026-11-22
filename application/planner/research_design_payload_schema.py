@@ -90,6 +90,10 @@ limitations so approval can request clarification.
 DERIVED requires depends_on_information_need_ids and a derivation object using
 version "derivation-v1", operation_type, metric, input_unit, geography,
 required_periods, decimal_places, max_inputs, max_provider_attempts and method.
+In a derivation, max_inputs is the maximum number of input Evidence/Findings;
+it is independent of required_periods. required_periods is the bounded ordered
+set of mandatory annual observation years and may contain more years than the
+number of input Evidence/Findings when one source covers multiple years.
 Allowed operations are YEAR_OVER_YEAR_ABSOLUTE_CHANGE, YEAR_OVER_YEAR_PERCENT_CHANGE,
 CUMULATIVE_ABSOLUTE_CHANGE, CUMULATIVE_PERCENT_CHANGE, TREND_CHARACTERIZATION,
 CROSS_SOURCE_COMPARISON and LIMITATION_SYNTHESIS.
