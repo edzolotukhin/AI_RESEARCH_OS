@@ -22,6 +22,7 @@ from application.prompts.python_format_prompt_renderer import (
     PythonFormatPromptRenderer,
 )
 from domain.project import Project
+from domain.research_brief import ResearchBrief
 from domain.workflow_run import WorkflowRun
 from runtime.workflow_context import WorkflowContext
 from tests.fixtures.research_brief import sample_research_brief
@@ -174,6 +175,20 @@ class DeterministicDesignResponseTests(unittest.TestCase):
         payload = json.loads(build_deterministic_design_response(prompt))
         refs = [ref for question in payload["research_questions"] for ref in question["objective_refs"]]
         self.assertEqual(refs, ["obj-001", "obj-002"])
+
+    def test_empty_registry_does_not_emit_synthetic_objective_id(self):
+        project = Project(id="empty-registry", name="Empty Registry", selected_methods=("DESK",))
+        project.research_brief = ResearchBrief(
+            title="Population", business_question="How did population change?",
+        ).materialize_objective_registry()
+        prompt = PlannerPromptBuilder(
+            template_loader=FileTemplateLoader(),
+            prompt_renderer=PythonFormatPromptRenderer(),
+            executor_catalog=make_test_executor_catalog(),
+        ).build(WorkflowContext(workflow_run=WorkflowRun(id="plan"), project=project))
+        payload = json.loads(build_deterministic_design_response(prompt))
+        self.assertEqual(payload["objective_reference_contract"], "legacy_text_v1")
+        self.assertNotIn("obj-001", json.dumps(payload))
 
     def test_legacy_desk_response_remains_unchanged_without_project_profile(self):
         brief = sample_research_brief(objectives=["Identify competitors."])

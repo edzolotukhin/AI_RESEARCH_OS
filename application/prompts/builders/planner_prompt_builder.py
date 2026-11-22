@@ -126,7 +126,7 @@ def _format_list(items: tuple[str, ...]) -> str:
 
 
 def _format_objective_registry(brief) -> str:
-    if brief.objective_registry is None:
+    if not brief.objective_registry:
         return "None specified (use legacy_text_v1 objective references)"
     return "\n".join(
         f"- {item.objective_id} | ordinal={item.ordinal} | exact_text={item.text}"
