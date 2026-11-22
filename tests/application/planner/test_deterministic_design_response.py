@@ -160,6 +160,21 @@ class DeterministicDesignResponseTests(unittest.TestCase):
         self.assertGreaterEqual(len(payload["analysis_plan"]), 2)
         self.assertEqual(len(payload["deliverable_plan"]), 2)
 
+    def test_registry_project_response_references_each_objective_once(self):
+        project = self._project(
+            ("DESK",),
+            objectives=["Оцінити розмір ринку", "Визначити бар’єри"],
+        )
+        project.research_brief = project.research_brief.materialize_objective_registry()
+        prompt = PlannerPromptBuilder(
+            template_loader=FileTemplateLoader(),
+            prompt_renderer=PythonFormatPromptRenderer(),
+            executor_catalog=make_test_executor_catalog(),
+        ).build(WorkflowContext(workflow_run=WorkflowRun(id="plan"), project=project))
+        payload = json.loads(build_deterministic_design_response(prompt))
+        refs = [ref for question in payload["research_questions"] for ref in question["objective_refs"]]
+        self.assertEqual(refs, ["obj-001", "obj-002"])
+
     def test_legacy_desk_response_remains_unchanged_without_project_profile(self):
         brief = sample_research_brief(objectives=["Identify competitors."])
         project = Project(id="legacy", name="Legacy")
